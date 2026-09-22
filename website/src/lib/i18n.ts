@@ -174,8 +174,7 @@ const en = {
     securityCopy:
       "Assets are served from the official GitHub releases of the repository. Credentials never touch the website.",
     refresh: "Refresh releases",
-    empty:
-      "Release information is temporarily unavailable. Please try again in a few minutes.",
+    empty: "Release information is temporarily unavailable. Please try again in a few minutes.",
     yourDevice: "Your device",
     recommended: "Recommended",
     files: "files",
@@ -190,8 +189,7 @@ const en = {
     intro:
       "TableR ships lean and adds database engines as plugins. Browse every official driver here, download a bundle, or install it straight from the app's Plugin Manager.",
     trustTitle: "Verified bundles",
-    trustCopy: (count: number) =>
-      `${count} official plugins, each SHA-256 verified on install`,
+    trustCopy: (count: number) => `${count} official plugins, each SHA-256 verified on install`,
     counts: {
       installable: "Install from the app now",
       pending: "Awaiting release binaries",
@@ -236,8 +234,7 @@ const en = {
       title: "Safe by default",
       copy: "On install the app recomputes each bundle's SHA-256 digest and refuses to import it unless the digest matches the manifest. Credentials never touch this website.",
     },
-    empty:
-      "The plugin catalog is not available yet. Run the repository generator to publish it.",
+    empty: "The plugin catalog is not available yet. Run the repository generator to publish it.",
   },
   changelog: {
     back: "Back to home",
@@ -245,8 +242,7 @@ const en = {
     heading: "Changelog",
     intro:
       "Every shipped TableR release, newest first. Notes come straight from the GitHub release of each version.",
-    empty:
-      "No published releases yet. Notes will appear here as soon as a version ships.",
+    empty: "No published releases yet. Notes will appear here as soon as a version ships.",
     viewOnGitHub: "View on GitHub",
   },
 };
@@ -257,8 +253,8 @@ const vi: typeof en = {
     workflow: "Quy trình",
     agent: "Agent",
     engines: "Hệ CSDL",
-    openSource: "Mã nguồn mở",
-    changelog: "Lịch sử bản phát hành",
+    openSource: "Mã nguồn",
+    changelog: "Phát hành",
     docs: "Tài liệu",
     plugins: "Plugin",
     download: "Tải xuống",
@@ -398,28 +394,24 @@ const vi: typeof en = {
     heading: "Tải TableR",
     intro:
       "Bản dựng hiện tại và các bản cũ cho Windows, macOS, Linux. Link tải trỏ thẳng tới asset chính thức trên GitHub.",
-    chooseIntro:
-      "Chọn bản hiện tại hoặc bản cũ. Mỗi tùy chọn bắt đầu tải trình cài đặt trực tiếp.",
+    chooseIntro: "Chọn bản hiện tại hoặc bản cũ. Mỗi tùy chọn bắt đầu tải trình cài đặt trực tiếp.",
     trustTitle: "Tệp phát hành chính thức",
     versionsAvailable: (count: number) => `${count} phiên bản khả dụng`,
     versionsFallback: "GitHub Releases",
     syncNote: "Tự động đồng bộ từ GitHub Releases mỗi 5 phút.",
     helpChooseTitle: "Chưa chắc chọn tệp nào?",
-    helpChooseCopy:
-      "Mở bản mới nhất và chọn tùy chọn có nhãn Đề xuất cho hệ điều hành của bạn.",
+    helpChooseCopy: "Mở bản mới nhất và chọn tùy chọn có nhãn Đề xuất cho hệ điều hành của bạn.",
     helpMacosTitle: "Cài bản macOS chưa ký",
     helpMacosCopyBefore:
       "Chuyển TableR vào Applications, thử mở một lần, rồi chọn Open Anyway trong System Settings > Privacy & Security. Nếu Gatekeeper vẫn chặn, chạy",
-    helpMacosCopyAfter:
-      "và mở lại. Việc này không đồng nghĩa ứng dụng đã được Apple notarize.",
+    helpMacosCopyAfter: "và mở lại. Việc này không đồng nghĩa ứng dụng đã được Apple notarize.",
     footerLicense: "TableR là phần mềm mã nguồn mở theo giấy phép GPL-3.0.",
     allReleases: "Tất cả bản phát hành trên GitHub",
     securityTitle: "An toàn mặc định",
     securityCopy:
       "Asset được phục vụ từ GitHub release chính thức của repository. Thông tin đăng nhập không bao giờ đi qua website.",
     refresh: "Làm mới danh sách",
-    empty:
-      "Thông tin bản phát hành tạm thời không khả dụng. Vui lòng thử lại sau vài phút.",
+    empty: "Thông tin bản phát hành tạm thời không khả dụng. Vui lòng thử lại sau vài phút.",
     yourDevice: "Thiết bị của bạn",
     recommended: "Đề xuất",
     files: "tệp",
@@ -480,8 +472,7 @@ const vi: typeof en = {
       title: "An toàn mặc định",
       copy: "Khi cài, app tính lại SHA-256 của từng bundle và từ chối nhập nếu digest không khớp manifest. Thông tin đăng nhập không bao giờ đi qua website.",
     },
-    empty:
-      "Danh mục plugin chưa sẵn sàng. Hãy chạy trình sinh repository để xuất bản.",
+    empty: "Danh mục plugin chưa sẵn sàng. Hãy chạy trình sinh repository để xuất bản.",
   },
   changelog: {
     back: "Về trang chủ",
@@ -489,14 +480,15 @@ const vi: typeof en = {
     heading: "Lịch sử bản phát hành",
     intro:
       "Mọi bản TableR đã phát hành, mới nhất đứng trước. Ghi chú lấy trực tiếp từ GitHub release của từng phiên bản.",
-    empty:
-      "Chưa có bản phát hành nào. Ghi chú sẽ xuất hiện ngay khi có phiên bản mới.",
+    empty: "Chưa có bản phát hành nào. Ghi chú sẽ xuất hiện ngay khi có phiên bản mới.",
     viewOnGitHub: "Xem trên GitHub",
   },
 };
 
-export const dictionaries: Record<SiteLanguage, typeof en> = { en, vi };
+export type Dictionary = typeof en;
 
-export function getDictionary(language: SiteLanguage) {
+export const dictionaries: Record<SiteLanguage, Dictionary> = { en, vi };
+
+export function getDictionary(language: SiteLanguage): Dictionary {
   return dictionaries[language];
 }

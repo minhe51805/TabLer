@@ -11,9 +11,12 @@ import {
   Eye,
   GitBranch,
   GitFork,
+  History,
   KeyRound,
   Layers3,
+  LayoutGrid,
   Network,
+  Puzzle,
   RefreshCw,
   ShieldCheck,
   Sparkles,
@@ -23,9 +26,10 @@ import {
 } from "lucide-react";
 import { getTableRReleases } from "@/lib/github-releases";
 import { getSiteLanguage } from "@/lib/language";
-import { getDictionary } from "@/lib/i18n";
+import { getDictionary, type Dictionary } from "@/lib/i18n";
 import { repositoryUrl } from "@/lib/site";
 import { LanguageToggle } from "./LanguageToggle";
+import { HeroScrollFX, ScrollReveal, TiltFrame } from "./Home3D";
 
 const downloadUrl = "/download";
 
@@ -38,26 +42,39 @@ const workflowMedia = [
     icon: KeyRound,
     image: "/screenshots/table-r-connection-launcher.png",
     alt: "TableR connection launcher showing saved PostgreSQL connections",
-    width: 1280,
-    height: 801,
+    width: 1920,
+    height: 1080,
   },
   {
     icon: Terminal,
     image: "/screenshots/table-r-query-workspace.png",
     alt: "TableR query workspace with SQL editor and result table",
-    width: 1280,
-    height: 801,
+    width: 1920,
+    height: 1080,
   },
   {
     icon: Sparkles,
     image: "/screenshots/table-r-ai-workspace.png",
     alt: "TableR AI workspace beside the SQL editor",
-    width: 1280,
-    height: 801,
+    width: 1920,
+    height: 1080,
   },
 ];
 
 const agentIcons = [Eye, BookMarked, ShieldCheck, RefreshCw];
+
+function navLinks(t: Dictionary) {
+  return [
+    { href: "#features", label: t.nav.features, icon: LayoutGrid },
+    { href: "#workflow", label: t.nav.workflow, icon: Workflow },
+    { href: "#agent", label: t.nav.agent, icon: Bot },
+    { href: "#engines", label: t.nav.engines, icon: Database },
+    { href: "#open-source", label: t.nav.openSource, icon: GitFork },
+    { href: "/changelog", label: t.nav.changelog, icon: History },
+    { href: "/docs", label: t.nav.docs, icon: BookMarked },
+    { href: "/plugins", label: t.nav.plugins, icon: Puzzle },
+  ];
+}
 
 const engines = [
   "PostgreSQL",
@@ -89,37 +106,28 @@ export default async function Home() {
   const latestVersion = releases[0]?.tag ?? "latest";
 
   return (
-    <main id="main">
+    <main id="main" className="neu">
+      <ScrollReveal />
+      <HeroScrollFX />
       <header className="site-header">
         <div className="shell header-inner">
           <a className="brand" href="#top" aria-label="TableR home">
-            <Image
-              src="/tabler-brand-mark.png"
-              width={36}
-              height={36}
-              alt=""
-              priority
-            />
+            <Image src="/tabler-brand-mark.png" width={36} height={36} alt="" priority />
             <span>TableR</span>
           </a>
 
           <nav className="main-nav" aria-label="Main navigation">
-            <a href="#features">{t.nav.features}</a>
-            <a href="#workflow">{t.nav.workflow}</a>
-            <a href="#agent">{t.nav.agent}</a>
-            <a href="#engines">{t.nav.engines}</a>
-            <a href="#open-source">{t.nav.openSource}</a>
-            <a href="/changelog">{t.nav.changelog}</a>
-            <Link href="/docs">{t.nav.docs}</Link>
-            <Link href="/plugins">{t.nav.plugins}</Link>
+            {navLinks(t).map(({ href, label, icon: NavIcon }) => (
+              <a href={href} key={href} aria-label={label} title={label}>
+                <NavIcon className="nav-icon" size={17} strokeWidth={1.9} aria-hidden="true" />
+                <span className="nav-label">{label}</span>
+              </a>
+            ))}
           </nav>
 
           <div className="header-actions">
             <LanguageToggle current={language} />
-            <a
-              className="button button-small button-primary"
-              href={downloadUrl}
-            >
+            <a className="button button-small button-primary" href={downloadUrl}>
               <Download size={16} aria-hidden="true" />
               {t.nav.download}
             </a>
@@ -128,48 +136,52 @@ export default async function Home() {
       </header>
 
       <section className="hero" id="top">
-        <div className="shell hero-copy">
-          <div className="hero-kicker">
-            <span className="status-dot" />
-            {t.hero.kicker}
-          </div>
-          <h1>{t.hero.headline}</h1>
-          <p className="hero-lede">{t.hero.lede}</p>
-          <div className="hero-actions">
-            <a className="button button-primary" href={downloadUrl}>
-              <Download size={18} aria-hidden="true" />
-              {t.hero.download} {latestVersion}
-            </a>
-            <a
-              className="button button-secondary"
-              href={repositoryUrl}
-              target="_blank"
-              rel="noreferrer"
-            >
-              <GitFork size={18} aria-hidden="true" />
-              {t.hero.viewOnGitHub}
-            </a>
-          </div>
-          <p className="hero-note">{t.hero.note}</p>
-        </div>
-
-        <div className="shell hero-media-wrap">
-          <div className="product-frame product-frame-hero">
-            <div className="frame-bar" aria-hidden="true">
-              <span />
-              <span />
-              <span />
-              <strong>ant_language / Query workspace</strong>
+        <div className="hero-sticky">
+          <div className="shell hero-copy">
+            <div className="hero-kicker">
+              <span className="status-dot" />
+              {t.hero.kicker}
             </div>
-            <Image
-              className="product-image"
-              src="/screenshots/table-r-query-workspace.png"
-              width={1280}
-              height={801}
-              alt="TableR desktop app showing a PostgreSQL query and its result set"
-              priority
-              sizes="(max-width: 720px) 94vw, 1180px"
-            />
+            <h1>{t.hero.headline}</h1>
+            <p className="hero-lede">{t.hero.lede}</p>
+            <div className="hero-actions">
+              <a className="button button-primary" href={downloadUrl}>
+                <Download size={18} aria-hidden="true" />
+                {t.hero.download} {latestVersion}
+              </a>
+              <a
+                className="button button-secondary"
+                href={repositoryUrl}
+                target="_blank"
+                rel="noreferrer"
+              >
+                <GitFork size={18} aria-hidden="true" />
+                {t.hero.viewOnGitHub}
+              </a>
+            </div>
+            <p className="hero-note">{t.hero.note}</p>
+          </div>
+
+          <div className="shell hero-media-wrap">
+            <TiltFrame>
+              <div className="product-frame product-frame-hero">
+                <div className="frame-bar" aria-hidden="true">
+                  <span />
+                  <span />
+                  <span />
+                  <strong>ant_language / Query workspace</strong>
+                </div>
+                <Image
+                  className="product-image"
+                  src="/screenshots/table-r-query-workspace.png"
+                  width={1920}
+                  height={1080}
+                  alt="TableR desktop app showing a PostgreSQL query and its result set"
+                  priority
+                  sizes="(max-width: 720px) 94vw, 1180px"
+                />
+              </div>
+            </TiltFrame>
           </div>
         </div>
       </section>
@@ -307,8 +319,8 @@ export default async function Home() {
             <Image
               className="product-image"
               src="/screenshots/table-r-er-diagram.png"
-              width={1280}
-              height={801}
+              width={1920}
+              height={1080}
               alt="TableR ER diagram workspace displaying database tables and relationships"
               sizes="(max-width: 720px) 94vw, 1180px"
             />
@@ -404,12 +416,7 @@ export default async function Home() {
       <footer>
         <div className="shell footer-inner">
           <a className="brand footer-brand" href="#top" aria-label="TableR home">
-            <Image
-              src="/tabler-brand-mark.png"
-              width={30}
-              height={30}
-              alt=""
-            />
+            <Image src="/tabler-brand-mark.png" width={30} height={30} alt="" />
             <span>TableR</span>
           </a>
           <p>{t.footer.built}</p>
@@ -421,11 +428,7 @@ export default async function Home() {
             <Link href="/changelog">{t.footer.changelog}</Link>
             <Link href="/docs">{t.footer.docs}</Link>
             <Link href="/plugins">{t.nav.plugins}</Link>
-            <a
-              href="https://buymeacoffee.com/minjev"
-              target="_blank"
-              rel="noreferrer"
-            >
+            <a href="https://buymeacoffee.com/minjev" target="_blank" rel="noreferrer">
               {t.footer.support}
             </a>
           </div>

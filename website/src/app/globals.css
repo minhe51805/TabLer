@@ -25,9 +25,7 @@
   --radius-lg: 16px;
   --shadow-card: 0 1px 2px rgba(16, 24, 33, 0.04);
   --shadow-hover: 0 14px 34px rgba(16, 24, 33, 0.1);
-  --font-display:
-    var(--font-display-dm), var(--font-geist-sans), "DM Sans", system-ui,
-    sans-serif;
+  --font-display: var(--font-display-dm), var(--font-geist-sans), "DM Sans", system-ui, sans-serif;
   --shell: 1180px;
 }
 
@@ -202,11 +200,16 @@ a {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 30px;
+  gap: 22px;
   margin-left: auto;
-  font-size: 14.5px;
+  font-size: 14px;
   font-weight: 500;
   color: #4a5560;
+  white-space: nowrap;
+}
+
+.main-nav a {
+  white-space: nowrap;
 }
 
 .main-nav a.is-current {
@@ -293,12 +296,7 @@ a {
   overflow: hidden;
   padding-top: 92px;
   background:
-    radial-gradient(
-      130% 90% at 50% -10%,
-      rgba(8, 126, 252, 0.07),
-      transparent 60%
-    ),
-    var(--paper);
+    radial-gradient(130% 90% at 50% -10%, rgba(8, 126, 252, 0.07), transparent 60%), var(--paper);
 }
 
 .hero-copy,
@@ -879,12 +877,7 @@ a {
   border: 1px solid var(--line);
   border-radius: var(--radius-lg);
   background:
-    radial-gradient(
-      120% 160% at 100% 0%,
-      rgba(8, 126, 252, 0.08),
-      transparent 55%
-    ),
-    var(--paper);
+    radial-gradient(120% 160% at 100% 0%, rgba(8, 126, 252, 0.08), transparent 55%), var(--paper);
   box-shadow: var(--shadow-card);
 }
 
@@ -3030,4 +3023,756 @@ footer {
     justify-content: flex-start;
     text-align: left;
   }
+}
+
+/* ---------------------------------------------------------------------------
+ * Neumorphism theme — homepage only (.neu)
+ * Soft extruded surfaces on a light grey-blue canvas. Dual shadows:
+ * light top-left, dark bottom-right. Inset shadows for pressed/recessed.
+ * ------------------------------------------------------------------------- */
+
+.neu {
+  --neu-bg: #e8ecf1;
+  --neu-bg-soft: #eef1f5;
+  --neu-surface: #e8ecf1;
+  --neu-ink: #2c3644;
+  --neu-muted: #6b7686;
+  --neu-accent: #087efc;
+  --neu-accent-deep: #0067d7;
+  --neu-radius: 22px;
+  --neu-radius-sm: 14px;
+  --neu-shadow-out: -8px -8px 16px rgba(255, 255, 255, 0.9), 8px 8px 20px rgba(163, 177, 198, 0.55);
+  --neu-shadow-out-sm:
+    -5px -5px 10px rgba(255, 255, 255, 0.85), 5px 5px 12px rgba(163, 177, 198, 0.5);
+  --neu-shadow-in:
+    inset -5px -5px 10px rgba(255, 255, 255, 0.8), inset 5px 5px 12px rgba(163, 177, 198, 0.45);
+  --neu-shadow-press:
+    inset -3px -3px 7px rgba(255, 255, 255, 0.75), inset 3px 3px 8px rgba(163, 177, 198, 0.5);
+
+  background: var(--neu-bg);
+  color: var(--neu-ink);
+}
+
+/* ---------- header: floating soft bar ---------- */
+
+.neu .site-header {
+  position: sticky;
+  top: 14px;
+  z-index: 50;
+  background: transparent;
+  border-bottom: none;
+  padding: 0 16px;
+  /* base .site-header blurs the full-width strip; the floating pill must not */
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+.neu .header-inner {
+  background: var(--neu-bg-soft);
+  border-radius: 18px;
+  box-shadow: var(--neu-shadow-out-sm);
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  padding: 10px 18px;
+}
+
+.neu .main-nav {
+  gap: 4px;
+}
+
+.neu .main-nav a {
+  color: var(--neu-muted);
+  border-radius: 10px;
+  padding: 6px 9px;
+  white-space: nowrap;
+  transition:
+    box-shadow 0.2s ease,
+    color 0.2s ease;
+}
+
+.neu .main-nav a:hover {
+  color: var(--neu-ink);
+  box-shadow: var(--neu-shadow-in);
+}
+
+/* ---------- buttons: raised pills, press on click ---------- */
+
+.neu .button {
+  border-radius: 999px;
+  border: none;
+  font-weight: 600;
+  transition:
+    box-shadow 0.18s ease,
+    transform 0.18s ease;
+}
+
+.neu .button-primary {
+  background: linear-gradient(145deg, #1a8dff, #0067d7);
+  color: #fff;
+  box-shadow:
+    -6px -6px 12px rgba(255, 255, 255, 0.7),
+    6px 6px 14px rgba(163, 177, 198, 0.6),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.neu .button-primary:hover {
+  transform: translateY(-1px);
+  box-shadow:
+    -8px -8px 16px rgba(255, 255, 255, 0.75),
+    10px 10px 20px rgba(163, 177, 198, 0.65),
+    inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+.neu .button-primary:active {
+  transform: translateY(0);
+  box-shadow:
+    var(--neu-shadow-press),
+    inset 0 0 0 999px rgba(0, 103, 215, 0.9);
+}
+
+.neu .button-secondary {
+  background: var(--neu-surface);
+  color: var(--neu-ink);
+  box-shadow: var(--neu-shadow-out-sm);
+}
+
+.neu .button-secondary:hover {
+  transform: translateY(-1px);
+  box-shadow: var(--neu-shadow-out);
+}
+
+.neu .button-secondary:active {
+  box-shadow: var(--neu-shadow-press);
+}
+
+/* ---------- hero ---------- */
+
+.neu .hero {
+  background:
+    radial-gradient(60% 50% at 20% 0%, rgba(8, 126, 252, 0.07), transparent 70%),
+    radial-gradient(50% 40% at 85% 15%, rgba(22, 154, 99, 0.06), transparent 70%), var(--neu-bg);
+}
+
+.neu .hero-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--neu-surface);
+  border-radius: 999px;
+  padding: 8px 16px;
+  box-shadow: var(--neu-shadow-in);
+  color: var(--neu-muted);
+}
+
+.neu .status-dot {
+  box-shadow: 0 0 0 4px rgba(22, 154, 99, 0.15);
+}
+
+.neu .hero h1 {
+  color: var(--neu-ink);
+  letter-spacing: -0.03em;
+}
+
+.neu .hero-lede {
+  color: var(--neu-muted);
+}
+
+.neu .hero-note {
+  color: var(--neu-muted);
+}
+
+/* ---------- product frame: extruded slab + tilt ---------- */
+
+.neu .tilt-stage {
+  perspective: 1400px;
+}
+
+.neu .tilt-frame {
+  transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1);
+  transform-style: preserve-3d;
+  will-change: transform;
+}
+
+.neu .product-frame {
+  background: var(--neu-bg-soft);
+  border: 1px solid rgba(255, 255, 255, 0.65);
+  border-radius: var(--neu-radius);
+  box-shadow: var(--neu-shadow-out);
+  overflow: hidden;
+}
+
+.neu .product-frame-hero {
+  box-shadow:
+    -14px -14px 30px rgba(255, 255, 255, 0.9),
+    18px 22px 44px rgba(163, 177, 198, 0.6);
+}
+
+.neu .frame-bar {
+  background: var(--neu-bg-soft);
+  border-bottom: 1px solid rgba(163, 177, 198, 0.25);
+}
+
+.neu .frame-bar span {
+  box-shadow: var(--neu-shadow-in);
+}
+
+.neu .frame-bar strong {
+  color: var(--neu-muted);
+}
+
+/* ---------- signal strip: recessed stats ---------- */
+
+.neu .signal-strip {
+  background: transparent;
+  border: none;
+}
+
+.neu .signal-grid > div {
+  background: var(--neu-surface);
+  border: none;
+  border-radius: var(--neu-radius-sm);
+  box-shadow: var(--neu-shadow-in);
+  padding: 18px 20px;
+}
+
+.neu .signal-grid strong {
+  color: var(--neu-ink);
+}
+
+.neu .signal-grid span {
+  color: var(--neu-muted);
+}
+
+/* ---------- sections ---------- */
+
+.neu .section {
+  background: transparent;
+}
+
+.neu .section-heading h2,
+.neu .erd-heading h2,
+.neu .engine-heading h2,
+.neu .final-cta h2 {
+  color: var(--neu-ink);
+}
+
+.neu .section-heading > p:last-child,
+.neu .erd-heading > p,
+.neu .engine-heading > p:last-of-type {
+  color: var(--neu-muted);
+}
+
+.neu .eyebrow {
+  display: inline-block;
+  color: var(--neu-accent-deep);
+  background: var(--neu-surface);
+  border-radius: 999px;
+  padding: 6px 14px;
+  box-shadow: var(--neu-shadow-out-sm);
+  font-weight: 700;
+}
+
+/* ---------- feature cards: raised tiles ---------- */
+
+.neu .feature-card {
+  background: var(--neu-surface);
+  border: none;
+  border-radius: var(--neu-radius);
+  box-shadow: var(--neu-shadow-out-sm);
+  transition:
+    box-shadow 0.25s ease,
+    transform 0.25s ease;
+}
+
+.neu .feature-card:hover {
+  transform: translateY(-4px);
+  box-shadow: var(--neu-shadow-out);
+}
+
+.neu .feature-icon {
+  background: var(--neu-surface);
+  border: none;
+  border-radius: 14px;
+  box-shadow: var(--neu-shadow-in);
+  color: var(--neu-accent-deep);
+}
+
+.neu .feature-card h3 {
+  color: var(--neu-ink);
+}
+
+.neu .feature-card p {
+  color: var(--neu-muted);
+}
+
+/* ---------- workflow rows ---------- */
+
+.neu .workflow-label {
+  color: var(--neu-accent-deep);
+}
+
+.neu .workflow-label > span {
+  background: var(--neu-surface);
+  border-radius: 10px;
+  box-shadow: var(--neu-shadow-in);
+  padding: 4px 10px;
+  font-weight: 700;
+}
+
+.neu .workflow-copy h3 {
+  color: var(--neu-ink);
+}
+
+.neu .workflow-copy > p {
+  color: var(--neu-muted);
+}
+
+.neu .workflow-check {
+  color: var(--neu-muted);
+}
+
+.neu .workflow-check svg {
+  color: var(--neu-accent-deep);
+}
+
+/* ---------- engine grid: soft chips ---------- */
+
+.neu .engine-item {
+  background: var(--neu-surface);
+  border: none;
+  border-radius: var(--neu-radius-sm);
+  box-shadow: var(--neu-shadow-out-sm);
+  transition:
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
+}
+
+.neu .engine-item:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--neu-shadow-out);
+}
+
+.neu .engine-mark {
+  box-shadow: var(--neu-shadow-in);
+  border-radius: 10px;
+}
+
+.neu .engine-item > span:last-child {
+  color: var(--neu-ink);
+}
+
+.neu .text-link {
+  color: var(--neu-accent-deep);
+}
+
+/* ---------- open-source: keep dark panel but soften ---------- */
+
+.neu .open-source-section {
+  background: linear-gradient(160deg, #1a2431, #0e141b);
+  border-radius: 32px;
+  margin: 0 20px;
+  box-shadow:
+    -10px -10px 24px rgba(255, 255, 255, 0.7),
+    14px 16px 32px rgba(163, 177, 198, 0.55);
+}
+
+.neu .architecture-list > div {
+  background: rgba(255, 255, 255, 0.04);
+  border: none;
+  border-radius: 14px;
+  box-shadow:
+    inset -4px -4px 10px rgba(255, 255, 255, 0.05),
+    inset 5px 5px 12px rgba(0, 0, 0, 0.45);
+}
+
+/* ---------- final CTA ---------- */
+
+.neu .final-cta {
+  background: transparent;
+}
+
+.neu .final-cta-inner {
+  background: var(--neu-surface);
+  border-radius: var(--neu-radius);
+  box-shadow: var(--neu-shadow-out);
+  padding: 34px 38px;
+}
+
+.neu .footer-inner {
+  background: var(--neu-surface);
+  border-radius: var(--neu-radius) var(--neu-radius) 0 0;
+  box-shadow: var(--neu-shadow-out-sm);
+  padding: 26px 30px;
+}
+
+.neu .footer-inner > p,
+.neu .footer-links a {
+  color: var(--neu-muted);
+}
+
+.neu .footer-links a:hover {
+  color: var(--neu-ink);
+}
+
+/* ---------- scroll reveal ---------- */
+
+.neu .reveal-pending {
+  opacity: 0;
+  transform: translateY(26px);
+  transition:
+    opacity 0.7s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.7s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.neu .reveal-pending.is-revealed {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .neu .reveal-pending {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+.neu .footer-brand,
+.neu .footer-brand span {
+  color: var(--neu-ink);
+}
+
+/* ---------- scrollytelling hero FX ---------- */
+
+.neu {
+  overflow-x: clip;
+}
+
+/* tall scroll track; only when JS FX is active (.fx-on added by HeroScrollFX) */
+.neu .hero.fx-on {
+  height: 220vh;
+  overflow: clip;
+  padding-top: 0;
+}
+
+.neu .hero.fx-on .hero-sticky {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow: hidden;
+  padding-top: 92px;
+}
+
+.neu .site-header {
+  will-change: transform;
+  transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* docked: pill slides to bottom of viewport, nav labels collapse to icons */
+.neu .site-header.is-docked {
+  transform: translateY(calc(100vh - 100% - 14px));
+}
+
+/* docked pill shrinks to hug its content, centered, no side edge lines
+   and no neumorphic shadow bleeding over the content behind it */
+.neu .site-header.is-docked .header-inner {
+  width: fit-content;
+  margin-inline: auto;
+  border-right: none;
+  border-left: none;
+  box-shadow: none;
+}
+
+.neu .main-nav .nav-icon {
+  display: none;
+}
+
+.neu .site-header.is-docked .main-nav .nav-icon {
+  display: inline-block;
+}
+
+.neu .site-header.is-docked .main-nav .nav-label {
+  display: none;
+}
+
+.neu .site-header.is-docked .main-nav a {
+  padding: 7px 9px;
+}
+
+.neu .hero-copy {
+  will-change: opacity, transform;
+}
+
+.neu .hero-media-wrap {
+  max-width: 920px;
+  margin-bottom: 6rem;
+  transform-origin: 50% 50%;
+  will-change: transform;
+}
+
+/* ---------- subpages (changelog / plugins / docs) ---------- */
+
+/* current nav item reads as a pressed soft chip */
+.neu .main-nav a.is-current {
+  color: var(--neu-ink);
+  font-weight: 650;
+  box-shadow: var(--neu-shadow-in);
+}
+
+/* page intros: drop the flat divider line */
+.neu .download-intro,
+.neu .plugins-intro {
+  border-bottom: none;
+}
+
+.neu .download-intro h1,
+.neu .plugins-intro h1,
+.neu .docs-article-head h1 {
+  color: var(--neu-ink);
+}
+
+/* trust badges become soft raised chips */
+.neu .download-trust,
+.neu .plugins-trust {
+  border: none;
+  border-radius: var(--neu-radius-sm);
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-out-sm);
+}
+
+/* changelog entries: extruded cards */
+.neu .changelog-entry {
+  border: none;
+  border-radius: var(--neu-radius-sm);
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-out-sm);
+}
+
+.neu .changelog-entry.is-latest {
+  box-shadow: var(--neu-shadow-out);
+}
+
+.neu .changelog-entry-head {
+  border-bottom: none;
+}
+
+.neu .release-version em {
+  background: var(--neu-bg);
+  box-shadow: var(--neu-shadow-in);
+}
+
+.neu .release-notes-body code {
+  border: none;
+  background: var(--neu-bg);
+  box-shadow: var(--neu-shadow-in);
+}
+
+.neu .release-notes-body blockquote {
+  border-left-color: rgba(163, 177, 198, 0.8);
+}
+
+.neu .release-empty {
+  border: none;
+  border-radius: var(--neu-radius-sm);
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-in);
+}
+
+/* plugin store: cards, chips, registry, install box */
+.neu .plugins-chip {
+  border: none;
+  box-shadow: var(--neu-shadow-in);
+}
+
+.neu .plugins-chip-ready,
+.neu .plugins-chip-pending {
+  background: var(--neu-bg-soft);
+}
+
+.neu .plugins-registry,
+.neu .plugins-install,
+.neu .plugins-empty {
+  border: none;
+  border-radius: var(--neu-radius-sm);
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-out-sm);
+}
+
+.neu .plugins-empty {
+  box-shadow: var(--neu-shadow-in);
+}
+
+.neu .plugin-card {
+  border: none;
+  border-radius: var(--neu-radius-sm);
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-out-sm);
+  transition:
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
+}
+
+.neu .plugin-card:hover {
+  box-shadow: var(--neu-shadow-out);
+  transform: translateY(-2px);
+}
+
+.neu .plugin-badge-ready,
+.neu .plugin-badge-pending {
+  border: none;
+  background: var(--neu-bg);
+  box-shadow: var(--neu-shadow-in);
+}
+
+.neu .plugin-perm {
+  border: none;
+  background: var(--neu-bg);
+  box-shadow: var(--neu-shadow-in);
+}
+
+/* plugins page footer blends into the canvas */
+.neu .download-footer {
+  border-top: none;
+  background: transparent;
+}
+
+/* docs: sidebar links press in, article surfaces soften */
+.neu .docs-nav-link:hover {
+  background: transparent;
+  box-shadow: var(--neu-shadow-in);
+  color: var(--neu-ink);
+}
+
+.neu .docs-nav-link.is-active {
+  background: var(--neu-bg-soft);
+  color: var(--neu-accent-deep);
+  box-shadow: var(--neu-shadow-in);
+}
+
+.neu .docs-subnav-link:hover {
+  background: transparent;
+  box-shadow: var(--neu-shadow-in);
+  color: var(--neu-ink);
+}
+
+.neu .docs-subnav-link.is-active {
+  background: var(--neu-bg-soft);
+  color: var(--neu-accent-deep);
+  box-shadow: var(--neu-shadow-in);
+}
+
+.neu .docs-nav .docs-subnav {
+  border-left-color: rgba(163, 177, 198, 0.8);
+}
+
+.neu .docs-toc ul {
+  border-left-color: rgba(163, 177, 198, 0.8);
+}
+
+.neu .docs-toc-link:hover {
+  color: var(--neu-ink);
+}
+
+.neu .docs-toc-link.is-active {
+  color: var(--neu-accent-deep);
+  border-left-color: var(--neu-accent);
+}
+
+.neu .docs-article-head {
+  border-bottom: none;
+}
+
+.neu .doc-article :not(pre) > code {
+  border: none;
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-in);
+}
+
+.neu .doc-table-wrap {
+  border: none;
+  border-radius: var(--neu-radius-sm);
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-out-sm);
+}
+
+.neu .doc-table thead th {
+  background: var(--neu-bg);
+}
+
+.neu .doc-table th,
+.neu .doc-table td {
+  border-bottom-color: rgba(163, 177, 198, 0.5);
+}
+
+.neu .docs-menu-toggle {
+  border: none;
+  border-radius: var(--neu-radius-sm);
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-out-sm);
+}
+
+/* download page: platform cards, option rows, release accordion */
+.neu .download-platform {
+  border: none;
+  border-radius: var(--neu-radius-sm);
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-out-sm);
+}
+
+.neu .download-platform.is-detected {
+  box-shadow: var(--neu-shadow-out);
+}
+
+.neu .download-platform-icon {
+  border: none;
+  border-radius: 10px;
+  background: var(--neu-bg);
+  box-shadow: var(--neu-shadow-in);
+}
+
+.neu .detected-label {
+  background: var(--neu-bg);
+  box-shadow: var(--neu-shadow-in);
+}
+
+.neu .download-option {
+  border: none;
+  border-radius: var(--neu-radius-sm);
+  background: var(--neu-bg);
+  box-shadow: var(--neu-shadow-in);
+  transition:
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.neu .download-option:hover {
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-out-sm);
+  transform: translateY(-1px);
+}
+
+.neu .download-option.is-recommended {
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-out-sm);
+}
+
+.neu .download-option-icon {
+  border-radius: 10px;
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-in);
+}
+
+.neu .release-section {
+  border: none;
+  border-radius: var(--neu-radius-sm);
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-out-sm);
+}
+
+.neu .release-section.is-latest {
+  box-shadow: var(--neu-shadow-out);
+}
+
+.neu .release-content {
+  border-top: none;
+  background: transparent;
 }

@@ -49,17 +49,11 @@ export default async function PluginsPage() {
   })).filter((group) => group.plugins.length > 0);
 
   return (
-    <main className="plugins-page" id="main">
+    <main className="neu plugins-page" id="main">
       <header className="site-header">
         <div className="shell header-inner">
           <Link className="brand" href="/" aria-label="TableR home">
-            <Image
-              src="/tabler-brand-mark.png"
-              width={36}
-              height={36}
-              alt=""
-              priority
-            />
+            <Image src="/tabler-brand-mark.png" width={36} height={36} alt="" priority />
             <span>TableR</span>
           </Link>
           <div className="header-actions">
@@ -98,8 +92,7 @@ export default async function PluginsPage() {
               </span>
               {catalog.counts.total - catalog.counts.installable > 0 ? (
                 <span className="plugins-chip plugins-chip-pending">
-                  {catalog.counts.total - catalog.counts.installable} ·{" "}
-                  {p.counts.pending}
+                  {catalog.counts.total - catalog.counts.installable} · {p.counts.pending}
                 </span>
               ) : null}
             </div>
@@ -126,11 +119,7 @@ export default async function PluginsPage() {
                   </div>
                   <div className="plugin-grid">
                     {group.plugins.map((plugin) => (
-                      <PluginCard
-                        key={plugin.id}
-                        plugin={plugin}
-                        labels={p.card}
-                      />
+                      <PluginCard key={plugin.id} plugin={plugin} labels={p.card} />
                     ))}
                   </div>
                 </section>
@@ -175,13 +164,7 @@ export default async function PluginsPage() {
 
 type PluginCardLabels = ReturnType<typeof getDictionary>["plugins"]["card"];
 
-function PluginCard({
-  plugin,
-  labels,
-}: {
-  plugin: PluginCatalogEntry;
-  labels: PluginCardLabels;
-}) {
+function PluginCard({ plugin, labels }: { plugin: PluginCatalogEntry; labels: PluginCardLabels }) {
   const engineLabel = plugin.engine?.label ?? plugin.name;
   return (
     <article className="plugin-card">
@@ -237,19 +220,12 @@ function PluginCard({
       ) : null}
 
       <div className="plugin-card-actions">
-        <a
-          className="button button-small button-primary"
-          href={plugin.bundle.path}
-          download
-        >
+        <a className="button button-small button-primary" href={plugin.bundle.path} download>
           <Download size={15} aria-hidden="true" />
           {labels.download}
         </a>
         {plugin.docsSlug ? (
-          <Link
-            className="button button-small button-secondary"
-            href={`/docs/${plugin.docsSlug}`}
-          >
+          <Link className="button button-small button-secondary" href={`/docs/${plugin.docsSlug}`}>
             <ExternalLink size={15} aria-hidden="true" />
             {labels.docs}
           </Link>

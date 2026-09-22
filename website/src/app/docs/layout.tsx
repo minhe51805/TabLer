@@ -9,11 +9,7 @@ import { repositoryUrl } from "@/lib/site";
 import { LanguageToggle } from "../LanguageToggle";
 import { DocsSidebar } from "./DocsSidebar";
 
-export default async function DocsLayout({
-  children,
-}: {
-  children: ReactNode;
-}) {
+export default async function DocsLayout({ children }: { children: ReactNode }) {
   const language = await getSiteLanguage();
   const t = getDictionary(language);
   const docs = getDocs(language);
@@ -30,17 +26,11 @@ export default async function DocsLayout({
   }));
 
   return (
-    <main className="docs-page" id="main">
+    <main className="neu docs-page" id="main">
       <header className="site-header">
         <div className="shell header-inner">
           <Link className="brand" href="/" aria-label="TableR home">
-            <Image
-              src="/tabler-brand-mark.png"
-              width={36}
-              height={36}
-              alt=""
-              priority
-            />
+            <Image src="/tabler-brand-mark.png" width={36} height={36} alt="" priority />
             <span>TableR</span>
           </Link>
 

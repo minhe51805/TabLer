@@ -866,7 +866,20 @@ export function useSQLEditor({
           editor.executeEdits("ai", [{ range: selection, text: sql, forceMoveMarkers: true }]);
         } else {
           const position = editor.getPosition();
-          if (position) {
+          const model = editor.getModel();
+          if (position && model) {
+            // Separate the incoming statement from existing text: without a
+            // boundary the SQL concatenates into one invalid statement.
+            const before = model.getValueInRange({
+              startLineNumber: 1,
+              startColumn: 1,
+              endLineNumber: position.lineNumber,
+              endColumn: position.column,
+            });
+            const lineAfter = model.getLineContent(position.lineNumber).slice(position.column - 1);
+            const needsPrefix = before.trim().length > 0 && !before.endsWith("\n");
+            const needsSuffix = lineAfter.trim().length > 0;
+            const text = (needsPrefix ? "\n\n" : "") + sql + (needsSuffix ? "\n" : "");
             editor.executeEdits("ai", [
               {
                 range: {
@@ -875,7 +888,7 @@ export function useSQLEditor({
                   endLineNumber: position.lineNumber,
                   endColumn: position.column,
                 },
-                text: sql,
+                text,
                 forceMoveMarkers: true,
               },
             ]);

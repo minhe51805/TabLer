@@ -27,6 +27,8 @@ import {
   type FavoriteFolder,
 } from "../../stores/favorite-folder-store";
 import type { SqlFavorite } from "../../types/query-history";
+import { extractParams, type SqlParam } from "../../utils/sql-params";
+import { ParamFillDialog } from "./ParamFillDialog";
 import "../../styles/lazy-overlays.css";
 
 interface Props {
@@ -408,9 +410,19 @@ export function SQLFavoritesPanel({ isOpen, onClose, onRunQuery, currentEditorSq
     }
   }, []);
 
+  const [paramDialog, setParamDialog] = useState<{
+    sql: string;
+    params: SqlParam[];
+  } | null>(null);
+
   const handleRun = useCallback(
     (sql: string) => {
-      onRunQuery(sql);
+      const params = extractParams(sql);
+      if (params.length === 0) {
+        onRunQuery(sql);
+        return;
+      }
+      setParamDialog({ sql, params });
     },
     [onRunQuery],
   );
@@ -515,7 +527,17 @@ export function SQLFavoritesPanel({ isOpen, onClose, onRunQuery, currentEditorSq
         </div>
 
         <div className="fav-list" ref={listRef}>
-          {saveDialog.open ? (
+          {paramDialog ? (
+            <ParamFillDialog
+              sql={paramDialog.sql}
+              params={paramDialog.params}
+              onSubmit={(resolved) => {
+                setParamDialog(null);
+                onRunQuery(resolved);
+              }}
+              onCancel={() => setParamDialog(null)}
+            />
+          ) : saveDialog.open ? (
             <div className="fav-save-form">
               <div className="fav-form-field">
                 <label className="fav-form-label">Name *</label>

@@ -38,6 +38,33 @@ use errors::{format_query_connection_error, format_query_runtime_error};
 use sandbox::{
     cap_sandbox_result, log_sandbox_denial, timeout_for_statements, validate_sandbox_batch,
 };
+/// Per-connection read-only pin for SQL-executing commands: when the live
+/// session was opened with `ConnectionConfig::read_only`, any batch that does
+/// not classify as fully read-only is rejected before the driver is touched.
+/// Unparseable SQL fails closed (the classifier reports `read_only = false`
+/// on parse errors), so a read-only connection can never smuggle a statement
+/// past the guard by being unclassifiable.
+async fn assert_connection_writable_sql(
+    db_manager: &DatabaseManager,
+    connection_id: &str,
+    sql: &str,
+) -> Result<(), AppError> {
+    if !db_manager.is_read_only(connection_id).await {
+        return Ok(());
+    }
+    let db_type = db_manager
+        .connection_database_type(connection_id)
+        .await
+        .ok();
+    if classify_sql_with_dialect(sql, db_type).read_only {
+        return Ok(());
+    }
+    db_manager
+        .assert_write_allowed(connection_id)
+        .await
+        .map_err(AppError::from)
+}
+
 #[tauri::command]
 pub fn classify_sql_safety(sql: String, database_type: Option<String>) -> SqlSafetyDecision {
     let parsed_type = database_type
@@ -63,6 +90,7 @@ pub async fn execute_query(
     cancellation_state: State<'_, QueryCancellationState>,
     safe_mode: State<'_, SafeModeState>,
 ) -> Result<QueryResult, AppError> {
+    assert_connection_writable_sql(db_manager.inner(), &connection_id, &sql).await?;
     safe_mode
         .assert_sql_allowed_with_approval(
             &connection_id,
@@ -314,6 +342,7 @@ pub async fn execute_parameterized_query(
     cancellation_state: State<'_, QueryCancellationState>,
     safe_mode: State<'_, SafeModeState>,
 ) -> Result<QueryResult, AppError> {
+    assert_connection_writable_sql(db_manager.inner(), &connection_id, &sql).await?;
     safe_mode
         .assert_sql_allowed_with_approval(
             &connection_id,
@@ -422,6 +451,10 @@ pub async fn preview_write_transaction(
     db_manager: State<'_, DatabaseManager>,
     safe_mode: State<'_, SafeModeState>,
 ) -> Result<PreviewWriteResult, AppError> {
+    db_manager
+        .assert_write_allowed(&connection_id)
+        .await
+        .map_err(AppError::from)?;
     safe_mode
         .assert_sql_allowed(&connection_id, &statements.join(";\n"))
         .await?;
@@ -510,6 +543,8 @@ pub async fn execute_sandboxed_query(
     cancellation_state: State<'_, QueryCancellationState>,
     safe_mode: State<'_, SafeModeState>,
 ) -> Result<QueryResult, AppError> {
+    assert_connection_writable_sql(db_manager.inner(), &connection_id, &statements.join(";\n"))
+        .await?;
     safe_mode
         .assert_sql_allowed_with_approval(
             &connection_id,

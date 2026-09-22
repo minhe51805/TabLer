@@ -63,6 +63,11 @@ pub struct ConnectionConfig {
     /// value is clamped to 1s–600s by `config::resolve_connection_query_timeout`.
     #[serde(default)]
     pub query_timeout_seconds: Option<u64>,
+    /// Per-connection read-only pin: when true, every write path (SQL editor,
+    /// inline edits, structure changes, imports, restores) is rejected at the
+    /// earliest command guard before any statement reaches the driver.
+    #[serde(default)]
+    pub read_only: bool,
     /// SSH connection config
     pub ssh_config: Option<crate::ssh::ssh_tunnel::SshConfig>,
 }
@@ -102,6 +107,7 @@ impl Default for ConnectionConfig {
             pre_connect_script: None,
             startup_commands: None,
             query_timeout_seconds: None,
+            read_only: false,
             ssh_config: None,
         }
     }

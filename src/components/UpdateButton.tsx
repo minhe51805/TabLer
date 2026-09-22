@@ -5,16 +5,14 @@ import { Download, Loader2, RefreshCw, CheckCircle2, AlertCircle } from "lucide-
 import { useI18n } from "../i18n";
 import { getAppShellCopy } from "./app-shell-copy";
 
-interface UpdateStatus {
-  available: boolean;
-  version: string | null;
-  body: string | null;
-}
+import type { UpdateStatusPayload } from "../hooks/use-updater-status";
 
 interface UpdateButtonProps {
   variant?: "primary" | "secondary" | "ghost";
   size?: "sm" | "md" | "lg";
   className?: string;
+  /** Called after every manual check: the status payload, or null on error. */
+  onChecked?: (status: UpdateStatusPayload | null) => void;
 }
 
 type UpdatePhase =
@@ -31,11 +29,12 @@ export function UpdateButton({
   variant = "secondary",
   size = "md",
   className = "",
+  onChecked,
 }: UpdateButtonProps) {
   const { language } = useI18n();
   const copy = getAppShellCopy(language).updates;
   const [phase, setPhase] = useState<UpdatePhase>("idle");
-  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatusPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
 
@@ -72,12 +71,14 @@ export function UpdateButton({
     setError(null);
     setUpdateStatus(null);
     try {
-      const status = await invoke<UpdateStatus>("check_for_update");
+      const status = await invoke<UpdateStatusPayload>("check_for_update");
       setUpdateStatus(status);
       setPhase(status.available ? "available" : "upToDate");
+      onChecked?.(status);
     } catch (e) {
       setError(String(e));
       setPhase("error");
+      onChecked?.(null);
     }
   };
 

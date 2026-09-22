@@ -39,5 +39,11 @@ export const ZH_BUNDLE_COPY: BundleCopy = {
     working: "正在导入...",
     done: "已导入",
     empty: "此包中没有内容。",
+    external: {
+      button: "从 DBeaver / DataGrip 导入",
+      passwordNote:
+        "密码不会被导入 — DBeaver 和 DataGrip 以加密方式存储密码。请为要导入的每个连接输入数据库密码。",
+      skipped: "已跳过 {count} 项（不支持的引擎或格式错误）",
+    },
   },
 };

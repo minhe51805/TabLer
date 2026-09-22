@@ -140,6 +140,11 @@ plugins/                    database driver plugins
   **not** in `src/i18n/*.ts`. The i18n files are a merge-conflict hotspot for
   parallel edits; copy modules expose a `get<Feature>Copy(language)` accessor
   with per-language objects and an English fallback.
+- **CSS**: do NOT add rules to `src/styles/app-components.css` (40k lines,
+  duplicate selectors have already caused contrast bugs). New feature styles
+  go in a per-feature stylesheet next to the component (e.g.
+  `ai-insights.css`, `datagrid-power-copy.css`) imported by the component.
+  Existing rules stay; only move them when touching that area anyway.
 - **AISlidePanel discipline**: one file per concern (context assembly, tool schema,
   tool executor, verification, cost, memory recall, …). When adding agent behaviour,
   extend the matching module instead of growing an unrelated one.

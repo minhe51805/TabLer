@@ -33,6 +33,14 @@ pub async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateStatus, Str
     }
 }
 
+/// Whether the updater plugin is configured for this build (pubkey +
+/// endpoints present). `app.updater()` fails when they are missing, so the
+/// About dialog can distinguish "no update yet" from "updater not set up".
+#[tauri::command]
+pub fn updater_enabled(app: tauri::AppHandle) -> bool {
+    app.updater().is_ok()
+}
+
 /// Download and install the update, emitting `update-download-progress`
 /// events (percent 0-100) so the UI can show a progress indicator.
 #[tauri::command]

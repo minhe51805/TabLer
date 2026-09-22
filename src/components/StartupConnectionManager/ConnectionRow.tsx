@@ -154,6 +154,15 @@ export function ConnectionRow({
               </span>
             ) : null}
 
+            {connection.read_only ? (
+              <span
+                className="connection-ro-badge"
+                title="Read-only connection — writes are blocked"
+              >
+                RO
+              </span>
+            ) : null}
+
             {tagName ? (
               <span
                 className="startup-connection-tag-pill"

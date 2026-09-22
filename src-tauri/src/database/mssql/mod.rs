@@ -64,6 +64,7 @@ mod mssql_parse_tests {
             startup_commands: None,
             pre_connect_script: None,
             query_timeout_seconds: None,
+            read_only: false,
             ssh_config: None,
         }
     }
@@ -149,6 +150,7 @@ mod mssql_live_diagnostics {
                 startup_commands: None,
                 pre_connect_script: None,
                 query_timeout_seconds: None,
+                read_only: false,
                 ssh_config: None,
             };
             mutate(&mut config);
@@ -485,6 +487,7 @@ fn config_defaults() -> ConnectionConfig {
         startup_commands: None,
         pre_connect_script: None,
         query_timeout_seconds: None,
+        read_only: false,
         ssh_config: None,
     }
 }

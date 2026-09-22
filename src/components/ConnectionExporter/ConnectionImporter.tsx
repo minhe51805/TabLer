@@ -2,7 +2,11 @@ import { useMemo, useState } from "react";
 import { Check, CheckCircle2, AlertCircle, Lock, Eye, EyeOff, FileUp, Package } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { ExportableConnection } from "../../utils/connection-export";
+import type { ExportableConnection, SkippedConnection } from "../../utils/connection-export";
+import {
+  importExternalConnections,
+  previewExternalConnections,
+} from "../../utils/connection-export";
 import {
   applyUiPrefs,
   importWorkspaceBundle,
@@ -55,6 +59,9 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
   const [error, setError] = useState<string | null>(null);
 
   const isBundleFile = filePath?.endsWith(".tabler-bundle") ?? false;
+  /** Set when the picked file is a DBeaver/DataGrip export (.json/.xml). */
+  const [externalFilePath, setExternalFilePath] = useState<string | null>(null);
+  const [externalSkipped, setExternalSkipped] = useState<SkippedConnection[]>([]);
 
   const handlePickFile = async () => {
     setError(null);
@@ -75,6 +82,8 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
         setBundlePreview(null);
         setBundleSelected(new Set());
         setResult(null);
+        setExternalFilePath(null);
+        setExternalSkipped([]);
         // Bundles carry no secrets — preview immediately, no password needed.
         if (picked.endsWith(".tabler-bundle")) {
           setIsDecrypting(true);
@@ -135,6 +144,47 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
     }
   };
 
+  // DBeaver / DataGrip exports are plaintext — preview immediately, no
+  // password needed. The file picker accepts .json and .xml.
+  const handlePickExternalFile = async () => {
+    setError(null);
+    try {
+      const picked = await open({
+        multiple: false,
+        filters: [
+          {
+            name: "DBeaver / DataGrip",
+            extensions: ["json", "xml"],
+          },
+        ],
+      });
+      if (picked && typeof picked === "string") {
+        setFilePath(null);
+        setPassword("");
+        setPreviewConnections(null);
+        setSelectedForImport(new Set());
+        setBundlePreview(null);
+        setBundleSelected(new Set());
+        setResult(null);
+        setExternalFilePath(picked);
+        setIsDecrypting(true);
+        try {
+          const res = await previewExternalConnections(picked);
+          setPreviewConnections(res.connections);
+          setExternalSkipped(res.skipped);
+          setSelectedForImport(new Set(res.connections.map((_, i) => i)));
+        } catch (e) {
+          setExternalFilePath(null);
+          setError(e instanceof Error ? e.message : String(e));
+        } finally {
+          setIsDecrypting(false);
+        }
+      }
+    } catch (e) {
+      setError(`Failed to open file dialog: ${e}`);
+    }
+  };
+
   const toggleBundleItem = (key: string) => {
     const next = new Set(bundleSelected);
     if (next.has(key)) next.delete(key);
@@ -166,18 +216,22 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
   };
 
   const handleImport = async () => {
-    if (!previewConnections || !filePath) return;
+    if (!previewConnections || (!filePath && !externalFilePath)) return;
     setIsLoading(true);
     setError(null);
     try {
       // Re-run the command with the selection so the backend persists the
       // chosen entries through ConnectionStorage (secrets go to the keyring).
-      await invoke<ExportableConnection[]>("import_connections_from_file", {
-        filePath,
-        password,
-        selectedIndices: [...selectedForImport],
-        passwords,
-      });
+      if (externalFilePath) {
+        await importExternalConnections(externalFilePath, [...selectedForImport], passwords);
+      } else {
+        await invoke<ExportableConnection[]>("import_connections_from_file", {
+          filePath,
+          password,
+          selectedIndices: [...selectedForImport],
+          passwords,
+        });
+      }
 
       onImport();
       setResult({ success: true, count: selectedForImport.size });
@@ -391,10 +445,25 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
             <div className="cex-warning">
               <Lock className="w-4 h-4" />
               <p>
-                Passwords were not exported. Enter the database password for each connection you
-                want to import.
+                {externalFilePath
+                  ? bundleCopy.import.external.passwordNote
+                  : "Passwords were not exported. Enter the database password for each connection you want to import."}
               </p>
             </div>
+
+            {externalSkipped.length > 0 && (
+              <div className="cex-warning">
+                <AlertCircle className="w-4 h-4" />
+                <p>
+                  {bundleCopy.import.external.skipped.replace(
+                    "{count}",
+                    String(externalSkipped.length),
+                  )}
+                  {": "}
+                  {externalSkipped.map((s) => `${s.name} (${s.reason})`).join(", ")}
+                </p>
+              </div>
+            )}
 
             {/* Password list */}
             <div className="cex-preview-list">
@@ -461,6 +530,18 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
                 </p>
                 <p className="cex-dropzone-hint">{bundleCopy.import.dropzoneHint}</p>
               </div>
+
+              {/* External tool import (DBeaver / DataGrip) */}
+              <button
+                type="button"
+                onClick={() => void handlePickExternalFile()}
+                disabled={isDecrypting}
+                className="cex-btn-cancel"
+                style={{ alignSelf: "flex-start" }}
+              >
+                <FileUp className="w-4 h-4" />
+                {isDecrypting ? "Reading file..." : bundleCopy.import.external.button}
+              </button>
 
               {filePath && !isBundleFile && (
                 <div className="cex-fieldset">

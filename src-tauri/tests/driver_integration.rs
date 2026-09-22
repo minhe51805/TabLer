@@ -59,6 +59,7 @@ fn base_config(db_type: DatabaseType) -> ConnectionConfig {
         startup_commands: None,
         query_timeout_seconds: None,
         ssh_config: None,
+        read_only: false,
     }
 }
 

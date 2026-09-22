@@ -1,5 +1,6 @@
 /**
- * Copy for the startup launcher's first-run "sample database" card.
+ * Copy for the startup launcher's empty-state CTAs (sample database card,
+ * external importer entry point) and list chrome.
  * Kept out of src/i18n per the per-feature copy-module convention.
  */
 
@@ -11,6 +12,10 @@ export interface StartupCopy {
     description: string;
     action: string;
     creating: string;
+  };
+  importCta: {
+    /** Empty-state button that opens the connection importer. */
+    action: string;
   };
   pingAll: {
     /** Toolbar button that probes every saved connection. */
@@ -42,6 +47,9 @@ const EN_COPY: StartupCopy = {
     action: "Create & connect",
     creating: "Creating sample…",
   },
+  importCta: {
+    action: "Import from DBeaver / DataGrip",
+  },
   pingAll: {
     action: "Ping all",
     reachable: "Reachable",
@@ -63,6 +71,9 @@ const VI_COPY: StartupCopy = {
     action: "Tạo & kết nối",
     creating: "Đang tạo mẫu…",
   },
+  importCta: {
+    action: "Nhập từ DBeaver / DataGrip",
+  },
   pingAll: {
     action: "Ping tất cả",
     reachable: "Kết nối được",
@@ -83,6 +94,9 @@ const ZH_COPY: StartupCopy = {
     description: "在本地创建一个包含 customers、products 和 orders 的 SQLite 演示库，无需服务器。",
     action: "创建并连接",
     creating: "正在创建示例…",
+  },
+  importCta: {
+    action: "从 DBeaver / DataGrip 导入",
   },
   pingAll: {
     action: "全部 Ping",
@@ -106,6 +120,9 @@ const TR_COPY: StartupCopy = {
     action: "Oluştur ve bağlan",
     creating: "Örnek oluşturuluyor…",
   },
+  importCta: {
+    action: "DBeaver / DataGrip'ten içe aktar",
+  },
   pingAll: {
     action: "Tümünü ping'le",
     reachable: "Ulaşılabilir",
@@ -127,6 +144,9 @@ const KO_COPY: StartupCopy = {
       "customers, products, orders가 포함된 로컬 SQLite 데모를 만듭니다. 서버가 필요 없습니다.",
     action: "생성 후 연결",
     creating: "샘플 생성 중…",
+  },
+  importCta: {
+    action: "DBeaver / DataGrip에서 가져오기",
   },
   pingAll: {
     action: "모두 핑",

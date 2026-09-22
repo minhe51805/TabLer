@@ -55,6 +55,8 @@ docs/*
 !docs/architecture/**
 !docs/PLUGINS.md
 !docs/RELEASE_SIGNING.md
+!docs/releases/
+!docs/releases/**
 !docs/SMOKE_TEST_CHECKLIST.md
 !docs/UPGRADE_ROADMAP.md
 !docs/STORE_OWNERSHIP.md

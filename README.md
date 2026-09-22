@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/minhe51805/TabLer/releases">
-    <img src="https://img.shields.io/badge/version-0.1.6-087EA4" alt="TableR version 0.1.6" />
+    <img src="https://img.shields.io/badge/version-0.1.6b-087EA4" alt="TableR version 0.1.6b" />
   </a>
   <a href="LICENSE">
     <img src="https://img.shields.io/badge/license-GPLv3-2563EB" alt="GPLv3 license" />
@@ -44,14 +44,14 @@ database-aware AI assistant beside the query instead of in another window.
 
 ## Highlights
 
-| Area | What TableR provides |
-| --- | --- |
-| SQL workspace | Monaco editor, multiple query tabs, formatting, execution timing, explain tools, history, and favorites |
-| Data exploration | Searchable schema explorer, table data browsing, row inspection, pagination, sorting, and filtering |
-| Results and exports | Table and chart views with CSV, JSON, Excel, and SQL-oriented export workflows |
-| Visual database tools | Interactive ER diagrams, minimap and layout controls, metrics boards, and query plan visualization |
-| AI assistance | Prompt, edit, and agent modes with schema context, file and image attachments, review-before-run SQL, and configurable providers |
-| Desktop workflow | Saved connections, local database bootstrap, OS keyring credentials, command palette, terminal, and session persistence |
+| Area                  | What TableR provides                                                                                                             |
+| --------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| SQL workspace         | Monaco editor, multiple query tabs, formatting, execution timing, explain tools, history, and favorites                          |
+| Data exploration      | Searchable schema explorer, table data browsing, row inspection, pagination, sorting, and filtering                              |
+| Results and exports   | Table and chart views with CSV, JSON, Excel, and SQL-oriented export workflows                                                   |
+| Visual database tools | Interactive ER diagrams, minimap and layout controls, metrics boards, and query plan visualization                               |
+| AI assistance         | Prompt, edit, and agent modes with schema context, file and image attachments, review-before-run SQL, and configurable providers |
+| Desktop workflow      | Saved connections, local database bootstrap, OS keyring credentials, command palette, terminal, and session persistence          |
 
 ## Product Tour
 
@@ -83,11 +83,11 @@ fit the canvas, and export PNG or SQL.
 
 TableR currently exposes connection workflows for 18 database engines:
 
-| Category | Engines |
-| --- | --- |
+| Category                  | Engines                                                                                                                   |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | Relational and analytical | PostgreSQL, MySQL, MariaDB, CockroachDB, Greenplum, Amazon Redshift, SQL Server, Vertica, ClickHouse, Snowflake, BigQuery |
-| Embedded and file-based | SQLite, DuckDB |
-| NoSQL and cloud-native | Cassandra, Redis, MongoDB, LibSQL, Cloudflare D1 |
+| Embedded and file-based   | SQLite, DuckDB                                                                                                            |
+| NoSQL and cloud-native    | Cassandra, Redis, MongoDB, LibSQL, Cloudflare D1                                                                          |
 
 > Feature depth can vary by engine because metadata, explain plans, schema
 > editing, and export behavior depend on each database driver.
@@ -98,16 +98,16 @@ profiles, connection strings, or file selection where supported.
 
 ## Technology
 
-| Layer | Stack |
-| --- | --- |
-| Desktop runtime | Tauri 2 |
-| Frontend | React 19, TypeScript 5, Vite |
-| Styling | Tailwind CSS 4 |
-| Native backend | Rust, Tokio |
-| Database access | SQLx plus engine-specific Rust drivers |
-| Editor and terminal | Monaco Editor, Xterm.js |
-| Data and diagrams | TanStack Table, Recharts, XYFlow |
-| State management | Zustand |
+| Layer               | Stack                                  |
+| ------------------- | -------------------------------------- |
+| Desktop runtime     | Tauri 2                                |
+| Frontend            | React 19, TypeScript 5, Vite           |
+| Styling             | Tailwind CSS 4                         |
+| Native backend      | Rust, Tokio                            |
+| Database access     | SQLx plus engine-specific Rust drivers |
+| Editor and terminal | Monaco Editor, Xterm.js                |
+| Data and diagrams   | TanStack Table, Recharts, XYFlow       |
+| State management    | Zustand                                |
 
 ```text
 React workspace
@@ -145,15 +145,15 @@ the desktop application with hot reload.
 
 ### Useful commands
 
-| Command | Purpose |
-| --- | --- |
-| `npm run dev` | Start the frontend development server |
-| `npm run tauri -- dev` | Run the complete desktop application |
-| `npm run typecheck` | Check TypeScript without emitting files |
-| `npm run test:run` | Run the Vitest suite once |
-| `npm run build` | Type-check and build the frontend |
-| `npm run tauri -- build` | Create platform-specific desktop bundles |
-| `cd website && npm run dev` | Start the public product website |
+| Command                     | Purpose                                  |
+| --------------------------- | ---------------------------------------- |
+| `npm run dev`               | Start the frontend development server    |
+| `npm run tauri -- dev`      | Run the complete desktop application     |
+| `npm run typecheck`         | Check TypeScript without emitting files  |
+| `npm run test:run`          | Run the Vitest suite once                |
+| `npm run build`             | Type-check and build the frontend        |
+| `npm run tauri -- build`    | Create platform-specific desktop bundles |
+| `cd website && npm run dev` | Start the public product website         |
 
 Production bundles are written below `src-tauri/target/release/bundle/`.
 The standalone Next.js website can be deployed from the `website` root
@@ -161,19 +161,19 @@ directory on Vercel.
 
 ## Keyboard Shortcuts
 
-| Shortcut | Action |
-| --- | --- |
-| `Ctrl+N` | Create a query tab |
-| `Ctrl+Enter` | Run the active query |
-| `Ctrl+Space` | Toggle the AI workspace |
-| `Ctrl+P` | Open the quick switcher |
-| `Ctrl+Shift+P` | Open the command palette |
-| `Ctrl+B` | Toggle the database explorer |
-| <kbd>Ctrl</kbd> + <kbd>&#96;</kbd> | Toggle the terminal |
-| <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>&#96;</kbd> | Toggle query results |
-| `Ctrl+H` | Open query history |
-| `Ctrl+Shift+S` | Open SQL favorites |
-| `Ctrl+Shift+F` | Format SQL |
+| Shortcut                                              | Action                       |
+| ----------------------------------------------------- | ---------------------------- |
+| `Ctrl+N`                                              | Create a query tab           |
+| `Ctrl+Enter`                                          | Run the active query         |
+| `Ctrl+Space`                                          | Toggle the AI workspace      |
+| `Ctrl+P`                                              | Open the quick switcher      |
+| `Ctrl+Shift+P`                                        | Open the command palette     |
+| `Ctrl+B`                                              | Toggle the database explorer |
+| <kbd>Ctrl</kbd> + <kbd>&#96;</kbd>                    | Toggle the terminal          |
+| <kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>&#96;</kbd> | Toggle query results         |
+| `Ctrl+H`                                              | Open query history           |
+| `Ctrl+Shift+S`                                        | Open SQL favorites           |
+| `Ctrl+Shift+F`                                        | Format SQL                   |
 
 Shortcuts can be customized from the application settings.
 

@@ -11,6 +11,7 @@ import {
 import { useShallow } from "zustand/react/shallow";
 import { useI18n } from "../../i18n";
 import { useConnectionStore } from "../../stores/connectionStore";
+import { useModalStore } from "../../stores/modalStore";
 import { emitAppToast } from "../../utils/app-toast";
 import {
   assignConnectionToGroup,
@@ -93,6 +94,7 @@ export function StartupConnectionManager({
       testConnection: state.testConnection,
     })),
   );
+  const setShowConnectionImporter = useModalStore((state) => state.setShowConnectionImporter);
 
   // ── Group & Tag State ───────────────────────────────────────────────────────
 
@@ -533,12 +535,14 @@ export function StartupConnectionManager({
             onLeaveHover={() => setHoverPreview(null)}
             onNewConnection={onNewConnection}
             onOpenDatabaseFile={onOpenDatabaseFile}
-            showSampleCard={connections.length === 0 && search.trim() === ""}
+            showEmptyStateCtas={connections.length === 0 && search.trim() === ""}
             sampleCopy={(STARTUP_COPY[language] ?? STARTUP_COPY.en).sampleCard}
             isCreatingSample={isCreatingSample}
             onCreateSample={() => {
               void handleCreateSample();
             }}
+            onImportConnections={() => setShowConnectionImporter(true)}
+            importCtaCopy={(STARTUP_COPY[language] ?? STARTUP_COPY.en).importCta}
             onToggleGroup={handleToggleGroup}
             onRenameGroup={handleRenameGroup}
             onChangeGroupColor={handleChangeGroupColor}

@@ -2,6 +2,7 @@ import {
   Activity,
   Check,
   Database,
+  FileUp,
   FolderOpen,
   FolderPlus,
   LayoutGrid,
@@ -54,12 +55,15 @@ interface Props {
   onLeaveHover: () => void;
   onNewConnection: () => void;
   onOpenDatabaseFile: () => void;
-  /** Show the first-run "sample database" card (only when the saved list is
-   *  truly empty — not merely filtered to zero). */
-  showSampleCard: boolean;
+  /** Show the first-run empty-state CTAs (create / sample / import) — only when
+   *  the saved list is truly empty, not merely filtered to zero. */
+  showEmptyStateCtas: boolean;
   sampleCopy: StartupCopy["sampleCard"];
   isCreatingSample: boolean;
   onCreateSample: () => void;
+  /** Opens the connection importer (DBeaver / DataGrip / TableR exports). */
+  onImportConnections: () => void;
+  importCtaCopy: StartupCopy["importCta"];
   onToggleGroup: (groupId: string) => void;
   onRenameGroup: (groupId: string, name: string) => void;
   onChangeGroupColor: (groupId: string, color: string) => void;
@@ -99,10 +103,12 @@ export function ConnectionListView({
   onLeaveHover,
   onNewConnection,
   onOpenDatabaseFile,
-  showSampleCard,
+  showEmptyStateCtas,
   sampleCopy,
   isCreatingSample,
   onCreateSample,
+  onImportConnections,
+  importCtaCopy,
   onToggleGroup,
   onRenameGroup,
   onChangeGroupColor,
@@ -298,26 +304,36 @@ export function ConnectionListView({
               <Database className="w-8 h-8 opacity-35" />
               <strong>{t("startup.manager.noConnections")}</strong>
               <p>{t("startup.manager.noConnectionsDescription")}</p>
-              {showSampleCard ? (
-                <button
-                  type="button"
-                  className="startup-manager-sample-card"
-                  onClick={onCreateSample}
-                  disabled={isCreatingSample || isConnecting}
-                >
-                  {isCreatingSample ? (
-                    <Loader2 className="w-4 h-4 animate-spin" />
-                  ) : (
-                    <Sparkles className="w-4 h-4" />
-                  )}
-                  <span className="startup-manager-sample-card-copy">
-                    <strong>{sampleCopy.title}</strong>
-                    <span>{sampleCopy.description}</span>
-                  </span>
-                  <span className="startup-manager-sample-card-action">
-                    {isCreatingSample ? sampleCopy.creating : sampleCopy.action}
-                  </span>
-                </button>
+              {showEmptyStateCtas ? (
+                <>
+                  <button type="button" className="btn btn-primary" onClick={onNewConnection}>
+                    <Plus className="w-4 h-4" />
+                    <span>{t("startup.manager.createConnection")}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="startup-manager-sample-card"
+                    onClick={onCreateSample}
+                    disabled={isCreatingSample || isConnecting}
+                  >
+                    {isCreatingSample ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <Sparkles className="w-4 h-4" />
+                    )}
+                    <span className="startup-manager-sample-card-copy">
+                      <strong>{sampleCopy.title}</strong>
+                      <span>{sampleCopy.description}</span>
+                    </span>
+                    <span className="startup-manager-sample-card-action">
+                      {isCreatingSample ? sampleCopy.creating : sampleCopy.action}
+                    </span>
+                  </button>
+                  <button type="button" className="btn btn-secondary" onClick={onImportConnections}>
+                    <FileUp className="w-4 h-4" />
+                    <span>{importCtaCopy.action}</span>
+                  </button>
+                </>
               ) : null}
             </div>
           ) : (

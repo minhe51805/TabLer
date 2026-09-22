@@ -106,7 +106,7 @@ export default async function Home() {
   const latestVersion = releases[0]?.tag ?? "latest";
 
   return (
-    <main id="main" className="home-neu">
+    <main id="main" className="neu">
       <ScrollReveal />
       <HeroScrollFX />
       <header className="site-header">

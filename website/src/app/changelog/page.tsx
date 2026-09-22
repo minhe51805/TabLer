@@ -10,8 +10,7 @@ import { ReleaseNotes } from "./ReleaseNotes";
 
 export const metadata: Metadata = {
   title: "TableR Changelog",
-  description:
-    "Every shipped TableR release with release notes, newest first.",
+  description: "Every shipped TableR release with release notes, newest first.",
 };
 
 export const revalidate = 300;
@@ -31,17 +30,11 @@ export default async function ChangelogPage() {
   const releases = await getTableRReleases();
 
   return (
-    <main className="download-page" id="main">
+    <main className="neu download-page" id="main">
       <header className="site-header">
         <div className="shell header-inner">
           <Link className="brand" href="/" aria-label="TableR home">
-            <Image
-              src="/tabler-brand-mark.png"
-              width={36}
-              height={36}
-              alt=""
-              priority
-            />
+            <Image src="/tabler-brand-mark.png" width={36} height={36} alt="" priority />
             <span>TableR</span>
           </Link>
           <div className="header-actions">
@@ -75,11 +68,13 @@ export default async function ChangelogPage() {
                 <div className="changelog-entry-head">
                   <span className="release-version">
                     {release.tag}
-                    {index === 0 ? <em>{t.download.latest}</em> : release.prerelease ? <em>{t.download.preRelease}</em> : null}
+                    {index === 0 ? (
+                      <em>{t.download.latest}</em>
+                    ) : release.prerelease ? (
+                      <em>{t.download.preRelease}</em>
+                    ) : null}
                   </span>
-                  <span className="changelog-date">
-                    {formatDate(release.publishedAt)}
-                  </span>
+                  <span className="changelog-date">{formatDate(release.publishedAt)}</span>
                 </div>
                 {release.body ? <ReleaseNotes body={release.body} /> : null}
                 <a

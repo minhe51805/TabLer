@@ -49,15 +49,13 @@ export function TiltFrame({ children }: { children: ReactNode }) {
 }
 
 /**
- * Scroll-reveal: observes every section inside .home-neu and adds
+ * Scroll-reveal: observes every section inside .neu and adds
  * .is-revealed when it enters the viewport — no JSX wrapping needed.
  * Renders nothing.
  */
 export function ScrollReveal() {
   useEffect(() => {
-    const sections = document.querySelectorAll<HTMLElement>(
-      ".home-neu section, .home-neu .signal-strip",
-    );
+    const sections = document.querySelectorAll<HTMLElement>(".neu section, .neu .signal-strip");
     if (sections.length === 0) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
       sections.forEach((el) => el.classList.add("is-revealed"));
@@ -96,11 +94,11 @@ export function ScrollReveal() {
  */
 export function HeroScrollFX() {
   useEffect(() => {
-    const hero = document.querySelector<HTMLElement>(".home-neu .hero");
-    const copy = document.querySelector<HTMLElement>(".home-neu .hero-copy");
-    const media = document.querySelector<HTMLElement>(".home-neu .hero-media-wrap");
-    const frame = document.querySelector<HTMLElement>(".home-neu .product-frame-hero");
-    const header = document.querySelector<HTMLElement>(".home-neu .site-header");
+    const hero = document.querySelector<HTMLElement>(".neu .hero");
+    const copy = document.querySelector<HTMLElement>(".neu .hero-copy");
+    const media = document.querySelector<HTMLElement>(".neu .hero-media-wrap");
+    const frame = document.querySelector<HTMLElement>(".neu .product-frame-hero");
+    const header = document.querySelector<HTMLElement>(".neu .site-header");
     if (!hero || !copy || !media || !frame || !header) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 

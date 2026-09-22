@@ -62,7 +62,7 @@
     },
     "updater": {
       "endpoints": ["https://github.com/minhe51805/TabLer/releases/latest/download/latest.json"],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDFFQTkwQjMzOTBEM0Q0NDIKUldSQzFOT1FNd3VwSHEwQnlWOTBGaWFpVUVoalRxb24va0V5Sk9teXM2OHhFd1RFdWxKMnVUamYK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDUzNDM2RkZEQUIxNEYyNUYKUldSZjhoU3IvVzlEVTIvMGJrSEFaZjNFWXREZDhyVzRCMGtQNXVicC9mNXBwY0cyRlhHVUI5OUEK"
     }
   }
 }

@@ -3709,3 +3709,70 @@ footer {
   background: var(--neu-bg-soft);
   box-shadow: var(--neu-shadow-out-sm);
 }
+
+/* download page: platform cards, option rows, release accordion */
+.neu .download-platform {
+  border: none;
+  border-radius: var(--neu-radius-sm);
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-out-sm);
+}
+
+.neu .download-platform.is-detected {
+  box-shadow: var(--neu-shadow-out);
+}
+
+.neu .download-platform-icon {
+  border: none;
+  border-radius: 10px;
+  background: var(--neu-bg);
+  box-shadow: var(--neu-shadow-in);
+}
+
+.neu .detected-label {
+  background: var(--neu-bg);
+  box-shadow: var(--neu-shadow-in);
+}
+
+.neu .download-option {
+  border: none;
+  border-radius: var(--neu-radius-sm);
+  background: var(--neu-bg);
+  box-shadow: var(--neu-shadow-in);
+  transition:
+    box-shadow 160ms ease,
+    transform 160ms ease;
+}
+
+.neu .download-option:hover {
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-out-sm);
+  transform: translateY(-1px);
+}
+
+.neu .download-option.is-recommended {
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-out-sm);
+}
+
+.neu .download-option-icon {
+  border-radius: 10px;
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-in);
+}
+
+.neu .release-section {
+  border: none;
+  border-radius: var(--neu-radius-sm);
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-out-sm);
+}
+
+.neu .release-section.is-latest {
+  box-shadow: var(--neu-shadow-out);
+}
+
+.neu .release-content {
+  border-top: none;
+  background: transparent;
+}

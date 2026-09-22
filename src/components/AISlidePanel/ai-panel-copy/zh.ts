@@ -30,6 +30,11 @@ export const ZH_PANEL_COPY: AIPanelCopy = {
       tooSlow: "太慢",
       other: "其他",
     },
+    editPrompt: "编辑并重新运行",
+    editPromptSave: "重新运行",
+    editPromptCancel: "取消",
+    queuedCount: "{count} 条排队中",
+    queuedClear: "全部丢弃",
   },
   rules: {
     title: "护栏规则",

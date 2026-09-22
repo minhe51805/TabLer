@@ -1,0 +1,79 @@
+/* Inline prompt editor + queued-send chip for the AI slide panel.
+   Kept out of app-components.css per repo convention (per-feature stylesheet). */
+
+.ai-workspace-prompt-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  width: 100%;
+}
+
+.ai-workspace-prompt-edit-input {
+  width: 100%;
+  resize: vertical;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.45;
+  padding: 8px 10px;
+  border: 1px solid var(--border-color, rgba(128, 128, 128, 0.35));
+  border-radius: 8px;
+  background: var(--bg-primary, transparent);
+  color: inherit;
+}
+
+.ai-workspace-prompt-edit-input:focus {
+  outline: none;
+  border-color: var(--accent, #087ea4);
+}
+
+.ai-workspace-prompt-edit-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+/* Pencil button floats at the user bubble's top-right corner. */
+.ai-workspace-chat-message--user {
+  position: relative;
+}
+
+.ai-workspace-prompt-edit-btn {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.ai-workspace-chat-message--user:hover .ai-workspace-prompt-edit-btn,
+.ai-workspace-prompt-edit-btn:focus-visible {
+  opacity: 1;
+}
+
+/* Queued-send chip above the composer textarea. */
+.ai-workspace-queue-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  border-radius: 999px;
+  background: var(--bg-tertiary, rgba(128, 128, 128, 0.12));
+  color: var(--text-secondary, inherit);
+  align-self: flex-start;
+}
+
+.ai-workspace-queue-chip-clear {
+  border: none;
+  background: none;
+  padding: 0;
+  font: inherit;
+  font-size: 12px;
+  color: var(--accent, #087ea4);
+  cursor: pointer;
+}
+
+.ai-workspace-queue-chip-clear:hover {
+  text-decoration: underline;
+}

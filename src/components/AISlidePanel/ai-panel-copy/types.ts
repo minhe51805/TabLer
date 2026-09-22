@@ -55,6 +55,16 @@ export interface AIPanelCopy {
       tooSlow: string;
       other: string;
     };
+    /** Pencil button on the user prompt: edit the sent text and re-run it. */
+    editPrompt: string;
+    /** Save button inside the inline prompt editor. */
+    editPromptSave: string;
+    /** Cancel button inside the inline prompt editor. */
+    editPromptCancel: string;
+    /** Composer chip while a run is in flight: "{count} queued". */
+    queuedCount: string;
+    /** Chip button that drops every queued message. */
+    queuedClear: string;
   };
   /** Guardrail rules manager modal. */
   rules: {

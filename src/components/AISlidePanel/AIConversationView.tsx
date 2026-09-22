@@ -11,6 +11,7 @@ import {
   Info,
   ListTree,
   Play,
+  PencilLine,
   RefreshCw,
   RotateCcw,
   Sparkles,
@@ -37,6 +38,7 @@ import { fetchAttachmentDataUrl } from "../../utils/ai-attachments";
 import { AIWorkspaceSqlBlock } from "./AIWorkspaceMarkdown";
 import { AIImageViewer } from "./AIImageViewer";
 import { AIAgentSteps } from "./AIAgentSteps";
+import "../../styles/ai-prompt-edit.css";
 import { extractAgentRecordLinks, type AIAgentRecordLink } from "./ai-agent-record-links";
 import { AIWorkspaceMarkdown } from "./AIWorkspaceMarkdown";
 import { AIThinkingTrace } from "./AIThinkingTrace";
@@ -64,6 +66,8 @@ interface AIConversationViewProps {
   /** Re-runs the prompt that produced this bubble and swaps the answer into
    *  the same chat slot; the old answer stays when the run fails. */
   onRegenerate?: (bubble: AIWorkspaceBubbleData) => void;
+  /** Edit the prompt of a finished turn and re-run it into the same slot. */
+  onEditRerun?: (bubble: AIWorkspaceBubbleData, editedPrompt: string) => void;
   /** Records 👍/👎 on a finished answer; 👎 carries the popover's reasons and
    *  free-text note into the learning loop. */
   onFeedback?: (bubble: AIWorkspaceBubbleData, feedback: AIWorkspaceBubbleFeedback) => void;
@@ -496,12 +500,16 @@ export const AIConversationView = memo(function AIConversationView({
   onUseSuggestion,
   onAskUserOptionSelect,
   onRegenerate,
+  onEditRerun,
   onFeedback,
 }: AIConversationViewProps) {
   const [viewerImage, setViewerImage] = useState<{ url: string; name: string } | null>(null);
   const [copiedBubbleId, setCopiedBubbleId] = useState<string | null>(null);
   // Bubble whose 👎 popover is open; only one feedback form at a time.
   const [feedbackBubbleId, setFeedbackBubbleId] = useState<string | null>(null);
+  // Bubble whose user prompt is being edited inline; only one at a time.
+  const [editingBubbleId, setEditingBubbleId] = useState<string | null>(null);
+  const [editingDraft, setEditingDraft] = useState("");
   const hasConversation = bubbles.length > 0;
   const { language } = useI18n();
   const panelCopy = getAIPanelCopy(language);
@@ -596,11 +604,76 @@ export const AIConversationView = memo(function AIConversationView({
                     />
                   )}
                   <div className="ai-workspace-chat-message ai-workspace-chat-message--user">
-                    <p className="ai-workspace-chat-text">
-                      {bubble.promptSummary || summarizePromptForDisplay(bubble.prompt)}
-                    </p>
-                    {bubble.attachments && bubble.attachments.length > 0 && (
-                      <AIAttachmentFileChips attachments={bubble.attachments} />
+                    {editingBubbleId === bubble.id ? (
+                      <div className="ai-workspace-prompt-edit">
+                        <textarea
+                          className="ai-workspace-prompt-edit-input"
+                          value={editingDraft}
+                          autoFocus
+                          rows={Math.min(8, Math.max(2, editingDraft.split("\n").length))}
+                          onChange={(event) => setEditingDraft(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (
+                              event.key === "Enter" &&
+                              !event.shiftKey &&
+                              !event.nativeEvent.isComposing
+                            ) {
+                              event.preventDefault();
+                              if (editingDraft.trim()) {
+                                setEditingBubbleId(null);
+                                onEditRerun?.(bubble, editingDraft);
+                              }
+                            }
+                            if (event.key === "Escape") {
+                              event.preventDefault();
+                              setEditingBubbleId(null);
+                            }
+                          }}
+                        />
+                        <div className="ai-workspace-prompt-edit-actions">
+                          <button
+                            type="button"
+                            className="ai-workspace-mode-action-btn"
+                            onClick={() => setEditingBubbleId(null)}
+                          >
+                            {panelCopy.responseActions.editPromptCancel}
+                          </button>
+                          <button
+                            type="button"
+                            className="ai-workspace-mode-action-btn primary"
+                            disabled={!editingDraft.trim()}
+                            onClick={() => {
+                              setEditingBubbleId(null);
+                              onEditRerun?.(bubble, editingDraft);
+                            }}
+                          >
+                            {panelCopy.responseActions.editPromptSave}
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <>
+                        <p className="ai-workspace-chat-text">
+                          {bubble.promptSummary || summarizePromptForDisplay(bubble.prompt)}
+                        </p>
+                        {bubble.attachments && bubble.attachments.length > 0 && (
+                          <AIAttachmentFileChips attachments={bubble.attachments} />
+                        )}
+                        {onEditRerun && bubble.status !== "loading" && (
+                          <button
+                            type="button"
+                            className="ai-workspace-chat-action-icon ai-workspace-prompt-edit-btn"
+                            title={panelCopy.responseActions.editPrompt}
+                            aria-label={panelCopy.responseActions.editPrompt}
+                            onClick={() => {
+                              setEditingBubbleId(bubble.id);
+                              setEditingDraft(bubble.prompt);
+                            }}
+                          >
+                            <PencilLine className="w-3.5 h-3.5" />
+                          </button>
+                        )}
+                      </>
                     )}
                   </div>
                   <div className="ai-workspace-chat-turn-header ai-workspace-chat-turn-header--assistant">

@@ -119,6 +119,17 @@ import {
   type AIAttachmentDraft,
 } from "../../utils/ai-attachments";
 import type { AIAgentRecordLink } from "./ai-agent-record-links";
+/** Work captured while a run was in flight. `prompt` items carry the composer
+ *  snapshot (draft + attachments + attached selection); `rerun` items are an
+ *  edited prompt re-run against an existing bubble's slot. */
+type PendingPrompt =
+  | {
+      kind: "prompt";
+      draft: string;
+      attachments: AIAttachmentDraft[];
+      selection: SelectionContextState | null;
+    }
+  | { kind: "rerun"; bubbleId: string; prompt: string };
 
 interface Props {
   isOpen: boolean;
@@ -308,6 +319,10 @@ export function AISlidePanel({
   const [slashDismissed, setSlashDismissed] = useState(false);
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [bubbles, setBubbles] = useState<AIWorkspaceBubbleData[]>([]);
+  // Mirror for drain-time lookups: a queued edit-rerun resolves its bubble
+  // after the current run settles, when the `bubbles` closure is already stale.
+  const bubblesRef = useRef<AIWorkspaceBubbleData[]>(bubbles);
+  bubblesRef.current = bubbles;
   const [chatThreads, setChatThreads] = useState<AIChatThread[]>([]);
   const [workspaceInteractionModes, setWorkspaceInteractionModes] = useState<
     Record<string, AIWorkspaceInteractionMode>
@@ -349,6 +364,12 @@ export function AISlidePanel({
   const [attachedSelection, setAttachedSelection] = useState<SelectionContextState | null>(null);
   const [deleteThreadPending, setDeleteThreadPending] = useState<string | null>(null);
   const [composerAttachments, setComposerAttachments] = useState<AIAttachmentDraft[]>([]);
+  // Messages sent while a run is in flight wait here instead of being dropped:
+  // the send path is single-slot (requestIdRef/streamingText are shared), so
+  // concurrent sends would supersede each other. Drained in order after the
+  // current run's createAssistantBubble resolves.
+  const [pendingQueue, setPendingQueue] = useState<PendingPrompt[]>([]);
+  const pendingQueueRef = useRef<PendingPrompt[]>([]);
   const [isAttachmentManagerOpen, setIsAttachmentManagerOpen] = useState(false);
   const [visualizationConsentPending, setVisualizationConsentPending] =
     useState<VisualizationReadConsentState | null>(null);
@@ -1579,10 +1600,105 @@ export function AISlidePanel({
     setPromptDraft(value);
   }, []);
 
+  /** Re-fetch a finished bubble's persisted attachment bytes into drafts so a
+   *  re-run sends the same files the original turn carried. */
+  const loadBubbleAttachmentDrafts = useCallback(
+    async (bubble: AIWorkspaceBubbleData): Promise<AIAttachmentDraft[] | undefined> => {
+      if (!bubble.attachments || bubble.attachments.length === 0) return undefined;
+      const rows = await invokeMutation<{ id: string; mimeType: string; data: string }[]>(
+        "get_ai_attachment_data",
+        { ids: bubble.attachments.map((attachment) => attachment.id) },
+      ).catch(() => [] as { id: string; mimeType: string; data: string }[]);
+      const dataById: Record<string, string> = Object.fromEntries(
+        rows.map((row) => [row.id, row.data]),
+      );
+      return bubble.attachments.map((attachment) => ({
+        ...attachment,
+        ...(attachment.kind === "image"
+          ? {
+              dataUrl: `data:${attachment.mimeType};base64,${dataById[attachment.id] ?? ""}`,
+            }
+          : { textContent: dataById[attachment.id] ?? "" }),
+      }));
+    },
+    [],
+  );
+
+  /** Edit & re-run: regenerate the bubble's slot with the edited prompt text.
+   *  The bubble keeps its id/position; on failure the old answer is restored
+   *  by the generation hook's replaceBubble path. */
+  const runEditedPrompt = useCallback(
+    async (bubble: AIWorkspaceBubbleData, editedPrompt: string) => {
+      const trimmed = editedPrompt.trim();
+      if (!trimmed) return;
+      const retryHistory = buildConversationHistoryMessages(
+        bubblesRef.current.filter(
+          (currentBubble) =>
+            currentBubble.threadId === bubble.threadId &&
+            currentBubble.id !== bubble.id &&
+            !currentBubble.compactedAt,
+        ),
+        historyBudget,
+      );
+      const regenAttachments = await loadBubbleAttachmentDrafts(bubble);
+      setActiveThreadId(bubble.threadId);
+      const result = await createAssistantBubble(trimmed, {
+        mode: "compose",
+        userPrompt: trimmed,
+        history: [...workspaceContextMessages, ...retryHistory],
+        threadId: bubble.threadId,
+        workspaceKey: bubble.workspaceKey,
+        interactionMode: bubble.interactionMode,
+        attachments: regenAttachments,
+        replaceBubble: bubble,
+      });
+      if (result && !result.success && !result.cancelled) {
+        emitAppToast({
+          tone: "error",
+          title: getAIPanelCopy(language).responseActions.regenerateFailed,
+          durationMs: 4000,
+        });
+      }
+    },
+    [
+      createAssistantBubble,
+      historyBudget,
+      language,
+      loadBubbleAttachmentDrafts,
+      workspaceContextMessages,
+    ],
+  );
   const handleGenerate = useCallback(
-    async (overrideDraft?: string) => {
-      if (isGenerating) return;
-      const normalizedPrompt = (overrideDraft ?? promptDraft).trim();
+    async (item?: PendingPrompt | string) => {
+      const current: PendingPrompt =
+        typeof item === "string"
+          ? { kind: "prompt", draft: item, attachments: [], selection: null }
+          : (item ?? {
+              kind: "prompt",
+              draft: promptDraft,
+              attachments: composerAttachments,
+              selection: attachedSelection,
+            });
+      if (isGenerating) {
+        // The send path is single-slot: park the message and let the drain
+        // loop below fire it once the in-flight run settles.
+        if (current.kind === "rerun" || current.draft.trim() || current.attachments.length > 0) {
+          pendingQueueRef.current = [...pendingQueueRef.current, current];
+          setPendingQueue(pendingQueueRef.current);
+          if (current.kind === "prompt") {
+            setPromptDraft("");
+            setComposerAttachments([]);
+            if (!isDashboardSelectionSource(current.selection?.source)) {
+              setAttachedSelection(null);
+            }
+          }
+        }
+        return;
+      }
+      const normalizedPrompt = (current.kind === "prompt" ? current.draft : "").trim();
+      const currentSelection = current.kind === "prompt" ? current.selection : null;
+      const currentAttachments = current.kind === "prompt" ? current.attachments : [];
+
       if (isCompactCommand(normalizedPrompt)) {
         setPromptDraft("");
         await handleCompactContext(false);
@@ -1613,7 +1729,7 @@ export function AISlidePanel({
         connectionId,
         dbType: activeConnectionDbType,
         databaseLabel: currentDatabase || null,
-        attachedSql: attachedSelection?.text ?? null,
+        attachedSql: currentSelection?.text ?? null,
       });
       if (editorAssist) {
         promptToRun = editorAssist.prompt;
@@ -1638,7 +1754,7 @@ export function AISlidePanel({
               currentDatabase,
               boundConnection: connectionName,
               // The only SQL the panel actually holds is what the user attached.
-              activeTabSql: attachedSelection?.text ?? null,
+              activeTabSql: currentSelection?.text ?? null,
             }),
           });
           promptToRun = resolved.prompt;
@@ -1659,13 +1775,13 @@ export function AISlidePanel({
         }
       }
 
-      const promptWithSelection = buildPromptWithSelection(promptToRun, attachedSelection);
+      const promptWithSelection = buildPromptWithSelection(promptToRun, currentSelection);
       if (!promptWithSelection.trim()) return;
 
       const displayPrompt =
         normalizedPrompt ||
-        (attachedSelection
-          ? `${aiCopy.composer.selectionReady} · ${attachedSelection.source}`
+        (currentSelection
+          ? `${aiCopy.composer.selectionReady} · ${currentSelection.source}`
           : promptWithSelection);
 
       // The request is now captured in its own chat turn, so clear the composer
@@ -1692,18 +1808,32 @@ export function AISlidePanel({
         mode: "compose",
         displayPrompt,
         userPrompt: normalizedPrompt || displayPrompt,
-        attachmentSource: attachedSelection?.source,
+        attachmentSource: currentSelection?.source,
         history: historyForRun,
         threadId: currentThread?.id,
         interactionMode: activeInteractionMode,
-        attachments: composerAttachments.length > 0 ? composerAttachments : undefined,
+        attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
       });
 
       if (result?.success) {
         setComposerAttachments([]);
-        if (!isDashboardSelectionSource(attachedSelection?.source)) {
+        if (!isDashboardSelectionSource(currentSelection?.source)) {
           setAttachedSelection(null);
         }
+      }
+
+      // Drain queued sends in order. The ref (not state) is read here because
+      // this closure's `pendingQueue` is stale by the time the run resolves.
+      while (pendingQueueRef.current.length > 0) {
+        const next = pendingQueueRef.current[0];
+        pendingQueueRef.current = pendingQueueRef.current.slice(1);
+        setPendingQueue(pendingQueueRef.current);
+        if (next.kind === "rerun") {
+          const bubble = bubblesRef.current.find((entry) => entry.id === next.bubbleId);
+          if (bubble) await runEditedPrompt(bubble, next.prompt);
+          continue;
+        }
+        await handleGenerate(next);
       }
     },
     [
@@ -1726,6 +1856,7 @@ export function AISlidePanel({
       handleRollbackCommand,
       isGenerating,
       promptDraft,
+      runEditedPrompt,
       setError,
     ],
   );
@@ -1734,10 +1865,11 @@ export function AISlidePanel({
   // the custom button just focuses the composer for free-form input.
   const handleAskUserOptionSelect = useCallback(
     (option: string) => {
-      if (isGenerating) return;
+      // Queued like any other send when a run is in flight — the option text
+      // is the user's reply, it must not be dropped.
       void handleGenerate(option);
     },
-    [handleGenerate, isGenerating],
+    [handleGenerate],
   );
   const handleAskUserCustomInput = useCallback(() => {
     composerTextareaRef.current?.focus();
@@ -1748,6 +1880,10 @@ export function AISlidePanel({
     if (activeBubbleId) {
       cancelledGenerationBubbleIdsRef.current.add(activeBubbleId);
     }
+    // Cancel means stop everything: queued sends would otherwise fire right
+    // after the cancelled run settles.
+    pendingQueueRef.current = [];
+    setPendingQueue([]);
     cancelGeneration();
   }, [cancelGeneration]);
 
@@ -1783,7 +1919,14 @@ export function AISlidePanel({
   // the generation hook restores the old answer untouched when the run fails.
   const handleRegenerateBubble = useCallback(
     async (bubble: AIWorkspaceBubbleData) => {
-      if (isGenerating) return;
+      if (isGenerating) {
+        pendingQueueRef.current = [
+          ...pendingQueueRef.current,
+          { kind: "rerun", bubbleId: bubble.id, prompt: bubble.prompt },
+        ];
+        setPendingQueue(pendingQueueRef.current);
+        return;
+      }
       const retryHistory = buildConversationHistoryMessages(
         bubbles.filter(
           (currentBubble) =>
@@ -1795,24 +1938,7 @@ export function AISlidePanel({
       );
       // Re-attach the turn's files: persisted attachments only carry metadata,
       // so the bytes are fetched back into drafts for the model call.
-      let regenAttachments: AIAttachmentDraft[] | undefined;
-      if (bubble.attachments && bubble.attachments.length > 0) {
-        const rows = await invokeMutation<{ id: string; mimeType: string; data: string }[]>(
-          "get_ai_attachment_data",
-          { ids: bubble.attachments.map((attachment) => attachment.id) },
-        ).catch(() => [] as { id: string; mimeType: string; data: string }[]);
-        const dataById: Record<string, string> = Object.fromEntries(
-          rows.map((row) => [row.id, row.data]),
-        );
-        regenAttachments = bubble.attachments.map((attachment) => ({
-          ...attachment,
-          ...(attachment.kind === "image"
-            ? {
-                dataUrl: `data:${attachment.mimeType};base64,${dataById[attachment.id] ?? ""}`,
-              }
-            : { textContent: dataById[attachment.id] ?? "" }),
-        }));
-      }
+      const regenAttachments = await loadBubbleAttachmentDrafts(bubble);
       setActiveThreadId(bubble.threadId);
       const result = await createAssistantBubble(bubble.prompt, {
         mode: "compose",
@@ -1839,8 +1965,27 @@ export function AISlidePanel({
       historyBudget,
       isGenerating,
       language,
+      loadBubbleAttachmentDrafts,
       workspaceContextMessages,
     ],
+  );
+
+  // Edit & re-run entry point from the conversation view: a finished turn's
+  // prompt is edited inline, then re-run into the same chat slot. While a run
+  // is in flight the edit queues like any other send.
+  const handleEditRerun = useCallback(
+    (bubble: AIWorkspaceBubbleData, editedPrompt: string) => {
+      if (isGenerating) {
+        pendingQueueRef.current = [
+          ...pendingQueueRef.current,
+          { kind: "rerun", bubbleId: bubble.id, prompt: editedPrompt },
+        ];
+        setPendingQueue(pendingQueueRef.current);
+        return;
+      }
+      void runEditedPrompt(bubble, editedPrompt);
+    },
+    [isGenerating, runEditedPrompt],
   );
 
   // 👍/👎 on a finished answer: the sentiment is stored on the bubble (so the
@@ -2559,6 +2704,7 @@ export function AISlidePanel({
     currentWorkspaceKey,
     saveAIConfigs,
     setError,
+
     setIsHistoryOpen,
     setIsSwitchingProvider,
     setWorkspaceAgentAutonomy,
@@ -2690,6 +2836,12 @@ export function AISlidePanel({
         addAttachmentFiles: (files) => void handleAddComposerAttachmentFiles(files),
         removeAttachment: handleRemoveComposerAttachment,
         regenerateBubble: (bubble) => void handleRegenerateBubble(bubble),
+        pendingQueueCount: pendingQueue.length,
+        clearPendingQueue: () => {
+          pendingQueueRef.current = [];
+          setPendingQueue([]);
+        },
+        editRerun: handleEditRerun,
         submitBubbleFeedback: handleBubbleFeedback,
         requestDeleteThread: handleRequestDeleteThread,
         renameThread: handleRenameChatThread,

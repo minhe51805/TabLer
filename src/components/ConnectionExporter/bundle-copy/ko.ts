@@ -39,5 +39,11 @@ export const KO_BUNDLE_COPY: BundleCopy = {
     working: "가져오는 중...",
     done: "가져옴",
     empty: "이 번들에는 항목이 없습니다.",
+    external: {
+      button: "DBeaver / DataGrip에서 가져오기",
+      passwordNote:
+        "비밀번호는 가져오지 않습니다 — DBeaver와 DataGrip은 암호화하여 저장합니다. 가져올 각 연결의 데이터베이스 비밀번호를 입력하세요.",
+      skipped: "{count}개 항목 건너뜀 (지원하지 않는 엔진 또는 형식 오류)",
+    },
   },
 };

@@ -45,5 +45,14 @@ export interface BundleCopy {
     working: string;
     done: string;
     empty: string;
+    /** External-tool import (DBeaver / DataGrip). */
+    external: {
+      /** Button that opens the .json/.xml picker. */
+      button: string;
+      /** Preview banner: source tools never export passwords. */
+      passwordNote: string;
+      /** Summary line for entries that could not be mapped; {count} is replaced. */
+      skipped: string;
+    };
   };
 }

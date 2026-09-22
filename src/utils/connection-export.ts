@@ -27,6 +27,18 @@ export interface ExportableConnection {
   queryTimeoutSeconds?: number;
 }
 
+/** One entry the external importer could not map (unsupported engine, malformed row). */
+export interface SkippedConnection {
+  name: string;
+  reason: string;
+}
+
+/** Preview payload returned by `import_external_connections`. */
+export interface ExternalImportResult {
+  connections: ExportableConnection[];
+  skipped: SkippedConnection[];
+}
+
 export interface ExportResult {
   success: boolean;
   filePath?: string;
@@ -102,6 +114,32 @@ export async function importConnections(filePath: string, password: string): Pro
     }
     return { success: false, error: msg };
   }
+}
+
+/**
+ * Preview connections from a DBeaver or DataGrip export file
+ * (`.dbeaver/data-sources.json`, legacy `data-sources.xml`, or DataGrip
+ * `dataSources.xml` / `dataSources.local.xml`). Nothing is persisted.
+ */
+export async function previewExternalConnections(filePath: string): Promise<ExternalImportResult> {
+  return invoke<ExternalImportResult>("import_external_connections", { filePath });
+}
+
+/**
+ * Persist the selected entries from a previously previewed external file.
+ * `passwords` maps preview index -> password typed in the dialog; entries
+ * without one land credential-less (the source tools never export secrets).
+ */
+export async function importExternalConnections(
+  filePath: string,
+  selectedIndices: number[],
+  passwords: Record<number, string>,
+): Promise<ExternalImportResult> {
+  return invoke<ExternalImportResult>("import_external_connections", {
+    filePath,
+    selectedIndices,
+    passwords,
+  });
 }
 
 /** Convert exported connection back to ConnectionConfig format. */

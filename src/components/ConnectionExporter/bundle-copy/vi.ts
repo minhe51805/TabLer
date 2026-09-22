@@ -39,5 +39,11 @@ export const VI_BUNDLE_COPY: BundleCopy = {
     working: "Đang nhập...",
     done: "Đã nhập",
     empty: "Gói này không có mục nào.",
+    external: {
+      button: "Nhập từ DBeaver / DataGrip",
+      passwordNote:
+        "Mật khẩu không bao giờ được nhập — DBeaver và DataGrip lưu chúng dưới dạng mã hóa. Nhập mật khẩu cơ sở dữ liệu cho từng kết nối bạn muốn nhập.",
+      skipped: "{count} mục bị bỏ qua (engine không hỗ trợ hoặc lỗi định dạng)",
+    },
   },
 };

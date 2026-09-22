@@ -218,6 +218,10 @@ pub struct ExportableConnection {
     /// importable.
     #[serde(default)]
     pub(crate) query_timeout_seconds: Option<u64>,
+    /// Read-only guard flag; `#[serde(default)]` keeps older export files
+    /// importable.
+    #[serde(default)]
+    pub(crate) read_only: bool,
 }
 
 impl From<&ConnectionConfig> for ExportableConnection {
@@ -242,6 +246,7 @@ impl From<&ConnectionConfig> for ExportableConnection {
             pre_connect_script: config.pre_connect_script.clone(),
             ssh_config: config.ssh_config.clone(),
             query_timeout_seconds: config.query_timeout_seconds,
+            read_only: config.read_only,
         }
     }
 }
@@ -273,6 +278,7 @@ impl ExportableConnection {
             pre_connect_script: self.pre_connect_script.clone(),
             query_timeout_seconds: self.query_timeout_seconds,
             ssh_config: self.ssh_config.clone(),
+            read_only: self.read_only,
         };
         config.fill_generated_name();
         config
@@ -432,6 +438,573 @@ fn parse_decrypted_connections(decrypted: &str) -> Result<Vec<ExportableConnecti
     })
 }
 
+// ─── External tool import (DBeaver / DataGrip) ───
+//
+// These formats are plaintext and carry no usable secrets: DBeaver encrypts
+// passwords inside its own credential store and DataGrip keeps them in the
+// IDE keychain, so imported connections always land credential-less and the
+// user re-enters passwords in the preview dialog.
+
+/// Preview payload for `import_external_connections`: the parsed connections
+/// plus the entries that were skipped (unsupported engine, malformed row).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalImportResult {
+    connections: Vec<ExportableConnection>,
+    skipped: Vec<SkippedConnection>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkippedConnection {
+    name: String,
+    reason: String,
+}
+
+/// DBeaver `.dbeaver/data-sources.json`: `{ "connections": { "<id>": {...} } }`.
+#[derive(Debug, Deserialize)]
+struct DBeaverDataSources {
+    #[serde(default)]
+    connections: HashMap<String, DBeaverConnection>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DBeaverConnection {
+    #[serde(default)]
+    provider: Option<String>,
+    #[serde(default)]
+    driver: Option<String>,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    configuration: DBeaverConfiguration,
+}
+
+#[derive(Debug, Default, Deserialize)]
+struct DBeaverConfiguration {
+    #[serde(default)]
+    host: Option<String>,
+    /// DBeaver writes the port as a string ("5432"); accept numbers too.
+    #[serde(default)]
+    port: Option<serde_json::Value>,
+    #[serde(default)]
+    database: Option<String>,
+    #[serde(default)]
+    user: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+}
+
+/// Raw fields collected from either tool's file before engine mapping.
+#[derive(Debug, Default)]
+struct ExternalDraft {
+    name: Option<String>,
+    /// DBeaver `provider` / DataGrip `driver-ref` / DBeaver `driver` id.
+    provider_hint: Option<String>,
+    driver_hint: Option<String>,
+    url: Option<String>,
+    host: Option<String>,
+    port: Option<u16>,
+    database: Option<String>,
+    user: Option<String>,
+}
+
+/// Fields extracted from a JDBC URL (or a DBeaver-style `scheme://` URL).
+#[derive(Debug, Default)]
+struct ParsedJdbcUrl {
+    /// The URL scheme, e.g. `postgresql`, `mysql`, `sqlserver`, `sqlite`.
+    scheme: String,
+    host: Option<String>,
+    port: Option<u16>,
+    database: Option<String>,
+    user: Option<String>,
+    /// File path for file-based engines (sqlite, duckdb).
+    file_path: Option<String>,
+}
+
+/// Map a provider/driver/URL-scheme hint to a DatabaseType. Returns `None`
+/// for engines TableR cannot connect to (oracle, db2, h2, ...) and for
+/// unrecognized hints — those entries are reported as skipped.
+fn engine_from_hint(hint: &str) -> Option<DatabaseType> {
+    let hint = hint.to_lowercase();
+    // Order matters: check the more specific names before their substrings
+    // (mariadb before mysql, sqlserver before generic matches).
+    if hint.contains("mariadb") {
+        Some(DatabaseType::MariaDB)
+    } else if hint.contains("mysql") {
+        Some(DatabaseType::MySQL)
+    } else if hint.contains("cockroach") {
+        Some(DatabaseType::CockroachDB)
+    } else if hint.contains("greenplum") {
+        Some(DatabaseType::Greenplum)
+    } else if hint.contains("redshift") {
+        Some(DatabaseType::Redshift)
+    } else if hint.contains("postgres") {
+        Some(DatabaseType::PostgreSQL)
+    } else if hint.contains("sqlite") {
+        Some(DatabaseType::SQLite)
+    } else if hint.contains("duckdb") {
+        Some(DatabaseType::DuckDB)
+    } else if hint.contains("sqlserver")
+        || hint.contains("mssql")
+        || hint.contains("jtds")
+        || hint.contains("sql_server")
+    {
+        Some(DatabaseType::MSSQL)
+    } else if hint.contains("mongo") {
+        Some(DatabaseType::MongoDB)
+    } else if hint.contains("redis") {
+        Some(DatabaseType::Redis)
+    } else if hint.contains("clickhouse") {
+        Some(DatabaseType::ClickHouse)
+    } else if hint.contains("cassandra") {
+        Some(DatabaseType::Cassandra)
+    } else if hint.contains("snowflake") {
+        Some(DatabaseType::Snowflake)
+    } else if hint.contains("vertica") {
+        Some(DatabaseType::Vertica)
+    } else if hint.contains("bigquery") {
+        Some(DatabaseType::BigQuery)
+    } else {
+        // oracle, db2, h2, derby, hive, generic jdbc drivers, ...
+        None
+    }
+}
+
+fn parse_port_value(value: &serde_json::Value) -> Option<u16> {
+    match value {
+        serde_json::Value::Number(n) => n.as_u64().and_then(|v| u16::try_from(v).ok()),
+        serde_json::Value::String(s) => s.trim().parse::<u16>().ok(),
+        _ => None,
+    }
+}
+
+/// Parse `jdbc:<scheme>:...` and bare `<scheme>:...` URLs. Handles the common
+/// `scheme://host:port/db?k=v` shape plus SQL Server's `;key=value` tail and
+/// file-based `sqlite:path` / `duckdb:path` URLs.
+fn parse_jdbc_url(url: &str) -> Option<ParsedJdbcUrl> {
+    let mut rest = url.trim();
+    if let Some(stripped) = rest.strip_prefix("jdbc:") {
+        rest = stripped;
+    }
+    let (scheme, mut tail) = rest.split_once(':')?;
+    let scheme = scheme.to_lowercase();
+    let mut parsed = ParsedJdbcUrl {
+        scheme: scheme.clone(),
+        ..ParsedJdbcUrl::default()
+    };
+
+    // File-based engines: everything after the scheme is the file path.
+    // Strip only the `//` authority marker so `jdbc:sqlite:/abs/path`
+    // keeps its leading slash.
+    if scheme == "sqlite" || scheme == "duckdb" {
+        let path = tail.strip_prefix("//").unwrap_or(tail);
+        if !path.is_empty() {
+            parsed.file_path = Some(path.to_string());
+        }
+        return Some(parsed);
+    }
+
+    // Strip authority markers: `//` (standard) and `@//`/`@` (oracle thin).
+    tail = tail
+        .trim_start_matches("//")
+        .trim_start_matches('@')
+        .trim_start_matches("//");
+    let (authority, tail) = match tail.find(['/', ';', '?']) {
+        Some(idx) => (&tail[..idx], &tail[idx..]),
+        None => (tail, ""),
+    };
+
+    // userinfo@host:port
+    let authority = authority.rsplit('@').next().unwrap_or(authority);
+    if let Some((host, port)) = authority.rsplit_once(':') {
+        if let Ok(port) = port.parse::<u16>() {
+            parsed.host = Some(host.to_string());
+            parsed.port = Some(port);
+        } else {
+            parsed.host = Some(authority.to_string());
+        }
+    } else if !authority.is_empty() {
+        parsed.host = Some(authority.to_string());
+    }
+
+    // Tail: `/dbname?k=v` (standard) or `;databaseName=db;user=u` (sqlserver).
+    let tail = tail.trim_start_matches('/');
+    let (db_part, props_part) = match tail.find(['?', ';']) {
+        Some(idx) => (&tail[..idx], &tail[idx..]),
+        None => (tail, ""),
+    };
+    if !db_part.is_empty() {
+        parsed.database = Some(db_part.to_string());
+    }
+    for pair in props_part.split(['?', ';', '&']) {
+        let Some((key, value)) = pair.split_once('=') else {
+            continue;
+        };
+        match key.to_lowercase().as_str() {
+            "databasename" | "database" => {
+                if parsed.database.is_none() && !value.is_empty() {
+                    parsed.database = Some(value.to_string());
+                }
+            }
+            "user" | "username" => {
+                if parsed.user.is_none() && !value.is_empty() {
+                    parsed.user = Some(value.to_string());
+                }
+            }
+            "portnumber" | "port" if parsed.port.is_none() => {
+                parsed.port = value.parse::<u16>().ok();
+            }
+            // `password` and every other property are deliberately ignored:
+            // credentials are never imported.
+            _ => {}
+        }
+    }
+    Some(parsed)
+}
+
+/// Turn a collected draft into an ExportableConnection, or a skip reason.
+fn draft_to_exportable(draft: ExternalDraft, source: &str) -> Result<ExportableConnection, String> {
+    let parsed_url = draft.url.as_deref().and_then(parse_jdbc_url);
+
+    // Engine resolution order: explicit provider id, driver id, URL scheme.
+    let db_type = draft
+        .provider_hint
+        .as_deref()
+        .and_then(engine_from_hint)
+        .or_else(|| draft.driver_hint.as_deref().and_then(engine_from_hint))
+        .or_else(|| {
+            parsed_url
+                .as_ref()
+                .and_then(|u| engine_from_hint(&u.scheme))
+        })
+        .ok_or_else(|| {
+            let hint = draft
+                .provider_hint
+                .or_else(|| draft.driver_hint.clone())
+                .or_else(|| parsed_url.as_ref().map(|u| u.scheme.clone()))
+                .unwrap_or_else(|| "unknown".to_string());
+            format!("unsupported engine ({hint})")
+        })?;
+
+    let is_file_based = matches!(db_type, DatabaseType::SQLite | DatabaseType::DuckDB);
+
+    let host = draft
+        .host
+        .or_else(|| parsed_url.as_ref().and_then(|u| u.host.clone()));
+    let port = draft
+        .port
+        .or_else(|| parsed_url.as_ref().and_then(|u| u.port));
+    let database = draft
+        .database
+        .or_else(|| parsed_url.as_ref().and_then(|u| u.database.clone()));
+    let user = draft
+        .user
+        .or_else(|| parsed_url.as_ref().and_then(|u| u.user.clone()));
+    let file_path = if is_file_based {
+        parsed_url
+            .as_ref()
+            .and_then(|u| u.file_path.clone())
+            .or(database.clone())
+    } else {
+        None
+    };
+
+    let name = draft
+        .name
+        .filter(|n| !n.trim().is_empty())
+        .unwrap_or_else(|| {
+            host.clone()
+                .or_else(|| file_path.clone())
+                .or_else(|| database.clone())
+                .unwrap_or_else(|| "Imported connection".to_string())
+        });
+
+    let mut additional_fields = HashMap::new();
+    additional_fields.insert("import_source".to_string(), source.to_string());
+    additional_fields.insert(
+        "import_note".to_string(),
+        "Password not imported — the source tool stores credentials encrypted; re-enter it after import.".to_string(),
+    );
+
+    Ok(ExportableConnection {
+        name,
+        db_type,
+        host: if is_file_based { None } else { host },
+        port: if is_file_based { None } else { port },
+        username: user,
+        database: if is_file_based { None } else { database },
+        file_path,
+        use_ssl: false,
+        ssl_mode: None,
+        ssl_ca_cert_path: None,
+        ssl_client_cert_path: None,
+        ssl_client_key_path: None,
+        ssl_skip_host_verification: None,
+        color: None,
+        additional_fields,
+        startup_commands: None,
+        pre_connect_script: None,
+        ssh_config: None,
+        query_timeout_seconds: None,
+        read_only: false,
+    })
+}
+
+fn parse_dbeaver_json(content: &str) -> Result<Vec<ExternalDraft>, String> {
+    let document: DBeaverDataSources = serde_json::from_str(content)
+        .map_err(|e| format!("Failed to parse DBeaver data-sources.json: {e}"))?;
+    Ok(document
+        .connections
+        .into_values()
+        .map(|conn| ExternalDraft {
+            name: conn.name,
+            provider_hint: conn.provider,
+            driver_hint: conn.driver,
+            url: conn.configuration.url,
+            host: conn.configuration.host,
+            port: conn.configuration.port.as_ref().and_then(parse_port_value),
+            database: conn.configuration.database,
+            user: conn.configuration.user,
+        })
+        .collect())
+}
+
+/// Read an attribute off a quick-xml start/empty tag, unescaping entities.
+fn xml_attr(e: &quick_xml::events::BytesStart<'_>, name: &str) -> Option<String> {
+    e.attributes().flatten().find_map(|attr| {
+        if attr.key.local_name().as_ref() == name.as_bytes() {
+            attr.decoded_and_normalized_value(quick_xml::XmlVersion::Explicit1_0, e.decoder())
+                .ok()
+                .map(|v| v.into_owned())
+        } else {
+            None
+        }
+    })
+}
+
+/// Parse both XML flavors in a single pass:
+/// - DBeaver legacy `data-sources.xml`: `<data-source>` elements with a
+///   `provider` attribute and a `<connection host=... port=... user=...>`
+///   child.
+/// - DataGrip `dataSources.xml` / `dataSources.local.xml`: `<data-source>`
+///   elements with `name`/`uuid` attributes and `<driver-ref>`, `<jdbc-url>`,
+///   `<user-name>`, `<database-name>` text children.
+fn parse_external_xml(content: &str) -> Result<Vec<ExternalDraft>, String> {
+    use quick_xml::events::Event;
+    use quick_xml::Reader;
+
+    let mut reader = Reader::from_str(content);
+    reader.config_mut().trim_text(true);
+
+    let mut drafts: Vec<ExternalDraft> = Vec::new();
+    let mut current: Option<ExternalDraft> = None;
+    let mut buf = Vec::new();
+
+    loop {
+        match reader.read_event_into(&mut buf) {
+            Ok(Event::Start(e)) => match e.local_name().as_ref() {
+                b"data-source" => {
+                    // Both formats use <data-source>; DBeaver carries
+                    // `provider`, DataGrip carries `name`/`uuid`.
+                    current = Some(ExternalDraft {
+                        name: xml_attr(&e, "name"),
+                        provider_hint: xml_attr(&e, "provider"),
+                        ..ExternalDraft::default()
+                    });
+                }
+                b"connection" => {
+                    // DBeaver legacy: connection details as attributes.
+                    if let Some(draft) = current.as_mut() {
+                        if let Some(driver) = xml_attr(&e, "driver") {
+                            draft.driver_hint = Some(driver);
+                        }
+                        if let Some(url) = xml_attr(&e, "url") {
+                            draft.url = Some(url);
+                        }
+                        if let Some(host) = xml_attr(&e, "host") {
+                            draft.host = Some(host);
+                        }
+                        if let Some(port) = xml_attr(&e, "port") {
+                            draft.port = port.parse::<u16>().ok();
+                        }
+                        if let Some(server) = xml_attr(&e, "server") {
+                            draft.database = Some(server);
+                        }
+                        if let Some(user) = xml_attr(&e, "user") {
+                            draft.user = Some(user);
+                        }
+                    }
+                }
+                // DataGrip leaf elements carry their value as text.
+                b"jdbc-url" | b"user-name" | b"database-name" | b"driver-ref" => {
+                    if let Some(draft) = current.as_mut() {
+                        let local = e.local_name().as_ref().to_vec();
+                        let text = reader
+                            .read_text(e.name())
+                            .ok()
+                            .and_then(|t| t.decode().ok().map(|s| s.into_owned()))
+                            .unwrap_or_default();
+                        let text = text.trim();
+                        if !text.is_empty() {
+                            match local.as_slice() {
+                                b"jdbc-url" => draft.url = Some(text.to_string()),
+                                b"user-name" => draft.user = Some(text.to_string()),
+                                b"database-name" => draft.database = Some(text.to_string()),
+                                b"driver-ref" if draft.driver_hint.is_none() => {
+                                    draft.driver_hint = Some(text.to_string());
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            },
+            Ok(Event::Empty(e)) => match e.local_name().as_ref() {
+                // Self-closing variants of the same elements.
+                b"data-source" => {
+                    drafts.push(ExternalDraft {
+                        name: xml_attr(&e, "name"),
+                        provider_hint: xml_attr(&e, "provider"),
+                        ..ExternalDraft::default()
+                    });
+                }
+                b"connection" => {
+                    if let Some(draft) = current.as_mut() {
+                        if let Some(driver) = xml_attr(&e, "driver") {
+                            draft.driver_hint = Some(driver);
+                        }
+                        if let Some(url) = xml_attr(&e, "url") {
+                            draft.url = Some(url);
+                        }
+                        if let Some(host) = xml_attr(&e, "host") {
+                            draft.host = Some(host);
+                        }
+                        if let Some(port) = xml_attr(&e, "port") {
+                            draft.port = port.parse::<u16>().ok();
+                        }
+                        if let Some(server) = xml_attr(&e, "server") {
+                            draft.database = Some(server);
+                        }
+                        if let Some(user) = xml_attr(&e, "user") {
+                            draft.user = Some(user);
+                        }
+                    }
+                }
+                b"driver-ref" => {
+                    if let Some(draft) = current.as_mut() {
+                        if let Some(reference) = xml_attr(&e, "ref") {
+                            draft.driver_hint = Some(reference);
+                        }
+                    }
+                }
+                _ => {}
+            },
+            Ok(Event::End(e)) => {
+                if e.local_name().as_ref() == b"data-source" {
+                    if let Some(draft) = current.take() {
+                        drafts.push(draft);
+                    }
+                }
+            }
+            Ok(Event::Eof) => break,
+            Err(e) => return Err(format!("Failed to parse XML data sources: {e}")),
+            _ => {}
+        }
+        buf.clear();
+    }
+
+    Ok(drafts)
+}
+
+/// Parse a DBeaver or DataGrip export into drafts, then map to connections.
+fn parse_external_file(file_path: &str, content: &str) -> Result<ExternalImportResult, String> {
+    let trimmed = content.trim_start();
+    let is_json = trimmed.starts_with('{');
+    let is_xml = trimmed.starts_with('<') || trimmed.starts_with("<?xml");
+
+    let (drafts, source) = if is_json {
+        (parse_dbeaver_json(content)?, "dbeaver")
+    } else if is_xml {
+        // Distinguish DBeaver legacy XML from DataGrip XML by content markers.
+        let source = if content.contains("data-sources") || content.contains("provider=") {
+            "dbeaver"
+        } else {
+            "datagrip"
+        };
+        (parse_external_xml(content)?, source)
+    } else {
+        return Err(format!(
+            "Unrecognized file format for {file_path}. Expected a DBeaver data-sources.json/.xml or a DataGrip dataSources.xml file."
+        ));
+    };
+
+    let mut connections = Vec::new();
+    let mut skipped = Vec::new();
+    for draft in drafts {
+        let label = draft
+            .name
+            .clone()
+            .or_else(|| draft.host.clone())
+            .unwrap_or_else(|| "unnamed".to_string());
+        match draft_to_exportable(draft, source) {
+            Ok(conn) => connections.push(conn),
+            Err(reason) => skipped.push(SkippedConnection {
+                name: label,
+                reason,
+            }),
+        }
+    }
+
+    if connections.is_empty() && skipped.is_empty() {
+        return Err("The file contains no connections.".to_string());
+    }
+
+    Ok(ExternalImportResult {
+        connections,
+        skipped,
+    })
+}
+
+/// Import connections exported by external tools (DBeaver, DataGrip).
+///
+/// Supported inputs:
+/// - DBeaver `.dbeaver/data-sources.json` (JSON `connections` map)
+/// - DBeaver legacy `data-sources.xml`
+/// - DataGrip `dataSources.xml` / `dataSources.local.xml`
+///
+/// Passwords are never imported — DBeaver encrypts them and DataGrip keeps
+/// them in the IDE keychain — so every returned connection has an empty
+/// password and carries an `import_note` in `additional_fields`.
+///
+/// Without `selected_indices` this is a pure preview. With it, the chosen
+/// entries are persisted through ConnectionStorage and any per-entry
+/// passwords typed into the dialog go to the keyring — the same contract as
+/// `import_connections_from_file`.
+#[tauri::command]
+pub fn import_external_connections(
+    file_path: String,
+    selected_indices: Option<Vec<usize>>,
+    passwords: Option<HashMap<usize, String>>,
+    conn_storage: State<'_, ConnectionStorage>,
+) -> Result<ExternalImportResult, String> {
+    let content =
+        std::fs::read_to_string(&file_path).map_err(|e| format!("Failed to read file: {e}"))?;
+    let result = parse_external_file(&file_path, &content)?;
+
+    if let Some(indices) = selected_indices {
+        persist_imported_connections(
+            &conn_storage,
+            &result.connections,
+            &indices,
+            &passwords.unwrap_or_default(),
+        )?;
+    }
+
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -515,6 +1088,185 @@ mod tests {
         assert_eq!(imported.len(), 1);
         assert_eq!(imported[0].name, "production");
         assert_eq!(imported[0].host.as_deref(), Some("db.example.test"));
+    }
+
+    #[test]
+    fn dbeaver_json_imports_postgres_and_mysql() {
+        let json = r#"{
+            "connections": {
+                "pg-prod": {
+                    "provider": "postgresql",
+                    "driver": "postgres_jdbc",
+                    "name": "Prod PG",
+                    "configuration": {
+                        "host": "prod.example.com",
+                        "port": "5433",
+                        "database": "shop",
+                        "user": "admin"
+                    }
+                },
+                "pg-url": {
+                    "provider": "postgresql",
+                    "driver": "postgres_jdbc",
+                    "name": "Url PG",
+                    "configuration": {
+                        "url": "jdbc:postgresql://db.internal:5432/analytics?ssl=true",
+                        "user": "reader"
+                    }
+                },
+                "mysql-dev": {
+                    "provider": "mysql",
+                    "driver": "mysql8",
+                    "name": "Dev MySQL",
+                    "configuration": {
+                        "host": "127.0.0.1",
+                        "port": "3307",
+                        "database": "appdb",
+                        "user": "dev"
+                    }
+                }
+            }
+        }"#;
+
+        let result = parse_external_file("data-sources.json", json).unwrap();
+        assert_eq!(result.connections.len(), 3);
+        assert!(result.skipped.is_empty());
+
+        let prod = result
+            .connections
+            .iter()
+            .find(|c| c.name == "Prod PG")
+            .unwrap();
+        assert_eq!(prod.db_type, DatabaseType::PostgreSQL);
+        assert_eq!(prod.host.as_deref(), Some("prod.example.com"));
+        assert_eq!(prod.port, Some(5433));
+        assert_eq!(prod.database.as_deref(), Some("shop"));
+        assert_eq!(prod.username.as_deref(), Some("admin"));
+        assert!(prod.additional_fields.contains_key("import_note"));
+
+        let url_pg = result
+            .connections
+            .iter()
+            .find(|c| c.name == "Url PG")
+            .unwrap();
+        assert_eq!(url_pg.db_type, DatabaseType::PostgreSQL);
+        assert_eq!(url_pg.host.as_deref(), Some("db.internal"));
+        assert_eq!(url_pg.port, Some(5432));
+        assert_eq!(url_pg.database.as_deref(), Some("analytics"));
+        assert_eq!(url_pg.username.as_deref(), Some("reader"));
+
+        let mysql = result
+            .connections
+            .iter()
+            .find(|c| c.name == "Dev MySQL")
+            .unwrap();
+        assert_eq!(mysql.db_type, DatabaseType::MySQL);
+        assert_eq!(mysql.host.as_deref(), Some("127.0.0.1"));
+        assert_eq!(mysql.port, Some(3307));
+        assert_eq!(mysql.database.as_deref(), Some("appdb"));
+        assert_eq!(mysql.username.as_deref(), Some("dev"));
+    }
+
+    #[test]
+    fn dbeaver_json_skips_unsupported_engines() {
+        let json = r#"{
+            "connections": {
+                "ora": {
+                    "provider": "oracle",
+                    "driver": "oracle_thin",
+                    "name": "Oracle DB",
+                    "configuration": {
+                        "url": "jdbc:oracle:thin:@//oracle.host:1521/ORCL",
+                        "user": "scott"
+                    }
+                }
+            }
+        }"#;
+
+        let result = parse_external_file("data-sources.json", json).unwrap();
+        assert!(result.connections.is_empty());
+        assert_eq!(result.skipped.len(), 1);
+        assert_eq!(result.skipped[0].name, "Oracle DB");
+    }
+
+    #[test]
+    fn datagrip_xml_imports_jdbc_url_fields() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="DataSourceManagerImpl" format="xml" multifile-model="true">
+    <data-source source="LOCAL" name="orders@localhost" uuid="abc-123">
+      <driver-ref>postgresql</driver-ref>
+      <jdbc-driver>org.postgresql.Driver</jdbc-driver>
+      <jdbc-url>jdbc:postgresql://localhost:5432/orders</jdbc-url>
+      <user-name>postgres</user-name>
+    </data-source>
+    <data-source source="LOCAL" name="ms-sql" uuid="def-456">
+      <driver-ref>sqlserver.ms</driver-ref>
+      <jdbc-url>jdbc:sqlserver://win-host:1433;databaseName=erp;user=sa</jdbc-url>
+    </data-source>
+  </component>
+</project>"#;
+
+        let result = parse_external_file("dataSources.local.xml", xml).unwrap();
+        assert_eq!(result.connections.len(), 2);
+
+        let pg = &result.connections[0];
+        assert_eq!(pg.name, "orders@localhost");
+        assert_eq!(pg.db_type, DatabaseType::PostgreSQL);
+        assert_eq!(pg.host.as_deref(), Some("localhost"));
+        assert_eq!(pg.port, Some(5432));
+        assert_eq!(pg.database.as_deref(), Some("orders"));
+        assert_eq!(pg.username.as_deref(), Some("postgres"));
+
+        let ms = &result.connections[1];
+        assert_eq!(ms.db_type, DatabaseType::MSSQL);
+        assert_eq!(ms.host.as_deref(), Some("win-host"));
+        assert_eq!(ms.port, Some(1433));
+        assert_eq!(ms.database.as_deref(), Some("erp"));
+        assert_eq!(ms.username.as_deref(), Some("sa"));
+    }
+
+    #[test]
+    fn dbeaver_legacy_xml_imports_connection_attributes() {
+        let xml = r#"<?xml version="1.0" encoding="UTF-8"?>
+<data-sources>
+  <data-source id="pg1" provider="postgresql" driver="postgres_jdbc" name="Legacy PG">
+    <connection host="legacy.example.com" port="5432" server="warehouse" user="etl"/>
+  </data-source>
+</data-sources>"#;
+
+        let result = parse_external_file("data-sources.xml", xml).unwrap();
+        assert_eq!(result.connections.len(), 1);
+        let conn = &result.connections[0];
+        assert_eq!(conn.name, "Legacy PG");
+        assert_eq!(conn.db_type, DatabaseType::PostgreSQL);
+        assert_eq!(conn.host.as_deref(), Some("legacy.example.com"));
+        assert_eq!(conn.port, Some(5432));
+        assert_eq!(conn.database.as_deref(), Some("warehouse"));
+        assert_eq!(conn.username.as_deref(), Some("etl"));
+    }
+
+    #[test]
+    fn sqlite_url_maps_to_file_path() {
+        let json = r#"{
+            "connections": {
+                "lite": {
+                    "provider": "sqlite",
+                    "driver": "sqlite_jdbc",
+                    "name": "Local SQLite",
+                    "configuration": {
+                        "url": "jdbc:sqlite:C:/data/local.db"
+                    }
+                }
+            }
+        }"#;
+
+        let result = parse_external_file("data-sources.json", json).unwrap();
+        assert_eq!(result.connections.len(), 1);
+        let conn = &result.connections[0];
+        assert_eq!(conn.db_type, DatabaseType::SQLite);
+        assert_eq!(conn.file_path.as_deref(), Some("C:/data/local.db"));
+        assert!(conn.host.is_none());
     }
 
     #[test]

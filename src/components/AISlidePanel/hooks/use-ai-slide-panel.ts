@@ -1445,7 +1445,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               message: note,
               observation: "Model/provider failover within the request chain.",
             });
-            publishAgentProgress();
+            publishAgentProgress({ action: "think", message: note });
           };
           window.addEventListener("ai-provider-chain-failover", handleChainFailoverNote);
 
@@ -1499,6 +1499,24 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                   controllerPrompt = `${controllerPrompt}\n\n${toolErrorReflectionNudge(trailingToolErrors)}`;
                   lastReflectedToolErrorStreak = trailingToolErrors;
                 }
+                // Liveness ticker: one model call can legitimately run for
+                // minutes (timeout x failover chain x in-line retries). Without
+                // a heartbeat the pending "Thinking..." step looks frozen, so
+                // republish it with the elapsed time while the call is in flight.
+                const thinkBaseMessage =
+                  reason === "budget"
+                    ? "Wrapping up…"
+                    : reason === "direct"
+                      ? "Composing response…"
+                      : "Thinking…";
+                const thinkStartedAt = Date.now();
+                const thinkTicker = window.setInterval(() => {
+                  const elapsedSeconds = Math.round((Date.now() - thinkStartedAt) / 1000);
+                  publishAgentProgress({
+                    action: "think",
+                    message: `${thinkBaseMessage} (${elapsedSeconds}s)`,
+                  });
+                }, 5000);
                 try {
                   // Images ride every controller call of the run (the requestor
                   // attaches the run's images) so whichever step composes the final
@@ -1759,6 +1777,8 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                       `The agent could not return a valid action: ${formatActionFailureReason(retryError)}`,
                     );
                   }
+                } finally {
+                  window.clearInterval(thinkTicker);
                 }
               },
               runTool: runAgentTool,

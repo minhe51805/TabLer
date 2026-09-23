@@ -401,6 +401,7 @@ export const tr: Record<keyof typeof en, string> = {
   "metrics.editor.color": "Vurgu rengi",
   "metrics.editor.colorDefault": "Varsayılan",
   "metrics.renameBoardHint": "Yeniden adlandırmak için çift tıklayın",
+  "metrics.widget.copyQuery": "Sorguyu kopyala",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":

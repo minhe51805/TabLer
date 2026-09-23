@@ -397,6 +397,7 @@ export const ko: Record<keyof typeof en, string> = {
   "metrics.editor.color": "강조 색상",
   "metrics.editor.colorDefault": "기본",
   "metrics.renameBoardHint": "더블클릭하여 이름 변경",
+  "metrics.widget.copyQuery": "쿼리 복사",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":

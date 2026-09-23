@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Code2, FileDown, ImageDown, Maximize2, RefreshCcw, Table2 } from "lucide-react";
+import { Code2, Copy, FileDown, ImageDown, Maximize2, RefreshCcw, Table2 } from "lucide-react";
 import { exportToCSV } from "../../../utils/export-utils";
 import { exportSvgAsPng } from "../../../utils/svg-png-export";
+import { formatRelativeTime } from "../utils/metrics-board-io";
 import { useI18n } from "../../../i18n";
 import type { MetricsWidgetDefinition, QueryResult } from "../../../types";
 import {
@@ -459,6 +460,19 @@ export function MetricsWidgetCard({
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation();
+              void navigator.clipboard.writeText(widget.query);
+            }}
+            title={t("metrics.widget.copyQuery")}
+            aria-label={t("metrics.widget.copyQuery")}
+          >
+            <Copy className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            className="metrics-widget-workspace-btn"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
               onFullscreen(widget);
             }}
             title={t("metrics.widget.fullscreen")}
@@ -486,6 +500,14 @@ export function MetricsWidgetCard({
                 ? t("metrics.everySeconds", { seconds: widget.refresh_seconds })
                 : t("metrics.manual")}
           </span>
+          {state.lastRunAt ? (
+            <span
+              className="metrics-widget-foot-time"
+              title={new Date(state.lastRunAt).toLocaleString()}
+            >
+              {formatRelativeTime(state.lastRunAt)}
+            </span>
+          ) : null}
         </div>
       </div>
 

@@ -370,6 +370,7 @@ export const en = {
   "metrics.editor.color": "Accent color",
   "metrics.editor.colorDefault": "Default",
   "metrics.renameBoardHint": "Double-click to rename",
+  "metrics.widget.copyQuery": "Copy query",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "metrics.context.add": "Add",

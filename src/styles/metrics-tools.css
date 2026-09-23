@@ -294,3 +294,8 @@
   outline: none;
   min-width: 180px;
 }
+.metrics-widget-foot-time {
+  font-size: 9px;
+  color: var(--text-tertiary, #94a3b8);
+  white-space: nowrap;
+}

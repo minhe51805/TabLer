@@ -360,7 +360,9 @@ export function MetricsWidgetCard({
         <div className="metrics-widget-card-head-main">
           <div className="metrics-widget-card-title-wrap">
             <span className="metrics-widget-card-type">{widgetLibraryItem.label}</span>
-            <strong className="metrics-widget-card-title">{widget.title}</strong>
+            <strong className="metrics-widget-card-title" title={widget.query}>
+              {widget.title}
+            </strong>
           </div>
           {widget.note ? (
             <span className="metrics-widget-card-note" title={widget.note}>

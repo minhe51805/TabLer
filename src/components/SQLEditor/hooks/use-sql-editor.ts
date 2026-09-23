@@ -38,6 +38,7 @@ import { captureAgentEditedRunCheckpoint } from "../agent-edit-safety";
 import { useConnectionCapabilities } from "../../../hooks/useConnectionCapabilities";
 import { isCapabilitySupported } from "../../../types/capabilities";
 import { extractParams, type SqlParam } from "../../../utils/sql-params";
+import { stripMarkdownFence } from "../../../utils/markdown-fence";
 
 export interface QueryChromeState {
   isRunning: boolean;
@@ -300,6 +301,10 @@ export function useSQLEditor({
       } else {
         sql = editor.getValue();
       }
+      // A markdown paste ("```sql\nSELECT ...\n```") unwraps to its first
+      // fenced block for every engine — the fence is not valid syntax
+      // anywhere and a trailing example block must never execute.
+      sql = stripMarkdownFence(sql);
       if (!sql.trim()) {
         setError(null);
         setResult(null);

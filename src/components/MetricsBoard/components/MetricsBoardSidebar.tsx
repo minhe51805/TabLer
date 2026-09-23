@@ -1,11 +1,4 @@
-import {
-  BarChart3,
-  ChevronDown,
-  ChevronRight,
-  Database,
-  Plus,
-  Search,
-} from "lucide-react";
+import { BarChart3, ChevronDown, ChevronRight, Database, Plus, Search } from "lucide-react";
 import type { MetricsBoardDefinition } from "../../../types";
 import { getWidgetLibraryItem } from "../utils/query-builder";
 
@@ -66,7 +59,9 @@ export function MetricsBoardSidebar({
         >
           <BarChart3 className="w-4 h-4" />
           <span>Metrics</span>
-          <small>{boards.length} board{boards.length === 1 ? "" : "s"}</small>
+          <small>
+            {boards.length} board{boards.length === 1 ? "" : "s"}
+          </small>
         </button>
       </aside>
 
@@ -86,7 +81,12 @@ export function MetricsBoardSidebar({
             onChange={(event) => onBoardSearchChange(event.target.value)}
             placeholder="Search for metrics board..."
           />
-          <button type="button" className="metrics-board-inline-action" onClick={onCreateBoard} title="Create metrics board">
+          <button
+            type="button"
+            className="metrics-board-inline-action"
+            onClick={onCreateBoard}
+            title="Create metrics board"
+          >
             <Plus className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -101,7 +101,11 @@ export function MetricsBoardSidebar({
                   className={`metrics-board-list-item ${isActive ? "active" : ""}`}
                   onClick={() => onSelectBoard(board.id)}
                 >
-                  {isActive ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                  {isActive ? (
+                    <ChevronDown className="w-3 h-3" />
+                  ) : (
+                    <ChevronRight className="w-3 h-3" />
+                  )}
                   <BarChart3 className="w-3.5 h-3.5" />
                   <div className="metrics-board-list-copy">
                     <span>{board.name}</span>
@@ -113,20 +117,25 @@ export function MetricsBoardSidebar({
 
                 {isActive && board.widgets.length > 0 && (
                   <div className="metrics-board-list-children">
-                    {board.widgets.map((widget) => {
-                      const Icon = getWidgetLibraryItem(widget.type).icon;
-                      return (
-                        <button
-                          key={widget.id}
-                          type="button"
-                          className={`metrics-board-list-child ${activeWidgetId === widget.id ? "active" : ""}`}
-                          onClick={() => onSelectWidget(widget.id)}
-                        >
-                          <Icon className="w-3 h-3" />
-                          <span>{widget.title}</span>
-                        </button>
-                      );
-                    })}
+                    {board.widgets
+                      .filter(
+                        (w) =>
+                          !boardSearch || w.title.toLowerCase().includes(boardSearch.toLowerCase()),
+                      )
+                      .map((widget) => {
+                        const Icon = getWidgetLibraryItem(widget.type).icon;
+                        return (
+                          <button
+                            key={widget.id}
+                            type="button"
+                            className={`metrics-board-list-child ${activeWidgetId === widget.id ? "active" : ""}`}
+                            onClick={() => onSelectWidget(widget.id)}
+                          >
+                            <Icon className="w-3 h-3" />
+                            <span>{widget.title}</span>
+                          </button>
+                        );
+                      })}
                   </div>
                 )}
               </div>

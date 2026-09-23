@@ -22,6 +22,7 @@ use super::extraction::{
     extract_anthropic_reasoning, extract_anthropic_response_text, extract_gemini_reasoning,
     extract_gemini_response_text, extract_openai_like_reasoning, extract_openai_like_response_text,
     extract_tool_call_as_action_json, publish_stream_payload, split_think_block,
+    ToolCallStreamState,
 };
 use super::prompt::build_ai_prompt;
 use super::providers::{
@@ -31,7 +32,10 @@ use super::providers::{
     parse_models_list_response, resolve_provider_body_shape, streaming_endpoint,
     streaming_request_body_with_thinking,
 };
-use super::{ai_http_client, run_blocking_storage_task, FetchedModel, AI_REQUEST_CANCELLED_ERROR};
+use super::{
+    ai_http_client, emit_ai_stream_event, run_blocking_storage_task, FetchedModel,
+    AI_REQUEST_CANCELLED_ERROR, MAX_AI_STREAM_OUTPUT_BYTES,
+};
 
 /// Calls a provider's "list models" API and returns the model IDs it exposes,
 /// powering the "Fetch models" button in AI settings so users don't have to
@@ -170,6 +174,15 @@ pub(crate) async fn execute_ai_stream_request(
         &request.mode,
         request.enable_thinking,
     );
+    // Native function-calling rides the stream too: the frontend opts in via
+    // `NATIVE_TOOL_CALLING_ENABLED`, so tool definitions must be injected here
+    // exactly like the non-streaming path or the model answers with plain text.
+    apply_native_tools(
+        &mut body,
+        &wire_provider,
+        request.tools.as_ref(),
+        request.tool_choice.as_ref(),
+    );
     apply_conversation_history(
         &mut body,
         resolve_provider_body_shape(&config, &base_endpoint),
@@ -229,6 +242,9 @@ pub(crate) async fn execute_ai_stream_request(
     let mut pending_text = String::new();
     let mut visible_started = false;
     let mut output_bytes = 0usize;
+    // Re-wraps streamed native tool-call fragments into the action-JSON text
+    // contract so the frontend agent loop parses the stream unchanged.
+    let mut tool_call_state = ToolCallStreamState::default();
 
     loop {
         let next = tokio::select! {
@@ -253,6 +269,19 @@ pub(crate) async fn execute_ai_stream_request(
                 continue;
             }
             if let Ok(payload) = serde_json::from_str::<serde_json::Value>(line) {
+                // Streamed native tool calls arrive as name + argument JSON
+                // fragments; re-wrap them into the action-JSON text contract so
+                // the frontend agent loop parses the stream unchanged. These
+                // fragments bypass `take_visible_stream_delta` on purpose —
+                // they are protocol JSON, not prose, and the `<think>` filter
+                // would corrupt them.
+                for fragment in tool_call_state.push_payload(&wire_provider, &payload) {
+                    output_bytes = output_bytes.saturating_add(fragment.len());
+                    if output_bytes > MAX_AI_STREAM_OUTPUT_BYTES {
+                        return Err("AI stream exceeded the 2 MB output limit.".to_string());
+                    }
+                    emit_ai_stream_event(app, request_id, "text_delta", Some(fragment), None)?;
+                }
                 publish_stream_payload(
                     app,
                     request_id,
@@ -270,6 +299,13 @@ pub(crate) async fn execute_ai_stream_request(
         let line = String::from_utf8_lossy(&buffer);
         let line = line.trim().trim_start_matches("data:").trim();
         if let Ok(payload) = serde_json::from_str::<serde_json::Value>(line) {
+            for fragment in tool_call_state.push_payload(&wire_provider, &payload) {
+                output_bytes = output_bytes.saturating_add(fragment.len());
+                if output_bytes > MAX_AI_STREAM_OUTPUT_BYTES {
+                    return Err("AI stream exceeded the 2 MB output limit.".to_string());
+                }
+                emit_ai_stream_event(app, request_id, "text_delta", Some(fragment), None)?;
+            }
             publish_stream_payload(
                 app,
                 request_id,

@@ -376,6 +376,7 @@ export const en = {
   "metrics.boardExportConfirm": "Download this board as JSON?",
   "metrics.widget.nextRefresh": "Next auto-refresh in",
   "metrics.widget.errorDetails": "Query details",
+  "metrics.boardDescription": "Add a description...",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "metrics.context.add": "Add",

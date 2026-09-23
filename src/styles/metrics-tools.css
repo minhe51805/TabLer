@@ -344,3 +344,23 @@
   white-space: pre-wrap;
   word-break: break-all;
 }
+.metrics-board-description-input {
+  font-size: 11px;
+  color: var(--text-tertiary, #94a3b8);
+  background: transparent;
+  border: none;
+  border-bottom: 1px dashed transparent;
+  padding: 1px 0;
+  outline: none;
+  width: 100%;
+  max-width: 400px;
+}
+
+.metrics-board-description-input:focus {
+  border-bottom-color: var(--accent, #22d3ee);
+}
+
+.metrics-board-description-input::placeholder {
+  color: var(--text-tertiary, #94a3b8);
+  opacity: 0.5;
+}

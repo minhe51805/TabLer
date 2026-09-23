@@ -1195,6 +1195,19 @@ export function MetricsBoard({
                   : ""}
               </span>
             )}
+            {activeBoard && (
+              <input
+                className="metrics-board-description-input"
+                value={activeBoard.description ?? ""}
+                placeholder={t("metrics.boardDescription")}
+                onChange={(e) => {
+                  const desc = e.target.value;
+                  persistBoards(
+                    boards.map((b) => (b.id === activeBoard.id ? { ...b, description: desc } : b)),
+                  );
+                }}
+              />
+            )}
           </div>
 
           <div className="metrics-board-topbar-actions">

@@ -403,6 +403,7 @@ export const ko: Record<keyof typeof en, string> = {
   "metrics.boardExportConfirm": "이 보드를 JSON으로 다운로드하시겠습니까?",
   "metrics.widget.nextRefresh": "다음 자동 새로고침",
   "metrics.widget.errorDetails": "쿼리 상세",
+  "metrics.boardDescription": "설명 추가...",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":

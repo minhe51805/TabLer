@@ -402,6 +402,7 @@ export const vi: Record<keyof typeof en, string> = {
   "metrics.boardExportConfirm": "Tải bảng này dưới dạng JSON?",
   "metrics.widget.nextRefresh": "Tự động làm mới sau",
   "metrics.widget.errorDetails": "Chi tiết truy vấn",
+  "metrics.boardDescription": "Thêm mô tả...",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":

@@ -174,6 +174,7 @@ export function readStoredBoards(): MetricsBoardDefinition[] {
           created_at: typeof board.created_at === "number" ? board.created_at : Date.now(),
           updated_at:
             migrated || typeof board.updated_at !== "number" ? Date.now() : board.updated_at,
+          description: typeof board.description === "string" ? board.description : undefined,
         };
       })
       .filter((board): board is MetricsBoardDefinition => !!board);

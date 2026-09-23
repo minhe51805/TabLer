@@ -224,6 +224,7 @@ export interface MetricsBoardDefinition {
   widgets: MetricsWidgetDefinition[];
   created_at: number;
   updated_at: number;
+  description?: string;
 }
 
 // ER Diagram types

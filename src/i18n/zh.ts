@@ -394,6 +394,7 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "metrics.boardExportConfirm": "下载此面板为JSON？",
   "metrics.widget.nextRefresh": "下次自动刷新",
   "metrics.widget.errorDetails": "查询详情",
+  "metrics.boardDescription": "添加描述...",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover": "提供者“{{failed}}”出现故障，正在切换到提供者“{{next}}”，请稍候。",

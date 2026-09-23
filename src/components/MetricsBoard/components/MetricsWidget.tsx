@@ -153,6 +153,23 @@ export function MetricsWidgetCard({
     };
   }, [runWidgetQuery, widget.refresh_seconds]);
 
+  // Countdown to next auto-refresh.
+  const [secondsUntilRefresh, setSecondsUntilRefresh] = useState<number | null>(null);
+  useEffect(() => {
+    if (widget.refresh_seconds <= 0 || !state.lastRunAt) {
+      setSecondsUntilRefresh(null);
+      return;
+    }
+    const tick = () => {
+      const elapsed = Math.floor((Date.now() - state.lastRunAt!) / 1000);
+      const remaining = Math.max(0, widget.refresh_seconds - elapsed);
+      setSecondsUntilRefresh(remaining);
+    };
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [widget.refresh_seconds, state.lastRunAt]);
+
   // Board-level "refresh all" — re-run when the token bumps.
   const prevRefreshTokenRef = useRef(refreshToken);
   useEffect(() => {
@@ -506,6 +523,11 @@ export function MetricsWidgetCard({
               title={new Date(state.lastRunAt).toLocaleString()}
             >
               {formatRelativeTime(state.lastRunAt)}
+            </span>
+          ) : null}
+          {secondsUntilRefresh !== null && secondsUntilRefresh > 0 ? (
+            <span className="metrics-widget-foot-countdown" title={t("metrics.widget.nextRefresh")}>
+              {secondsUntilRefresh}s
             </span>
           ) : null}
         </div>

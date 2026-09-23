@@ -316,3 +316,9 @@
   padding: 1px 4px;
   border-radius: 4px;
 }
+.metrics-widget-foot-countdown {
+  font-size: 9px;
+  color: var(--accent, #22d3ee);
+  font-weight: 600;
+  white-space: nowrap;
+}

@@ -374,6 +374,7 @@ export const en = {
   "metrics.boardAutoArrange": "Auto-arrange",
   "metrics.boardAutoArrangeDesc": "Compact widgets into a 3-column grid",
   "metrics.boardExportConfirm": "Download this board as JSON?",
+  "metrics.widget.nextRefresh": "Next auto-refresh in",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "metrics.context.add": "Add",

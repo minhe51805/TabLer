@@ -7,10 +7,12 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Trash2,
   TriangleAlert,
   X,
 } from "lucide-react";
 import { invokeMutation } from "../../utils/tauri-utils";
+import { requestAppConfirmation } from "../../stores/confirmStore";
 import { getLinkedWorkspaceDir } from "../../hooks/useLinkedFolders";
 import { useSkillUsageStore } from "../../stores/skillUsageStore";
 import { useSkillPrefsStore } from "../../stores/skillPrefsStore";
@@ -319,6 +321,37 @@ export function AISkillsManagerModal({ open, language, onClose }: AISkillsManage
       setError(String(err));
     }
   }, [t]);
+
+  /**
+   * Delete the selected global skill after an explicit confirm. Workspace
+   * skills are never offered — they are files inside the user's own repo.
+   * The roster re-reads from disk afterwards rather than trusting local state.
+   */
+  const handleDeleteSelected = useCallback(async () => {
+    if (!selectedRow || selectedRow.source !== WRITABLE_SKILL_SOURCE || draftBusy) return;
+    const name = selectedRow.name;
+    const confirmed = await requestAppConfirmation({
+      title: t(`Xóa skill "${name}"?`, `Delete skill "${name}"?`),
+      message: t(
+        `Thư mục skills/${name} sẽ bị xóa vĩnh viễn, gồm SKILL.md và mọi references/scripts đi kèm. Skill đã tắt vẫn chiếm chỗ trong catalog cho tới khi bị xóa.`,
+        `The skills/${name} folder will be permanently deleted, including SKILL.md and any bundled references/scripts. A disabled skill still sits in the catalog until it is deleted.`,
+      ),
+      confirmText: t("Xóa vĩnh viễn", "Delete permanently"),
+      cancelText: t("Giữ lại", "Keep it"),
+    });
+    if (!confirmed) return;
+    setDraftBusy(true);
+    try {
+      await invokeMutation("delete_ai_skill", { name });
+      setNotice(t(`Đã xóa skill "${name}".`, `Deleted skill "${name}".`));
+      setSelectedName(null);
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setDraftBusy(false);
+    }
+  }, [selectedRow, draftBusy, refresh, t]);
 
   if (!open) return null;
 
@@ -766,6 +799,23 @@ export function AISkillsManagerModal({ open, language, onClose }: AISkillsManage
                             <Pencil className="w-3.5 h-3.5" />
                           )}
                           {t("Sửa", "Edit")}
+                        </button>
+                        <button
+                          type="button"
+                          className="ai-skills-manager-btn is-ghost is-small"
+                          onClick={() => void handleDeleteSelected()}
+                          disabled={!canEditSelected || draftBusy}
+                          title={
+                            canEditSelected
+                              ? t("Xóa skill này vĩnh viễn", "Delete this skill permanently")
+                              : t(
+                                  "Skill thuộc workspace — xóa thư mục trong repo của bạn.",
+                                  "Workspace skill — delete the folder in your repository.",
+                                )
+                          }
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          {t("Xóa", "Delete")}
                         </button>
                         <button
                           type="button"

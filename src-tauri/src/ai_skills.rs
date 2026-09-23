@@ -949,6 +949,31 @@ pub fn update_ai_skill(
     Ok(skill_dir.to_string_lossy().to_string())
 }
 
+/// Delete a **global** Agent Skill: removes `<data_dir>/skills/<name>/`
+/// entirely — SKILL.md plus any references/scripts the bundle carries.
+///
+/// Same containment contract as the update path: the name is validated and the
+/// canonical directory must live under the global skills root, so a symlinked
+/// or traversal-named entry cannot delete outside it. Workspace skills are out
+/// of scope — they are files inside the user's own repository, and the app
+/// must not delete project files it did not author.
+#[tauri::command]
+pub fn delete_ai_skill(name: String) -> Result<(), String> {
+    let name = validate_skill_name(&name)?;
+    let data_dir = resolve_data_dir().map_err(|error| error.to_string())?;
+    let skills_root = data_dir.join("skills");
+    let skill_dir = skills_root.join(&name);
+    let (Ok(canonical_root), Ok(canonical_dir)) =
+        (skills_root.canonicalize(), skill_dir.canonicalize())
+    else {
+        return Err(format!("Skill '{name}' was not found."));
+    };
+    if !canonical_dir.starts_with(&canonical_root) {
+        return Err(format!("Skill '{name}' was not found."));
+    }
+    std::fs::remove_dir_all(&canonical_dir).map_err(|error| error.to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

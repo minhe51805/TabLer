@@ -465,6 +465,7 @@ pub fn run() {
             ai_skills::ai_skills_directory,
             ai_skills::create_ai_skill,
             ai_skills::update_ai_skill,
+            ai_skills::delete_ai_skill,
             // Built-in skill pack: seed on demand / restore shipped content.
             ai_skill_seed::seed_ai_builtin_skills,
             ai_skill_seed::reset_ai_builtin_skills,

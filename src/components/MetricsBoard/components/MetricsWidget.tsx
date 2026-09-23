@@ -11,12 +11,7 @@ import {
   METRICS_DRAG_HOLD_MS,
   validateMetricsQuery,
 } from "../utils/query-builder";
-import {
-  ChartBars,
-  ChartLine,
-  ChartPie,
-  ChartRadial,
-} from "../utils/chart-renderer";
+import { ChartBars, ChartLine, ChartPie, ChartRadial } from "../utils/chart-renderer";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 
 // ---------------------------------------------------------------------------
@@ -46,6 +41,7 @@ interface MetricsWidgetCardProps {
   resizing: boolean;
   onDragStart: (clientX: number, clientY: number) => void;
   onResizeStart: (clientX: number, clientY: number) => void;
+  onContextMenu: (widgetId: string, clientX: number, clientY: number) => void;
 }
 
 export function MetricsWidgetCard({
@@ -60,6 +56,7 @@ export function MetricsWidgetCard({
   resizing,
   onDragStart,
   onResizeStart,
+  onContextMenu,
 }: MetricsWidgetCardProps) {
   const { t } = useI18n();
   const [state, setState] = useState<WidgetRunState>({
@@ -97,10 +94,7 @@ export function MetricsWidgetCard({
     setState((prev) => ({ ...prev, loading: true, error: null }));
 
     try {
-      const result = await executeMetricsQuery(
-        connectionId,
-        validation.statement,
-      );
+      const result = await executeMetricsQuery(connectionId, validation.statement);
 
       if (requestIdRef.current !== requestId) return;
       setState({
@@ -148,25 +142,16 @@ export function MetricsWidgetCard({
 
   const series = useMemo(() => getSeries(state.result), [state.result]);
   const metric = useMemo(() => getMetricValue(state.result), [state.result]);
-  const validation = useMemo(
-    () => validateMetricsQuery(widget.query),
-    [widget.query],
-  );
+  const validation = useMemo(() => validateMetricsQuery(widget.query), [widget.query]);
   const widgetLibraryItem = getWidgetLibraryItem(widget.type);
 
   const content = (() => {
     if (state.loading && !state.result) {
-      return (
-        <div className="metrics-widget-empty">
-          {t("metrics.widget.loading")}
-        </div>
-      );
+      return <div className="metrics-widget-empty">{t("metrics.widget.loading")}</div>;
     }
 
     if (!validation.ok) {
-      return (
-        <div className="metrics-widget-empty error">{validation.error}</div>
-      );
+      return <div className="metrics-widget-empty error">{validation.error}</div>;
     }
 
     if (state.error) {
@@ -174,9 +159,7 @@ export function MetricsWidgetCard({
     }
 
     if (!state.result || state.result.rows.length === 0) {
-      return (
-        <div className="metrics-widget-empty">{t("metrics.widget.noData")}</div>
-      );
+      return <div className="metrics-widget-empty">{t("metrics.widget.noData")}</div>;
     }
 
     if (widget.type === "scoreboard") {
@@ -203,9 +186,7 @@ export function MetricsWidgetCard({
               {state.result.rows.slice(0, 5).map((row, rowIndex) => (
                 <tr key={rowIndex}>
                   {row.slice(0, 4).map((cell, cellIndex) => (
-                    <td key={cellIndex}>
-                      {cell === null ? "NULL" : String(cell)}
-                    </td>
+                    <td key={cellIndex}>{cell === null ? "NULL" : String(cell)}</td>
                   ))}
                 </tr>
               ))}
@@ -216,11 +197,7 @@ export function MetricsWidgetCard({
     }
 
     if (series.length === 0) {
-      return (
-        <div className="metrics-widget-empty">
-          {t("metrics.widget.queryNeedsSeries")}
-        </div>
-      );
+      return <div className="metrics-widget-empty">{t("metrics.widget.queryNeedsSeries")}</div>;
     }
 
     if (widget.type === "bar") {
@@ -306,6 +283,11 @@ export function MetricsWidgetCard({
       className={`metrics-widget-card ${selected ? "selected" : ""} ${dragging ? "dragging" : ""} ${resizing ? "resizing" : ""}`}
       style={layoutStyle}
       onPointerDown={beginCardHoldDrag}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onContextMenu(widget.id, event.clientX, event.clientY);
+      }}
       onClick={() => {
         if (suppressClickRef.current) {
           suppressClickRef.current = false;
@@ -323,12 +305,8 @@ export function MetricsWidgetCard({
       <div className="metrics-widget-card-head">
         <div className="metrics-widget-card-head-main">
           <div className="metrics-widget-card-title-wrap">
-            <span className="metrics-widget-card-type">
-              {widgetLibraryItem.label}
-            </span>
-            <strong className="metrics-widget-card-title">
-              {widget.title}
-            </strong>
+            <span className="metrics-widget-card-type">{widgetLibraryItem.label}</span>
+            <strong className="metrics-widget-card-title">{widget.title}</strong>
           </div>
         </div>
         <button
@@ -341,9 +319,7 @@ export function MetricsWidgetCard({
           }}
           title={t("metrics.widget.refresh")}
         >
-          <RefreshCcw
-            className={`w-3.5 h-3.5 ${state.loading ? "animate-spin" : ""}`}
-          />
+          <RefreshCcw className={`w-3.5 h-3.5 ${state.loading ? "animate-spin" : ""}`} />
         </button>
       </div>
 

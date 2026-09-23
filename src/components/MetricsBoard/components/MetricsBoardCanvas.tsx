@@ -10,6 +10,8 @@ import { useI18n } from "../../../i18n";
 import { getWidgetLibrary } from "../utils/query-builder";
 import { MetricsWidgetCard } from "./MetricsWidget";
 import { MetricsEditor } from "./MetricsEditor";
+import { WidgetContextMenu } from "./WidgetContextMenu";
+import "../../../styles/metrics-tools.css";
 
 interface CanvasContextMenuState {
   left: number;
@@ -91,10 +93,31 @@ interface Props {
     state:
       | CanvasContextMenuState
       | null
-      | ((
-          prev: CanvasContextMenuState | null,
-        ) => CanvasContextMenuState | null),
+      | ((prev: CanvasContextMenuState | null) => CanvasContextMenuState | null),
   ) => void;
+  widgetContextMenu: {
+    widgetId: string;
+    left: number;
+    top: number;
+    submenu: "type" | "refresh" | null;
+  } | null;
+  setWidgetContextMenu: (
+    state: {
+      widgetId: string;
+      left: number;
+      top: number;
+      submenu: "type" | "refresh" | null;
+    } | null,
+  ) => void;
+  openWidgetContextMenu: (widgetId: string, clientX: number, clientY: number) => void;
+  updateWidgetById: (widgetId: string, updates: Partial<MetricsWidgetDefinition>) => void;
+  duplicateWidget: (widgetId: string) => void;
+  deleteWidgetWithUndo: (widgetId: string) => void;
+  undoDelete: { widget: MetricsWidgetDefinition; expiresAt: number } | null;
+  onUndoDelete: () => void;
+  onDismissUndo: () => void;
+  setEditingWidgetId: (id: string | null) => void;
+  setActiveWidgetId: (id: string | null) => void;
 }
 
 export function MetricsBoardCanvas({
@@ -123,6 +146,17 @@ export function MetricsBoardCanvas({
   deleteSelectedWidget,
   widgetEditorLayout,
   setCanvasContextMenu,
+  widgetContextMenu,
+  setWidgetContextMenu,
+  openWidgetContextMenu,
+  updateWidgetById,
+  duplicateWidget,
+  deleteWidgetWithUndo,
+  undoDelete,
+  onUndoDelete,
+  onDismissUndo,
+  setEditingWidgetId,
+  setActiveWidgetId,
 }: Props) {
   const { t } = useI18n();
 
@@ -149,14 +183,57 @@ export function MetricsBoardCanvas({
               resizing={resizeState?.widgetId === widget.id}
               layoutStyle={getWidgetLayoutStyle(widget)}
               onSelect={() => handleWidgetSelection(widget.id)}
-              onDragStart={(clientX, clientY) =>
-                handleWidgetDragStart(widget, clientX, clientY)
-              }
+              onDragStart={(clientX, clientY) => handleWidgetDragStart(widget, clientX, clientY)}
               onResizeStart={(clientX, clientY) =>
                 handleWidgetResizeStart(widget, clientX, clientY)
               }
+              onContextMenu={openWidgetContextMenu}
             />
           ))}
+
+          {widgetContextMenu ? (
+            <WidgetContextMenu
+              menu={widgetContextMenu}
+              widget={activeBoard?.widgets.find((w) => w.id === widgetContextMenu.widgetId) ?? null}
+              onClose={() => setWidgetContextMenu(null)}
+              onSubmenu={(submenu) =>
+                setWidgetContextMenu(widgetContextMenu ? { ...widgetContextMenu, submenu } : null)
+              }
+              onEdit={(id) => {
+                setActiveWidgetId(id);
+                setEditingWidgetId(id);
+                setWidgetContextMenu(null);
+              }}
+              onDuplicate={(id) => {
+                duplicateWidget(id);
+                setWidgetContextMenu(null);
+              }}
+              onChangeType={(id, type) => {
+                updateWidgetById(id, { type });
+                setWidgetContextMenu(null);
+              }}
+              onChangeRefresh={(id, seconds) => {
+                updateWidgetById(id, { refresh_seconds: seconds });
+                setWidgetContextMenu(null);
+              }}
+              onDelete={(id) => {
+                deleteWidgetWithUndo(id);
+                setWidgetContextMenu(null);
+              }}
+            />
+          ) : null}
+
+          {undoDelete ? (
+            <div className="metrics-undo-toast" role="status">
+              <span>{t("metrics.widget.deleted")}</span>
+              <button type="button" onClick={onUndoDelete}>
+                {t("metrics.widget.undo")}
+              </button>
+              <button type="button" aria-label={t("common.close")} onClick={onDismissUndo}>
+                ×
+              </button>
+            </div>
+          ) : null}
         </div>
 
         {canvasContextMenu ? (
@@ -186,9 +263,7 @@ export function MetricsBoardCanvas({
                 className="metrics-board-context-button"
                 onClick={() =>
                   setCanvasContextMenu((current) =>
-                    current
-                      ? { ...current, submenuOpen: !current.submenuOpen }
-                      : current,
+                    current ? { ...current, submenuOpen: !current.submenuOpen } : current,
                   )
                 }
               >

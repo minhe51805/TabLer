@@ -97,6 +97,17 @@ type ResizeState = {
   previewHeightPx: number;
 };
 
+function formatRelativeTime(timestamp: number): string {
+  const seconds = Math.floor((Date.now() - timestamp) / 1000);
+  if (seconds < 5) return "just now";
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -132,6 +143,11 @@ export function MetricsBoard({
     widget: MetricsWidgetDefinition;
     expiresAt: number;
   } | null>(null);
+  const [lastRefreshAt, setLastRefreshAt] = useState<number | null>(null);
+
+  // Track the most recent widget refresh across the board.
+  const handleWidgetRefreshed = useCallback(() => setLastRefreshAt(Date.now()), []);
+
   const [dragState, setDragState] = useState<DragState | null>(null);
   const [resizeState, setResizeState] = useState<ResizeState | null>(null);
   const [canvasWidth, setCanvasWidth] = useState(1080);
@@ -1070,6 +1086,14 @@ export function MetricsBoard({
               {displayConnectionLabel}
               {displayDatabaseLabel ? ` / ${displayDatabaseLabel}` : ""}
             </span>
+            {activeBoard && (
+              <span className="metrics-board-topbar-stats">
+                {activeBoard.widgets.length} {t("metrics.widgets")}
+                {lastRefreshAt
+                  ? ` · ${t("metrics.lastRefresh")} ${formatRelativeTime(lastRefreshAt)}`
+                  : ""}
+              </span>
+            )}
           </div>
 
           <div className="metrics-board-topbar-actions">
@@ -1281,6 +1305,7 @@ export function MetricsBoard({
           onOpenQuery={openWidgetQuery}
           onFullscreen={(widget) => setFullscreenWidgetId(widget.id)}
           onDrillDown={drillDownWidget}
+          onWidgetRefreshed={handleWidgetRefreshed}
           refreshToken={refreshToken}
           activeBoard={activeBoard}
           activeWidgetId={activeWidgetId}
@@ -1349,6 +1374,7 @@ export function MetricsBoard({
                   onContextMenu={() => undefined}
                   onFullscreen={() => setFullscreenWidgetId(null)}
                   onDrillDown={drillDownWidget}
+                  onWidgetRefreshed={handleWidgetRefreshed}
                   refreshToken={refreshToken}
                 />
               );

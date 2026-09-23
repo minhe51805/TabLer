@@ -60,6 +60,7 @@ interface Props {
   onFullscreen: (widget: MetricsWidgetDefinition) => void;
   onDrillDown: (widget: MetricsWidgetDefinition, label: string, result: QueryResult) => void;
   refreshToken: number;
+  onWidgetRefreshed: () => void;
   activeBoard: MetricsBoardDefinition | null;
   activeWidgetId: string | null;
   editingWidget: MetricsWidgetDefinition | null;
@@ -130,6 +131,7 @@ export function MetricsBoardCanvas({
   onFullscreen,
   onDrillDown,
   refreshToken,
+  onWidgetRefreshed,
   activeBoard,
   activeWidgetId,
   editingWidget,
@@ -197,6 +199,7 @@ export function MetricsBoardCanvas({
               onFullscreen={onFullscreen}
               onDrillDown={onDrillDown}
               refreshToken={refreshToken}
+              onWidgetRefreshed={onWidgetRefreshed}
             />
           ))}
 

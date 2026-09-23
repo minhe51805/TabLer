@@ -363,6 +363,8 @@ export const en = {
   "metrics.editor.previewResult": "{{rows}} rows",
   "metrics.editor.note": "Note",
   "metrics.editor.notePlaceholder": "Optional description…",
+  "metrics.widgets": "widgets",
+  "metrics.lastRefresh": "updated",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "metrics.context.add": "Add",

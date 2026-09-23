@@ -47,6 +47,7 @@ interface MetricsWidgetCardProps {
   refreshToken: number;
   onFullscreen: (widget: MetricsWidgetDefinition) => void;
   onDrillDown: (widget: MetricsWidgetDefinition, label: string, result: QueryResult) => void;
+  onWidgetRefreshed: () => void;
 }
 
 export function MetricsWidgetCard({
@@ -65,6 +66,7 @@ export function MetricsWidgetCard({
   refreshToken,
   onFullscreen,
   onDrillDown,
+  onWidgetRefreshed,
 }: MetricsWidgetCardProps) {
   const { t } = useI18n();
   const [state, setState] = useState<WidgetRunState>({
@@ -112,6 +114,7 @@ export function MetricsWidgetCard({
         error: null,
         lastRunAt: Date.now(),
       });
+      onWidgetRefreshed();
     } catch (error) {
       if (requestIdRef.current !== requestId) return;
       setState({
@@ -131,7 +134,7 @@ export function MetricsWidgetCard({
         }, 0);
       }
     }
-  }, [connectionId, widget.query]);
+  }, [connectionId, widget.query, onWidgetRefreshed]);
 
   useEffect(() => {
     void runWidgetQuery();

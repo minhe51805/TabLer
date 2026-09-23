@@ -390,6 +390,8 @@ export const ko: Record<keyof typeof en, string> = {
   "metrics.editor.previewResult": "{{rows}}행",
   "metrics.editor.note": "메모",
   "metrics.editor.notePlaceholder": "선택적 설명…",
+  "metrics.widgets": "위젯",
+  "metrics.lastRefresh": "업데이트",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":

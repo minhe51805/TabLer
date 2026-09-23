@@ -3627,10 +3627,18 @@ a {
 
 .neu .site-header.is-docked .header-actions {
   flex-direction: column;
+  align-items: center;
 }
 
 .neu .site-header.is-docked .lang-toggle {
   flex-direction: column;
+  align-items: stretch;
+}
+
+.neu .site-header.is-docked .lang-option {
+  width: 38px;
+  padding: 7px 0;
+  text-align: center;
 }
 
 .neu .site-header.is-docked .lang-option + .lang-option {
@@ -3646,6 +3654,7 @@ a {
   width: 38px;
   height: 38px;
   padding: 0;
+  margin-left: 0;
   justify-content: center;
 }
 

@@ -189,6 +189,12 @@ export function buildAIRequestFailureBubble(
     (bubble.agentSteps?.some((step) => step.action !== "plan" && step.status !== "running") ??
       false);
 
+  // A step still marked "running" when the run died would spin forever —
+  // settle it as an error so the trace reads as finished-with-failure.
+  const settledSteps = bubble.agentSteps?.map((step) =>
+    step.status === "running" ? { ...step, status: "error" as const } : step,
+  );
+
   if (hasPartialEvidence) {
     return {
       ...bubble,
@@ -201,6 +207,7 @@ export function buildAIRequestFailureBubble(
       detail: partialText ? `${partialText}\n\n---\n\n${message}` : message,
       sql: undefined,
       risk: undefined,
+      agentSteps: settledSteps,
       requestErrorCode: wasCancelled ? "cancelled" : requestError.code,
       retryable: true,
       autoDismissAt: undefined,
@@ -218,7 +225,7 @@ export function buildAIRequestFailureBubble(
       preview: message,
       detail: message,
       sql: undefined,
-      risk: undefined,
+      agentSteps: settledSteps,
       requestErrorCode: "cancelled",
       retryable: true,
       autoDismissAt: undefined,
@@ -235,7 +242,7 @@ export function buildAIRequestFailureBubble(
     preview: message,
     detail: message,
     sql: undefined,
-    risk: undefined,
+    agentSteps: settledSteps,
     requestErrorCode: requestError.code,
     retryable: requestError.retryable,
     autoDismissAt: undefined,
@@ -893,6 +900,10 @@ export function useAIAssistantGeneration({
                   reasoning: result.reasoning,
                   askUserOptions: result.askUserOptions ?? undefined,
                   failoverNotes: result.failoverNotes,
+                  // Replace the live progress snapshot with the finalized
+                  // steps: the last publish carries a pending "think" step
+                  // still marked running, which would spin forever.
+                  agentSteps: result.agentSteps,
                   tokensUsed: result.tokensUsed,
                   modelUsed: result.modelUsed,
                   runTrace: result.runTrace,

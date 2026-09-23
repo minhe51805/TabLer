@@ -388,6 +388,10 @@ export const tr: Record<keyof typeof en, string> = {
   "metrics.boardImportDesc": "JSON'dan pano yükle",
   "metrics.boardRefreshAll": "Tümünü yenile",
   "metrics.boardRefreshAllDesc": "Tüm widget sorgularını yeniden çalıştır",
+  "metrics.editor.preview": "Önizleme",
+  "metrics.editor.previewing": "Çalışıyor…",
+  "metrics.editor.history": "Geçmiş",
+  "metrics.editor.previewResult": "{{rows}} satır",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":

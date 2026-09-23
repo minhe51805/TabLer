@@ -309,6 +309,7 @@ export function MetricsBoardCanvas({
 
         {editingWidget && widgetEditorLayout ? (
           <MetricsEditor
+            connectionId={connectionId}
             editingWidget={editingWidget}
             widgetEditorLayout={widgetEditorLayout}
             onQueryDraftChange={setWidgetQueryDraft}

@@ -122,3 +122,99 @@
   letter-spacing: 0.06em;
   color: var(--text-tertiary, #94a3b8);
 }
+.metrics-editor-tools {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+}
+
+.metrics-editor-history {
+  margin-top: 4px;
+  max-height: 120px;
+  overflow-y: auto;
+  border: 1px solid var(--border-subtle, rgba(148, 163, 184, 0.2));
+  border-radius: 8px;
+  background: var(--bg-secondary, #1e293b);
+}
+
+.metrics-editor-history-item {
+  display: block;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: none;
+  color: var(--text-secondary, #cbd5e1);
+  font-size: 11px;
+  font-family: "JetBrains Mono", Consolas, monospace;
+  text-align: left;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.metrics-editor-history-item:hover {
+  background: var(--bg-hover, rgba(148, 163, 184, 0.12));
+}
+
+.metrics-editor-preview {
+  margin-top: 6px;
+  border: 1px solid var(--border-subtle, rgba(148, 163, 184, 0.2));
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.metrics-editor-preview-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px;
+  background: var(--bg-secondary, #1e293b);
+  font-size: 11px;
+  color: var(--text-secondary, #cbd5e1);
+}
+
+.metrics-editor-preview-head button {
+  background: none;
+  border: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 2px;
+}
+
+.metrics-editor-preview-table {
+  max-height: 140px;
+  overflow: auto;
+}
+
+.metrics-editor-preview-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.metrics-editor-preview-table th,
+.metrics-editor-preview-table td {
+  padding: 4px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--border-subtle, rgba(148, 163, 184, 0.12));
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 120px;
+}
+
+.metrics-editor-preview-table th {
+  background: var(--bg-tertiary, #0f172a);
+  font-weight: 600;
+  color: var(--text-tertiary, #94a3b8);
+}
+
+.metrics-editor-preview-error {
+  margin-top: 6px;
+  padding: 6px 10px;
+  border-radius: 8px;
+  background: rgba(239, 68, 68, 0.12);
+  color: #fca5a5;
+  font-size: 11px;
+}

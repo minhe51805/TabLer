@@ -1,14 +1,19 @@
 import Editor, { type OnMount } from "@monaco-editor/react";
 import "../../../utils/monaco-bundle";
 import type * as Monaco from "monaco-editor";
-import { Trash2 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { History, Play, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useConnectionStore } from "../../../stores/connectionStore";
 import type { MetricsWidgetDefinition, MetricsWidgetType } from "../../../types";
 import {
+  executeMetricsQuery,
+  formatExecutionError,
   getMetricsRefreshSelectOptions,
   getMetricsSizeSelectOptions,
   getWidgetLibrary,
+  pushQueryHistory,
+  readQueryHistory,
+  validateMetricsQuery,
 } from "../utils/query-builder";
 import { MetricsCompactSelect } from "./MetricsCompactSelect";
 import { useI18n } from "../../../i18n";
@@ -19,6 +24,7 @@ import { useI18n } from "../../../i18n";
 
 export interface MetricsEditorProps {
   editingWidget: MetricsWidgetDefinition;
+  connectionId: string;
   widgetEditorLayout: {
     left: number;
     top: number;
@@ -38,6 +44,7 @@ export interface MetricsEditorProps {
 
 export function MetricsEditor({
   editingWidget,
+  connectionId,
   widgetEditorLayout,
   onQueryDraftChange,
   onUpdateWidget,
@@ -49,6 +56,37 @@ export function MetricsEditor({
   const tables = useConnectionStore((state) => state.tables);
   const metricsRefreshOptions = getMetricsRefreshSelectOptions();
   const metricsSizeOptions = getMetricsSizeSelectOptions();
+  const [preview, setPreview] = useState<{
+    loading: boolean;
+    result: { columns: string[]; rows: (string | number | boolean | null)[][] } | null;
+    error: string | null;
+  }>({ loading: false, result: null, error: null });
+  const [showHistory, setShowHistory] = useState(false);
+  const history = readQueryHistory(connectionId);
+
+  const runPreview = useCallback(async () => {
+    const query = editingWidget.query;
+    const validation = validateMetricsQuery(query);
+    if (!validation.ok) {
+      setPreview({ loading: false, result: null, error: validation.error });
+      return;
+    }
+    setPreview({ loading: true, result: null, error: null });
+    try {
+      const result = await executeMetricsQuery(connectionId, validation.statement);
+      pushQueryHistory(connectionId, query);
+      setPreview({
+        loading: false,
+        result: {
+          columns: result.columns.map((c) => c.name),
+          rows: result.rows.slice(0, 5) as (string | number | boolean | null)[][],
+        },
+        error: null,
+      });
+    } catch (error) {
+      setPreview({ loading: false, result: null, error: formatExecutionError(error) });
+    }
+  }, [connectionId, editingWidget.query]);
 
   useEffect(() => {
     onQueryDraftChange(editingWidget?.query ?? "");
@@ -76,10 +114,28 @@ export function MetricsEditor({
         }));
 
         const keywords = [
-          "SELECT", "FROM", "WHERE", "AND", "OR", "ORDER BY", "GROUP BY",
-          "LIMIT", "JOIN", "LEFT JOIN", "INNER JOIN", "ON", "AS",
-          "INSERT INTO", "VALUES", "UPDATE", "SET", "DELETE FROM",
-          "WITH", "SHOW", "DESCRIBE", "EXPLAIN",
+          "SELECT",
+          "FROM",
+          "WHERE",
+          "AND",
+          "OR",
+          "ORDER BY",
+          "GROUP BY",
+          "LIMIT",
+          "JOIN",
+          "LEFT JOIN",
+          "INNER JOIN",
+          "ON",
+          "AS",
+          "INSERT INTO",
+          "VALUES",
+          "UPDATE",
+          "SET",
+          "DELETE FROM",
+          "WITH",
+          "SHOW",
+          "DESCRIBE",
+          "EXPLAIN",
         ];
 
         const keywordSuggestions = keywords.map((keyword) => ({
@@ -220,6 +276,84 @@ export function MetricsEditor({
         </div>
       </div>
 
+      <div className="metrics-editor-tools">
+        <button
+          type="button"
+          className="metrics-board-btn"
+          onClick={() => void runPreview()}
+          disabled={preview.loading}
+        >
+          <Play className="w-3.5 h-3.5" />
+          <span>
+            {preview.loading ? t("metrics.editor.previewing") : t("metrics.editor.preview")}
+          </span>
+        </button>
+        {history.length > 0 && (
+          <button
+            type="button"
+            className="metrics-board-btn"
+            onClick={() => setShowHistory((v) => !v)}
+          >
+            <History className="w-3.5 h-3.5" />
+            <span>{t("metrics.editor.history")}</span>
+          </button>
+        )}
+      </div>
+
+      {showHistory && (
+        <div className="metrics-editor-history">
+          {history.map((q, i) => (
+            <button
+              key={i}
+              type="button"
+              className="metrics-editor-history-item"
+              onClick={() => {
+                onQueryDraftChange(q);
+                setShowHistory(false);
+              }}
+              title={q}
+            >
+              {q.length > 80 ? q.slice(0, 80) + "…" : q}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {preview.error && <div className="metrics-editor-preview-error">{preview.error}</div>}
+      {preview.result && (
+        <div className="metrics-editor-preview">
+          <div className="metrics-editor-preview-head">
+            <span>{t("metrics.editor.previewResult", { rows: preview.result.rows.length })}</span>
+            <button
+              type="button"
+              onClick={() => setPreview({ loading: false, result: null, error: null })}
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+          <div className="metrics-editor-preview-table">
+            <table>
+              <thead>
+                <tr>
+                  {preview.result.columns.map((c) => (
+                    <th key={c}>{c}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {preview.result.rows.map((row, i) => (
+                  <tr key={i}>
+                    {row.map((cell, j) => (
+                      <td key={j}>{cell === null ? "NULL" : String(cell)}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       <div className="metrics-board-field-grid">
         <label className="metrics-board-field">
           <span>{t("metrics.editor.refreshRate")}</span>
@@ -245,24 +379,14 @@ export function MetricsEditor({
         </label>
       </div>
 
-      <div className="metrics-board-help compact">
-        {t("metrics.editor.help")}
-      </div>
+      <div className="metrics-board-help compact">{t("metrics.editor.help")}</div>
 
       <div className="metrics-widget-editor-actions">
-        <button
-          type="button"
-          className="metrics-board-btn danger"
-          onClick={onDelete}
-        >
+        <button type="button" className="metrics-board-btn danger" onClick={onDelete}>
           <Trash2 className="w-3.5 h-3.5" />
           <span>{t("common.delete")}</span>
         </button>
-        <button
-          type="button"
-          className="metrics-board-btn"
-          onClick={onClearSelection}
-        >
+        <button type="button" className="metrics-board-btn" onClick={onClearSelection}>
           <span>{t("common.ok")}</span>
         </button>
       </div>

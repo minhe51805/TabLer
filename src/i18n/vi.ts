@@ -383,6 +383,10 @@ export const vi: Record<keyof typeof en, string> = {
   "metrics.boardImportDesc": "Tải bảng từ file JSON",
   "metrics.boardRefreshAll": "Làm mới tất cả",
   "metrics.boardRefreshAllDesc": "Chạy lại mọi widget",
+  "metrics.editor.preview": "Xem trước",
+  "metrics.editor.previewing": "Đang chạy…",
+  "metrics.editor.history": "Lịch sử",
+  "metrics.editor.previewResult": "{{rows}} dòng",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":

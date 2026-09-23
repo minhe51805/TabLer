@@ -384,6 +384,10 @@ export const ko: Record<keyof typeof en, string> = {
   "metrics.boardImportDesc": "JSON에서 보드 로드",
   "metrics.boardRefreshAll": "모두 새로고침",
   "metrics.boardRefreshAllDesc": "모든 위젯 쿼리 재실행",
+  "metrics.editor.preview": "미리보기",
+  "metrics.editor.previewing": "실행 중…",
+  "metrics.editor.history": "기록",
+  "metrics.editor.previewResult": "{{rows}}행",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":

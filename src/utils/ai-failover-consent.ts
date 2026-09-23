@@ -4,6 +4,23 @@ const STORAGE_KEY = "tabler.ai.failoverConsent";
 const CONSENT_REQUEST_EVENT = "ai-failover-consent-request";
 
 let pendingResolver: ((approved: boolean) => void) | null = null;
+let pendingTimer: number | null = null;
+
+/**
+ * How long an unanswered consent request may hold a caller. The dialog only
+ * exists while the AI panel is open, so a request that outlives this window
+ * is almost certainly one nobody can see — resolving it as denied keeps a
+ * scheduled run from starving the queue forever.
+ */
+const CONSENT_TIMEOUT_MS = 60_000;
+
+function clearPending() {
+  if (pendingTimer !== null) {
+    clearTimeout(pendingTimer);
+    pendingTimer = null;
+  }
+  pendingResolver = null;
+}
 
 export function getAIFailoverConsent(): AIFailoverConsent {
   try {
@@ -39,8 +56,16 @@ export function requestAIFailoverConsent(): Promise<boolean> {
   const current = getAIFailoverConsent();
   if (current !== "unset") return Promise.resolve(current === "approved");
   if (pendingResolver) return Promise.resolve(false);
-  return new Promise((resolve) => {
+  // Executor form: Promise.withResolvers is unavailable under the project's
+  // ES2020 lib target.
+  return new Promise<boolean>((resolve) => {
     pendingResolver = resolve;
+    pendingTimer = window.setTimeout(() => {
+      // Nobody answered in time — treat as denied without remembering, so the
+      // question can be asked again when a human is actually present.
+      clearPending();
+      resolve(false);
+    }, CONSENT_TIMEOUT_MS);
     window.dispatchEvent(new CustomEvent(CONSENT_REQUEST_EVENT));
   });
 }
@@ -48,7 +73,7 @@ export function requestAIFailoverConsent(): Promise<boolean> {
 export function resolveAIFailoverConsent(approved: boolean): void {
   setAIFailoverConsent(approved ? "approved" : "declined");
   const resolver = pendingResolver;
-  pendingResolver = null;
+  clearPending();
   resolver?.(approved);
 }
 
@@ -60,6 +85,6 @@ export function resolveAIFailoverConsent(approved: boolean): void {
  */
 export function denyPendingAIFailoverConsent(): void {
   const resolver = pendingResolver;
-  pendingResolver = null;
+  clearPending();
   resolver?.(false);
 }

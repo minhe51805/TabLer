@@ -1,4 +1,6 @@
 import { splitSqlStatements } from "../../utils/sqlStatements";
+import { classifySqlSafety } from "../../utils/sql-safety";
+import { isHighRiskStatement, isMutatingStatement } from "../SQLEditor/SQLEditorUtils";
 
 import type { ColumnDetail, ForeignKeyInfo, IndexInfo, TableStructure } from "../../types";
 
@@ -51,7 +53,7 @@ export function rankTableForPrompt(promptText: string, tableName: string): numbe
 
 export function pickRelevantTables<T extends { name: string }>(
   promptText: string,
-  tables: T[]
+  tables: T[],
 ): T[] {
   const ranked = tables
     .map((table) => ({ table, score: rankTableForPrompt(promptText, table.name) }))
@@ -71,7 +73,7 @@ export function pickRelevantTables<T extends { name: string }>(
 
 export function summarizeStructure(
   tableName: string,
-  columns: Array<{ name: string; data_type: string }>
+  columns: Array<{ name: string; data_type: string }>,
 ): string {
   if (columns.length === 0) return `Table ${tableName}`;
   const preview = columns
@@ -124,7 +126,9 @@ export function inferAISchemaCodecMode(promptText: string): AISchemaCodecMode {
     "sơ đồ",
   ];
 
-  return relationalSignals.some((signal) => normalizedPrompt.includes(signal)) ? "relational" : "core";
+  return relationalSignals.some((signal) => normalizedPrompt.includes(signal))
+    ? "relational"
+    : "core";
 }
 
 function sanitizeSchemaToken(value: string) {
@@ -149,7 +153,8 @@ function encodeDataTypeForAI(column: ColumnDetail) {
   if (/^(timestamp|datetime)/.test(normalized)) return "ts";
   if (/^(date)/.test(normalized)) return "date";
   if (/^(time)/.test(normalized)) return "time";
-  if (/^(char|varchar|nvarchar|text|longtext|mediumtext|tinytext|citext)/.test(normalized)) return "str";
+  if (/^(char|varchar|nvarchar|text|longtext|mediumtext|tinytext|citext)/.test(normalized))
+    return "str";
   if (/^(blob|binary|varbinary|bytea)/.test(normalized)) return "bin";
   return sanitizeSchemaToken(normalized || "unknown");
 }
@@ -158,7 +163,11 @@ function encodeColumnForAI(column: ColumnDetail) {
   const flags: string[] = [];
   if (column.is_primary_key) flags.push("pk");
   if (!column.is_nullable) flags.push("nn");
-  if (column.default_value !== undefined && column.default_value !== null && String(column.default_value).trim() !== "") {
+  if (
+    column.default_value !== undefined &&
+    column.default_value !== null &&
+    String(column.default_value).trim() !== ""
+  ) {
     flags.push("df");
   }
   if ((column.extra || "").toLowerCase().includes("auto_increment")) {
@@ -185,27 +194,30 @@ function encodeForeignKeyForAI(foreignKey: ForeignKeyInfo) {
 export function encodeStructureForAI(
   tableName: string,
   structure: Pick<TableStructure, "columns" | "indexes" | "foreign_keys">,
-  options: { mode?: AISchemaCodecMode } = {}
+  options: { mode?: AISchemaCodecMode } = {},
 ): string {
   const mode = options.mode || "core";
   const encodedColumns = structure.columns
     .slice(0, MAX_AI_COLUMNS_PER_SUMMARY)
     .map(encodeColumnForAI)
     .join(";");
-  const remainingColumns = structure.columns.length - Math.min(structure.columns.length, MAX_AI_COLUMNS_PER_SUMMARY);
+  const remainingColumns =
+    structure.columns.length - Math.min(structure.columns.length, MAX_AI_COLUMNS_PER_SUMMARY);
 
   const encodedIndexes = structure.indexes
     .slice(0, MAX_AI_INDEXES_PER_SUMMARY)
     .map(encodeIndexForAI)
     .join(";");
-  const remainingIndexes = structure.indexes.length - Math.min(structure.indexes.length, MAX_AI_INDEXES_PER_SUMMARY);
+  const remainingIndexes =
+    structure.indexes.length - Math.min(structure.indexes.length, MAX_AI_INDEXES_PER_SUMMARY);
 
   const encodedForeignKeys = structure.foreign_keys
     .slice(0, MAX_AI_FOREIGN_KEYS_PER_SUMMARY)
     .map(encodeForeignKeyForAI)
     .join(";");
   const remainingForeignKeys =
-    structure.foreign_keys.length - Math.min(structure.foreign_keys.length, MAX_AI_FOREIGN_KEYS_PER_SUMMARY);
+    structure.foreign_keys.length -
+    Math.min(structure.foreign_keys.length, MAX_AI_FOREIGN_KEYS_PER_SUMMARY);
 
   const parts = [
     `T:${sanitizeSchemaToken(tableName)}`,
@@ -217,20 +229,29 @@ export function encodeStructureForAI(
   }
 
   if (mode === "relational" && (encodedForeignKeys || remainingForeignKeys > 0)) {
-    parts.push(`F:[${encodedForeignKeys}${remainingForeignKeys > 0 ? `;+${remainingForeignKeys}` : ""}]`);
+    parts.push(
+      `F:[${encodedForeignKeys}${remainingForeignKeys > 0 ? `;+${remainingForeignKeys}` : ""}]`,
+    );
   }
 
   return parts.join("|");
 }
 
 export function normalizeStatement(statement: string): string {
-  return statement.replace(/^--.*$/gm, "").replace(/\/\*[\s\S]*?\*\//g, "").trim().toUpperCase();
+  return statement
+    .replace(/^--.*$/gm, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .trim()
+    .toUpperCase();
 }
 
 export function analyzeGeneratedSql(sql: string): SqlRiskAnalysis {
   const statements = splitSqlStatements(sql);
   if (statements.length === 0) {
-    return { level: "dangerous", reason: "The AI response did not contain a usable SQL statement." };
+    return {
+      level: "dangerous",
+      reason: "The AI response did not contain a usable SQL statement.",
+    };
   }
 
   let hasReviewableChange = false;
@@ -239,41 +260,74 @@ export function analyzeGeneratedSql(sql: string): SqlRiskAnalysis {
     const normalized = normalizeStatement(statement);
     if (!normalized) continue;
 
-    if (
-      normalized.startsWith("DROP ") ||
-      normalized.startsWith("TRUNCATE ") ||
-      normalized.startsWith("ALTER DATABASE") ||
-      normalized.startsWith("ALTER ROLE") ||
-      normalized.startsWith("CREATE USER") ||
-      normalized.startsWith("GRANT ") ||
-      normalized.startsWith("REVOKE ")
-    ) {
-      return { level: "dangerous", reason: "This SQL can change or remove critical database objects or permissions." };
+    // Shared classifiers cover DROP/TRUNCATE/GRANT/REVOKE, user-management
+    // DDL, WHERE-less DELETE/UPDATE, EXPLAIN ANALYZE <write>, SELECT INTO,
+    // mutating CTEs, and the full mutating-prefix list (COPY, VACUUM, CALL,
+    // DO, LOCK, ...) so this panel cannot drift from the editor's guard.
+    if (isHighRiskStatement(statement)) {
+      return {
+        level: "dangerous",
+        reason:
+          "This SQL can change or remove critical database objects, permissions, or many rows at once.",
+      };
     }
 
-    if (normalized.startsWith("DELETE ") && !/\bWHERE\b/.test(normalized)) {
-      return { level: "dangerous", reason: "DELETE without WHERE would affect every row in the target table." };
+    if (normalized.startsWith("ALTER DATABASE") || normalized.startsWith("ALTER ROLE")) {
+      return {
+        level: "dangerous",
+        reason: "This SQL can change or remove critical database objects or permissions.",
+      };
     }
 
-    if (normalized.startsWith("UPDATE ") && !/\bWHERE\b/.test(normalized)) {
-      return { level: "dangerous", reason: "UPDATE without WHERE would affect every row in the target table." };
-    }
-
-    if (
-      normalized.startsWith("ALTER ") ||
-      normalized.startsWith("CREATE ") ||
-      normalized.startsWith("INSERT ") ||
-      normalized.startsWith("UPDATE ") ||
-      normalized.startsWith("DELETE ") ||
-      normalized.startsWith("DROP INDEX")
-    ) {
+    if (isMutatingStatement(statement)) {
       hasReviewableChange = true;
     }
   }
 
   if (hasReviewableChange) {
-    return { level: "review", reason: "This SQL changes data or schema. Review it carefully before inserting or running it." };
+    return {
+      level: "review",
+      reason:
+        "This SQL changes data or schema. Review it carefully before inserting or running it.",
+    };
   }
 
   return { level: "safe", reason: null };
+}
+
+/**
+ * `analyzeGeneratedSql` backed by the backend AST classifier: the frontend
+ * prefix scan cannot see `EXPLAIN ANALYZE <write>` or `EXPLAIN <write>` —
+ * both report "safe" and would auto-run a statement that mutates. The
+ * backend's `classify_sql_safety` is authoritative; anything it does not
+ * classify as read-only is escalated to at least "review" so it never
+ * auto-runs. A classifier failure falls back to the frontend result —
+ * never the other way around (fail-open would resurrect the auto-run hole).
+ */
+export async function analyzeGeneratedSqlWithBackend(
+  sql: string,
+  databaseType?: string | null,
+): Promise<SqlRiskAnalysis> {
+  const frontend = analyzeGeneratedSql(sql);
+  if (frontend.level === "dangerous") return frontend;
+  try {
+    const decision = await classifySqlSafety(sql, databaseType ?? null);
+    if (decision.parseError) {
+      return {
+        level: frontend.level === "safe" ? "review" : frontend.level,
+        reason: `The SQL could not be parsed by the safety classifier: ${decision.parseError}`,
+      };
+    }
+    if (!decision.readOnly) {
+      return {
+        level: frontend.level === "safe" ? "review" : frontend.level,
+        reason:
+          frontend.reason ??
+          "This SQL is not read-only (it may execute a write, e.g. EXPLAIN ANALYZE). Review it carefully before running.",
+      };
+    }
+    return frontend;
+  } catch {
+    return frontend;
+  }
 }

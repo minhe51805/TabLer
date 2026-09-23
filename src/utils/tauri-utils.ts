@@ -96,7 +96,9 @@ export function invokeWithTimeout<T>(
           finish(() => {
             reject(
               new TauriTimeoutError(
-                `${label} timed out after ${Math.round(timeoutMs / 1000)}s. The request was cancelled and can be retried.`,
+                `${label} timed out after ${Math.round(timeoutMs / 1000)}s. ` +
+                  "The app stopped waiting, but the backend may still be working on it — " +
+                  "check the result before retrying so the operation does not run twice.",
               ),
             );
           });

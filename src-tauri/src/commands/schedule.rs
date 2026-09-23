@@ -21,7 +21,7 @@ use crate::storage::schedule_storage::{
     apply_agent_run_outcome, mark_agent_task_dispatched, mark_schedule_missed,
     normalize_catch_up_policy, normalize_schedule_kind, QuerySchedule, ScheduleRunOutcome,
     ScheduleStorage, MAX_PERSISTED_ERROR_CHARS, SCHEDULE_KIND_AGENT, SCHEDULE_KIND_SQL,
-    SCHEDULE_STATUS_ERROR, SCHEDULE_STATUS_OK,
+    SCHEDULE_STATUS_DISPATCHED, SCHEDULE_STATUS_ERROR, SCHEDULE_STATUS_OK,
 };
 use serde_json::json;
 use tauri::{AppHandle, Emitter, Manager};
@@ -49,6 +49,7 @@ pub fn save_query_schedule(
     kind: Option<String>,
     prompt: Option<String>,
     catch_up_policy: Option<String>,
+    allow_data_read: Option<bool>,
 ) -> Result<QuerySchedule, String> {
     let mut storage = ScheduleStorage::new()?;
     let kind = normalize_schedule_kind(kind.as_deref())?;
@@ -67,6 +68,15 @@ pub fn save_query_schedule(
         _ => {
             if sql.trim().is_empty() {
                 return Err("A scheduled query needs a single SELECT/WITH statement.".into());
+            }
+            // Reject non-readonly SQL at SAVE time, not first run: a schedule
+            // that can never execute should not be storable (the runner
+            // re-checks the same predicate before every fire).
+            if !is_readonly_schedulable(&sql) {
+                return Err(
+                    "Only a single read-only SELECT/WITH statement can be scheduled — writes, DDL, and filesystem-access SQL are not schedulable."
+                        .into(),
+                );
             }
             (sql, None)
         }
@@ -94,6 +104,9 @@ pub fn save_query_schedule(
         sql,
         kind: kind.to_string(),
         prompt,
+        // Only agent tasks may carry the data-read consent; a SQL schedule
+        // never reads data through the agent, so the flag stays off there.
+        allow_data_read: kind == SCHEDULE_KIND_AGENT && allow_data_read.unwrap_or(false),
         connection_id,
         database,
         interval_seconds: interval_seconds.clamp(60, MAX_INTERVAL_SECONDS),
@@ -131,6 +144,10 @@ pub fn acknowledge_missed_schedule_runs() -> Result<u64, String> {
 /// is written by the scheduler alone, so a run can never claim a result the app
 /// did not observe. SQL-kind rows are refused: they are reported by the runner
 /// itself.
+///
+/// The row must still be `dispatched`: a report for a run that never went out
+/// — or a stale report arriving after a newer dispatch already completed —
+/// must not overwrite state it did not produce.
 #[tauri::command]
 pub fn complete_agent_schedule_run(
     schedule_id: String,
@@ -146,6 +163,12 @@ pub fn complete_agent_schedule_run(
     if !schedule.is_agent_task() {
         return Err(format!(
             "Schedule {schedule_id} is a {SCHEDULE_KIND_SQL} schedule; its runs are reported by the scheduler."
+        ));
+    }
+    if schedule.last_status.as_deref() != Some(SCHEDULE_STATUS_DISPATCHED) {
+        return Err(format!(
+            "Schedule {schedule_id} is not awaiting a run report (status: {}); the report is stale and was not recorded.",
+            schedule.last_status.as_deref().unwrap_or("none")
         ));
     }
     let outcome = ScheduleRunOutcome::parse(&status)?;
@@ -281,7 +304,7 @@ async fn dispatch_agent_schedule(
         return Ok(());
     }
 
-    mark_agent_task_dispatched(&mut schedule, chrono::Utc::now().timestamp_millis());
+    mark_agent_task_dispatched(&mut schedule);
     let _ = app.emit(
         "schedule-fired",
         json!({
@@ -291,6 +314,7 @@ async fn dispatch_agent_schedule(
             "prompt": schedule.prompt,
             "connectionId": schedule.connection_id,
             "database": schedule.database,
+            "allowDataRead": schedule.allow_data_read,
             "status": schedule.last_status,
             "rows": null,
             "error": null,
@@ -324,6 +348,46 @@ async fn run_due_schedules(app: &AppHandle, db_manager: &DatabaseManager) {
             log::warn!("[Scheduler] schedule run failed: {error}");
         }
     }
+}
+
+/// Boot-time reaper: a row still `dispatched` when the app starts belongs to a
+/// run the previous session can never report (the queue lives in RAM and died
+/// with it). Left alone it would stay `dispatched` forever — `is_due` refuses
+/// to fire it and `complete_agent_schedule_run` would accept a report nobody
+/// can still send. Record the interruption as an error outcome so the row is
+/// honest and the schedule resumes on its normal cadence.
+///
+/// Runs before missed-run reconciliation so a reaped row's `last_ran_at` is
+/// fresh and is not double-counted as missed.
+fn reap_stale_dispatches() -> u64 {
+    let Ok(mut storage) = ScheduleStorage::new() else {
+        return 0;
+    };
+    let now = chrono::Utc::now().timestamp_millis();
+    let mut reaped = 0_u64;
+    for mut schedule in storage.get_all() {
+        if !schedule.is_agent_task()
+            || schedule.last_status.as_deref() != Some(SCHEDULE_STATUS_DISPATCHED)
+        {
+            continue;
+        }
+        apply_agent_run_outcome(
+            &mut schedule,
+            ScheduleRunOutcome::Error,
+            None,
+            Some(
+                "The app closed while this task was dispatched; its outcome was never reported."
+                    .into(),
+            ),
+            None,
+            now,
+        );
+        reaped += 1;
+        if let Err(error) = storage.save(schedule) {
+            log::warn!("[Scheduler] failed to reap stale dispatch: {error}");
+        }
+    }
+    reaped
 }
 
 /// Boot-time reconciliation: every occurrence that elapsed while the app was
@@ -360,9 +424,11 @@ fn reconcile_missed_schedules(app: &AppHandle) -> u64 {
 /// Spawns the minute-tick scheduler loop (called once from app setup).
 pub fn spawn_scheduler(app: AppHandle) {
     tauri::async_runtime::spawn(async move {
-        // Before the first tick: account for everything that elapsed while the
-        // app was closed, then run what is due — that first pass is also what
-        // executes `run_once` catch-ups exactly once.
+        // Before the first tick: reap dispatches the previous session can never
+        // report, then account for everything that elapsed while the app was
+        // closed, then run what is due — that first pass is also what executes
+        // `run_once` catch-ups exactly once.
+        reap_stale_dispatches();
         reconcile_missed_schedules(&app);
         {
             let db_manager = app.state::<DatabaseManager>();

@@ -1,4 +1,5 @@
 import { AI_AGENT_SEED_DOCUMENT_LIMIT } from "../ai-agent-tools";
+import { agentSqlToolBlockedMessage } from "../ai-agent-engine-gates";
 import { agentToolError } from "../agent-tool-executor-helpers";
 import { generateInsertSql } from "../../../utils/sql-generator";
 import { stringifyAgentObservation, type AgentToolModule } from "./shared";
@@ -12,12 +13,8 @@ export const tool: AgentToolModule = {
     // confirms). SQL engines get INSERT statements; document engines get an
     // insertMany script.
     const isDocument = ctx.toolAvailability?.documentPropose ?? false;
-    if (
-      ctx.toolAvailability &&
-      !ctx.toolAvailability.documentPropose &&
-      !ctx.toolAvailability.sqlWritePreview
-    ) {
-      return `Tool blocked: propose_seed_data is not available on ${ctx.toolAvailability.engineLabel}. It fills a table or collection with sample data on SQL engines and MongoDB only.`;
+    if (ctx.toolAvailability && !ctx.toolAvailability.seedPropose) {
+      return agentSqlToolBlockedMessage("propose_seed_data", ctx.toolAvailability);
     }
     const collection = typeof args?.collection === "string" ? args.collection.trim() : "";
     if (!collection) {

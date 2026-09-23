@@ -1,6 +1,20 @@
 import { useCallback, type Dispatch, type RefObject, type SetStateAction } from "react";
-import type { ConnectionConfig, QueryResult } from "../../../types";
+import type { ConnectionConfig, DatabaseType, QueryResult } from "../../../types";
+import { getCurrentAppLanguage } from "../../../i18n";
+import { quoteIdentifier } from "../../../utils/sql-generator";
+import { getDataGridCopy } from "../datagrid-copy";
 import { buildRowPrimaryKeys, type ResolvedColumn } from "./useDataGrid";
+
+/** SQL literal for a cell value — mirrors cellToSql in utils/sql-generator. */
+function sqlLiteral(value: unknown, dbType: DatabaseType | undefined): string {
+  if (value === null || value === undefined) return "NULL";
+  if (typeof value === "boolean") return value ? "TRUE" : "FALSE";
+  if (typeof value === "number") return String(value);
+  const str = typeof value === "object" ? JSON.stringify(value) : String(value);
+  // MSSQL needs the N'' prefix for unicode strings; every dialect quotes
+  // strings — an unquoted literal would silently corrupt the WHERE clause.
+  return dbType === "mssql" ? `N'${str.replace(/'/g, "''")}'` : `'${str.replace(/'/g, "''")}'`;
+}
 
 interface DataGridDragReorderParams {
   tableName?: string;
@@ -49,87 +63,125 @@ export function useDataGridDragReorder({
 
   dataGridInstanceIdRef,
 }: DataGridDragReorderParams) {
-  const handleDragStart = useCallback((rowIndex: number) => {
-    setDragSourceIndex(rowIndex);
-  }, [setDragSourceIndex]);
+  const handleDragStart = useCallback(
+    (rowIndex: number) => {
+      setDragSourceIndex(rowIndex);
+    },
+    [setDragSourceIndex],
+  );
 
-  const handleDragOver = useCallback((e: React.DragEvent, rowIndex: number) => {
-    e.preventDefault();
-    setDropTargetIndex(rowIndex);
-  }, [setDropTargetIndex]);
+  const handleDragOver = useCallback(
+    (e: React.DragEvent, rowIndex: number) => {
+      e.preventDefault();
+      setDropTargetIndex(rowIndex);
+    },
+    [setDropTargetIndex],
+  );
 
-  const handleDrop = useCallback(async (e: React.DragEvent, targetIndex: number) => {
-    e.preventDefault();
-    if (dragSourceIndex === null || dragSourceIndex === targetIndex) {
-      setDragSourceIndex(null);
-      setDropTargetIndex(null);
-      return;
-    }
-    if (!tableName || !data || primaryKeyColumns.length === 0 || !orderColumn) {
-      setError(
-        "Cannot reorder rows: table has no sequence column (e.g., row_order, sort_order, position, seq). Add one to enable drag-and-drop reordering.",
+  const handleDrop = useCallback(
+    async (e: React.DragEvent, targetIndex: number) => {
+      e.preventDefault();
+      if (dragSourceIndex === null || dragSourceIndex === targetIndex) {
+        setDragSourceIndex(null);
+        setDropTargetIndex(null);
+        return;
+      }
+      const copy = getDataGridCopy(getCurrentAppLanguage());
+      if (!tableName || !data || primaryKeyColumns.length === 0 || !orderColumn) {
+        setError(copy.reorder.noOrderColumn);
+        setDragSourceIndex(null);
+        setDropTargetIndex(null);
+        return;
+      }
+
+      const sourceRow = data.rows[dragSourceIndex];
+      const targetRow = data.rows[targetIndex];
+      if (!sourceRow || !targetRow) {
+        setDragSourceIndex(null);
+        setDropTargetIndex(null);
+        return;
+      }
+
+      const sourcePk = buildRowPrimaryKeys(sourceRow, resolvedColumns, primaryKeyColumns);
+      const targetPk = buildRowPrimaryKeys(targetRow, resolvedColumns, primaryKeyColumns);
+
+      const orderColumnIndex = resolvedColumns.findIndex((c) => c.name === orderColumn);
+      if (orderColumnIndex < 0) {
+        setError(copy.reorder.noOrderColumn);
+        setDragSourceIndex(null);
+        setDropTargetIndex(null);
+        return;
+      }
+      const sourceOrderValue = sourceRow[orderColumnIndex];
+      const targetOrderValue = targetRow[orderColumnIndex];
+
+      const connection = connections.find((c: ConnectionConfig) => c.id === connectionId);
+      const dbType = connection?.db_type;
+
+      const quotedTable = quoteIdentifier(tableName, dbType);
+      const quotedOrderColumn = quoteIdentifier(orderColumn, dbType);
+      const sourceCond = sourcePk
+        .map((pk) => `${quoteIdentifier(pk.column, dbType)} = ${sqlLiteral(pk.value, dbType)}`)
+        .join(" AND ");
+      const targetCond = targetPk
+        .map((pk) => `${quoteIdentifier(pk.column, dbType)} = ${sqlLiteral(pk.value, dbType)}`)
+        .join(" AND ");
+
+      // One atomic UPDATE: a CASE picks the swapped value per matched row, so a
+      // failure can never leave a half-swap behind (unlike the old two-statement
+      // pair, which had no transaction around it).
+      const sql =
+        `UPDATE ${quotedTable} SET ${quotedOrderColumn} = CASE ` +
+        `WHEN ${sourceCond} THEN ${sqlLiteral(targetOrderValue, dbType)} ` +
+        `WHEN ${targetCond} THEN ${sqlLiteral(sourceOrderValue, dbType)} ` +
+        `ELSE ${quotedOrderColumn} END WHERE (${sourceCond}) OR (${targetCond});`;
+
+      const confirmed = window.confirm(
+        copy.reorder.confirm(tableName, orderColumn, sourceOrderValue, targetOrderValue, sql),
       );
-      setDragSourceIndex(null);
-      setDropTargetIndex(null);
-      return;
-    }
+      if (!confirmed) {
+        setDragSourceIndex(null);
+        setDropTargetIndex(null);
+        return;
+      }
 
-    const sourceRow = data.rows[dragSourceIndex];
-    const targetRow = data.rows[targetIndex];
-    if (!sourceRow || !targetRow) {
-      setDragSourceIndex(null);
-      setDropTargetIndex(null);
-      return;
-    }
+      try {
+        await executeQuery(connectionId, sql);
 
-    // Build UPDATE statements to swap the order values
-    const sourcePk = buildRowPrimaryKeys(sourceRow, resolvedColumns, primaryKeyColumns);
-    const targetPk = buildRowPrimaryKeys(targetRow, resolvedColumns, primaryKeyColumns);
-
-    const sourceOrderValue = sourceRow[resolvedColumns.findIndex((c) => c.name === orderColumn)];
-    const targetOrderValue = targetRow[resolvedColumns.findIndex((c) => c.name === orderColumn)];
-
-    const connection = connections.find((c: ConnectionConfig) => c.id === connectionId);
-    const dbType = connection?.db_type;
-
-    const needsQuoting =
-      (dbType === "mysql" || dbType === "postgresql" || dbType === "mariadb" || dbType === "sqlite") &&
-      typeof sourceOrderValue === "string";
-
-    const fmt = (v: unknown) =>
-      v === null ? "NULL" : typeof v === "number" ? String(v) : needsQuoting ? `'${String(v).replace(/'/g, "''")}'` : String(v);
-
-    const sql1 = `UPDATE ${tableName} SET ${orderColumn} = ${fmt(targetOrderValue)} WHERE ${sourcePk.map((pk) => `${pk.column} = ${fmt(pk.value)}`).join(" AND ")};`;
-    const sql2 = `UPDATE ${tableName} SET ${orderColumn} = ${fmt(sourceOrderValue)} WHERE ${targetPk.map((pk) => `${pk.column} = ${fmt(pk.value)}`).join(" AND ")};`;
-
-    const confirmed = window.confirm(
-      `Reorder rows?\n\nSource: ${tableName}[${orderColumn}] = ${sourceOrderValue}\nTarget: ${tableName}[${orderColumn}] = ${targetOrderValue}\n\nSQL to execute:\n${sql1}\n${sql2}`,
-    );
-    if (!confirmed) {
-      setDragSourceIndex(null);
-      setDropTargetIndex(null);
-      return;
-    }
-
-    try {
-      await executeQuery(connectionId, sql1);
-      await executeQuery(connectionId, sql2);
-
-      invalidateTableCaches(connectionId, tableName, database);
-      window.dispatchEvent(
-        new CustomEvent("table-data-updated", {
-          detail: { connectionId, database, tableName, sourceId: dataGridInstanceIdRef.current },
-        }),
-      );
-      await refreshTableFromStart();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setError(`Reorder failed: ${message}`);
-    } finally {
-      setDragSourceIndex(null);
-      setDropTargetIndex(null);
-    }
-  }, [dragSourceIndex, tableName, data, primaryKeyColumns, orderColumn, resolvedColumns, connections, setDragSourceIndex, setDropTargetIndex, setError, connectionId, executeQuery, invalidateTableCaches, database, dataGridInstanceIdRef, refreshTableFromStart]);
+        invalidateTableCaches(connectionId, tableName, database);
+        window.dispatchEvent(
+          new CustomEvent("table-data-updated", {
+            detail: { connectionId, database, tableName, sourceId: dataGridInstanceIdRef.current },
+          }),
+        );
+        await refreshTableFromStart();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setError(`Reorder failed: ${message}`);
+      } finally {
+        setDragSourceIndex(null);
+        setDropTargetIndex(null);
+      }
+    },
+    [
+      dragSourceIndex,
+      tableName,
+      data,
+      primaryKeyColumns,
+      orderColumn,
+      resolvedColumns,
+      connections,
+      setDragSourceIndex,
+      setDropTargetIndex,
+      setError,
+      connectionId,
+      executeQuery,
+      invalidateTableCaches,
+      database,
+      dataGridInstanceIdRef,
+      refreshTableFromStart,
+    ],
+  );
 
   const handleDragEnd = useCallback(() => {
     setDragSourceIndex(null);

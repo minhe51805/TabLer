@@ -11,6 +11,8 @@ export interface TabBarCopy {
   moveToLeftPane: string;
   closeSplit: string;
   closeTab: string;
+  stopQuery: string;
+  stop: string;
 }
 
 const EN_COPY: TabBarCopy = {
@@ -19,6 +21,8 @@ const EN_COPY: TabBarCopy = {
   moveToLeftPane: "Move to Left Pane",
   closeSplit: "Close Split",
   closeTab: "Close",
+  stopQuery: "Stop query",
+  stop: "Stop",
 };
 
 const VI_COPY: TabBarCopy = {
@@ -27,6 +31,8 @@ const VI_COPY: TabBarCopy = {
   moveToLeftPane: "Chuyển sang khung trái",
   closeSplit: "Đóng chia đôi",
   closeTab: "Đóng",
+  stopQuery: "Dừng truy vấn",
+  stop: "Dừng",
 };
 
 const ZH_COPY: TabBarCopy = {
@@ -35,6 +41,8 @@ const ZH_COPY: TabBarCopy = {
   moveToLeftPane: "移动到左窗格",
   closeSplit: "关闭拆分",
   closeTab: "关闭",
+  stopQuery: "停止查询",
+  stop: "停止",
 };
 
 const TR_COPY: TabBarCopy = {
@@ -43,6 +51,8 @@ const TR_COPY: TabBarCopy = {
   moveToLeftPane: "Sol Bölmeye Taşı",
   closeSplit: "Bölmeyi Kapat",
   closeTab: "Kapat",
+  stopQuery: "Sorguyu durdur",
+  stop: "Durdur",
 };
 
 const KO_COPY: TabBarCopy = {
@@ -51,6 +61,8 @@ const KO_COPY: TabBarCopy = {
   moveToLeftPane: "왼쪽 창으로 이동",
   closeSplit: "분할 닫기",
   closeTab: "닫기",
+  stopQuery: "쿼리 중지",
+  stop: "중지",
 };
 
 const COPY: Record<AppLanguage, TabBarCopy> = {

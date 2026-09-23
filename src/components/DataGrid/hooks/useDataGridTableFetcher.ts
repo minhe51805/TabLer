@@ -1,14 +1,16 @@
-import { useCallback, type Dispatch, type RefObject, type SetStateAction } from "react";
+import { useCallback, useRef, type Dispatch, type RefObject, type SetStateAction } from "react";
 import type { ColumnDetail, QueryResult } from "../../../types";
 import type { DatabaseType } from "../../../types/database";
 import type { ConnectionConfig, ForeignKeyInfo } from "../../../types";
 import { resolveDataWindowColumns } from "../data-window";
 import { devLogError } from "../../../utils/logger";
+import { changeScopeKey } from "../../../stores/change-tracking-store";
 import {
   buildTableCacheKey,
   buildTableScopeKey,
   invalidateTableScopeCaches,
   isFreshCacheEntry,
+  resolveTableFilter,
   setBoundedMapEntry,
   tableCountCache,
   tablePageCache,
@@ -56,12 +58,16 @@ interface DataGridTableFetcherParams {
     },
   ) => Promise<QueryResult>;
   countRows: (connectionId: string, table: string, database?: string) => Promise<number>;
-  getTableStructure: (connectionId: string, table: string, database?: string) => Promise<{
+  getTableStructure: (
+    connectionId: string,
+    table: string,
+    database?: string,
+  ) => Promise<{
     columns: ColumnDetail[];
     foreign_keys: ForeignKeyInfo[];
   }>;
-  setColumnNameMap: (tableName: string, map: Record<number, string>) => void;
-  setDbType: (tableName: string, dbType: DatabaseType | undefined) => void;
+  setColumnNameMap: (scopeKey: string, map: Record<number, string>) => void;
+  setDbType: (scopeKey: string, dbType: DatabaseType | undefined) => void;
 
   connections: ConnectionConfig[];
 
@@ -144,45 +150,104 @@ export function useDataGridTableFetcher({
     structureRequestIdRef,
     inlineStructureCacheRef,
   } = refs;
-  const setLoadedTablePage = useCallback((page: number, result: QueryResult) => {
-    if (page === 0) loadedTablePagesRef.current.clear();
-    loadedTablePagesRef.current.set(page, result);
-    const rows: QueryResult["rows"] = [];
-    for (let index = 0; loadedTablePagesRef.current.has(index); index += 1) {
-      rows.push(...(loadedTablePagesRef.current.get(index)?.rows ?? []));
-    }
-    const canonicalColumns = loadedTablePagesRef.current.get(0)?.columns ?? [];
-    setData((previous) => ({
-      ...result,
-      columns: resolveDataWindowColumns(canonicalColumns, previous?.columns ?? [], result.columns),
-      rows,
-    }));
-    setHasMoreTableRows(result.rows.length === PAGE_SIZE);
-  }, [loadedTablePagesRef, setData, setHasMoreTableRows]);
+  // Mirror structureColumns into a ref so fetchData can read the latest set
+  // without re-creating (and re-firing) on every structure load.
+  const structureColumnsRef = useRef(structureColumns);
+  structureColumnsRef.current = structureColumns;
+  const setLoadedTablePage = useCallback(
+    (page: number, result: QueryResult) => {
+      if (page === 0) loadedTablePagesRef.current.clear();
+      loadedTablePagesRef.current.set(page, result);
+      const rows: QueryResult["rows"] = [];
+      for (let index = 0; loadedTablePagesRef.current.has(index); index += 1) {
+        rows.push(...(loadedTablePagesRef.current.get(index)?.rows ?? []));
+      }
+      const canonicalColumns = loadedTablePagesRef.current.get(0)?.columns ?? [];
+      setData((previous) => ({
+        ...result,
+        columns: resolveDataWindowColumns(
+          canonicalColumns,
+          previous?.columns ?? [],
+          result.columns,
+        ),
+        rows,
+      }));
+      setHasMoreTableRows(result.rows.length === PAGE_SIZE);
+    },
+    [loadedTablePagesRef, setData, setHasMoreTableRows],
+  );
 
-  const patchLoadedTableCell = useCallback((rowIndex: number, columnIndex: number, value: GridCellValue) => {
-    const page = Math.floor(rowIndex / PAGE_SIZE);
-    const pageRowIndex = rowIndex % PAGE_SIZE;
-    const pageResult = loadedTablePagesRef.current.get(page);
-    if (!pageResult?.rows[pageRowIndex]) return;
+  /** Register the scope-keyed column map + db type used for staged-change
+   *  SQL previews. Must run on EVERY structure path (fresh fetch AND cache
+   *  hits) or a stale map from another connection's same-named table can
+   *  misroute an update. */
+  const registerColumnMetadata = useCallback(
+    (columns: ColumnDetail[]) => {
+      if (!tableName || columns.length === 0) return;
+      const scopeKey = changeScopeKey(connectionId, database, tableName);
+      const colNameMap: Record<number, string> = {};
+      columns.forEach((col, idx) => {
+        colNameMap[idx] = col.name;
+      });
+      setColumnNameMap(scopeKey, colNameMap);
+      const connection = connections.find((c: ConnectionConfig) => c.id === connectionId);
+      setDbType(scopeKey, connection?.db_type);
+    },
+    [connectionId, connections, database, setColumnNameMap, setDbType, tableName],
+  );
 
-    const rows = pageResult.rows.map((row, index) => {
-      if (index !== pageRowIndex) return row;
-      const nextRow = [...row];
-      nextRow[columnIndex] = value;
-      return nextRow;
-    });
-    loadedTablePagesRef.current.set(page, { ...pageResult, rows });
-  }, [loadedTablePagesRef]);
+  const patchLoadedTableCell = useCallback(
+    (rowIndex: number, columnIndex: number, value: GridCellValue) => {
+      const page = Math.floor(rowIndex / PAGE_SIZE);
+      const pageRowIndex = rowIndex % PAGE_SIZE;
+      const pageResult = loadedTablePagesRef.current.get(page);
+      if (!pageResult?.rows[pageRowIndex]) return;
+
+      const rows = pageResult.rows.map((row, index) => {
+        if (index !== pageRowIndex) return row;
+        const nextRow = [...row];
+        nextRow[columnIndex] = value;
+        return nextRow;
+      });
+      loadedTablePagesRef.current.set(page, { ...pageResult, rows });
+    },
+    [loadedTablePagesRef],
+  );
 
   const fetchData = useCallback(
     async (page: number) => {
       if (!tableName || !isActive) return;
 
-      const dataScope = `${connectionId}|${database || ""}|${tableName}|${sortColumn || ""}|${sortDir}|${rowFocusFilter}`;
+      const dbType = connections.find((c: ConnectionConfig) => c.id === connectionId)?.db_type;
+      // Filter columns come from the structure cache (ref-read, always fresh)
+      // so a late structure load never forces a page refetch — the next
+      // fetch simply upgrades the quick filter to server-side.
+      const filterColumns =
+        structureColumnsRef.current.length > 0
+          ? structureColumnsRef.current
+          : (inlineStructureCacheRef.inlineStructureCache.get(
+              buildTableScopeKey(connectionId, tableName, database),
+            ) ?? []);
+      const filterPlan = resolveTableFilter(tableFilter, rowFocusFilter, filterColumns, dbType);
+      const serverFilter = filterPlan.serverFilter;
+      // Distinguishes server-filtered pages from client-filtered ones in the
+      // page cache — the same quick filter produces different row sets.
+      const quickFilterKey = tableFilter.trim()
+        ? `${filterPlan.clientSideOnly ? "client" : "server"}:${tableFilter.trim()}`
+        : "";
+
+      const dataScope = `${connectionId}|${database || ""}|${tableName}|${sortColumn || ""}|${sortDir}|${serverFilter}|${quickFilterKey}`;
       if (dataScopeRef.current !== dataScope) {
         dataScopeRef.current = dataScope;
         requestIdRef.current += 1;
+        // A scope change (sort/filter/table) invalidates every loaded page —
+        // drop them and restart at page 0 so unfiltered chunks never mix
+        // with filtered ones.
+        loadedTablePagesRef.current.clear();
+        if (page !== 0) {
+          setCurrentPage(0);
+          return;
+        }
       }
       const requestId = requestIdRef.current;
       const tableCacheKey = buildTableCacheKey(
@@ -192,14 +257,16 @@ export function useDataGridTableFetcher({
         page,
         sortColumn,
         sortDir,
-        rowFocusFilter,
+        serverFilter,
+        quickFilterKey,
       );
       const cachedPage = tablePageCache.get(tableCacheKey);
       const tableScopeKey = buildTableScopeKey(connectionId, tableName, database);
       const cachedCount = tableCountCache.get(tableScopeKey);
-      const hasFreshCount = !tableFilter.trim() && !rowFocusFilter && Boolean(
-        cachedCount && isFreshCacheEntry(cachedCount.cachedAt, TABLE_COUNT_CACHE_TTL_MS),
-      );
+      const hasFreshCount =
+        !tableFilter.trim() &&
+        !rowFocusFilter &&
+        Boolean(cachedCount && isFreshCacheEntry(cachedCount.cachedAt, TABLE_COUNT_CACHE_TTL_MS));
 
       if (cachedPage && isFreshCacheEntry(cachedPage.cachedAt, 120_000)) {
         setLoadedTablePage(page, cachedPage.result);
@@ -224,7 +291,7 @@ export function useDataGridTableFetcher({
           limit: PAGE_SIZE,
           orderBy: sortColumn || undefined,
           orderDir: sortColumn ? sortDir : undefined,
-          filter: rowFocusFilter || undefined,
+          filter: serverFilter || undefined,
         });
 
         if (!isMountedRef.current || requestId !== requestIdRef.current) return;
@@ -303,8 +370,9 @@ export function useDataGridTableFetcher({
             );
           }
         } else {
-          const fallbackTotalRows = (!tableFilter.trim() && !rowFocusFilter ? cachedCount?.totalRows : undefined)
-            || page * PAGE_SIZE + result.rows.length;
+          const fallbackTotalRows =
+            (!tableFilter.trim() && !rowFocusFilter ? cachedCount?.totalRows : undefined) ||
+            page * PAGE_SIZE + result.rows.length;
           setBoundedMapEntry(
             tablePageCache,
             tableCacheKey,
@@ -320,7 +388,32 @@ export function useDataGridTableFetcher({
         setIsLoading(false);
       }
     },
-    [tableName, isActive, connectionId, database, sortColumn, sortDir, rowFocusFilter, dataScopeRef, requestIdRef, tableFilter, setIsLoading, setLoadedTablePage, setTotalRows, getTableData, isMountedRef, isActiveRef, countRequestIdRef, countTimeoutRef, countRows, setError],
+    [
+      tableName,
+      isActive,
+      connectionId,
+      database,
+      sortColumn,
+      sortDir,
+      rowFocusFilter,
+      dataScopeRef,
+      requestIdRef,
+      tableFilter,
+      connections,
+      inlineStructureCacheRef,
+      loadedTablePagesRef,
+      setCurrentPage,
+      setIsLoading,
+      setLoadedTablePage,
+      setTotalRows,
+      getTableData,
+      isMountedRef,
+      isActiveRef,
+      countRequestIdRef,
+      countTimeoutRef,
+      countRows,
+      setError,
+    ],
   );
 
   const refreshTableFromStart = useCallback(async (): Promise<boolean> => {
@@ -342,7 +435,15 @@ export function useDataGridTableFetcher({
     } catch {
       return false;
     }
-  }, [loadedTablePagesRef, setHasMoreTableRows, setCurrentPage, tableName, connectionId, database, fetchData]);
+  }, [
+    loadedTablePagesRef,
+    setHasMoreTableRows,
+    setCurrentPage,
+    tableName,
+    connectionId,
+    database,
+    fetchData,
+  ]);
 
   const ensureStructureLoaded = useCallback(async () => {
     if (!tableName || externalResult) {
@@ -354,10 +455,12 @@ export function useDataGridTableFetcher({
     if (cachedStructure && cachedStructure.length > 0) {
       setStructureColumns(cachedStructure);
       setStructureStatus("ready");
+      registerColumnMetadata(cachedStructure);
       return cachedStructure;
     }
 
     if (structureStatus === "ready" && structureColumns.length > 0) {
+      registerColumnMetadata(structureColumns);
       return structureColumns;
     }
 
@@ -389,17 +492,9 @@ export function useDataGridTableFetcher({
           structureRetryTimeoutRef.current = null;
         }
 
-        // Setup change tracking column name map for SQL preview generation
-        if (tableName) {
-          const colNameMap: Record<number, string> = {};
-          structure.columns.forEach((col, idx) => {
-            colNameMap[idx] = col.name;
-          });
-          setColumnNameMap(tableName, colNameMap);
-
-          const connection = connections.find((c: ConnectionConfig) => c.id === connectionId);
-          setDbType(tableName, connection?.db_type);
-        }
+        // Register the scope-keyed column map + db type for staged-change
+        // SQL previews (shared helper also covers the cache-hit paths).
+        registerColumnMetadata(structure.columns);
         return structure.columns;
       })
       .catch((error) => {
@@ -435,7 +530,25 @@ export function useDataGridTableFetcher({
 
     structurePromiseRef.current = structurePromise;
     return structurePromise;
-  }, [connectionId, connections, database, externalResult, getTableStructure, inlineStructureCacheRef.inlineStructureCache, isMountedRef, setColumnNameMap, setDbType, setForeignKeys, setStructureColumns, setStructureStatus, structureColumns, structurePromiseRef, structureRequestIdRef, structureRetryAttemptRef, structureRetryTimeoutRef, structureStatus, tableName]);
+  }, [
+    connectionId,
+    database,
+    externalResult,
+    getTableStructure,
+    inlineStructureCacheRef.inlineStructureCache,
+    isMountedRef,
+    registerColumnMetadata,
+    setForeignKeys,
+    setStructureColumns,
+    setStructureStatus,
+    structureColumns,
+    structurePromiseRef,
+    structureRequestIdRef,
+    structureRetryAttemptRef,
+    structureRetryTimeoutRef,
+    structureStatus,
+    tableName,
+  ]);
 
   return {
     setLoadedTablePage,

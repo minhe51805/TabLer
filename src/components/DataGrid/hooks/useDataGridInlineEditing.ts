@@ -1,6 +1,6 @@
-import { useCallback, useRef, type Dispatch, type SetStateAction } from "react";
+import { useCallback, type Dispatch, type SetStateAction } from "react";
 import type { QueryResult } from "../../../types";
-import type { StagedChange } from "../../../types/change-tracking";
+import type { StagedChangeInput } from "../../../stores/change-tracking-store";
 import {
   areCellValuesEqual,
   buildResolvedColumns,
@@ -18,10 +18,11 @@ interface EditingCell {
   col: number;
 }
 
-type StageChangeFn = (change: Omit<StagedChange, "id" | "timestamp" | "sqlPreview">) => void;
+type StageChangeFn = (change: StagedChangeInput) => void;
 
 interface DataGridInlineEditingParams {
   canAttemptInlineEdit: boolean;
+  connectionId: string;
   data: QueryResult | null;
   tableName?: string;
   database?: string;
@@ -43,7 +44,6 @@ interface DataGridInlineEditingParams {
   ensureStructureLoaded: () => Promise<ColumnDetail[]>;
 
   editingDraftRef: { current: string };
-  editorRef: { current: HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null };
 }
 
 /**
@@ -53,6 +53,7 @@ interface DataGridInlineEditingParams {
  */
 export function useDataGridInlineEditing({
   canAttemptInlineEdit,
+  connectionId,
   data,
   tableName,
   database,
@@ -74,10 +75,7 @@ export function useDataGridInlineEditing({
   ensureStructureLoaded,
 
   editingDraftRef,
-  editorRef,
 }: DataGridInlineEditingParams) {
-  const editingOpenedAtRef = useRef(0);
-
   const startEditingCell = useCallback(
     async (rowIndex: number, colIndex: number) => {
       if (!canAttemptInlineEdit || !data || !tableName) return;
@@ -110,7 +108,9 @@ export function useDataGridInlineEditing({
       }
 
       if (!buildStableRowIdentity(rowValues, nextResolvedColumns)) {
-        setError(`Inline edit unavailable for ${tableName}: this row has an incomplete primary key.`);
+        setError(
+          `Inline edit unavailable for ${tableName}: this row has an incomplete primary key.`,
+        );
         return;
       }
 
@@ -122,105 +122,152 @@ export function useDataGridInlineEditing({
       const seedValue = editorValueFromCell(rowValues[colIndex] as GridCellValue);
       setEditingSeedValue(seedValue);
       editingDraftRef.current = seedValue;
-      editingOpenedAtRef.current = Date.now();
       setEditingCell({ row: rowIndex, col: colIndex });
     },
-    [canAttemptInlineEdit, data, tableName, setSelectedCell, resolvedColumns, structureStatus, setEditingSeedValue, editingDraftRef, setEditingCell, ensureStructureLoaded, setError],
+    [
+      canAttemptInlineEdit,
+      data,
+      tableName,
+      setSelectedCell,
+      resolvedColumns,
+      structureStatus,
+      setEditingSeedValue,
+      editingDraftRef,
+      setEditingCell,
+      ensureStructureLoaded,
+      setError,
+    ],
   );
 
   const cancelEditingCell = useCallback(() => {
     setEditingCell(null);
     setEditingSeedValue("");
     editingDraftRef.current = "";
-    editingOpenedAtRef.current = 0;
   }, [editingDraftRef, setEditingCell, setEditingSeedValue]);
 
-  const commitEditingCell = useCallback(async () => {
-    if (!editingCell || !data || !tableName) return;
+  const commitEditingCell = useCallback(
+    async (committed?: GridCellValue) => {
+      if (!editingCell || !data || !tableName) return;
 
-    const targetColumn = resolvedColumns[editingCell.col];
-    const rowValues = data.rows[editingCell.row];
-    if (!targetColumn || !rowValues || targetColumn.is_primary_key || primaryKeyColumns.length === 0) {
-      cancelEditingCell();
-      return;
-    }
-
-    if (!buildStableRowIdentity(rowValues, resolvedColumns)) {
-      cancelEditingCell();
-      setError(`Inline edit unavailable for ${tableName}: this row has an incomplete primary key.`);
-      return;
-    }
-
-    try {
-      const nextValue = parseEditorValue(editingDraftRef.current, targetColumn);
-      const currentValue = rowValues[editingCell.col] as GridCellValue;
-
-      if (areCellValuesEqual(currentValue, nextValue)) {
+      const targetColumn = resolvedColumns[editingCell.col];
+      const rowValues = data.rows[editingCell.row];
+      if (
+        !targetColumn ||
+        !rowValues ||
+        targetColumn.is_primary_key ||
+        primaryKeyColumns.length === 0
+      ) {
         cancelEditingCell();
         return;
       }
 
-      const primaryKeys = buildRowPrimaryKeys(rowValues, resolvedColumns, primaryKeyColumns);
-      const rowKeyRecord: Record<string, unknown> = {};
-      for (const pk of primaryKeys) {
-        rowKeyRecord[pk.column] = pk.value;
+      if (!buildStableRowIdentity(rowValues, resolvedColumns)) {
+        cancelEditingCell();
+        setError(
+          `Inline edit unavailable for ${tableName}: this row has an incomplete primary key.`,
+        );
+        return;
       }
 
-      // Stage the change in the queue (change tracking)
-      stageChange({
-        type: "update",
-        tableName,
-        database,
-        rowIndex: editingCell.row,
-        rowKey: rowKeyRecord,
-        columns: {
-          [editingCell.col]: { old: currentValue, new: nextValue },
-        },
-        originalRow: rowValues as (string | number | boolean | null)[],
-      });
+      const currentValue = rowValues[editingCell.col] as GridCellValue;
 
-      // Keep the authoritative chunk cache in sync before virtual scrolling loads another page.
-      patchLoadedTableCell(editingCell.row, editingCell.col, nextValue);
-      setData((previous) => {
-        if (!previous) return previous;
-        const nextRows = previous.rows.map((row, index) => {
-          if (index !== editingCell.row) return row;
-          const nextRow = [...row];
-          nextRow[editingCell.col] = nextValue;
-          return nextRow;
-        });
-        return { ...previous, rows: nextRows };
-      });
+      // Unedited commit (e.g. blur right after opening): the draft still holds
+      // the seed — including the "NULL" placeholder shown for null cells — so
+      // nothing was typed and nothing should be staged. Explicit editor commits
+      // (select options, NULL gesture) always count as a user action.
+      if (
+        committed === undefined &&
+        editingDraftRef.current === editorValueFromCell(currentValue)
+      ) {
+        cancelEditingCell();
+        return;
+      }
 
-      // Track staged row for visual indicator
-      setStagedRowIndices((prev) => new Set([...prev, editingCell.row]));
-      cancelEditingCell();
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      setError(`Failed to stage change: ${message}`);
-    } finally {
-      setSavingCell(null);
-    }
-  }, [cancelEditingCell, data, database, editingCell, editingDraftRef, patchLoadedTableCell, primaryKeyColumns, resolvedColumns, setData, setError, setSavingCell, setStagedRowIndices, stageChange, tableName]);
-
-  const handleEditorBlur = useCallback(() => {
-    if (Date.now() - editingOpenedAtRef.current < 160) {
-      window.setTimeout(() => {
-        editorRef.current?.focus();
-        if (editorRef.current && "select" in editorRef.current) {
-          editorRef.current.select();
+      setSavingCell({ row: editingCell.row, col: editingCell.col });
+      try {
+        // `committed` is the editor's resolved value: null is the explicit NULL
+        // gesture (never re-parsed), strings still go through the column-aware
+        // parser so '1e5'/'.5' and bigint precision are handled in one place,
+        // and numbers/booleans are final.
+        let nextValue: GridCellValue;
+        if (committed === undefined) {
+          nextValue = parseEditorValue(editingDraftRef.current, targetColumn);
+        } else if (typeof committed === "string") {
+          nextValue = parseEditorValue(committed, targetColumn);
+        } else {
+          nextValue = committed;
         }
-      }, 0);
-      return;
-    }
 
-    void commitEditingCell();
-  }, [commitEditingCell, editorRef]);
+        if (areCellValuesEqual(currentValue, nextValue)) {
+          cancelEditingCell();
+          return;
+        }
+
+        const primaryKeys = buildRowPrimaryKeys(rowValues, resolvedColumns, primaryKeyColumns);
+        const rowKeyRecord: Record<string, unknown> = {};
+        for (const pk of primaryKeys) {
+          rowKeyRecord[pk.column] = pk.value;
+        }
+
+        // Stage the change in the queue (change tracking)
+        stageChange({
+          type: "update",
+          connectionId,
+          tableName,
+          database,
+          rowIndex: editingCell.row,
+          rowKey: rowKeyRecord,
+          columns: {
+            [editingCell.col]: { old: currentValue, new: nextValue },
+          },
+          originalRow: rowValues as (string | number | boolean | null)[],
+        });
+
+        // Keep the authoritative chunk cache in sync before virtual scrolling loads another page.
+        patchLoadedTableCell(editingCell.row, editingCell.col, nextValue);
+        setData((previous) => {
+          if (!previous) return previous;
+          const nextRows = previous.rows.map((row, index) => {
+            if (index !== editingCell.row) return row;
+            const nextRow = [...row];
+            nextRow[editingCell.col] = nextValue;
+            return nextRow;
+          });
+          return { ...previous, rows: nextRows };
+        });
+
+        // Track staged row for visual indicator
+        setStagedRowIndices((prev) => new Set([...prev, editingCell.row]));
+        cancelEditingCell();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        setError(`Failed to stage change: ${message}`);
+      } finally {
+        setSavingCell(null);
+      }
+    },
+    [
+      cancelEditingCell,
+      connectionId,
+      data,
+      database,
+      editingCell,
+      editingDraftRef,
+      patchLoadedTableCell,
+      primaryKeyColumns,
+      resolvedColumns,
+      setData,
+      setError,
+      setSavingCell,
+      setStagedRowIndices,
+      stageChange,
+      tableName,
+    ],
+  );
 
   return {
     startEditingCell,
     cancelEditingCell,
     commitEditingCell,
-    handleEditorBlur,
   };
 }

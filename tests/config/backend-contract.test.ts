@@ -10,6 +10,8 @@ import {
   AI_MAX_PROMPT_CHARS,
   AI_MAX_TOOLS_CHARS,
 } from "@/config/ai-limits";
+import { listAgentToolSpecs } from "@/components/AISlidePanel/tool-schema/parsing";
+import { toOpenAIFunctionTools } from "@/components/AISlidePanel/tool-schema/provider-formats";
 
 /**
  * Cross-language contract (tech-debt audit D1): the frontend AI caps in
@@ -18,9 +20,7 @@ import {
  * fails the moment the two sides drift — no more silently mismatched literals.
  */
 function rustUsizeConst(source: string, name: string): number {
-  const match = source.match(
-    new RegExp(`pub const ${name}\\s*:\\s*usize\\s*=\\s*([0-9_]+)`),
-  );
+  const match = source.match(new RegExp(`pub const ${name}\\s*:\\s*usize\\s*=\\s*([0-9_]+)`));
   if (!match) {
     throw new Error(`Constant ${name} not found in config.rs`);
   }
@@ -41,4 +41,19 @@ describe("frontend AI limits mirror the Rust backend (D1)", () => {
       expect(rustUsizeConst(configRs, name)).toBe(frontendValue);
     });
   }
+});
+
+describe("AI_MAX_TOOLS_CHARS fits the real tool catalog", () => {
+  it("the serialized catalog stays under the cap", () => {
+    // The cap exists to reject abusive payloads, not the app's own catalog.
+    // Serializing the real specs the way `toOpenAIFunctionTools` does and
+    // comparing against the cap means adding a tool that pushes the payload
+    // over the limit fails this test at build time instead of failing the
+    // agent at runtime.
+    const payload = JSON.stringify({
+      tools: toOpenAIFunctionTools(listAgentToolSpecs()),
+      tool_choice: "auto",
+    });
+    expect(payload.length).toBeLessThanOrEqual(AI_MAX_TOOLS_CHARS);
+  });
 });

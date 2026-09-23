@@ -61,18 +61,21 @@ export function resolvePluginHttpDrivers(
 }
 
 /**
- * Runtime availability of a PluginHttp engine's driver, derived from the
+ * Runtime availability of a plugin-gated engine's driver, derived from the
  * installed plugin set. This is the single source of truth that keeps the
  * connection picker and the Plugin Manager in sync so an installed-but-disabled
  * driver is never presented as a not-yet-available "roadmap" engine.
- *  - "active"    -> an enabled, verified, stable declarative-http driver exists
- *                   (connectable now; same as the legacy `supported === true`).
- *  - "installed" -> a matching driver bundle is installed but not active yet
- *                   (disabled, unverified, or non-stable) — it needs enabling,
- *                   it is NOT a roadmap-only engine.
- *  - "roadmap"   -> no matching driver bundle is installed at all.
+ *  - "active"     -> an enabled, verified, usable driver exists
+ *                    (connectable now; same as the legacy `supported === true`).
+ *  - "installed"  -> a matching driver bundle is installed but not active yet
+ *                    (disabled, unverified, or non-stable) — it needs enabling,
+ *                    it is NOT a roadmap-only engine.
+ *  - "incomplete" -> a matching driver bundle is installed but cannot work on
+ *                    this platform (e.g. a `driver-sidecar-v1` bundle without a
+ *                    `bin/<os>-<arch>/` binary) — enabling it cannot fix that.
+ *  - "roadmap"    -> no matching driver bundle is installed at all.
  */
-export type PluginHttpAvailability = "active" | "installed" | "roadmap";
+export type PluginHttpAvailability = "active" | "installed" | "incomplete" | "roadmap";
 
 /**
  * Whether any installed plugin bundle contributes a declarative-http driver for
@@ -132,17 +135,17 @@ export function isPluginNativeProtocol(key: string): key is PluginNativeProtocol
 /**
  * Whether a native engine is connectable in the running build, read from the
  * backend availability map (`get_native_driver_availability`). Non-native keys
- * are always available; an unknown/missing native key defaults to `true` so a
- * failed or not-yet-loaded report never hides an engine the build supports (the
- * backend still guards the connect path). The default build ships all four, so
- * this only changes behavior for intentionally lean builds.
+ * are always available. A missing report or an unknown native key fails CLOSED
+ * (not available): the report is the authoritative compiled-feature surface, so
+ * an engine the build cannot drive must never be offered as ready — the picker
+ * explains the missing driver instead of dead-ending at connect time.
  */
 export function isNativeDriverAvailable(
   availability: Record<string, boolean> | undefined,
   key: string,
 ): boolean {
   if (!isPluginNativeProtocol(key)) return true;
-  return availability?.[key] ?? true;
+  return availability?.[key] === true;
 }
 
 /**
@@ -196,10 +199,12 @@ export function isNativeEngineConnectable(
  * drivers the product always ships (MySQL, PostgreSQL, SQLite, SQL Server,
  * MongoDB) plus every engine that reuses one of those compiled drivers
  * (MariaDB -> MySQL wire; CockroachDB/Greenplum/Redshift/Vertica -> PostgreSQL
- * wire). EVERY other engine is plugin-gated: it only becomes connectable once
- * a matching driver plugin is installed and enabled. Keeping the set here
- * (instead of a flag duplicated per surface) is what stops an engine from ever
- * being presented as "ready here / needs-a-plugin there".
+ * wire). EVERY other engine is plugin-gated: HTTP engines need a declarative
+ * driver plugin, and `PluginNative` engines (DuckDB, Cassandra, Redis, LibSQL)
+ * need either a compiled-in crate or a `driver-sidecar-v1` plugin with a
+ * platform binary. Keeping the set here (instead of a flag duplicated per
+ * surface) is what stops an engine from ever being presented as "ready here /
+ * needs-a-plugin there".
  */
 export const BUILTIN_ENGINE_KEYS = [
   "mysql",
@@ -212,8 +217,6 @@ export const BUILTIN_ENGINE_KEYS = [
   "redshift",
   "vertica",
   "mongodb",
-  "redis",
-  "duckdb",
 ] as const;
 
 export type BuiltinEngineKey = (typeof BUILTIN_ENGINE_KEYS)[number];
@@ -224,29 +227,23 @@ export function isBuiltinEngine(key: string): boolean {
 }
 
 /**
- * Whether any installed plugin bundle contributes a driver for this protocol,
- * regardless of runtime / enabled / verified flags. Generalizes
- * {@link hasInstalledPluginHttpDriver} to every plugin-gated engine so an
- * installed-but-inactive bundle can be told apart from a true roadmap engine.
+ * Marker substring the backend writes into `validation_error` when an installed
+ * `driver-sidecar-v1` bundle has no `bin/<os>-<arch>/` executable for the
+ * running platform (see `verify_installed_record` in install.rs). The frontend
+ * cannot inspect the bundle directory, so it keys the "incomplete" picker state
+ * off this exact phrase.
  */
-export function hasInstalledPluginDriver(
-  plugins: InstalledPluginRecord[],
-  protocol: string,
-): boolean {
-  return plugins.some(
-    (plugin) =>
-      plugin.manifest.capabilities.includes("database") &&
-      plugin.manifest.contributes.drivers.some((driver) => driver.protocol === protocol),
-  );
-}
+export const MISSING_PLATFORM_BINARY_MARKER = "no binary for this platform";
 
 /**
  * Runtime availability of a plugin-gated engine, across BOTH the declarative
  * HTTP and the sidecar driver runtimes:
- *  - "active"    -> an enabled, verified, usable driver is installed.
- *  - "installed" -> a driver bundle is installed but not active yet (disabled /
- *                   unverified) — it needs enabling, NOT a roadmap engine.
- *  - "roadmap"   -> no matching driver bundle is installed at all.
+ *  - "active"     -> an enabled, verified, usable driver is installed.
+ *  - "installed"  -> a driver bundle is installed but not active yet (disabled /
+ *                    unverified) — it needs enabling, NOT a roadmap engine.
+ *  - "incomplete" -> every installed bundle for this protocol is missing its
+ *                    platform binary — enabling cannot fix it.
+ *  - "roadmap"    -> no matching driver bundle is installed at all.
  */
 export function resolveEnginePluginAvailability(
   plugins: InstalledPluginRecord[],
@@ -258,8 +255,23 @@ export function resolveEnginePluginAvailability(
   ) {
     return "active";
   }
-  if (hasInstalledPluginDriver(plugins, protocol)) return "installed";
-  return "roadmap";
+  const installed = plugins.filter(
+    (plugin) =>
+      plugin.manifest.capabilities.includes("database") &&
+      plugin.manifest.contributes.drivers.some((driver) => driver.protocol === protocol),
+  );
+  if (installed.length === 0) return "roadmap";
+  // A bundle that only lacks its platform binary can never be enabled into a
+  // working driver, so it must not be presented as "needs enabling". If ANY
+  // installed bundle is usable-after-enable, "installed" stays the honest state.
+  if (
+    installed.every((plugin) =>
+      (plugin.validationError ?? "").includes(MISSING_PLATFORM_BINARY_MARKER),
+    )
+  ) {
+    return "incomplete";
+  }
+  return "installed";
 }
 
 /**
@@ -271,13 +283,16 @@ export function resolveEnginePluginAvailability(
  * has a `key` and its static build-time `supported` flag.
  *
  *  - Built-in engine (see {@link BUILTIN_ENGINE_KEYS}) -> ships by default and
- *    keeps its static `supported` flag. A built-in native crate (duckdb, redis)
- *    additionally honors the compiled-build report / an installed sidecar, so a
- *    deliberately lean build stays honest.
+ *    keeps its static `supported` flag.
+ *  - `PluginNative` engine (DuckDB, Cassandra, Redis, LibSQL) -> connectable
+ *    when the crate was compiled in OR a verified sidecar plugin is installed;
+ *    `pluginHttpState` still carries the plugin state so an installed-but-
+ *    disabled sidecar bundle shows "needs enabling", never "roadmap".
  *  - Any OTHER engine -> plugin-gated: `supported` iff a matching driver plugin
- *    is installed and active; `pluginHttpState` carries the 3-state
- *    "active" | "installed" | "roadmap" so an installed-but-disabled bundle is
- *    shown as "needs enabling", never as a not-installed roadmap engine.
+ *    is installed and active; `pluginHttpState` carries the 4-state
+ *    "active" | "installed" | "incomplete" | "roadmap" so an installed-but-
+ *    disabled bundle is shown as "needs enabling", never as a not-installed
+ *    roadmap engine.
  */
 export function applyEngineRuntimeAvailability<T extends { key: string; supported: boolean }>(
   engines: readonly T[],
@@ -287,17 +302,18 @@ export function applyEngineRuntimeAvailability<T extends { key: string; supporte
   const sidecarDrivers = resolveNativeSidecarDrivers(plugins);
   return engines.map((engine) => {
     if (isBuiltinEngine(engine.key)) {
-      if (isPluginNativeProtocol(engine.key)) {
-        return {
-          ...engine,
-          supported:
-            engine.supported &&
-            isNativeEngineConnectable(nativeDriverAvailability, sidecarDrivers, engine.key),
-        };
-      }
       return engine;
     }
     const pluginHttpState = resolveEnginePluginAvailability(plugins, engine.key);
+    if (isPluginNativeProtocol(engine.key)) {
+      return {
+        ...engine,
+        supported:
+          engine.supported &&
+          isNativeEngineConnectable(nativeDriverAvailability, sidecarDrivers, engine.key),
+        pluginHttpState,
+      };
+    }
     return { ...engine, supported: pluginHttpState === "active", pluginHttpState };
   });
 }

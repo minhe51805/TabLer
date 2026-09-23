@@ -873,7 +873,7 @@ describe("agent memory tools", () => {
     vi.mocked(invokeMutation).mockRejectedValue(
       "Refusing to save: the memory body looks like it contains a password. Never store credentials in memory.",
     );
-    const obs = await run(mkDeps(), {
+    const obs = await run(mkDeps({ memoryScope: { connectionId: CONNECTION_ID, database: DB } }), {
       action: "save_memory",
       args: { name: "creds", body: "password: hunter2" },
     });

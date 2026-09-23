@@ -36,6 +36,8 @@ export const ZH_PANEL_COPY: AIPanelCopy = {
     queuedCount: "{count} 条排队中",
     queuedClear: "全部丢弃",
   },
+  sqlValidationWarning: "建议的 SQL 未通过沙箱验证({error});运行前请检查或修复。",
+  tokenBudgetReached: "已达到 token 预算——回答可能被截断。",
   rules: {
     title: "护栏规则",
     subtitle: "<workspace>/rules 中的 Markdown 规则和内置规则包会审查代理执行的每条语句。",

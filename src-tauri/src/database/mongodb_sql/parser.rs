@@ -82,7 +82,18 @@ impl Parser {
 
     fn expect_field_path(&mut self) -> Result<String> {
         match self.advance() {
-            Some(Token::Word(word)) | Some(Token::QuotedIdent(word)) => Ok(word),
+            Some(Token::Word(word)) | Some(Token::QuotedIdent(word)) => {
+                // `$`-prefixed names are MongoDB operators, not field paths —
+                // a quoted "$where" would otherwise smuggle server-side
+                // JavaScript into a read-only SELECT.
+                if word.starts_with('$') {
+                    Err(anyhow!(
+                        "field names may not start with '$' (found '{word}')"
+                    ))
+                } else {
+                    Ok(word)
+                }
+            }
             Some(token) => Err(anyhow!("expected a field name, found {token:?}")),
             None => Err(anyhow!("expected a field name")),
         }

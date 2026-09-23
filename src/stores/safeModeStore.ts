@@ -2,8 +2,15 @@ import { create } from "zustand";
 import type { ConnectionEnvironment, SafeModeLevel, SafeModeSettings } from "../types/safe-mode";
 import { isBlockedAtLevel, requiresConfirmationAtLevel } from "../types/safe-mode";
 import { invokeMutation } from "../utils/tauri-utils";
+import { requestAppConfirmation } from "./confirmStore";
 
 const STORAGE_KEY = "tabler.safe-mode.v1";
+/**
+ * The Safe Mode level suspended by the AI "full access" grant, persisted
+ * separately so an app restart while suspended restores protection instead
+ * of booting into an unguarded state.
+ */
+const FULL_ACCESS_SUSPENDED_KEY = "tabler.safe-mode.fullAccessSuspended";
 
 const DEFAULT_SETTINGS: SafeModeSettings = {
   globalLevel: 1,
@@ -11,11 +18,50 @@ const DEFAULT_SETTINGS: SafeModeSettings = {
   connectionEnvironments: {},
 };
 
+function loadSuspendedFullAccessLevel(): SafeModeLevel | null {
+  try {
+    const raw = localStorage.getItem(FULL_ACCESS_SUSPENDED_KEY);
+    if (raw === null) return null;
+    const level = Number(raw);
+    return level >= 1 && level <= 5 ? (level as SafeModeLevel) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveSuspendedFullAccessLevel(level: SafeModeLevel) {
+  try {
+    localStorage.setItem(FULL_ACCESS_SUSPENDED_KEY, String(level));
+  } catch {
+    // ignore
+  }
+}
+
+function clearSuspendedFullAccessLevel() {
+  try {
+    localStorage.removeItem(FULL_ACCESS_SUSPENDED_KEY);
+  } catch {
+    // ignore
+  }
+}
+
 function loadSettings(): SafeModeSettings {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) {
-      return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+      const parsed = { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+      // Boot-time restore: if the app closed while "full access" had Safe
+      // Mode suspended, the suspension ends here — protection comes back on
+      // next launch instead of silently staying off.
+      const suspended = loadSuspendedFullAccessLevel();
+      if (suspended !== null) {
+        clearSuspendedFullAccessLevel();
+        if (parsed.globalLevel === 0) {
+          parsed.globalLevel = suspended;
+          localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
+        }
+      }
+      return parsed;
     }
   } catch {
     // ignore
@@ -69,6 +115,18 @@ interface SafeModeState {
 
   getEffectiveLevel: (connectionId?: string) => SafeModeLevel;
   setGlobalLevel: (level: SafeModeLevel) => void;
+  /**
+   * AI "full access" grant: suspends the global Safe Mode level to 0 and
+   * stashes the prior level so `resumeSafeModeFromFullAccess` can restore it
+   * when the grant is dropped. Only called after the user explicitly
+   * acknowledged the suspension in the full-access consent dialog.
+   */
+  suspendSafeModeForFullAccess: () => void;
+  /**
+   * Restores the level `suspendSafeModeForFullAccess` stashed — but only when
+   * the level is still 0, so a manual change made while suspended wins.
+   */
+  resumeSafeModeFromFullAccess: () => void;
   setConnectionOverride: (connectionId: string, level: SafeModeLevel) => void;
   removeConnectionOverride: (connectionId: string) => void;
   clearConnectionOverrides: () => void;
@@ -109,6 +167,33 @@ export const useSafeModeStore = create<SafeModeState>((set, get) => {
     setGlobalLevel: (level: SafeModeLevel) => {
       set((state) => {
         const next = { ...state.settings, globalLevel: level };
+        saveSettings(next);
+        return { settings: next };
+      });
+      // A deliberate level change ends any full-access suspension: the user's
+      // explicit pick is the new baseline, not the stashed one.
+      clearSuspendedFullAccessLevel();
+    },
+
+    suspendSafeModeForFullAccess: () => {
+      const current = get().settings.globalLevel;
+      if (current <= 0) return;
+      saveSuspendedFullAccessLevel(current);
+      set((state) => {
+        const next = { ...state.settings, globalLevel: 0 as SafeModeLevel };
+        saveSettings(next);
+        return { settings: next };
+      });
+    },
+
+    resumeSafeModeFromFullAccess: () => {
+      const suspended = loadSuspendedFullAccessLevel();
+      clearSuspendedFullAccessLevel();
+      // Only restore when the level is still suspended at 0 — a manual change
+      // made while full access was active is the user's newer decision.
+      if (suspended === null || get().settings.globalLevel !== 0) return;
+      set((state) => {
+        const next = { ...state.settings, globalLevel: suspended };
         saveSettings(next);
         return { settings: next };
       });
@@ -234,17 +319,22 @@ export const useSafeModeStore = create<SafeModeState>((set, get) => {
   };
 });
 
-/** Awaits user confirmation via window.confirm for level 3, or returns false for level 4-5 (UI must handle modal). */
+/** Awaits user confirmation via the in-app ConfirmDialog for level 3, or returns false for level 4-5 (UI must handle modal). */
 export async function promptConfirmation(sql: string, connectionId?: string): Promise<boolean> {
   const { needsConfirmation, getEffectiveLevel } = useSafeModeStore.getState();
   const level = getEffectiveLevel(connectionId);
 
   if (!needsConfirmation(sql, connectionId)) return true;
 
-  // Level 3: simple confirm dialog
+  // Level 3: simple confirm dialog — the app's ConfirmDialog host, never the
+  // native window.confirm (a no-op on macOS WKWebView).
   if (level === 3) {
     const preview = sql.length > 200 ? sql.slice(0, 200) + "..." : sql;
-    return window.confirm(`Execute this write statement?\n\n${preview}`);
+    return requestAppConfirmation({
+      title: "Execute write statement?",
+      message: preview,
+      confirmText: "Execute",
+    });
   }
 
   // Level 4-5: must be handled by a proper modal (returns false here)

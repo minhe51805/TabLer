@@ -18,6 +18,7 @@ mod observability;
 pub mod query_history;
 pub mod ssh;
 pub mod storage;
+mod storage_notices;
 mod utils;
 
 /// Sandbox SQL-safety guard, re-exported at the crate root so the driver
@@ -267,6 +268,11 @@ pub fn run() {
         .manage(connection_attempt_cancellation_state)
         .manage(DiagnosticReviewState::default())
         .setup(|app| {
+            // Storage notices raised before the webview existed (sync folder
+            // missing, corrupt files quarantined) are replayed now that the
+            // app handle can emit events.
+            storage_notices::init_storage_notices(app.handle());
+
             if let Err(e) = watcher::start_watcher(app.handle().clone()) {
                 error!("[TableR] Failed to start watcher: {}", e);
             }
@@ -459,6 +465,7 @@ pub fn run() {
             ai_skills::ai_skills_directory,
             ai_skills::create_ai_skill,
             ai_skills::update_ai_skill,
+            ai_skills::delete_ai_skill,
             // Built-in skill pack: seed on demand / restore shipped content.
             ai_skill_seed::seed_ai_builtin_skills,
             ai_skill_seed::reset_ai_builtin_skills,
@@ -547,6 +554,7 @@ pub fn run() {
             commands::storage_recovery::check_storage_health,
             commands::storage_recovery::reset_corrupt_storage,
             commands::storage_recovery::exit_app,
+            storage_notices::drain_storage_notices,
             // First-run sample database
             commands::sample_db::create_sample_database,
             // Workspace bundle export/import (team sharing)

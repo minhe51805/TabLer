@@ -2,9 +2,14 @@
  * Change Tracking Preview Modal — shows staged changes as SQL diff before commit.
  */
 import { X, Copy, Check, AlertTriangle } from "lucide-react";
-import { useChangeTrackingStore } from "../../../stores/change-tracking-store";
+import {
+  useChangeTrackingStore,
+  changeScopeKey,
+  changeMatchesScope,
+} from "../../../stores/change-tracking-store";
 
 interface Props {
+  connectionId: string;
   tableName?: string;
   database?: string;
   onApply: () => void;
@@ -13,6 +18,7 @@ interface Props {
 }
 
 export function ChangeTrackingPreviewModal({
+  connectionId,
   tableName,
   database,
   onApply,
@@ -22,9 +28,8 @@ export function ChangeTrackingPreviewModal({
   const { stagedChanges, isPreviewOpen, selectedChangeId, selectChange, closePreview } =
     useChangeTrackingStore();
 
-  const tableChanges = stagedChanges.filter(
-    (c) => c.tableName === tableName && c.database === database,
-  );
+  const scope = tableName ? changeScopeKey(connectionId, database, tableName) : "";
+  const tableChanges = stagedChanges.filter((c) => changeMatchesScope(c, scope));
 
   if (!isPreviewOpen || tableChanges.length === 0) {
     return null;

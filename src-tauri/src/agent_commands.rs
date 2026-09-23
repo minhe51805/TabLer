@@ -118,6 +118,10 @@ pub struct AgentCommandSummary {
     pub argument_hint: Option<String>,
     /// Argument names, parsed from `argument-hint` for typed affordances.
     pub argument_names: Vec<String>,
+    /// Tools this command narrows the run to (empty = no narrowing). Carried
+    /// through so the frontend can enforce the declared restriction — the
+    /// contract is narrowing only, never a grant.
+    pub allowed_tools: Vec<String>,
     pub inject: Vec<String>,
     pub origin: CommandOrigin,
 }
@@ -129,6 +133,7 @@ impl AgentCommand {
             description: self.description.clone(),
             argument_hint: self.argument_hint.clone(),
             argument_names: parse_argument_names(self.argument_hint.as_deref()),
+            allowed_tools: self.allowed_tools.clone(),
             inject: self.inject.clone(),
             origin: self.origin,
         }
@@ -160,6 +165,10 @@ pub struct ResolvedCommand {
     pub prompt: String,
     /// The raw argument text the user typed after the command name.
     pub arguments: String,
+    /// Tools this command narrows the run to (empty = no narrowing). Mirrored
+    /// from `command.allowed_tools` at the top level so the caller can enforce
+    /// the restriction without unpacking the summary.
+    pub allowed_tools: Vec<String>,
     /// Context keys the command asked for but the host did not supply - the UI
     /// can then say "the active tab has no SQL" instead of the agent guessing.
     pub missing_context: Vec<String>,
@@ -172,7 +181,11 @@ pub struct ResolvedCommand {
 /// Reads a flat `key: value` frontmatter block. Deliberately the same shape as
 /// `agent_rules::parse_frontmatter` so the two asset kinds behave identically.
 fn parse_frontmatter(contents: &str) -> Result<(HashMap<String, String>, String), String> {
-    let normalized = contents.replace("\r\n", "\n");
+    // A UTF-8 BOM survives `trim()` (it is not whitespace), so a BOM-saved file
+    // would fail the `---` fence check and be silently dropped. Strip it first.
+    let normalized = contents
+        .trim_start_matches('\u{feff}')
+        .replace("\r\n", "\n");
     let mut lines = normalized.lines();
 
     let first = lines.next().unwrap_or_default();
@@ -401,6 +414,7 @@ pub fn render_command(
         command: command.summary(),
         prompt,
         arguments: arguments.to_string(),
+        allowed_tools: command.allowed_tools.clone(),
         missing_context: missing,
     }
 }

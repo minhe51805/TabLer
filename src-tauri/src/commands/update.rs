@@ -55,11 +55,15 @@ pub async fn download_and_install_update(app: tauri::AppHandle) -> Result<(), St
         .ok_or("No update available")?;
 
     let emitter = app.clone();
+    // The callback reports per-chunk byte counts, not cumulative progress —
+    // accumulate so the UI sees real download progress.
+    let mut downloaded: u64 = 0;
     update
         .download_and_install(
             move |chunk, total| {
+                downloaded = downloaded.saturating_add(chunk as u64);
                 let percent = match total {
-                    Some(total) if total > 0 => ((chunk as f64 / total as f64) * 100.0) as u8,
+                    Some(total) if total > 0 => ((downloaded as f64 / total as f64) * 100.0) as u8,
                     _ => 0,
                 };
                 let _ = emitter.emit(UPDATE_PROGRESS_EVENT, percent.min(100));

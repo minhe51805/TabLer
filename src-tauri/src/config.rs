@@ -29,7 +29,9 @@ pub const AI_MAX_HISTORY_MESSAGES: usize = 12;
 /// Max total characters across all replayed history messages.
 pub const AI_MAX_HISTORY_CHARS: usize = 24_000;
 /// Max characters in the machine-generated native tool definitions payload.
-pub const AI_MAX_TOOLS_CHARS: usize = 20_000;
+/// Sized for the real catalog: 34 tool specs serialize to ~29.5k chars, so
+/// 40k leaves headroom for spec growth while still rejecting abusive payloads.
+pub const AI_MAX_TOOLS_CHARS: usize = 40_000;
 
 // ─────────────────────────────────────────────────────────────────────────
 // AI provider wire config (D3 + D10)

@@ -36,6 +36,9 @@ export const VI_PANEL_COPY: AIPanelCopy = {
     queuedCount: "{count} đang chờ",
     queuedClear: "Bỏ hết",
   },
+  sqlValidationWarning:
+    "SQL đề xuất chưa pass sandbox validation ({error}); hãy xem lại hoặc sửa trước khi chạy.",
+  tokenBudgetReached: "Đã đạt ngân sách token — câu trả lời có thể bị cắt ngắn.",
   rules: {
     title: "Quy tắc guardrail",
     subtitle:

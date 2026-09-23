@@ -1,5 +1,6 @@
 import type { ConnectionConfig } from "../../types";
 import { normalizedStatementIsDisguisedWrite } from "../../utils/sqlStatements";
+import { explainAnalyzeInnerStatement, stripLeadingSqlNoise } from "../../utils/sql-safety";
 
 const INLINE_COMPLETION_CACHE_MS = 120_000;
 const INLINE_COMPLETION_MIN_INTERVAL_MS = 2_000;
@@ -58,26 +59,6 @@ const PROTECTED_RUN_SESSION_PREFIXES = [
 export function formatExecutionError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   return message.replace(/^Error:\s*/, "");
-}
-
-export function stripLeadingSqlNoise(statement: string) {
-  let remaining = statement;
-  while (true) {
-    remaining = remaining.trimStart();
-    if (remaining.startsWith("--")) {
-      const nextLineIndex = remaining.indexOf("\n");
-      if (nextLineIndex === -1) return "";
-      remaining = remaining.slice(nextLineIndex + 1);
-      continue;
-    }
-    if (remaining.startsWith("/*")) {
-      const commentEnd = remaining.indexOf("*/");
-      if (commentEnd === -1) return "";
-      remaining = remaining.slice(commentEnd + 2);
-      continue;
-    }
-    return remaining;
-  }
 }
 
 export function normalizeStatementForGuard(statement: string) {
@@ -152,16 +133,38 @@ export function isSessionSwitchStatement(statement: string) {
   return PROTECTED_RUN_SESSION_PREFIXES.some((prefix) => normalized.startsWith(prefix));
 }
 
+/** True when `EXPLAIN ANALYZE` wraps a statement that is not a pure read —
+    the analyze form EXECUTES the wrapped statement, so
+    `EXPLAIN ANALYZE DELETE ...` mutates. `EXPLAIN ANALYZE SELECT` stays a read. */
+export function isExplainAnalyzeMutating(statement: string) {
+  const inner = explainAnalyzeInnerStatement(normalizeStatementForGuard(statement));
+  if (!inner) return false;
+  if (inner.startsWith("EXPLAIN")) return isExplainAnalyzeMutating(inner);
+  const readPrefixes = ["SELECT", "WITH", "SHOW", "DESCRIBE", "DESC", "PRAGMA", "VALUES", "TABLE"];
+  if (readPrefixes.some((prefix) => inner.startsWith(prefix))) {
+    return normalizedStatementIsDisguisedWrite(inner);
+  }
+  return true;
+}
+
 export function isMutatingStatement(statement: string) {
   const normalized = normalizeStatementForGuard(statement);
   if (!normalized) return false;
   if (normalizedStatementIsDisguisedWrite(normalized)) return true;
+  if (isExplainAnalyzeMutating(statement)) return true;
   return PROTECTED_RUN_MUTATING_PREFIXES.some((prefix) => normalized.startsWith(prefix));
 }
 
 export function isHighRiskStatement(statement: string) {
   const normalized = normalizeStatementForGuard(statement);
   if (!normalized) return false;
+
+  // `EXPLAIN ANALYZE <stmt>` executes the wrapped statement — it inherits the
+  // risk of whatever it analyzes.
+  const explainInner = explainAnalyzeInnerStatement(normalized);
+  if (explainInner) {
+    return isHighRiskStatement(explainInner);
+  }
 
   if (
     normalized.startsWith("DROP ") ||

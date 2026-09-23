@@ -5,7 +5,11 @@
 import { invoke } from "@tauri-apps/api/core";
 import { translateCurrent } from "../../../i18n";
 import type { QueryResult } from "../../../types";
-import { splitSqlStatements } from "../../../utils/sqlStatements";
+import {
+  normalizedStatementIsDisguisedWrite,
+  splitSqlStatements,
+} from "../../../utils/sqlStatements";
+import { stripLeadingSqlNoise } from "../../../utils/sql-safety";
 import { METRICS_QUERY_TIMEOUT_MS } from "./metrics-grid-config";
 
 // ---------------------------------------------------------------------------
@@ -44,31 +48,49 @@ export function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: st
 // SQL helpers
 // ---------------------------------------------------------------------------
 
-function stripLeadingSqlNoise(statement: string) {
-  let remaining = statement;
-
-  while (true) {
-    remaining = remaining.trimStart();
-    if (remaining.startsWith("--")) {
-      const nextLineIndex = remaining.indexOf("\n");
-      if (nextLineIndex === -1) return "";
-      remaining = remaining.slice(nextLineIndex + 1);
+/** Removes ALL SQL comments (line + block) while preserving string literals,
+    so keyword checks cannot be dodged with comment or `--` tricks. */
+function stripSqlComments(statement: string) {
+  let result = "";
+  let index = 0;
+  while (index < statement.length) {
+    const char = statement[index];
+    const next = statement[index + 1];
+    if (char === "'" || char === '"' || char === "`") {
+      const quoteEnd = statement.indexOf(char, index + 1);
+      if (quoteEnd === -1) {
+        result += statement.slice(index);
+        break;
+      }
+      result += statement.slice(index, quoteEnd + 1);
+      index = quoteEnd + 1;
       continue;
     }
-
-    if (remaining.startsWith("/*")) {
-      const commentEnd = remaining.indexOf("*/");
-      if (commentEnd === -1) return "";
-      remaining = remaining.slice(commentEnd + 2);
+    if (char === "-" && next === "-") {
+      const lineEnd = statement.indexOf("\n", index + 2);
+      if (lineEnd === -1) break;
+      result += " ";
+      index = lineEnd + 1;
       continue;
     }
-
-    return remaining;
+    if (char === "/" && next === "*") {
+      const commentEnd = statement.indexOf("*/", index + 2);
+      if (commentEnd === -1) break;
+      result += " ";
+      index = commentEnd + 2;
+      continue;
+    }
+    result += char;
+    index += 1;
   }
+  return result;
 }
 
 function normalizeSqlForMetrics(statement: string) {
-  return stripLeadingSqlNoise(statement).replace(/\s+/g, " ").trim().toUpperCase();
+  return stripSqlComments(stripLeadingSqlNoise(statement))
+    .replace(/\s+/g, " ")
+    .trim()
+    .toUpperCase();
 }
 
 export function validateMetricsQuery(
@@ -101,13 +123,24 @@ export function validateMetricsQuery(
     };
   }
 
-  if (
-    normalized.startsWith("WITH") &&
-    [" INSERT ", " UPDATE ", " DELETE ", " MERGE "].some((keyword) => normalized.includes(keyword))
-  ) {
+  // EXPLAIN ANALYZE executes the wrapped statement server-side — it is never
+  // a pure read, even for SELECT.
+  if (/^EXPLAIN\s+ANALYZE\b/.test(normalized) || /^EXPLAIN\s*\([^)]*\bANALYZE\b/.test(normalized)) {
     return {
       ok: false,
-      error: translateCurrent("metrics.validation.noMutatingCte"),
+      error: translateCurrent("metrics.validation.readOnlyOnly"),
+    };
+  }
+
+  // Disguised writes behind a read-looking prefix: `SELECT ... INTO`,
+  // data-modifying CTE bodies (`WITH x AS (DELETE ...)`), and PRAGMA
+  // assignments / non-readonly pragma calls (`writable_schema`, `user_version`).
+  if (normalizedStatementIsDisguisedWrite(normalized)) {
+    return {
+      ok: false,
+      error: normalized.startsWith("WITH")
+        ? translateCurrent("metrics.validation.noMutatingCte")
+        : translateCurrent("metrics.validation.readOnlyOnly"),
     };
   }
 
@@ -243,6 +276,8 @@ export async function executeMetricsQuery(
       invoke("execute_sandboxed_query", {
         connectionId,
         statements: [statement],
+        requireReadOnly: true,
+        requestId: crypto.randomUUID(),
       }),
       METRICS_QUERY_TIMEOUT_MS,
       "Metrics query",

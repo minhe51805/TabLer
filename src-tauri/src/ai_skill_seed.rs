@@ -303,7 +303,14 @@ fn seed_one(
         if let Some(parent) = target.parent() {
             std::fs::create_dir_all(parent).map_err(|error| error.to_string())?;
         }
-        std::fs::write(&target, content).map_err(|error| error.to_string())?;
+        // SKILL.md goes through the same crash-safe write as the manager UI:
+        // staging file + same-volume rename + symlink refusal, so a crash
+        // mid-seed can never leave a torn SKILL.md behind.
+        if *rel_path == "SKILL.md" {
+            crate::ai_skills::write_skill_file(&target, content)?;
+        } else {
+            std::fs::write(&target, content).map_err(|error| error.to_string())?;
+        }
     }
 
     // Even a no-op pass refreshes the record: it also covers the case where the

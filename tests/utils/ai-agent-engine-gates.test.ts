@@ -13,23 +13,31 @@ import type { DatabaseType, QueryModel } from "@/types";
 import capabilityMatrix from "../../docs/generated/driver-capabilities.json";
 import { PLUGIN_HTTP_PROTOCOLS, PLUGIN_NATIVE_PROTOCOLS } from "@/utils/plugin-driver-runtime";
 
-const SQL_ENGINES: DatabaseType[] = [
+// Engines whose driver implements preview_write_transaction (rollback-only
+// preview). Mirrors AGENT_ENGINE_TOOL_FLAGS.previewWrite.
+const SQL_ENGINES_WITH_PREVIEW: DatabaseType[] = [
   "mysql",
   "mariadb",
   "sqlite",
-  "duckdb",
   "cockroachdb",
-  "snowflake",
   "postgresql",
   "greenplum",
   "redshift",
   "mssql",
   "vertica",
+];
+
+// SQL dialects without a rollback-preview driver impl — preview_write is gated.
+const SQL_ENGINES_WITHOUT_PREVIEW: DatabaseType[] = [
+  "duckdb",
+  "snowflake",
   "clickhouse",
   "bigquery",
   "libsql",
   "cloudflare_d1",
 ];
+
+const SQL_ENGINES: DatabaseType[] = [...SQL_ENGINES_WITH_PREVIEW, ...SQL_ENGINES_WITHOUT_PREVIEW];
 
 describe("agent engine tool gates", () => {
   it("classifies every configured engine", () => {
@@ -38,45 +46,79 @@ describe("agent engine tool gates", () => {
     );
   });
 
-  it.each(SQL_ENGINES)("keeps SQL read and write-preview tools on %s", (engine) => {
+  it.each(SQL_ENGINES_WITH_PREVIEW)("keeps SQL read and write-preview tools on %s", (engine) => {
     const availability = agentToolAvailability(engine);
     expect(availability.queryModel).toBe("sql");
     expect(availability.sqlRead).toBe(true);
     expect(availability.sqlWritePreview).toBe(true);
     expect(isAgentToolEnabled("run_readonly_sql", availability)).toBe(true);
     expect(isAgentToolEnabled("preview_write", availability)).toBe(true);
-    const catalog = formatAgentToolCatalog({ workspaceToolsEnabled: true, availability }).join("\n");
+    const catalog = formatAgentToolCatalog({ workspaceToolsEnabled: true, availability }).join(
+      "\n",
+    );
     expect(catalog).toContain('"action":"run_readonly_sql"');
     expect(catalog).toContain('"action":"preview_write"');
   });
+
+  it.each(SQL_ENGINES_WITHOUT_PREVIEW)(
+    "keeps SQL reads but gates write-preview on %s (no driver impl)",
+    (engine) => {
+      const availability = agentToolAvailability(engine);
+      expect(availability.queryModel).toBe("sql");
+      expect(availability.sqlRead).toBe(true);
+      expect(isAgentToolEnabled("run_readonly_sql", availability)).toBe(true);
+      expect(isAgentToolEnabled("preview_write", availability)).toBe(false);
+      const catalog = formatAgentToolCatalog({ workspaceToolsEnabled: true, availability }).join(
+        "\n",
+      );
+      expect(catalog).toContain('"action":"run_readonly_sql"');
+      expect(catalog).not.toContain('"action":"preview_write"');
+    },
+  );
 
   it("allows CQL SELECT but not SQL write previews on Cassandra", () => {
     const availability = agentToolAvailability("cassandra");
     expect(availability.queryModel).toBe("cql");
     expect(availability.sqlRead).toBe(true);
     expect(availability.sqlWritePreview).toBe(false);
-    const catalog = formatAgentToolCatalog({ workspaceToolsEnabled: true, availability }).join("\n");
+    const catalog = formatAgentToolCatalog({ workspaceToolsEnabled: true, availability }).join(
+      "\n",
+    );
     expect(catalog).toContain('"action":"run_readonly_sql"');
     expect(catalog).not.toContain('"action":"preview_write"');
   });
 
-  it.each(["redis", "mongodb", "opensearch"] as const)(
-    "hides SQL tools on non-SQL engine %s",
-    (engine) => {
-      const availability = agentToolAvailability(engine);
-      expect(availability.sqlRead).toBe(false);
-      expect(availability.sqlWritePreview).toBe(false);
-      expect(isAgentToolEnabled("run_readonly_sql", availability)).toBe(false);
-      expect(isAgentToolEnabled("preview_write", availability)).toBe(false);
-      expect(isAgentToolEnabled("sample_table_data", availability)).toBe(true);
-      const catalog = formatAgentToolCatalog({ workspaceToolsEnabled: true, availability });
-      const actions = catalog.map((line) => line.match(/"action":"([^"]+)"/)?.[1]);
-      expect(actions).not.toContain("run_readonly_sql");
-      expect(actions).not.toContain("preview_write");
-      expect(actions).toContain("sample_table_data");
-      expect(actions).toContain("list_tables");
-    },
-  );
+  it.each(["redis", "opensearch"] as const)("hides SQL tools on non-SQL engine %s", (engine) => {
+    const availability = agentToolAvailability(engine);
+    expect(availability.sqlRead).toBe(false);
+    expect(availability.sqlWritePreview).toBe(false);
+    expect(isAgentToolEnabled("run_readonly_sql", availability)).toBe(false);
+    expect(isAgentToolEnabled("preview_write", availability)).toBe(false);
+    expect(isAgentToolEnabled("sample_table_data", availability)).toBe(true);
+    const catalog = formatAgentToolCatalog({ workspaceToolsEnabled: true, availability });
+    const actions = catalog.map((line) => line.match(/"action":"([^"]+)"/)?.[1]);
+    expect(actions).not.toContain("run_readonly_sql");
+    expect(actions).not.toContain("preview_write");
+    expect(actions).toContain("sample_table_data");
+    expect(actions).toContain("list_tables");
+  });
+
+  it("keeps translated SELECT reads on mongodb but gates write/schema tools", () => {
+    const availability = agentToolAvailability("mongodb");
+    // The driver translates a SELECT subset into find() pipelines — reads stay.
+    expect(availability.sqlRead).toBe(true);
+    expect(availability.sqlWritePreview).toBe(false);
+    expect(isAgentToolEnabled("run_readonly_sql", availability)).toBe(true);
+    expect(isAgentToolEnabled("preview_write", availability)).toBe(false);
+    expect(isAgentToolEnabled("restore_checkpoint", availability)).toBe(false);
+    expect(isAgentToolEnabled("list_schema_objects", availability)).toBe(false);
+    expect(isAgentToolEnabled("sample_table_data", availability)).toBe(true);
+    const catalog = formatAgentToolCatalog({ workspaceToolsEnabled: true, availability });
+    const actions = catalog.map((line) => line.match(/"action":"([^"]+)"/)?.[1]);
+    expect(actions).toContain("run_readonly_sql");
+    expect(actions).not.toContain("preview_write");
+    expect(actions).toContain("sample_table_data");
+  });
 
   it("defaults unknown engines to SQL so existing workspaces stay enabled", () => {
     expect(agentQueryModelForEngine(null)).toBe("sql");
@@ -86,11 +128,13 @@ describe("agent engine tool gates", () => {
   it("explains the block in plain language", () => {
     const redis = agentToolAvailability("redis");
     expect(agentSqlToolBlockedMessage("run_readonly_sql", redis)).toContain("Redis");
-    expect(agentSqlToolBlockedMessage("run_readonly_sql", redis)).not.toMatch(/SQL observations are not available/i);
+    expect(agentSqlToolBlockedMessage("run_readonly_sql", redis)).not.toMatch(
+      /SQL observations are not available/i,
+    );
     expect(agentSqlToolBlockedMessage("preview_write", redis)).toContain("Redis");
   });
 
-  it("enables propose_seed_data on SQL and document engines, not on cql/kv/search", () => {
+  it("enables propose_seed_data on SQL, document and CQL engines, not on kv/search", () => {
     const mongo = agentToolAvailability("mongodb");
     expect(mongo.documentPropose).toBe(true);
     expect(isAgentToolEnabled("propose_seed_data", mongo)).toBe(true);
@@ -101,7 +145,11 @@ describe("agent engine tool gates", () => {
       expect(isAgentToolEnabled("propose_seed_data", availability)).toBe(true);
     }
 
-    for (const engine of ["cassandra", "redis", "opensearch"] as const) {
+    // Cassandra speaks CQL INSERT — seed proposals are enabled.
+    const cassandra = agentToolAvailability("cassandra");
+    expect(isAgentToolEnabled("propose_seed_data", cassandra)).toBe(true);
+
+    for (const engine of ["redis", "opensearch"] as const) {
       const availability = agentToolAvailability(engine);
       expect(availability.documentPropose).toBe(false);
       expect(availability.sqlWritePreview).toBe(false);

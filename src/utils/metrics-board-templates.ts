@@ -4,6 +4,7 @@
  */
 
 import type { DatabaseType, MetricsBoardDefinition, MetricsWidgetDefinition } from "../types";
+import { getWidgetLibraryItem } from "../components/MetricsBoard/utils/metrics-widget-catalog";
 
 import {
   type AIMetricsBoardTemplate,
@@ -119,23 +120,23 @@ export function createAIMetricsBoardFromWidgets(args: {
     return null;
   }
 
-  const COLUMNS = 2;
   const now = Date.now();
-  const widgets: MetricsWidgetDefinition[] = cleaned.map((widget, index) => {
-    // Scoreboards are compact; charts/tables take a full column row.
-    const isCompact = widget.type === "scoreboard";
-    const colSpan = isCompact ? 1 : 1;
-    const rowSpan = widget.type === "table" ? 2 : 1;
-    return {
+  const widgets: MetricsWidgetDefinition[] = [];
+  for (const widget of cleaned) {
+    // Use the widget library's default footprint so AI widgets land at the
+    // same size a manually-added widget would (scoreboard 3x3, table 6x4,
+    // charts 4x4) instead of a 1-column sliver.
+    const libraryItem = getWidgetLibraryItem(widget.type);
+    const candidate: MetricsWidgetDefinition = {
       id: `widget-${crypto.randomUUID()}`,
       type: widget.type,
       title: widget.title,
       query: widget.query,
       refresh_seconds: 0,
-      col_span: colSpan,
-      row_span: rowSpan,
-      grid_x: index % COLUMNS,
-      grid_y: Math.floor(index / COLUMNS),
+      col_span: libraryItem.colSpan,
+      row_span: libraryItem.rowSpan,
+      grid_x: 0,
+      grid_y: 0,
       chart_spec: {
         version: 1,
         source_query: widget.query,
@@ -145,7 +146,12 @@ export function createAIMetricsBoardFromWidgets(args: {
         limit: widget.limit,
       },
     };
-  });
+    widgets.push(
+      canPlaceWidget(widgets, candidate)
+        ? candidate
+        : findFirstAvailablePosition(widgets, candidate),
+    );
+  }
 
   const requestedTitle =
     args.title?.trim() && args.title.trim() !== "DB Overview Dashboard"
@@ -225,8 +231,8 @@ export function appendAIMetricsWidgetsToBoard(args: {
       title: widget.title,
       query: widget.query,
       refresh_seconds: 0,
-      col_span: 1,
-      row_span: widget.type === "table" ? 2 : 1,
+      col_span: getWidgetLibraryItem(widget.type).colSpan,
+      row_span: getWidgetLibraryItem(widget.type).rowSpan,
       grid_x: 0,
       grid_y: 0,
       chart_spec: {

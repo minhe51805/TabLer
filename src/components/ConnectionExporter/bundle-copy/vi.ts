@@ -1,9 +1,33 @@
 import type { BundleCopy } from "./types";
 
 export const VI_BUNDLE_COPY: BundleCopy = {
+  common: {
+    done: "Xong",
+    cancel: "Hủy",
+  },
   modes: {
     connections: "Chỉ kết nối",
     bundle: "Gói workspace đầy đủ",
+  },
+  connectionsExport: {
+    title: "Xuất kết nối",
+    subtitle: "Lưu kết nối thành tệp xuất có mã hóa, gắn phiên bản",
+    selectLabel: (selected, total) => `Chọn (${selected}/${total})`,
+    selectAll: "Chọn tất cả",
+    deselectAll: "Bỏ chọn tất cả",
+    empty: "Không có kết nối đã lưu để xuất.",
+    encryptionNote:
+      "Kết nối sẽ được mã hóa bằng AES-256-GCM. Mật khẩu không được xuất — bạn sẽ cần nhập lại khi nhập.",
+    passwordLabel: "Mật khẩu mã hóa",
+    passwordPlaceholder: "Tối thiểu 10 ký tự",
+    confirmLabel: "Xác nhận mật khẩu",
+    confirmPlaceholder: "Nhập lại mật khẩu",
+    errorPasswordShort: "Mật khẩu phải có ít nhất 10 ký tự.",
+    errorPasswordMismatch: "Mật khẩu không khớp.",
+    errorNoSelection: "Hãy chọn ít nhất một kết nối.",
+    button: (count) => `Xuất ${count} kết nối`,
+    working: "Đang xuất...",
+    done: (count, path) => `Đã xuất ${count} kết nối tới ${path}`,
   },
   export: {
     title: "Xuất gói workspace",
@@ -45,5 +69,23 @@ export const VI_BUNDLE_COPY: BundleCopy = {
         "Mật khẩu không bao giờ được nhập — DBeaver và DataGrip lưu chúng dưới dạng mã hóa. Nhập mật khẩu cơ sở dữ liệu cho từng kết nối bạn muốn nhập.",
       skipped: "{count} mục bị bỏ qua (engine không hỗ trợ hoặc lỗi định dạng)",
     },
+    connectionsTitle: "Nhập kết nối",
+    connectionsSubtitle: "Tải kết nối từ tệp TableR đã mã hóa",
+    sourceFile: "Tệp nguồn",
+    dropzonePick: "Nhấn để chọn tệp .tabler-connections hoặc .tabler-bundle",
+    externalWorking: "Đang đọc tệp...",
+    decryptLabel: "Mật khẩu giải mã",
+    decryptPlaceholder: "Nhập mật khẩu của tệp xuất",
+    decryptButton: "Mở tệp",
+    decryptWorking: "Đang giải mã...",
+    importButton: (count) => `Nhập ${count} kết nối`,
+    importWorking: "Đang nhập...",
+    importedMessage: (count) => `Đã nhập thành công ${count} kết nối`,
+    passwordNote:
+      "Mật khẩu không được xuất. Nhập mật khẩu cơ sở dữ liệu cho từng kết nối bạn muốn nhập.",
+    passwordPlaceholder: "Mật khẩu cơ sở dữ liệu (tùy chọn)",
+    errorIncorrectPassword: "Mật khẩu không đúng. Vui lòng thử lại.",
+    errorOpenDialog: (detail) => `Không mở được hộp thoại chọn tệp: ${detail}`,
+    errorImportFailed: (detail) => `Nhập thất bại: ${detail}`,
   },
 };

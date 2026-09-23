@@ -14,11 +14,7 @@ export default defineConfig(async () => ({
   base: isTauriDev ? "/" : "./",
   build: {
     target:
-      tauriPlatform === "windows"
-        ? "chrome105"
-        : tauriPlatform === "macos"
-          ? "safari13"
-          : "es2020",
+      tauriPlatform === "windows" ? "chrome105" : tauriPlatform === "macos" ? "safari13" : "es2020",
     cssTarget: tauriPlatform === "windows" ? "chrome105" : undefined,
     // Disable manual chunks for production to ensure WebView2 compatibility
     // Single bundle eliminates chunk loading race conditions
@@ -52,8 +48,9 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 3. tell Vite to ignore watching `src-tauri`, the Next.js `website`
+      // app, and build output — edits there must not reload the desktop dev UI
+      ignored: ["**/src-tauri/**", "**/website/**", "**/dist/**", "**/dist-plugins/**"],
     },
   },
 }));

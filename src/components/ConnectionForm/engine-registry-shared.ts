@@ -50,15 +50,17 @@ export interface DbEntry {
   databasePlaceholder?: string;
   extraFields?: EngineExtraField[];
   /**
-   * Runtime availability of a PluginHttp engine's driver, computed from the
-   * installed plugin set. Only populated for PluginHttp protocols; undefined
-   * for built-in / native engines.
-   *  - "active"    -> an enabled, verified, stable driver is installed.
-   *  - "installed" -> a driver bundle is installed but not active yet (disabled/
-   *                   unverified) — it needs enabling, NOT a roadmap-only engine.
-   *  - "roadmap"   -> no matching plugin bundle is installed at all.
+   * Runtime availability of a plugin-gated engine's driver, computed from the
+   * installed plugin set. Populated for PluginHttp and PluginNative protocols;
+   * undefined for built-in engines.
+   *  - "active"     -> an enabled, verified, usable driver is installed.
+   *  - "installed"  -> a driver bundle is installed but not active yet (disabled/
+   *                    unverified) — it needs enabling, NOT a roadmap-only engine.
+   *  - "incomplete" -> the installed bundle lacks a binary for this platform —
+   *                    enabling cannot fix it.
+   *  - "roadmap"    -> no matching plugin bundle is installed at all.
    */
-  pluginHttpState?: "active" | "installed" | "roadmap";
+  pluginHttpState?: "active" | "installed" | "incomplete" | "roadmap";
 }
 
 type DbFieldConfig = Pick<
@@ -223,7 +225,8 @@ export const ENGINE_EXTRA_FIELDS = {
         },
       ],
       hint: "Auto-detected from the server name: local servers and SERVER\\INSTANCE default to Windows Authentication; Azure SQL defaults to SQL Server Authentication.",
-      hintVi: "Tự nhận theo Server name: máy local và SERVER\\INSTANCE dùng Windows Authentication; Azure SQL dùng SQL Server Authentication.",
+      hintVi:
+        "Tự nhận theo Server name: máy local và SERVER\\INSTANCE dùng Windows Authentication; Azure SQL dùng SQL Server Authentication.",
     },
     {
       key: "instance_name",
@@ -259,7 +262,8 @@ export const ENGINE_EXTRA_FIELDS = {
       label: "Trust server certificate",
       labelVi: "Tin server certificate",
       hint: "Local SQL Server uses a self-signed certificate — keep this checked (same as the mssql VS Code extension). Uncheck for strict certificate validation.",
-      hintVi: "SQL Server local dùng certificate tự ký — giữ checked (giống extension mssql của VS Code). Bỏ check nếu cần xác thực nghiêm ngặt.",
+      hintVi:
+        "SQL Server local dùng certificate tự ký — giữ checked (giống extension mssql của VS Code). Bỏ check nếu cần xác thực nghiêm ngặt.",
     },
   ] satisfies EngineExtraField[],
   redis: [
@@ -280,7 +284,8 @@ export const ENGINE_EXTRA_FIELDS = {
       label: "Connection discovery",
       labelVi: "Kieu ket noi",
       hint: "SRV discovers the whole Atlas cluster via DNS. Direct connects to one host:port — use it for PrivateLink endpoints (pl-*.mongodb.net) or self-hosted servers.",
-      hintVi: "SRV tim toan bo cluster Atlas qua DNS. Direct ket noi thang mot host:port — dung cho Private Endpoint (pl-*.mongodb.net) hoac MongoDB tu cai dat.",
+      hintVi:
+        "SRV tim toan bo cluster Atlas qua DNS. Direct ket noi thang mot host:port — dung cho Private Endpoint (pl-*.mongodb.net) hoac MongoDB tu cai dat.",
       options: [
         { value: "", label: "Auto-detect (hostname)", labelVi: "Tu dong nhan dien (hostname)" },
         { value: "force", label: "SRV (Atlas)", labelVi: "SRV (Atlas)" },

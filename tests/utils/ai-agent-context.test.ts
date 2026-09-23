@@ -48,59 +48,72 @@ describe("AI agent context builder", () => {
   });
 
   it("builds workspace identifiers without duplicating the active database qualifier", () => {
-    expect(buildWorkspaceTableIdentifier({ name: "users", schema: "public" }, "public"))
-      .toBe("users");
-    expect(buildWorkspaceTableIdentifier({ name: "users", schema: "analytics" }, "public"))
-      .toBe("analytics.users");
-    expect(buildWorkspaceTableIdentifier({ name: "public.users", schema: "public" }, "public"))
-      .toBe("public.users");
+    expect(buildWorkspaceTableIdentifier({ name: "users", schema: "public" }, "public")).toBe(
+      "users",
+    );
+    expect(buildWorkspaceTableIdentifier({ name: "users", schema: "analytics" }, "public")).toBe(
+      "analytics.users",
+    );
+    expect(
+      buildWorkspaceTableIdentifier({ name: "public.users", schema: "public" }, "public"),
+    ).toBe("public.users");
   });
 
   it("prioritizes relevant tables, removes duplicates, and respects the limit", () => {
-    expect(buildAgentVisibleTableNames(
-      ["users", "orders", "events", "audit_logs"],
-      ["events", "USERS"],
-      3,
-    )).toEqual(["events", "USERS", "orders"]);
+    expect(
+      buildAgentVisibleTableNames(
+        ["users", "orders", "events", "audit_logs"],
+        ["events", "USERS"],
+        3,
+      ),
+    ).toEqual(["events", "USERS", "orders"]);
   });
 
   it("builds a bounded schema capsule with explicit grounding rules", () => {
     const schemas = ["T=users", "T=orders", "T=events", "T=logs", "T=ignored"];
 
     expect(buildSchemaCapsulePreview(schemas)).toBe("T=users\nT=orders\nT=events\nT=logs");
-    expect(buildSchemaCapsuleContext({
-      currentDatabase: "analytics",
-      totalTableCount: 8,
-      visibleTableNames: ["users", "orders"],
-      allVisible: false,
-      tableSchemas: schemas.slice(0, 2),
-      schemaCodecMode: "relational",
-      truncatedOverview: true,
-    })).toContain("DB=analytics\nTC=8\nTV=users,orders,...");
-    expect(buildSchemaCapsuleContext({
-      currentDatabase: "analytics",
-      totalTableCount: 8,
-      visibleTableNames: ["users"],
-      allVisible: false,
-      tableSchemas: ["T=users"],
-      schemaCodecMode: "relational",
-      truncatedOverview: true,
-    })).toContain("NOTE=Overview limited to current capsule tables.");
+    expect(
+      buildSchemaCapsuleContext({
+        currentDatabase: "analytics",
+        totalTableCount: 8,
+        visibleTableNames: ["users", "orders"],
+        allVisible: false,
+        tableSchemas: schemas.slice(0, 2),
+        schemaCodecMode: "relational",
+        truncatedOverview: true,
+      }),
+    ).toContain("DB=analytics\nTC=8\nTV=users,orders,...");
+    expect(
+      buildSchemaCapsuleContext({
+        currentDatabase: "analytics",
+        totalTableCount: 8,
+        visibleTableNames: ["users"],
+        allVisible: false,
+        tableSchemas: ["T=users"],
+        schemaCodecMode: "relational",
+        truncatedOverview: true,
+      }),
+    ).toContain("NOTE=Overview limited to current capsule tables.");
   });
 
   it("builds recovery context that advertises missing catalog entries", () => {
-    expect(buildAgentRecoveryContext({
-      currentDatabase: "analytics",
-      availableTableNames: ["users", "orders", "events"],
-      visibleTableNames: ["users", "orders"],
-      schemaCapsulePreview: "T=users",
-    })).toBe([
-      "DB=analytics",
-      "TC=3",
-      "TV=users,orders,...",
-      "SCHEMA_PREVIEW=\nT=users",
-      "RULE=list_tables for catalog; search_schema for unknown fields; describe_table before assuming columns; stay inside verified schema.",
-    ].join("\n"));
+    expect(
+      buildAgentRecoveryContext({
+        currentDatabase: "analytics",
+        availableTableNames: ["users", "orders", "events"],
+        visibleTableNames: ["users", "orders"],
+        schemaCapsulePreview: "T=users",
+      }),
+    ).toBe(
+      [
+        "DB=analytics",
+        "TC=3",
+        "TV=users,orders,...",
+        "SCHEMA_PREVIEW=\nT=users",
+        "RULE=list_tables for catalog; search_schema for unknown fields; describe_table before assuming columns; stay inside verified schema.",
+      ].join("\n"),
+    );
   });
 
   it("builds localized planning prompts from a bounded table catalog", () => {
@@ -172,7 +185,7 @@ describe("AI agent context builder", () => {
     expect(prompt).not.toContain("x".repeat(2_500));
   });
 
-  it("omits SQL tools and SQL-only rules on document/KV engines", () => {
+  it("gates SQL write tools but keeps translated reads on document engines", () => {
     const prompt = buildAgentControllerPrompt({
       userPrompt: "Show recent orders",
       assistIntent: "sql",
@@ -183,19 +196,20 @@ describe("AI agent context builder", () => {
       toolAvailability: agentToolAvailability("mongodb"),
     });
 
-    expect(prompt).toContain("Engine: MongoDB (document)");
-    // SQL gating moves to the native payload: MongoDB must not receive the
-    // read-only SQL tool at all.
+    // MongoDB speaks a translated SELECT subset, so the read tool stays — but
+    // write preview, parameterized reads, schema objects and checkpoints are
+    // gated off by the capability matrix.
     const mongoPayload = JSON.stringify(
       nativeToolPayloadForProvider("openai", {
         workspaceToolsEnabled: true,
         availability: agentToolAvailability("mongodb"),
       }),
     );
-    expect(mongoPayload).not.toContain('"run_readonly_sql"');
+    expect(mongoPayload).toContain('"run_readonly_sql"');
     expect(mongoPayload).not.toContain('"preview_write"');
-    expect(prompt).toContain("Omit finish.args.sql");
-    expect(prompt).not.toContain("run run_readonly_sql before finishing");
+    expect(mongoPayload).not.toContain('"run_parameterized_sql"');
+    expect(mongoPayload).not.toContain('"restore_checkpoint"');
+    expect(prompt).toContain("run_readonly_sql");
   });
 
   it("keeps SQL tools on ClickHouse", () => {
@@ -216,7 +230,7 @@ describe("AI agent context builder", () => {
       }),
     );
     expect(clickhousePayload).toContain('"run_readonly_sql"');
-    expect(clickhousePayload).toContain('"preview_write"');
+    // ClickHouse has no rollback-preview driver impl — preview_write is gated.
   });
 
   it("injects pre-inspected summaries and caps them to save describe_table steps", () => {

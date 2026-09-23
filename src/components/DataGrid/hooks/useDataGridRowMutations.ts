@@ -6,7 +6,7 @@ import {
   type SetStateAction,
 } from "react";
 import type { ColumnDetail } from "../../../types";
-import type { StagedChange } from "../../../types/change-tracking";
+import type { StagedChangeInput } from "../../../stores/change-tracking-store";
 import { parseEditorValue, buildRowPrimaryKeys, type ResolvedColumn } from "./useDataGrid";
 import { computeNewRowPlan, computeColumnPlan } from "./useInsertColumnPlan";
 import { type CsvFileSelection } from "../dialogs/PasteRowsDialog";
@@ -15,6 +15,7 @@ import type { QueryResult } from "../../../types";
 import { emitAppToast } from "../../../utils/app-toast";
 import { getCurrentAppLanguage } from "../../../i18n";
 import { getDataGridPowerCopy } from "../datagrid-power-copy";
+import { getDataGridCopy } from "../datagrid-copy";
 
 interface DataGridRowMutationsParams {
   tableName?: string;
@@ -106,7 +107,7 @@ interface DataGridRowMutationsParams {
   cancelCsvImport: (operationId: string) => Promise<boolean>;
 
   /** Change-tracking queue: staged inserts land in the review modal. */
-  stageChange: (change: Omit<StagedChange, "id" | "timestamp" | "sqlPreview">) => void;
+  stageChange: (change: StagedChangeInput) => void;
   invalidateTableCaches: (connectionId: string, tableName: string, database?: string) => void;
   refreshTableFromStart: () => Promise<unknown>;
 
@@ -287,6 +288,7 @@ export function useDataGridRowMutations({
       }
       stageChange({
         type: "insert",
+        connectionId,
         tableName,
         database,
         // No source row exists — inserts have no grid row to highlight.
@@ -300,7 +302,7 @@ export function useDataGridRowMutations({
         tone: "success",
       });
     },
-    [database, resolvedColumns, stageChange, tableName],
+    [connectionId, database, resolvedColumns, stageChange, tableName],
   );
 
   const handleInsertRow = useCallback(async () => {
@@ -597,19 +599,16 @@ export function useDataGridRowMutations({
       .sort((left, right) => left - right);
     const hiddenSelectedCount = selectedRows.size - sortedRows.length;
 
+    const copy = getDataGridCopy(getCurrentAppLanguage());
     if (sortedRows.length === 0) {
-      setError(
-        "The selected rows are hidden by the current filter. Clear the filter to delete them.",
-      );
+      setError(copy.deleteRows.hiddenOnly);
       return;
     }
 
     const hiddenNote =
-      hiddenSelectedCount > 0
-        ? ` ${hiddenSelectedCount} selected row${hiddenSelectedCount === 1 ? " is" : "s are"} hidden by the current filter and will be kept.`
-        : "";
+      hiddenSelectedCount > 0 ? copy.deleteRows.hiddenNote(hiddenSelectedCount) : "";
     const shouldDelete = window.confirm(
-      `Delete ${sortedRows.length} selected row${sortedRows.length === 1 ? "" : "s"} from ${tableName}?${hiddenNote} This cannot be undone.`,
+      copy.deleteRows.confirm(sortedRows.length, tableName, hiddenNote),
     );
     if (!shouldDelete) return;
 
@@ -633,15 +632,27 @@ export function useDataGridRowMutations({
         throw new Error("Database did not delete any rows for the current selection.");
       }
 
-      const deletedRowSet = new Set(sortedRows);
-      setData((previous) => {
-        if (!previous) return previous;
-        return {
-          ...previous,
-          rows: previous.rows.filter((_, index) => !deletedRowSet.has(index)),
-        };
-      });
-      setTotalRows((previous) => Math.max(0, previous - sortedRows.length));
+      const partialDelete = affectedRows < sortedRows.length;
+      if (partialDelete) {
+        // The backend reports only a count — which rows survived is unknown,
+        // so skip the optimistic removal and let the refresh below show the
+        // real state. The toast keeps the partial failure visible.
+        emitAppToast({
+          title: copy.deleteRows.partialTitle,
+          description: copy.deleteRows.partialDescription(affectedRows, sortedRows.length),
+          tone: "error",
+        });
+      } else {
+        const deletedRowSet = new Set(sortedRows);
+        setData((previous) => {
+          if (!previous) return previous;
+          return {
+            ...previous,
+            rows: previous.rows.filter((_, index) => !deletedRowSet.has(index)),
+          };
+        });
+      }
+      setTotalRows((previous) => Math.max(0, previous - affectedRows));
       setSelectedRows(new Set());
       rowSelectionAnchorRef.current = null;
       cancelEditingCell();

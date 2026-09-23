@@ -22,7 +22,8 @@ pub(crate) use driver::{resolve_active_plugin_driver, resolve_active_sidecar};
 // Helpers the sibling `plugins` command file reaches through its glob import.
 pub(super) use bundle::{resolve_bundle_source, validate_bundle};
 pub(super) use install::{
-    install_bundle_from_path, rollback_path, sync_installed_plugins, verify_installed_record,
+    install_bundle_from_path, mark_missing_platform_binary, rollback_path, sync_installed_plugins,
+    verify_installed_record,
 };
 pub(super) use registry::{
     fetch_registry_index, latest_compatible_package, materialize_registry_package,

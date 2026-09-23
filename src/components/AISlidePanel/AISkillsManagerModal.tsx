@@ -7,10 +7,13 @@ import {
   Plus,
   RefreshCw,
   Search,
+  Trash2,
   TriangleAlert,
   X,
 } from "lucide-react";
 import { invokeMutation } from "../../utils/tauri-utils";
+import { requestAppConfirmation } from "../../stores/confirmStore";
+import { getLinkedWorkspaceDir } from "../../hooks/useLinkedFolders";
 import { useSkillUsageStore } from "../../stores/skillUsageStore";
 import { useSkillPrefsStore } from "../../stores/skillPrefsStore";
 import { buildSkillHealthReport, type SkillCatalogEntry } from "./ai-skill-health";
@@ -44,6 +47,9 @@ interface AISkillContent {
   model: string | null;
   effort: string | null;
   allowedTools: string[];
+  /** SKILL.md mtime (millis); echoed back as `expectedUpdatedAt` on save so a
+   * concurrent external edit is refused instead of silently overwritten. */
+  updatedAt: number | null;
 }
 
 /** The editor form's state, for both "create" and "edit". */
@@ -61,6 +67,8 @@ interface SkillDraft {
   model: string;
   effort: string;
   source: string;
+  /** Mtime the draft was opened at — the optimistic-concurrency token. */
+  updatedAt: number | null;
 }
 
 /**
@@ -92,13 +100,26 @@ export function AISkillsManagerModal({ open, language, onClose }: AISkillsManage
   const [draftBusy, setDraftBusy] = useState(false);
   /** Save/create failures stay inside the editor, not the roster behind it. */
   const [draftError, setDraftError] = useState<string | null>(null);
+  /** SKILL.md files the loader rejected, shown under the roster. */
+  const [loadErrors, setLoadErrors] = useState<string[]>([]);
 
   const refresh = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const entries = await invokeMutation<SkillCatalogEntry[]>("list_ai_skills", {});
-      setCatalog(Array.isArray(entries) ? entries : []);
+      // Linked-folder skills only surface when the workspace dir is passed;
+      // without it the catalog silently lists builtin/global skills only.
+      const workspaceDir = await getLinkedWorkspaceDir();
+      const report = await invokeMutation<{
+        skills: SkillCatalogEntry[];
+        errors?: { path: string; reason: string }[];
+      }>("list_ai_skills", {
+        workspaceDir,
+      });
+      setCatalog(Array.isArray(report.skills) ? report.skills : []);
+      // Malformed SKILL.md files are skipped by the loader — list them so
+      // "the skill is not in the catalog" is diagnosable instead of silent.
+      setLoadErrors((report.errors ?? []).map((entry) => `${entry.path}: ${entry.reason}`));
     } catch (err) {
       setError(String(err));
     } finally {
@@ -207,6 +228,7 @@ export function AISkillsManagerModal({ open, language, onClose }: AISkillsManage
       model: "",
       effort: "",
       source: WRITABLE_SKILL_SOURCE,
+      updatedAt: null,
     });
   }, []);
 
@@ -217,7 +239,10 @@ export function AISkillsManagerModal({ open, language, onClose }: AISkillsManage
       setDraftError(null);
       setDraftLoading(name);
       try {
-        const content = await invokeMutation<AISkillContent>("read_ai_skill", { name });
+        const content = await invokeMutation<AISkillContent>("read_ai_skill", {
+          name,
+          workspaceDir: await getLinkedWorkspaceDir(),
+        });
         setDraft({
           mode: "edit",
           name: content.name,
@@ -229,6 +254,7 @@ export function AISkillsManagerModal({ open, language, onClose }: AISkillsManage
           model: content.model ?? "",
           effort: content.effort ?? "",
           source: content.source,
+          updatedAt: content.updatedAt ?? null,
         });
       } catch (err) {
         setError(String(err));
@@ -270,6 +296,10 @@ export function AISkillsManagerModal({ open, language, onClose }: AISkillsManage
           license: draft.license.trim() || null,
           model: draft.model.trim() || null,
           effort: draft.effort.trim() || null,
+          // Optimistic concurrency: the backend refuses when the file changed
+          // since this draft was opened, so a save cannot clobber an external
+          // edit the user never saw.
+          expectedUpdatedAt: draft.updatedAt,
         });
       }
       setNotice(t(`Đã lưu skill tại: ${path}`, `Saved skill at: ${path}`));
@@ -291,6 +321,37 @@ export function AISkillsManagerModal({ open, language, onClose }: AISkillsManage
       setError(String(err));
     }
   }, [t]);
+
+  /**
+   * Delete the selected global skill after an explicit confirm. Workspace
+   * skills are never offered — they are files inside the user's own repo.
+   * The roster re-reads from disk afterwards rather than trusting local state.
+   */
+  const handleDeleteSelected = useCallback(async () => {
+    if (!selectedRow || selectedRow.source !== WRITABLE_SKILL_SOURCE || draftBusy) return;
+    const name = selectedRow.name;
+    const confirmed = await requestAppConfirmation({
+      title: t(`Xóa skill "${name}"?`, `Delete skill "${name}"?`),
+      message: t(
+        `Thư mục skills/${name} sẽ bị xóa vĩnh viễn, gồm SKILL.md và mọi references/scripts đi kèm. Skill đã tắt vẫn chiếm chỗ trong catalog cho tới khi bị xóa.`,
+        `The skills/${name} folder will be permanently deleted, including SKILL.md and any bundled references/scripts. A disabled skill still sits in the catalog until it is deleted.`,
+      ),
+      confirmText: t("Xóa vĩnh viễn", "Delete permanently"),
+      cancelText: t("Giữ lại", "Keep it"),
+    });
+    if (!confirmed) return;
+    setDraftBusy(true);
+    try {
+      await invokeMutation("delete_ai_skill", { name });
+      setNotice(t(`Đã xóa skill "${name}".`, `Deleted skill "${name}".`));
+      setSelectedName(null);
+      await refresh();
+    } catch (err) {
+      setError(String(err));
+    } finally {
+      setDraftBusy(false);
+    }
+  }, [selectedRow, draftBusy, refresh, t]);
 
   if (!open) return null;
 
@@ -634,6 +695,18 @@ export function AISkillsManagerModal({ open, language, onClose }: AISkillsManage
                   <span>{notice}</span>
                 </div>
               ) : null}
+              {loadErrors.length > 0 ? (
+                <div className="ai-skills-manager-error" role="alert">
+                  <TriangleAlert className="w-3.5 h-3.5" aria-hidden="true" />
+                  <span>
+                    {t(
+                      `${loadErrors.length} SKILL.md không tải được: `,
+                      `${loadErrors.length} SKILL.md file(s) failed to load: `,
+                    )}
+                    {loadErrors.join(" · ")}
+                  </span>
+                </div>
+              ) : null}
 
               {/* Master–detail, the Provider Settings shape: a roster column on the
               left, one skill's full record on the right. The old stack of cards
@@ -726,6 +799,23 @@ export function AISkillsManagerModal({ open, language, onClose }: AISkillsManage
                             <Pencil className="w-3.5 h-3.5" />
                           )}
                           {t("Sửa", "Edit")}
+                        </button>
+                        <button
+                          type="button"
+                          className="ai-skills-manager-btn is-ghost is-small"
+                          onClick={() => void handleDeleteSelected()}
+                          disabled={!canEditSelected || draftBusy}
+                          title={
+                            canEditSelected
+                              ? t("Xóa skill này vĩnh viễn", "Delete this skill permanently")
+                              : t(
+                                  "Skill thuộc workspace — xóa thư mục trong repo của bạn.",
+                                  "Workspace skill — delete the folder in your repository.",
+                                )
+                          }
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                          {t("Xóa", "Delete")}
                         </button>
                         <button
                           type="button"

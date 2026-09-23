@@ -2,10 +2,16 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const invokeMutationMock = vi.fn();
 const invokeWithTimeoutMock = vi.fn();
+const invokeAgentToolMock = vi.fn();
 
 vi.mock("@/utils/tauri-utils", () => ({
   invokeMutation: (...args: unknown[]) => invokeMutationMock(...args),
   invokeWithTimeout: (...args: unknown[]) => invokeWithTimeoutMock(...args),
+}));
+
+vi.mock("@/utils/ai-tool-command-client", () => ({
+  invokeAIWorkspaceToolWithTimeout: (...args: unknown[]) => invokeAgentToolMock(...args),
+  invokeAIWorkspaceToolMutation: (...args: unknown[]) => invokeAgentToolMock(...args),
 }));
 
 import { useQueryStore } from "@/stores/queryStore";
@@ -37,6 +43,8 @@ describe("queryStore", () => {
   beforeEach(() => {
     invokeMutationMock.mockReset();
     invokeWithTimeoutMock.mockReset();
+    invokeAgentToolMock.mockReset();
+    invokeAgentToolMock.mockResolvedValue(queryResult);
     invokeWithTimeoutMock.mockImplementation((command: string, args: { sql?: string }) => {
       if (command === "classify_sql_safety") return Promise.resolve(safetyDecision(args.sql || ""));
       return Promise.resolve(queryResult);
@@ -111,9 +119,8 @@ describe("queryStore", () => {
     await useQueryStore.getState().executeQuery("connection-1", "select 1");
     expect(invokeMutationMock.mock.calls.length).toBe(calls + 1);
   });
-
   it("always clears the execution flag after a backend error", async () => {
-    invokeMutationMock.mockRejectedValue(new Error("database unavailable"));
+    invokeAgentToolMock.mockRejectedValue(new Error("database unavailable"));
 
     await expect(
       useQueryStore.getState().executeSandboxQuery("connection-1", ["select 1"]),
@@ -123,10 +130,8 @@ describe("queryStore", () => {
   });
 
   it("sends a request id for sandbox queries and blocks writes in Safe Mode", async () => {
-    invokeMutationMock.mockResolvedValue(queryResult);
-
     await useQueryStore.getState().executeSandboxQuery("connection-1", ["select 1"]);
-    expect(invokeMutationMock).toHaveBeenCalledWith(
+    expect(invokeAgentToolMock).toHaveBeenCalledWith(
       "execute_sandboxed_query",
       expect.objectContaining({
         connectionId: "connection-1",
@@ -134,13 +139,15 @@ describe("queryStore", () => {
         requireReadOnly: false,
         requestId: expect.any(String),
       }),
+      expect.any(Number),
+      expect.any(String),
     );
 
-    invokeMutationMock.mockClear();
+    invokeAgentToolMock.mockClear();
     await expect(
       useQueryStore.getState().executeSandboxQuery("connection-1", ["DELETE FROM users"]),
     ).rejects.toThrow("Safe Mode level 1");
-    expect(invokeMutationMock).not.toHaveBeenCalled();
+    expect(invokeAgentToolMock).not.toHaveBeenCalled();
   });
 
   it("escalates a blocked sandbox write to Safe Mode confirmation when user-initiated", async () => {
@@ -157,12 +164,14 @@ describe("queryStore", () => {
         .executeSandboxQuery("connection-1", ["DELETE FROM users"], false, {
           userInitiated: true,
         });
-      expect(invokeMutationMock).toHaveBeenCalledWith(
+      expect(invokeAgentToolMock).toHaveBeenCalledWith(
         "execute_sandboxed_query",
         expect.objectContaining({
           connectionId: "connection-1",
           statements: ["DELETE FROM users"],
         }),
+        expect.any(Number),
+        expect.any(String),
       );
     } finally {
       window.removeEventListener("safe-mode-confirm-request", autoApprove);
@@ -183,7 +192,7 @@ describe("queryStore", () => {
           userInitiated: true,
         }),
       ).rejects.toThrow("Query cancelled by Safe Mode confirmation.");
-      expect(invokeMutationMock).not.toHaveBeenCalled();
+      expect(invokeAgentToolMock).not.toHaveBeenCalled();
     } finally {
       window.removeEventListener("safe-mode-confirm-request", autoReject);
     }
@@ -201,7 +210,7 @@ describe("queryStore", () => {
         .executeSandboxQuery("connection-1", ["DELETE FROM users"], false, {
           preApproved: true,
         });
-      expect(invokeMutationMock).toHaveBeenCalledWith(
+      expect(invokeAgentToolMock).toHaveBeenCalledWith(
         "execute_sandboxed_query",
         expect.objectContaining({
           connectionId: "connection-1",
@@ -209,6 +218,8 @@ describe("queryStore", () => {
           // Backend must honor the human approval and relax its own block.
           safeModeApprovedByUser: true,
         }),
+        expect.any(Number),
+        expect.any(String),
       );
     } finally {
       window.removeEventListener("safe-mode-confirm-request", failOnPrompt);
@@ -325,9 +336,9 @@ describe("queryStore", () => {
     expect(invokeWithTimeoutMock).toHaveBeenCalledWith(
       "get_foreign_key_lookup_values",
       {
-        connection_id: "connection-1",
-        referenced_table: "teams",
-        referenced_column: "id",
+        connectionId: "connection-1",
+        referencedTable: "teams",
+        referencedColumn: "id",
         search: "platform",
         limit: 1000,
       },
@@ -337,22 +348,22 @@ describe("queryStore", () => {
   });
 
   it("routes agent read-only queries through the pinned backend command", async () => {
-    invokeMutationMock.mockResolvedValue(queryResult);
-
     await useQueryStore.getState().executeAgentReadonlyQuery("connection-1", ["select 1"]);
 
     // The agent read tool must call the dedicated command whose read-only
     // boundary is pinned server-side. It must NOT send a `requireReadOnly`
     // flag, since that flag can never be used to lower the boundary here.
-    expect(invokeMutationMock).toHaveBeenCalledWith(
+    expect(invokeAgentToolMock).toHaveBeenCalledWith(
       "execute_agent_readonly_query",
       expect.objectContaining({
         connectionId: "connection-1",
         statements: ["select 1"],
         requestId: expect.any(String),
       }),
+      expect.any(Number),
+      expect.any(String),
     );
-    const [, args] = invokeMutationMock.mock.calls[0];
+    const [, args] = invokeAgentToolMock.mock.calls[0];
     expect(args).not.toHaveProperty("requireReadOnly");
   });
 
@@ -362,7 +373,7 @@ describe("queryStore", () => {
     await expect(
       useQueryStore.getState().executeAgentReadonlyQuery("connection-1", ["DELETE FROM users"]),
     ).rejects.toThrow("Safe Mode level 1");
-    expect(invokeMutationMock).not.toHaveBeenCalled();
+    expect(invokeAgentToolMock).not.toHaveBeenCalled();
     expect(useQueryStore.getState().isExecutingQuery).toBe(false);
     expect(useQueryStore.getState().activeQueryRequestId).toBeNull();
   });
@@ -460,6 +471,7 @@ describe("queryStore", () => {
         orderBy: "id",
         orderDir: "ASC",
         filter: null,
+        overwrite: false,
       },
     });
   });

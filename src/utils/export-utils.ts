@@ -46,6 +46,17 @@ function buildExportFilename(tableName: string | undefined, extension: string): 
 }
 
 /**
+ * Spreadsheet formula-injection guard: a text cell whose first character is
+ * `=`, `+`, `-`, `@`, or a tab/CR/LF trick is prefixed with a single quote so
+ * Excel/Sheets/LibreOffice render it as text instead of evaluating it.
+ * Numbers and booleans are left alone — a real `-5` must stay numeric.
+ */
+function spreadsheetSafeText(str: string): string {
+  if (/^[=+\-@\t\r]/.test(str)) return `'${str}`;
+  return str;
+}
+
+/**
  * Escapes a single CSV value according to RFC 4180:
  * - Doubles up internal double-quotes
  * - Wraps in double-quotes if contains comma, quote, or newline
@@ -54,7 +65,7 @@ function buildExportFilename(tableName: string | undefined, extension: string): 
 function escapeCsvValue(value: string | number | boolean | null): string {
   if (value === null || value === undefined) return "";
 
-  const str = String(value);
+  const str = typeof value === "string" ? spreadsheetSafeText(value) : String(value);
 
   // Check if escaping is needed
   if (str.includes('"') || str.includes(",") || str.includes("\n") || str.includes("\r")) {
@@ -134,10 +145,11 @@ export function buildTsvContent(
   columns: string[],
   rows: (string | number | boolean | null)[][],
 ): string {
-  const escapeTsv = (value: string | number | boolean | null): string =>
-    value === null || value === undefined
-      ? ""
-      : String(value).replace(/\t/g, " ").replace(/\r?\n/g, " ");
+  const escapeTsv = (value: string | number | boolean | null): string => {
+    if (value === null || value === undefined) return "";
+    const str = typeof value === "string" ? spreadsheetSafeText(value) : String(value);
+    return str.replace(/\t/g, " ").replace(/\r?\n/g, " ");
+  };
   const lines = [columns.map(escapeTsv).join("\t")];
   for (const row of rows) {
     lines.push(row.map(escapeTsv).join("\t"));

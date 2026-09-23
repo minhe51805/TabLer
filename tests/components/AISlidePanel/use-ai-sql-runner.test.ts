@@ -73,7 +73,13 @@ describe("useAISqlRunner Safe Mode pre-approval", () => {
     requestAISqlConfirmationMock.mockReset();
     resetRuleEngine();
     invokeWithTimeoutMock.mockReset();
-    invokeWithTimeoutMock.mockResolvedValue({ fileName: "ck.sql", tables: 2, rows: 5 });
+    // Command-aware: classify_sql_safety answers "read-only" so the frontend
+    // verdict stands; create_database_checkpoint answers a checkpoint result.
+    invokeWithTimeoutMock.mockImplementation((command: string) =>
+      command === "classify_sql_safety"
+        ? Promise.resolve({ statements: [], readOnly: true, hasSchemaMutation: false })
+        : Promise.resolve({ fileName: "ck.sql", tables: 2, rows: 5 }),
+    );
     useConnectionStore.setState({ currentDatabase: "app" });
   });
 
@@ -110,17 +116,16 @@ describe("useAISqlRunner Safe Mode pre-approval", () => {
     );
   });
 
-  it("full autonomy still confirms mutations through the review dialog", async () => {
-    // The standing grant covers reads; a write under "full" shows the same
-    // confirmation dialog and is pre-approved for Safe Mode once accepted.
-    requestAISqlConfirmationMock.mockResolvedValue(true);
+  it("full autonomy runs mutations without a dialog (standing grant)", async () => {
+    // "Full" is the standing human approval granted in the consent dialog —
+    // writes execute without a per-statement confirmation, pre-approved for
+    // Safe Mode. A `require_approval` guardrail rule can still force a dialog
+    // (covered in the rules block below).
     const { result, executeSandboxQuery } = setupRunner();
     await act(async () => {
       await result.current.runSql("UPDATE users SET x = 1", { agentAutonomy: "full" });
     });
-    expect(requestAISqlConfirmationMock).toHaveBeenCalledWith("high-risk", [
-      "UPDATE users SET x = 1",
-    ]);
+    expect(requestAISqlConfirmationMock).not.toHaveBeenCalled();
     expect(executeSandboxQuery).toHaveBeenCalledWith(
       "conn-1",
       ["UPDATE users SET x = 1"],
@@ -148,7 +153,11 @@ describe("useAISqlRunner auto-checkpoint safety net", () => {
     requestAISqlConfirmationMock.mockResolvedValue(true);
     resetRuleEngine();
     invokeWithTimeoutMock.mockReset();
-    invokeWithTimeoutMock.mockResolvedValue({ fileName: "ck.sql", tables: 2, rows: 5 });
+    invokeWithTimeoutMock.mockImplementation((command: string) =>
+      command === "classify_sql_safety"
+        ? Promise.resolve({ statements: [], readOnly: true, hasSchemaMutation: false })
+        : Promise.resolve({ fileName: "ck.sql", tables: 2, rows: 5 }),
+    );
     useConnectionStore.setState({
       connections: [{ id: "conn-1", db_type: "mssql" }] as never,
       currentDatabase: "app",
@@ -163,7 +172,7 @@ describe("useAISqlRunner auto-checkpoint safety net", () => {
     expect(invokeWithTimeoutMock).toHaveBeenCalledWith(
       "create_database_checkpoint",
       expect.objectContaining({ connectionId: "conn-1", label: "auto-before-agent-write" }),
-      60_000,
+      120_000,
       "Safety checkpoint",
     );
     expect(executeSandboxQuery).toHaveBeenCalledWith(
@@ -179,7 +188,12 @@ describe("useAISqlRunner auto-checkpoint safety net", () => {
     await act(async () => {
       await result.current.runSql("SELECT * FROM users", { agentAutonomy: "full" });
     });
-    expect(invokeWithTimeoutMock).not.toHaveBeenCalled();
+    // The safety classifier runs for every statement; the checkpoint does not.
+    expect(
+      invokeWithTimeoutMock.mock.calls.filter(
+        ([command]) => command === "create_database_checkpoint",
+      ),
+    ).toHaveLength(0);
   });
 
   describe("useAISqlRunner guardrail rules", () => {
@@ -187,7 +201,11 @@ describe("useAISqlRunner auto-checkpoint safety net", () => {
       requestAISqlConfirmationMock.mockReset();
       resetRuleEngine();
       invokeWithTimeoutMock.mockReset();
-      invokeWithTimeoutMock.mockResolvedValue({ fileName: "ck.sql", tables: 2, rows: 5 });
+      invokeWithTimeoutMock.mockImplementation((command: string) =>
+        command === "classify_sql_safety"
+          ? Promise.resolve({ statements: [], readOnly: true, hasSchemaMutation: false })
+          : Promise.resolve({ fileName: "ck.sql", tables: 2, rows: 5 }),
+      );
       useConnectionStore.setState({
         connections: [{ id: "conn-1", db_type: "mssql" }] as never,
         currentDatabase: "app",

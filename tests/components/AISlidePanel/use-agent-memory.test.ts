@@ -70,14 +70,16 @@ describe("agent memory index wiring (use-agent-memory)", () => {
     });
   });
 
-  it("degrades to an empty index on backend failure and does not cache the failure", async () => {
+  it("reports backend failure as null (not an empty index) and does not cache it", async () => {
     mockedInvoke.mockRejectedValueOnce("backend down");
     const failed = await getAgentMemoryIndex({
       workspaceToolsEnabled: true,
       connectionId: "conn-1",
       database: "appdb",
     });
-    expect(failed).toEqual([]);
+    // null = "the store could not be read" — the prompt must not claim no
+    // memories exist and invite save_memory over an unread store.
+    expect(failed).toBeNull();
     mockedInvoke.mockResolvedValue([
       { name: "later", description: "", updatedAt: "2026-02-02T00:00:00Z" },
     ]);

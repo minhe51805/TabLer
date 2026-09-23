@@ -137,7 +137,9 @@ pub(super) async fn run_sql_restore(
 ) -> Result<RestoreResult, String> {
     db_manager.assert_write_allowed(connection_id).await?;
     if enforce_safe_mode {
-        safe_mode.assert_sql_allowed(connection_id, sql).await?;
+        safe_mode
+            .assert_sql_allowed(connection_id, sql, Some(db_type))
+            .await?;
     }
     // The capability gate targets native backup/restore tooling. Checkpoint
     // rollback is plain SQL re-execution confirmed through a 3-step human
@@ -202,12 +204,13 @@ pub(super) async fn run_sql_restore(
 }
 
 fn normalized_statement(statement: &str) -> String {
-    statement
-        .lines()
-        .filter(|line| !line.trim_start().starts_with("--"))
+    // Strip `--`, `#`, and `/* */` comments (string-literal contents are
+    // masked too — only the leading keyword matters here), then collapse to
+    // one uppercase line so `/* c */ DROP TABLE` still reads as DROP.
+    crate::utils::sql::strip_sql_comments(statement, " ")
+        .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ")
-        .trim()
         .to_ascii_uppercase()
 }
 
@@ -227,7 +230,7 @@ fn is_data_change(statement: &str) -> bool {
 
 fn is_destructive(statement: &str) -> bool {
     let normalized = normalized_statement(statement);
-    ["DROP", "TRUNCATE", "DELETE", "ALTER TABLE"]
+    ["DROP", "TRUNCATE", "DELETE", "UPDATE", "ALTER TABLE"]
         .iter()
         .any(|keyword| normalized.starts_with(keyword))
 }
@@ -304,6 +307,19 @@ mod tests {
         assert_eq!(preview.destructive_statement_count, 1);
         assert!(!preview.transactional);
         assert!(preview.warning.is_some());
+    }
+
+    #[test]
+    fn preview_counts_block_commented_drops_and_updates_as_destructive() {
+        let preview = preview_database_restore(
+            "/* generated dump */\nCREATE TABLE t (id INT); /* c */ DROP TABLE old; UPDATE t SET id = 2;".to_string(),
+            DatabaseType::PostgreSQL,
+        )
+        .unwrap();
+
+        assert_eq!(preview.destructive_statement_count, 2);
+        assert_eq!(preview.schema_change_count, 2);
+        assert_eq!(preview.data_change_count, 1);
     }
 
     #[test]

@@ -46,6 +46,9 @@ export function serializeBoard(board: MetricsBoardDefinition): string {
           row_span: w.row_span,
           grid_x: w.grid_x,
           grid_y: w.grid_y,
+          note: w.note,
+          color: w.color,
+          chart_spec: w.chart_spec,
         })),
       },
     },
@@ -90,6 +93,12 @@ export function deserializeBoard(
       row_span: typeof r.row_span === "number" ? r.row_span : 4,
       grid_x: typeof r.grid_x === "number" ? r.grid_x : 0,
       grid_y: typeof r.grid_y === "number" ? r.grid_y : 0,
+      note: typeof r.note === "string" ? r.note : undefined,
+      color: typeof r.color === "string" ? r.color : undefined,
+      chart_spec:
+        r.chart_spec && typeof r.chart_spec === "object"
+          ? (r.chart_spec as MetricsWidgetDefinition["chart_spec"])
+          : undefined,
     });
   }
 
@@ -139,41 +148,6 @@ export function formatRelativeTime(timestamp: number): string {
   return `${Math.floor(hours / 24)}d ago`;
 }
 
-const ACTIVITY_KEY = "tabler.metricsBoardActivity.v1";
-const MAX_ACTIVITY = 50;
-
-export type BoardActivityEntry = {
-  boardId: string;
-  widgetId: string;
-  widgetTitle: string;
-  action: "run" | "error" | "add" | "delete" | "edit";
-  timestamp: number;
-  detail?: string;
-};
-
-export function pushBoardActivity(entry: Omit<BoardActivityEntry, "timestamp">) {
-  if (typeof window === "undefined") return;
-  try {
-    const raw = window.localStorage.getItem(ACTIVITY_KEY);
-    const list: BoardActivityEntry[] = raw ? JSON.parse(raw) : [];
-    list.unshift({ ...entry, timestamp: Date.now() });
-    window.localStorage.setItem(ACTIVITY_KEY, JSON.stringify(list.slice(0, MAX_ACTIVITY)));
-  } catch {
-    /* ignore */
-  }
-}
-
-export function readBoardActivity(boardId: string): BoardActivityEntry[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = window.localStorage.getItem(ACTIVITY_KEY);
-    const list: BoardActivityEntry[] = raw ? JSON.parse(raw) : [];
-    return list.filter((e) => e.boardId === boardId);
-  } catch {
-    return [];
-  }
-}
-
 /** Extract unique {{param}} names from a SQL string. */
 export function extractQueryParams(sql: string): string[] {
   const names = new Set<string>();
@@ -182,11 +156,24 @@ export function extractQueryParams(sql: string): string[] {
   }
   return [...names];
 }
-
-/** Substitute {{param}} placeholders with board param values. */
+/**
+ * Substitute {{param}} placeholders with board param values.
+ *
+ * Contract: write placeholders bare in SQL (`WHERE id = {{user_id}}`), never
+ * inside quotes. Values are spliced as SQL literals, not raw text:
+ *  - numbers and booleans pass through unquoted (`42`, `true`),
+ *  - anything else becomes a quoted string literal with inner quotes doubled
+ *    (`o'brien` -> `'o''brien'`),
+ *  - unset/empty params become `NULL`.
+ * This keeps a param value from reshaping the surrounding query.
+ */
 export function applyQueryParams(sql: string, params: Record<string, string>): string {
   return sql.replace(/\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g, (_, name: string) => {
     const value = params[name];
-    return value !== undefined && value !== "" ? value : "";
+    if (value === undefined || value === "") return "NULL";
+    const trimmed = value.trim();
+    if (/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(trimmed)) return trimmed;
+    if (/^(true|false)$/i.test(trimmed)) return trimmed.toLowerCase();
+    return `'${value.replace(/'/g, "''")}'`;
   });
 }

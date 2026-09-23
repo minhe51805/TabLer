@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CalendarClock, Play, Sparkles, Trash2, X } from "lucide-react";
 import { useI18n, type TranslationKey } from "../../i18n";
 import { useQuerySchedulesStore } from "../../stores/query-schedules-store";
+import { useAIStore } from "../../stores/aiStore";
 import {
   describeTaskWait,
   useAgentScheduleStore,
@@ -11,7 +12,7 @@ import { useConnectionStore } from "../../stores/connectionStore";
 import { useAppLayoutStore } from "../../stores/appLayoutStore";
 import { emitAppToast } from "../../utils/app-toast";
 import { requestAppConfirmation } from "../../stores/confirmStore";
-import { getScheduleCopy } from "./schedule-copy";
+import { getScheduleCopy, type ScheduleCopy } from "./schedule-copy";
 import { extractParams } from "../../utils/sql-params";
 import { getParamFillCopy } from "../SQLFavorites/param-fill-copy";
 import "../../styles/lazy-overlays.css";
@@ -20,19 +21,19 @@ const MINUTE_OPTIONS = [5, 15, 30, 60, 180, 360, 720, 1440];
 
 type ScheduleKind = "sql" | "agent";
 
-function formatInterval(seconds: number): string {
-  if (seconds % 3600 === 0) return `${seconds / 3600}h`;
-  if (seconds >= 60) return `${Math.round(seconds / 60)}m`;
-  return `${seconds}s`;
+function formatInterval(seconds: number, copy: ScheduleCopy): string {
+  if (seconds % 3600 === 0) return copy.every(`${seconds / 3600}h`);
+  if (seconds >= 60) return copy.every(`${Math.round(seconds / 60)}m`);
+  return copy.every(`${seconds}s`);
 }
 
-function relativeTime(millis: number | null | undefined): string {
+function relativeTime(millis: number | null | undefined, copy: ScheduleCopy): string {
   if (!millis) return "—";
   const deltaSeconds = Math.round((Date.now() - millis) / 1000);
-  if (deltaSeconds < 60) return `${deltaSeconds}s ago`;
-  if (deltaSeconds < 3600) return `${Math.round(deltaSeconds / 60)}m ago`;
-  if (deltaSeconds < 86_400) return `${Math.round(deltaSeconds / 3600)}h ago`;
-  return `${Math.round(deltaSeconds / 86_400)}d ago`;
+  if (deltaSeconds < 60) return copy.ago.seconds(deltaSeconds);
+  if (deltaSeconds < 3600) return copy.ago.minutes(Math.round(deltaSeconds / 60));
+  if (deltaSeconds < 86_400) return copy.ago.hours(Math.round(deltaSeconds / 3600));
+  return copy.ago.days(Math.round(deltaSeconds / 86_400));
 }
 
 /** Localized name of the reason a dispatched agent task has not started. */
@@ -62,6 +63,9 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
   const connections = useConnectionStore((state) => state.connections);
   const activeConnectionId = useConnectionStore((state) => state.activeConnectionId);
   const currentDatabase = useConnectionStore((state) => state.currentDatabase);
+  // A queued agent task waits while an AI request is in flight; mirror the
+  // runner's busy flag so the wait reason is real, not hardcoded.
+  const isAiBusy = useAIStore((state) => state.activeAIRequestId !== null);
   const draftSql = useAppLayoutStore((state) => state.querySchedulesDraftSql);
   const setDraftSql = useAppLayoutStore((state) => state.setQuerySchedulesDraftSql);
 
@@ -73,6 +77,7 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
     sql: string;
     prompt: string;
     connectionId: string;
+    allowDataRead: boolean;
     database: string;
     intervalMinutes: number;
     enabled: boolean;
@@ -84,6 +89,7 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
     sql: "",
     prompt: "",
     connectionId: "",
+    allowDataRead: false,
     database: "",
     intervalMinutes: 60,
     enabled: true,
@@ -120,7 +126,10 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
       Boolean(
         editor.name.trim() &&
         editor.connectionId &&
-        (editor.kind === "agent" ? editor.prompt.trim() : editor.sql.trim()),
+        (editor.kind === "agent" ? editor.prompt.trim() : editor.sql.trim()) &&
+        // An agent task with no database is a wildcard: it would run on
+        // whatever database happens to be active at fire time.
+        (editor.kind !== "agent" || editor.database.trim()),
       ),
     [editor],
   );
@@ -137,6 +146,7 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
         kind: editor.kind,
         sql: editor.kind === "sql" ? editor.sql.trim() : "",
         prompt: editor.kind === "agent" ? editor.prompt.trim() : null,
+        allowDataRead: editor.kind === "agent" ? editor.allowDataRead : false,
         connectionId: editor.connectionId,
         database: editor.database.trim() || null,
         intervalSeconds: editor.intervalMinutes * 60,
@@ -151,6 +161,7 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
         sql: "",
         prompt: "",
         connectionId: "",
+        allowDataRead: false,
         database: "",
         intervalMinutes: 60,
         enabled: true,
@@ -198,7 +209,12 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
           <h2 className="fav-title">
             <CalendarClock className="w-4 h-4" /> {t("schedules.title")}
           </h2>
-          <button type="button" className="fav-close" aria-label="Close" onClick={onClose}>
+          <button
+            type="button"
+            className="fav-close"
+            aria-label={t("common.close")}
+            onClick={onClose}
+          >
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -275,9 +291,26 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
                     setEditor((current) => ({ ...current, prompt: event.target.value }))
                   }
                 />
+                {/* Explicit opt-in: without it the task may only read schema
+                    metadata — no row data leaves the machine. */}
+                <div className="fav-form-field">
+                  <label className="fav-form-label">
+                    <input
+                      type="checkbox"
+                      checked={editor.allowDataRead}
+                      onChange={(event) =>
+                        setEditor((current) => ({
+                          ...current,
+                          allowDataRead: event.target.checked,
+                        }))
+                      }
+                    />{" "}
+                    {copy.agentDataRead}
+                  </label>
+                </div>
                 {/* Said before the task exists, not after it fails: an agent task
                     runs unattended, read-only, and only while the app is open. */}
-                <p className="fav-entry-desc">{t("schedules.agentReadOnlyHint")}</p>
+                <p className="fav-entry-desc">{copy.agentReadOnlyHint}</p>
               </div>
             )}
             <div className="fav-form-field">
@@ -374,7 +407,7 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
             </div>
           </div>
         ) : isLoading ? (
-          <div className="fav-empty">Loading...</div>
+          <div className="fav-empty">{copy.loading}</div>
         ) : schedules.length === 0 ? (
           <div className="fav-empty">{t("schedules.empty")}</div>
         ) : (
@@ -389,7 +422,7 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
                 ? describeTaskWait(queuedRun, {
                     connectionId: activeConnectionId,
                     database: currentDatabase,
-                    isBusy: false,
+                    isBusy: isAiBusy,
                   })
                 : null;
             const statusGlyph =
@@ -403,7 +436,7 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
                       ? copy.statusMissed
                       : schedule.lastStatus
                         ? "✓"
-                        : "new";
+                        : copy.statusNew;
             return (
               <div
                 key={schedule.id}
@@ -424,7 +457,7 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
                   <span className="fav-tag">
                     {t(isAgent ? "schedules.tagAgent" : "schedules.tagSql")}
                   </span>
-                  <span className="fav-tag">{formatInterval(schedule.intervalSeconds)}</span>
+                  <span className="fav-tag">{formatInterval(schedule.intervalSeconds, copy)}</span>
                   <span
                     className="fav-tag"
                     title={
@@ -438,8 +471,8 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
                   </span>
                 </div>
                 <p className="fav-entry-desc">
-                  {t("schedules.lastRan")}: {relativeTime(schedule.lastRanAt)}
-                  {schedule.lastRows != null ? ` · ${schedule.lastRows} rows` : ""}
+                  {t("schedules.lastRan")}: {relativeTime(schedule.lastRanAt, copy)}
+                  {schedule.lastRows != null ? ` · ${copy.rowsCount(schedule.lastRows)}` : ""}
                 </p>
                 {queuedRun && (
                   <p className="fav-entry-desc">
@@ -475,6 +508,7 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
                         intervalMinutes: Math.max(1, Math.round(schedule.intervalSeconds / 60)),
                         enabled: schedule.enabled,
                         catchUpPolicy: schedule.catchUpPolicy ?? "skip",
+                        allowDataRead: schedule.allowDataRead ?? false,
                       })
                     }
                   >
@@ -511,6 +545,7 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
                   intervalMinutes: 60,
                   enabled: true,
                   catchUpPolicy: "skip",
+                  allowDataRead: false,
                 })
               }
             >

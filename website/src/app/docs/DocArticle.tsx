@@ -2,6 +2,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { AlertTriangle, Info, Lightbulb } from "lucide-react";
 import type { DocBlock } from "@/lib/docs";
+import { DocCode } from "./DocCode";
 
 const calloutIcon = {
   info: Info,
@@ -18,9 +19,7 @@ export function DocArticle({
 }) {
   return (
     <div className="doc-article">
-      {blocks.map((block, index) =>
-        renderBlock(block, index, headingIds?.[index]),
-      )}
+      {blocks.map((block, index) => renderBlock(block, index, headingIds?.[index]))}
     </div>
   );
 }
@@ -58,11 +57,7 @@ function renderBlock(block: DocBlock, key: number, id?: string) {
         </ol>
       );
     case "code":
-      return (
-        <pre key={key} className="doc-code" data-lang={block.lang}>
-          <code>{block.code}</code>
-        </pre>
-      );
+      return <DocCode key={key} lang={block.lang} code={block.code} />;
     case "table":
       return (
         <div key={key} className="doc-table-wrap">

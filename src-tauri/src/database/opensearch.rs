@@ -306,6 +306,18 @@ impl OpenSearchDriver {
         query_label: String,
         truncated: bool,
     ) -> QueryResult {
+        Self::hits_to_result_capped(hits, elapsed, query_label, truncated, MAX_RESULT_ROWS)
+    }
+
+    /// Like [`Self::hits_to_result`] with a caller-chosen row cap so paged
+    /// fetches beyond the interactive 500-row default still return data.
+    fn hits_to_result_capped(
+        hits: Vec<Value>,
+        elapsed: u128,
+        query_label: String,
+        truncated: bool,
+        row_cap: usize,
+    ) -> QueryResult {
         let mut names = BTreeSet::new();
         names.extend([
             "_index".to_string(),
@@ -320,7 +332,7 @@ impl OpenSearchDriver {
         let names = names.into_iter().collect::<Vec<_>>();
         let rows = hits
             .into_iter()
-            .take(MAX_RESULT_ROWS)
+            .take(row_cap)
             .map(|hit| {
                 let source = hit.get("_source").and_then(Value::as_object);
                 names
@@ -502,8 +514,6 @@ impl DatabaseDriver for OpenSearchDriver {
     ) -> Result<QueryResult> {
         let index = Self::validate_index(table)?;
         let mut body = json!({
-            "from": offset.min(10_000),
-            "size": limit.min(MAX_RESULT_ROWS as u64),
             "query": { "match_all": {} }
         });
         if let Some(filter) = filter.map(str::trim).filter(|value| !value.is_empty()) {
@@ -529,9 +539,93 @@ impl DatabaseDriver for OpenSearchDriver {
             sort.insert(field.to_string(), json!({ "order": direction }));
             body["sort"] = Value::Array(vec![Value::Object(sort)]);
         }
+
+        // `from`+`size` cannot page past the 10 000-hit window; deeper pages
+        // go through the scroll API instead of silently clamping the offset
+        // (which used to return the same first rows for every deep page).
+        if offset.saturating_add(limit) <= 10_000 {
+            body["from"] = json!(offset);
+            body["size"] = json!(limit.min(MAX_RESULT_ROWS as u64));
+            Self::validate_search_body(&body)?;
+            return self
+                .search(index, &body, format!("Browse index {index}"))
+                .await;
+        }
+
+        body["size"] = json!(MAX_RESULT_ROWS);
+        if body.get("sort").is_none() {
+            body["sort"] = json!(["_doc"]);
+        }
         Self::validate_search_body(&body)?;
-        self.search(index, &body, format!("Browse index {index}"))
-            .await
+
+        let started = Instant::now();
+        let mut response = self
+            .send_json(
+                Method::POST,
+                &format!("/{index}/_search?scroll=2m"),
+                Some(&body),
+            )
+            .await?;
+        let mut collected: Vec<Value> = Vec::new();
+        let mut skipped = 0_u64;
+        let mut scroll_id = response
+            .get("_scroll_id")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        loop {
+            let hits = response
+                .pointer("/hits/hits")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            if hits.is_empty() {
+                break;
+            }
+            for hit in hits {
+                if skipped < offset {
+                    skipped += 1;
+                    continue;
+                }
+                if collected.len() as u64 >= limit {
+                    break;
+                }
+                collected.push(hit);
+            }
+            if collected.len() as u64 >= limit {
+                break;
+            }
+            let Some(id) = scroll_id.clone() else {
+                break;
+            };
+            response = self
+                .send_json(
+                    Method::POST,
+                    "/_search/scroll",
+                    Some(&json!({ "scroll": "2m", "scroll_id": id })),
+                )
+                .await?;
+            scroll_id = response
+                .get("_scroll_id")
+                .and_then(Value::as_str)
+                .map(str::to_string);
+        }
+        if let Some(id) = scroll_id {
+            let _ = self
+                .send_json(
+                    Method::DELETE,
+                    "/_search/scroll",
+                    Some(&json!({ "scroll_id": [id] })),
+                )
+                .await;
+        }
+        let truncated = collected.len() as u64 >= limit;
+        Ok(Self::hits_to_result_capped(
+            collected,
+            started.elapsed().as_millis(),
+            format!("Browse index {index}"),
+            truncated,
+            usize::MAX,
+        ))
     }
 
     async fn count_rows(&self, table: &str, _database: Option<&str>) -> Result<i64> {
@@ -598,7 +692,6 @@ impl DatabaseDriver for OpenSearchDriver {
         enum ScrollState {
             Start,
             Scroll(String),
-            Done,
         }
 
         stream::once(setup)
@@ -607,7 +700,6 @@ impl DatabaseDriver for OpenSearchDriver {
                     (ScrollState::Start, index, body),
                     move |(state, index, body)| async move {
                         let response = match &state {
-                            ScrollState::Done => return Ok(None),
                             ScrollState::Start => {
                                 self.send_json(
                                     Method::POST,
@@ -658,10 +750,11 @@ impl DatabaseDriver for OpenSearchDriver {
                         let next = match scroll_id {
                             Some(scroll_id) => ScrollState::Scroll(scroll_id),
                             None => {
-                                log::warn!(
+                                // Stopping here would silently truncate the
+                                // export — surface it as an error instead.
+                                return Err(anyhow!(
                                     "OpenSearch export of '{index}' stopped early: the server did not return a scroll id"
-                                );
-                                ScrollState::Done
+                                ));
                             }
                         };
                         Ok(Some((result, (next, index, body))))

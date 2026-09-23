@@ -2,10 +2,9 @@ use super::export_support::*;
 use crate::database::capabilities::DriverCapability;
 use crate::database::driver::DatabaseDriver;
 use crate::database::manager::DatabaseManager;
-use crate::database::models::{DatabaseType, SchemaObjectInfo, TableInfo, TableStructure};
+use crate::database::models::{DatabaseType, TableInfo, TableStructure};
 use anyhow::{Context, Result};
 use serde::Serialize;
-use serde_json::{Map as JsonMap, Value as JsonValue};
 use std::fs;
 use tauri::State;
 use tokio::task;
@@ -39,29 +38,11 @@ pub(super) struct ExportTableBundle {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct DatabaseExportSnapshot {
-    pub(super) meta: DatabaseExportSnapshotMeta,
-    pub(super) schema_objects: Vec<SchemaObjectInfo>,
-    pub(super) tables: Vec<DatabaseExportSnapshotTable>,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub(super) struct DatabaseExportSnapshotMeta {
     pub(super) exported_at: String,
     pub(super) engine: String,
     pub(super) database: Option<String>,
     pub(super) format: String,
-}
-
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub(super) struct DatabaseExportSnapshotTable {
-    pub(super) name: String,
-    pub(super) schema: Option<String>,
-    pub(super) table_type: String,
-    pub(super) structure: TableStructure,
-    pub(super) rows: Vec<JsonMap<String, JsonValue>>,
 }
 
 pub(super) struct SqlExportPayload {
@@ -107,39 +88,38 @@ pub async fn export_database(
     );
     let target_path = open_export_save_dialog(&suggested_name, export_format)?;
 
-    let (content, table_count, row_count) = match export_format {
+    let (table_count, row_count) = match export_format {
         DatabaseExportFormat::Sql => {
             let content = build_sql_export(driver_ref, resolved_database.as_deref(), db_type)
                 .await
                 .map_err(|error| error.to_string())?;
-            (content.content, content.table_count, content.row_count)
+            let target_path_for_write = target_path.clone();
+            task::spawn_blocking(move || fs::write(&target_path_for_write, content.content))
+                .await
+                .map_err(|_| "Database export write task failed unexpectedly.".to_string())?
+                .with_context(|| format!("Failed to write export file '{}'", target_path.display()))
+                .map_err(|error| error.to_string())?;
+            (content.table_count, content.row_count)
         }
         DatabaseExportFormat::JsonSnapshot => {
-            let content = build_json_snapshot(driver_ref, resolved_database.as_deref())
-                .await
-                .map_err(|error| error.to_string())?;
-            let row_count = content
-                .tables
-                .iter()
-                .map(|table| table.rows.len() as u64)
-                .sum::<u64>();
-            let table_count = content.tables.len();
-            (
-                serde_json::to_string_pretty(&content)
-                    .context("Failed to serialize the export snapshot")
-                    .map_err(|error| error.to_string())?,
-                table_count,
-                row_count,
+            // Rows stream to the file batch-by-batch; a failure mid-export
+            // removes the partial file instead of leaving a truncated dump.
+            match stream_json_snapshot(
+                driver_ref,
+                resolved_database.as_deref(),
+                db_type,
+                &target_path,
             )
+            .await
+            {
+                Ok(counts) => counts,
+                Err(error) => {
+                    let _ = fs::remove_file(&target_path);
+                    return Err(error.to_string());
+                }
+            }
         }
     };
-
-    let target_path_for_write = target_path.clone();
-    task::spawn_blocking(move || fs::write(&target_path_for_write, content))
-        .await
-        .map_err(|_| "Database export write task failed unexpectedly.".to_string())?
-        .with_context(|| format!("Failed to write export file '{}'", target_path.display()))
-        .map_err(|error| error.to_string())?;
 
     Ok(DatabaseExportResult {
         file_path: target_path.to_string_lossy().to_string(),

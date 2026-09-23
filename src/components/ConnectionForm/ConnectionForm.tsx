@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent } f
 import { useConnectionStore } from "../../stores/connectionStore";
 import { usePluginStore } from "../../stores/pluginStore";
 import { useI18n } from "../../i18n";
-import type { ConnectionConfig } from "../../types";
+import type { ConnectionConfig, DatabaseType } from "../../types";
 import { emitAppToast } from "../../utils/app-toast";
 import { splitSqlStatements } from "../../utils/sqlStatements";
 import {
   resolvePluginHttpDrivers,
+  resolveNativeSidecarDrivers,
   isPluginHttpProtocol,
+  isPluginNativeProtocol,
   applyEngineRuntimeAvailability,
 } from "../../utils/plugin-driver-runtime";
 import { invokeWithTimeout } from "../../utils/tauri-utils";
@@ -56,8 +58,8 @@ export function ConnectionForm({
   const loadSavedConnections = useConnectionStore((state) => state.loadSavedConnections);
   const testConnection = useConnectionStore((state) => state.testConnection);
   const createLocalDatabase = useConnectionStore((state) => state.createLocalDatabase);
-  const suggestSqliteDatabasePath = useConnectionStore((state) => state.suggestSqliteDatabasePath);
   const pickSqliteDatabasePath = useConnectionStore((state) => state.pickSqliteDatabasePath);
+  const suggestSqliteDatabasePath = useConnectionStore((state) => state.suggestSqliteDatabasePath);
   const isConnecting = useConnectionStore((state) => state.isConnecting);
   const installedPlugins = usePluginStore((state) => state.plugins);
   const pluginsHaveLoaded = usePluginStore((state) => state.hasLoaded);
@@ -68,12 +70,17 @@ export function ConnectionForm({
     () => resolvePluginHttpDrivers(installedPlugins),
     [installedPlugins],
   );
-  // Which native-crate engines this build actually compiled in (Cargo features).
-  // Defaults to empty so the shipped build — which enables all of them — behaves
-  // exactly as before; a lean build reports the subset it linked.
-  const [nativeDriverAvailability, setNativeDriverAvailability] = useState<Record<string, boolean>>(
-    {},
+  const nativeSidecarDrivers = useMemo(
+    () => resolveNativeSidecarDrivers(installedPlugins),
+    [installedPlugins],
   );
+  // Which native-crate engines this build actually compiled in (Cargo features).
+  // Starts undefined ("no report yet") and fails CLOSED: until the backend
+  // answers, a native engine is treated as unavailable rather than offered as
+  // ready and dead-ending at connect time.
+  const [nativeDriverAvailability, setNativeDriverAvailability] = useState<
+    Record<string, boolean> | undefined
+  >(undefined);
   useEffect(() => {
     let cancelled = false;
     void invokeWithTimeout<Record<string, boolean>>(
@@ -86,8 +93,9 @@ export function ConnectionForm({
         if (!cancelled && availability) setNativeDriverAvailability(availability);
       })
       .catch(() => {
-        // Fail open: keep native engines visible; the backend still guards the
-        // connect path with a clear "not compiled into this build" error.
+        // Fail closed: an unreachable report leaves native engines unavailable
+        // so the picker explains the missing driver instead of promising a
+        // connect this build cannot perform.
       });
     return () => {
       cancelled = true;
@@ -95,9 +103,10 @@ export function ConnectionForm({
   }, []);
   // Single source of truth shared with the Plugin Manager (see
   // applyEngineRuntimeAvailability): PluginHttp engines gate on an
-  // installed/enabled driver with a 3-state "active"/"installed"/"roadmap",
-  // native engines gate on the compiled build + installed sidecars, and every
-  // other engine keeps its static flag. Both surfaces can never disagree.
+  // installed/enabled driver with a 4-state
+  // "active"/"installed"/"incomplete"/"roadmap", native engines gate on the
+  // compiled build + installed sidecars, and every other engine keeps its
+  // static flag. Both surfaces can never disagree.
   const availableDatabases = useMemo(
     () => applyEngineRuntimeAvailability(ALL_DATABASES, installedPlugins, nativeDriverAvailability),
     [installedPlugins, nativeDriverAvailability],
@@ -227,6 +236,9 @@ export function ConnectionForm({
         installedDisabled: "Đã cài · cần bật",
         installedDisabledCaption:
           "Bundle driver đã được cài nhưng đang tắt. Bật nó trong Trình quản lý plugin để kết nối.",
+        installedIncomplete: "Đã cài · thiếu binary",
+        installedIncompleteCaption:
+          "Bundle driver đã được cài nhưng không có binary cho nền tảng này. Cần một bundle có thư mục bin/ phù hợp.",
         roadmapCaption: "Các engine sắp tới đã hiển thị trong định hướng sản phẩm.",
         localReadyCaption: "Khởi tạo và mở các engine này trực tiếp từ TableR.",
         connectOnly: "Chỉ kết nối",
@@ -282,6 +294,8 @@ export function ConnectionForm({
         detailsCopy:
           "Nhập địa chỉ máy chủ, thông tin đăng nhập, và tên cơ sở dữ liệu tùy chọn cho engine này.",
         host: "Host",
+        pasteUrlHint:
+          "Dán URL kết nối (vd. postgres://user:pass@host:5432/db) để tự điền các trường.",
         port: "Cổng",
         username: "Tên người dùng",
         password: "Mật khẩu",
@@ -345,6 +359,9 @@ export function ConnectionForm({
       installedDisabled: "Installed · needs enabling",
       installedDisabledCaption:
         "The driver bundle is installed but disabled. Enable it in Plugin Manager to connect.",
+      installedIncomplete: "Installed · missing binary",
+      installedIncompleteCaption:
+        "The driver bundle is installed but has no binary for this platform. Install a bundle with a matching bin/ folder.",
       roadmapCaption: "Upcoming engines visible in the product direction.",
       localReadyCaption: "Bootstrap and open these engines directly from TableR.",
       connectOnly: "Connect only",
@@ -400,6 +417,8 @@ export function ConnectionForm({
       detailsCopy:
         "Enter server endpoint, credentials, and optional database name for this engine.",
       host: "Host",
+      pasteUrlHint:
+        "Paste a connection URL (e.g. postgres://user:pass@host:5432/db) to fill the fields.",
       port: "Port",
       username: "Username",
       password: "Password",
@@ -484,6 +503,27 @@ export function ConnectionForm({
     setTestResult(null);
   };
 
+  // The plugin binding a plugin-gated engine needs in `additional_fields` so
+  // the backend can resolve its driver: HTTP engines use the installed
+  // declarative-http driver, native engines the installed sidecar driver.
+  const pluginDriverFields = useCallback(
+    (key: string): Record<string, string> => {
+      if (isPluginHttpProtocol(key) && pluginHttpDrivers[key]) {
+        return {
+          plugin_id: pluginHttpDrivers[key]!.pluginId,
+          plugin_driver_id: pluginHttpDrivers[key]!.id,
+        };
+      }
+      if (isPluginNativeProtocol(key) && nativeSidecarDrivers[key]) {
+        return {
+          plugin_id: nativeSidecarDrivers[key]!.pluginId,
+          plugin_driver_id: nativeSidecarDrivers[key]!.id,
+        };
+      }
+      return {};
+    },
+    [pluginHttpDrivers, nativeSidecarDrivers],
+  );
   const handleSelectDb = (db: DbEntry) => setSelectedDb(db);
 
   // --- SSMS-style authentication auto-detection for SQL Server --------------
@@ -511,77 +551,95 @@ export function ConnectionForm({
     });
   }, [formData.db_type, formData.host]);
 
-  // --- Pasted connection URL support for MongoDB ---------------------------
+  // --- Pasted connection URL support ---------------------------------------
   // The backend builds the URI from the structured fields and deliberately
   // strips any embedded credentials/path from a URL pasted into the Host
   // field ("structured fields are authoritative") — a correctly pasted Atlas
   // URL therefore connected ANONYMOUSLY: ping passed, real commands failed.
-  // Parse the paste here and fill the structured fields so what the user
-  // pasted is what actually connects.
-  const mongoPasteHandledRef = useRef<string | null>(null);
+  // Route every scheme-looking paste through the backend `parse_url_details`
+  // parser so what the user pasted is what actually connects, for every engine
+  // the URL grammar covers (postgres://, mysql://, mongodb+srv://, redis://, …)
+  // — not just MongoDB.
+  const urlPasteHandledRef = useRef<string | null>(null);
   useEffect(() => {
-    if (formData.db_type !== "mongodb") return;
     const pastedHost = (formData.host ?? "").trim();
-    if (!/^mongodb(\+srv)?:\/\//i.test(pastedHost)) return;
-    if (mongoPasteHandledRef.current === pastedHost) return; // manual edits win after the first fill
-    let parsed: {
+    if (!/^[a-z][a-z0-9+.-]*:\/\//i.test(pastedHost)) return;
+    if (urlPasteHandledRef.current === pastedHost) return; // manual edits win after the first fill
+    let cancelled = false;
+    void invokeWithTimeout<{
+      db_type: DatabaseType;
       host: string;
-      username?: string;
-      password?: string;
-      database?: string;
-      authSource?: string;
-      replicaSet?: string;
-    } | null = null;
-    try {
-      const url = new URL(pastedHost);
-      const decode = (value: string) => {
-        try {
-          return decodeURIComponent(value);
-        } catch {
-          return value;
+      port?: number | null;
+      username: string;
+      password: string;
+      database: string;
+      use_ssl: boolean;
+    }>("parse_url_details", { url: pastedHost }, 5_000, "Parsing connection URL")
+      .then((parsed) => {
+        if (cancelled) return;
+        const engine = getDatabaseEngine(parsed.db_type);
+        if (!engine) return;
+        urlPasteHandledRef.current = pastedHost;
+        // Engine-specific extras the generic parser does not model still come
+        // from the URL itself: MongoDB's authSource/replicaSet query params and
+        // Redis' logical database index from the path.
+        const extraFields: Record<string, string> = {};
+        if (parsed.db_type === "mongodb") {
+          try {
+            const url = new URL(pastedHost);
+            const authSource = url.searchParams.get("authSource");
+            const replicaSet = url.searchParams.get("replicaSet");
+            if (authSource) extraFields.auth_source = authSource;
+            if (replicaSet) extraFields.replica_set = replicaSet;
+          } catch {
+            // The backend already parsed the URL; extras are best-effort.
+          }
         }
-      };
-      parsed = {
-        host: `${url.hostname}${url.port ? `:${url.port}` : ""}`,
-        username: url.username ? decode(url.username) : undefined,
-        password: url.password ? decode(url.password) : undefined,
-        database: url.pathname.replace(/^\//, "") || undefined,
-        authSource: url.searchParams.get("authSource") || undefined,
-        replicaSet: url.searchParams.get("replicaSet") || undefined,
-      };
-    } catch {
-      return; // not a parseable URL — leave everything as typed
-    }
-    const paste = parsed;
-    if (!paste) return;
-    mongoPasteHandledRef.current = pastedHost;
-    const filledCredentials = Boolean(paste.username || paste.password);
-    setFormData((prev) => ({
-      ...prev,
-      host: paste.host,
-      ...(paste.username && !prev.username ? { username: paste.username } : {}),
-      ...(paste.database ? { database: paste.database } : {}),
-      additional_fields: {
-        ...(prev.additional_fields ?? {}),
-        ...(paste.authSource ? { auth_source: paste.authSource } : {}),
-        ...(paste.replicaSet ? { replica_set: paste.replicaSet } : {}),
-      },
-    }));
-    if (paste.password) {
-      passwordDraftRef.current = paste.password;
-    }
-    if (filledCredentials) {
-      emitAppToast({
-        tone: "info",
-        title:
-          language === "vi" ? "Đã điền thông tin từ URL" : "Connection details filled from URL",
-        description:
-          language === "vi"
-            ? "Tên đăng nhập, database xác thực và các tùy chọn được lấy từ URL bạn dán."
-            : "Username, auth database and options were taken from the pasted URL.",
+        if (parsed.db_type === "redis" && parsed.database) {
+          extraFields.redis_database = parsed.database;
+        }
+        setSelectedDb(engine);
+        setFormData((prev) => {
+          const sameEngine = prev.db_type === parsed.db_type;
+          return {
+            ...prev,
+            db_type: parsed.db_type,
+            host: parsed.db_type === "sqlite" ? "" : parsed.host,
+            port: parsed.port ?? engine.defaultPort,
+            username: sameEngine ? prev.username || parsed.username : parsed.username,
+            database:
+              parsed.db_type === "sqlite" || parsed.db_type === "redis" ? "" : parsed.database,
+            file_path: parsed.db_type === "sqlite" ? parsed.database : "",
+            use_ssl: parsed.use_ssl,
+            additional_fields: {
+              ...(sameEngine ? (prev.additional_fields ?? {}) : {}),
+              ...extraFields,
+              ...pluginDriverFields(parsed.db_type),
+            },
+          };
+        });
+        if (parsed.password) {
+          passwordDraftRef.current = parsed.password;
+        }
+        if (parsed.username || parsed.password) {
+          emitAppToast({
+            tone: "info",
+            title:
+              language === "vi" ? "Đã điền thông tin từ URL" : "Connection details filled from URL",
+            description:
+              language === "vi"
+                ? "Tên đăng nhập, database xác thực và các tùy chọn được lấy từ URL bạn dán."
+                : "Username, auth database and options were taken from the pasted URL.",
+          });
+        }
+      })
+      .catch(() => {
+        // Not a parseable connection URL — leave the host text as typed.
       });
-    }
-  }, [formData.db_type, formData.host, language]);
+    return () => {
+      cancelled = true;
+    };
+  }, [formData.host, formData.db_type, language, pluginDriverFields]);
 
   const handleSwitchIntent = (nextIntent: "connect" | "bootstrap") => {
     if (editConnection || nextIntent === intentMode) return;
@@ -616,15 +674,10 @@ export function ConnectionForm({
         username: db.usernameMode === "hidden" ? "" : switchedEngine ? "" : prev.username,
         file_path: db.connectionMode === "file" ? prev.file_path : "",
         use_ssl: db.supportsSsl ? prev.use_ssl : false,
-        additional_fields:
-          isPluginHttpProtocol(db.key) && pluginHttpDrivers[db.key]
-            ? {
-                plugin_id: pluginHttpDrivers[db.key]!.pluginId,
-                plugin_driver_id: pluginHttpDrivers[db.key]!.id,
-              }
-            : switchedEngine
-              ? {}
-              : (prev.additional_fields ?? {}),
+        additional_fields: {
+          ...(switchedEngine ? {} : (prev.additional_fields ?? {})),
+          ...pluginDriverFields(db.key),
+        },
       };
     });
     setStep("form");
@@ -876,10 +929,16 @@ export function ConnectionForm({
           items: filteredDbs.filter((db) => !db.supported && db.pluginHttpState === "installed"),
         },
         {
+          key: "installed-incomplete",
+          title: copy.installedIncomplete,
+          caption: copy.installedIncompleteCaption,
+          items: filteredDbs.filter((db) => !db.supported && db.pluginHttpState === "incomplete"),
+        },
+        {
           key: "roadmap",
           title: copy.roadmap,
           caption: copy.roadmapCaption,
-          items: filteredDbs.filter((db) => !db.supported && db.pluginHttpState !== "installed"),
+          items: filteredDbs.filter((db) => !db.supported && db.pluginHttpState === "roadmap"),
         },
       ].filter((s) => s.items.length > 0);
     }
@@ -1036,6 +1095,7 @@ export function ConnectionForm({
     connectionDetails: copy.connectionDetails,
     detailsCopy: copy.detailsCopy,
     host: copy.host,
+    pasteUrlHint: copy.pasteUrlHint,
     port: copy.port,
     username: copy.username,
     password: copy.password,

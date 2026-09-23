@@ -30,6 +30,12 @@ export const AI_AGENT_TOOL_NAMES = [
   "read_skill_resource",
   "delegate",
   "read_page",
+  "manage_metrics_widget",
+  "manage_schedule",
+  "open_table_tab",
+  "manage_skill",
+  "manage_rule",
+  "switch_database",
   "batch",
   "finish",
 ] as const;
@@ -91,6 +97,10 @@ export const WORKSPACE_ONLY_TOOLS = new Set<AIAgentToolName>([
   "edit_query_sql",
   "delete_memory",
   "batch",
+  "manage_metrics_widget",
+  "manage_schedule",
+  "open_table_tab",
+  "switch_database",
 ]);
 
 /** Minimal JSON Schema subset used for tool parameters (Draft 2020-12 compatible). */

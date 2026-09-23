@@ -55,19 +55,28 @@ pub(super) fn log_sandbox_denial(connection_id: &str, statements_count: usize, r
     );
 }
 
-pub(super) fn validate_sandbox_statement(
-    statement: &str,
+/// Fail-closed capability guard: filesystem/network/OS-command SQL
+/// (pg_read_file, DuckDB read_csv, INTO OUTFILE, COPY ... TO PROGRAM, …)
+/// exfiltrates data or runs code even when it parses as a plain read, so it
+/// must never cross an execution boundary regardless of statement kind.
+/// Shared by the sandbox validator and the human query entry points.
+pub(super) fn reject_dangerous_capability(
+    sql: &str,
     database_type: Option<crate::database::models::DatabaseType>,
 ) -> Result<(), String> {
-    // Fail-closed capability guard FIRST: filesystem/network/OS-command SQL
-    // (pg_read_file, DuckDB read_csv, INTO OUTFILE, COPY ... TO PROGRAM, …)
-    // exfiltrates data or runs code even when it parses as a plain read, so it
-    // must never cross the sandbox boundary regardless of statement kind.
-    if let Some(reason) = detect_dangerous_capability(statement, database_type) {
+    if let Some(reason) = detect_dangerous_capability(sql, database_type) {
         return Err(format!(
             "Sandbox gateway blocks SQL that {reason}. This filesystem/network/OS capability is not allowed inside the sandbox."
         ));
     }
+    Ok(())
+}
+
+pub(super) fn validate_sandbox_statement(
+    statement: &str,
+    database_type: Option<crate::database::models::DatabaseType>,
+) -> Result<(), String> {
+    reject_dangerous_capability(statement, database_type)?;
     let decision = classify_sql_with_dialect(statement, database_type);
     if let Some(error) = decision.parse_error {
         return Err(format!("Sandbox gateway could not parse SQL: {error}"));

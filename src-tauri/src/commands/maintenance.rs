@@ -1,10 +1,24 @@
+use crate::commands::safe_mode::SafeModeState;
 use crate::database::manager::DatabaseManager;
 use crate::database::models::QueryResult;
+use crate::database::safety::{quote_mysql_identifier, quote_postgres_identifier};
 use serde::Serialize;
 use tauri::State;
 use tokio::time::{timeout, Duration};
 
 const MAINTENANCE_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// Identifier quoting goes through the shared `database::safety` helpers:
+/// they trim, reject empty/control-char names, and double embedded quote
+/// characters so a table named `we"ird` or `back`tick` cannot break out of
+/// the identifier and inject SQL.
+fn double_quoted(name: &str) -> Result<String, String> {
+    quote_postgres_identifier(name).map_err(|error| error.to_string())
+}
+
+fn backtick_quoted(name: &str) -> Result<String, String> {
+    quote_mysql_identifier(name).map_err(|error| error.to_string())
+}
 
 /// Supported maintenance commands.
 /// The frontend passes these as string enum values.
@@ -18,7 +32,7 @@ pub fn build_maintenance_sql(
         "vacuum" => match db_type {
             "postgresql" | "greenplum" | "cockroachdb" | "redshift" | "vertica" => {
                 if let Some(tbl) = table {
-                    Ok(format!("VACUUM ANALYZE \"{}\";", tbl))
+                    Ok(format!("VACUUM ANALYZE {};", double_quoted(tbl)?))
                 } else {
                     Ok("VACUUM ANALYZE;".to_string())
                 }
@@ -32,14 +46,14 @@ pub fn build_maintenance_sql(
         "analyze" => match db_type {
             "postgresql" | "greenplum" | "cockroachdb" | "redshift" | "vertica" => {
                 if let Some(tbl) = table {
-                    Ok(format!("ANALYZE \"{}\";", tbl))
+                    Ok(format!("ANALYZE {};", double_quoted(tbl)?))
                 } else {
                     Ok("ANALYZE;".to_string())
                 }
             }
             "mysql" | "mariadb" => {
                 if let Some(tbl) = table {
-                    Ok(format!("ANALYZE TABLE `{}`;", tbl))
+                    Ok(format!("ANALYZE TABLE {};", backtick_quoted(tbl)?))
                 } else {
                     Err("ANALYZE requires a table name for MySQL/MariaDB.".to_string())
                 }
@@ -47,7 +61,7 @@ pub fn build_maintenance_sql(
             "sqlite" | "libsql" | "cloudflare_d1" => {
                 // SQLite ANALYZE runs on the entire database or a specific table/index
                 if let Some(tbl) = table {
-                    Ok(format!("ANALYZE \"{}\";", tbl))
+                    Ok(format!("ANALYZE {};", double_quoted(tbl)?))
                 } else {
                     Ok("ANALYZE;".to_string())
                 }
@@ -60,15 +74,22 @@ pub fn build_maintenance_sql(
         "optimize" => match db_type {
             "mysql" | "mariadb" => {
                 if let Some(tbl) = table {
-                    Ok(format!("OPTIMIZE TABLE `{}`;", tbl))
+                    Ok(format!("OPTIMIZE TABLE {};", backtick_quoted(tbl)?))
                 } else {
                     Err("OPTIMIZE TABLE requires a table name.".to_string())
                 }
             }
             "clickhouse" => {
                 if let Some(tbl) = table {
-                    let db_prefix = database.map_or(String::new(), |d| format!("{}.", d));
-                    Ok(format!("OPTIMIZE TABLE {}`{}` FINAL;", db_prefix, tbl))
+                    let db_prefix = match database {
+                        Some(d) => format!("{}.", backtick_quoted(d)?),
+                        None => String::new(),
+                    };
+                    Ok(format!(
+                        "OPTIMIZE TABLE {}{} FINAL;",
+                        db_prefix,
+                        backtick_quoted(tbl)?
+                    ))
                 } else {
                     Err("OPTIMIZE TABLE requires a table name for ClickHouse.".to_string())
                 }
@@ -81,16 +102,16 @@ pub fn build_maintenance_sql(
         "reindex" => match db_type {
             "postgresql" | "greenplum" | "cockroachdb" | "redshift" | "vertica" => {
                 if let Some(tbl) = table {
-                    Ok(format!("REINDEX TABLE \"{}\";", tbl))
+                    Ok(format!("REINDEX TABLE {};", double_quoted(tbl)?))
                 } else if let Some(db) = database {
-                    Ok(format!("REINDEX DATABASE \"{}\";", db))
+                    Ok(format!("REINDEX DATABASE {};", double_quoted(db)?))
                 } else {
                     Ok("REINDEX;".to_string())
                 }
             }
             "sqlite" | "libsql" | "cloudflare_d1" => {
                 if let Some(tbl) = table {
-                    Ok(format!("REINDEX \"{}\";", tbl))
+                    Ok(format!("REINDEX {};", double_quoted(tbl)?))
                 } else {
                     Ok("REINDEX;".to_string())
                 }
@@ -103,7 +124,7 @@ pub fn build_maintenance_sql(
         "check_table" => match db_type {
             "mysql" | "mariadb" => {
                 if let Some(tbl) = table {
-                    Ok(format!("CHECK TABLE `{}`;", tbl))
+                    Ok(format!("CHECK TABLE {};", backtick_quoted(tbl)?))
                 } else {
                     Err("CHECK TABLE requires a table name.".to_string())
                 }
@@ -113,7 +134,7 @@ pub fn build_maintenance_sql(
                 if let Some(tbl) = table {
                     Ok(format!(
                         "SELECT relname, relpages, reltuples, relallvisible FROM pg_catalog.pg_class WHERE relname = '{}';",
-                        tbl
+                        tbl.replace('\'', "''")
                     ))
                 } else {
                     Err("CHECK TABLE requires a table name.".to_string())
@@ -168,8 +189,13 @@ pub async fn run_maintenance_command(
     table: Option<String>,
     database: Option<String>,
     db_manager: State<'_, DatabaseManager>,
+    safe_mode: State<'_, SafeModeState>,
 ) -> Result<QueryResult, String> {
     db_manager.assert_write_allowed(&connection_id).await?;
+    let database_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .ok();
     let driver = db_manager
         .get_driver(&connection_id)
         .await
@@ -177,7 +203,11 @@ pub async fn run_maintenance_command(
 
     let db_type = driver.driver_name();
     let sql = build_maintenance_sql(&command, db_type, table.as_deref(), database.as_deref())?;
-
+    // Safe Mode sees the real statement: 'Read Only' (and stricter tiers)
+    // must stop maintenance writes just like editor SQL.
+    safe_mode
+        .ensure_mutation_allowed(&connection_id, &sql, database_type)
+        .await?;
     timeout(MAINTENANCE_TIMEOUT, driver.execute_query(&sql))
         .await
         .map_err(|_| {

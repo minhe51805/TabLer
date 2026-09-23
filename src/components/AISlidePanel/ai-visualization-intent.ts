@@ -417,7 +417,6 @@ export function supportsOverviewMetricsBoard(dbType?: DatabaseType) {
     case "mysql":
     case "mariadb":
     case "mssql":
-    case "mongodb":
       return true;
     default:
       return false;

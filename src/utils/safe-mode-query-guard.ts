@@ -5,6 +5,18 @@ import { classifySqlSafety, type SqlSafetyDecision } from "./sql-safety";
 
 const CONFIRMATION_TIMEOUT_MS = 300_000;
 
+/**
+ * Thrown when the human declines a Safe Mode confirmation dialog. Callers
+ * distinguish this from a real failure and render a neutral "cancelled"
+ * state instead of a red error.
+ */
+export class SafeModeCancelledError extends Error {
+  constructor(message = "Query cancelled by Safe Mode confirmation.") {
+    super(message);
+    this.name = "SafeModeCancelledError";
+  }
+}
+
 let confirmationSequence = 0;
 
 function requestConfirmation(sql: string, connectionId: string, level: number): Promise<boolean> {
@@ -46,17 +58,14 @@ export async function assertQueryAllowed(
   // Pass the connection's engine so dialect-specific server commands
   // (MySQL SHOW/DESCRIBE presets) classify under the right grammar.
   const databaseType =
-    useConnectionStore
-      .getState()
-      .connections.find((connection) => connection.id === connectionId)?.db_type ?? null;
+    useConnectionStore.getState().connections.find((connection) => connection.id === connectionId)
+      ?.db_type ?? null;
   const decision = await classifySqlSafety(sql, databaseType);
   if (decision.statements.length === 0) {
     throw new Error(decision.parseError || "SQL contains no executable statements.");
   }
   if (decision.parseError && safeLevel > 0) {
-    throw new Error(
-      `Safe Mode could not classify this SQL reliably: ${decision.parseError}`,
-    );
+    throw new Error(`Safe Mode could not classify this SQL reliably: ${decision.parseError}`);
   }
 
   // `preApproved` marks runs where the human already granted approval for
@@ -66,8 +75,7 @@ export async function assertQueryAllowed(
   const preApproved = options?.preApproved === true && safeLevel <= 3;
   const blocked = decision.statements.find(
     (statement) =>
-      (statement.kind === "unknown" && safeLevel > 0) ||
-      isBlockedAtLevel(safeLevel, statement.sql),
+      (statement.kind === "unknown" && safeLevel > 0) || isBlockedAtLevel(safeLevel, statement.sql),
   );
   // Track whether the human explicitly approved this exact run so the
   // backend can relax its own level 1-3 block for it (see
@@ -85,7 +93,7 @@ export async function assertQueryAllowed(
     } else if (options?.userInitiated && safeLevel <= 3) {
       const confirmed = await requestConfirmation(sql, connectionId, safeLevel);
       if (!confirmed) {
-        throw new Error("Query cancelled by Safe Mode confirmation.");
+        throw new SafeModeCancelledError();
       }
       userConfirmed = true;
     } else {
@@ -96,15 +104,33 @@ export async function assertQueryAllowed(
     }
   }
 
+  // The classifier flags statements that reach outside the database — local
+  // filesystem, network, or OS commands (`pg_read_file`, `INTO OUTFILE`,
+  // `COPY ... TO PROGRAM`, DuckDB `read_csv`). The sandbox boundary always
+  // rejects these; on the direct path a human may still approve the exact
+  // run, but autonomous callers never get a dialog.
+  if (decision.filesystemAccess && !userConfirmed) {
+    if (options?.userInitiated) {
+      const confirmed = await requestConfirmation(sql, connectionId, safeLevel);
+      if (!confirmed) {
+        throw new SafeModeCancelledError();
+      }
+      userConfirmed = true;
+    } else {
+      throw new Error(
+        "This statement reaches outside the database (filesystem, network, or OS command). " +
+          "The sandbox gateway always rejects it; run it from the query editor to approve it explicitly.",
+      );
+    }
+  }
+
   const needsConfirmation =
     safeLevel === 5 ||
-    decision.statements.some((statement) =>
-      requiresConfirmationAtLevel(safeLevel, statement.sql),
-    );
-  if (needsConfirmation && !preApproved) {
+    decision.statements.some((statement) => requiresConfirmationAtLevel(safeLevel, statement.sql));
+  if (needsConfirmation && !preApproved && !userConfirmed) {
     const confirmed = await requestConfirmation(sql, connectionId, safeLevel);
     if (!confirmed) {
-      throw new Error("Query cancelled by Safe Mode confirmation.");
+      throw new SafeModeCancelledError();
     }
     userConfirmed = true;
   }
@@ -125,12 +151,13 @@ export async function assertStatementsAllowed(
   }
 
   const needsReview =
-    safeLevel === 5 || statements.some((statement) => requiresConfirmationAtLevel(safeLevel, statement));
+    safeLevel === 5 ||
+    statements.some((statement) => requiresConfirmationAtLevel(safeLevel, statement));
   if (!needsReview) return;
 
   const preview = statements.join(";\n");
   const confirmed = await requestConfirmation(preview, connectionId, safeLevel);
   if (!confirmed) {
-    throw new Error("Restore cancelled by Safe Mode confirmation.");
+    throw new SafeModeCancelledError("Restore cancelled by Safe Mode confirmation.");
   }
 }

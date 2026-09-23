@@ -38,6 +38,7 @@ import { ConnectionListView } from "./ConnectionListView";
 import { StartupBrandingPanel } from "./StartupBrandingPanel";
 import { HoverPopover } from "./HoverPopover";
 import { AppUpdateButton } from "./AppUpdateButton";
+import { useStorageNotices } from "./use-storage-notices";
 import { STARTUP_COPY } from "./startup-copy";
 
 interface Props {
@@ -63,6 +64,10 @@ export function StartupConnectionManager({
 }: Props) {
   const { t, language } = useI18n();
   const isDesktopWindow = typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+  // Surface storage-layer notices (corrupt files quarantined, sync folder
+  // unavailable, missing keyring credentials) as toasts.
+  useStorageNotices();
+
   const {
     connections,
     activeConnectionId,

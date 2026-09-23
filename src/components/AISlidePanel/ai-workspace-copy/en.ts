@@ -35,6 +35,8 @@ export const EN_COPY: AIWorkspaceCopy = {
     insert: "Insert",
     approveRun: "Approve Run",
     retry: "Retry",
+    liveDataDisabledHint:
+      "The agent already read live data for this answer — running this SQL again would duplicate it.",
   },
   modal: {
     kicker: "Bubble Detail",
@@ -130,7 +132,7 @@ export const EN_COPY: AIWorkspaceCopy = {
     agentAutonomySmart: "Smart",
     agentAutonomySmartHint: "Auto-run safe read queries, ask before writes.",
     agentAutonomyFull: "Full access",
-    agentAutonomyFullHint: "Auto-run safe reads; writes and schema changes still ask.",
+    agentAutonomyFullHint: "Runs everything without asking; turns Safe Mode off.",
     thinkingToggleLabel: "Thinking",
     thinkingToggleHint: "Show or hide the agent's live reasoning",
     thinkingOn: "On",
@@ -172,8 +174,12 @@ export const EN_COPY: AIWorkspaceCopy = {
     sqlConfirmBatchLabel: "{count} statements in this run.",
     autonomyFullConfirmTitle: "Enable full access?",
     autonomyFullConfirmBody:
-      "The agent runs reads and tool calls without asking first. Write and schema operations still require your confirmation before executing.",
+      "The agent runs reads, writes, and schema changes WITHOUT asking first — statements execute as soon as they are proposed. Only enable this for work you fully trust.",
     autonomyFullConfirmAllow: "Enable full access",
+    autonomyFullSafeModeTitle: "Turn off Safe Mode?",
+    autonomyFullSafeModeBody:
+      "Full access also turns Safe Mode OFF while it is active — the agent's writes will not be checked or confirmed at all. Safe Mode is restored automatically when you switch back to Smart or Always review.",
+    autonomyFullSafeModeAllow: "Turn off Safe Mode and enable",
     promptIdeas: [
       {
         title: "Create table",

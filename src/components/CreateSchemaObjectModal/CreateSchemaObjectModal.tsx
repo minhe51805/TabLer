@@ -15,6 +15,7 @@ import {
 import { ObjectTypePicker, type WizardKind } from "./ObjectTypePicker";
 import { ColumnEditor, createEmptyColumn, type ColumnDraft } from "./ColumnEditor";
 import { useI18n, type TranslationKey } from "../../i18n";
+import { getSchemaWizardCopy } from "./schema-wizard-copy";
 
 const KIND_LABEL_KEYS: Record<WizardKind, TranslationKey> = {
   table: "schemaWizard.kind.table",
@@ -69,7 +70,8 @@ export function CreateSchemaObjectModal({
   onClose,
   onCreateDraft,
 }: Props) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
+  const wizardCopy = getSchemaWizardCopy(language);
   const dialect = resolveWizardDialect(dbType);
   const { askAI, aiConfigs } = useAIStore(
     useShallow((state) => ({
@@ -162,11 +164,11 @@ export function CreateSchemaObjectModal({
     }
 
     if (kind === "table") {
-      return buildTableSql(dialect, name, schema, database, tableColumns);
+      return buildTableSql(dialect, name, schema, database, tableColumns, wizardCopy.errors);
     }
 
     if (kind === "view") {
-      return buildViewSql(dialect, name, schema, database, viewBody);
+      return buildViewSql(dialect, name, schema, database, viewBody, wizardCopy.errors);
     }
 
     return buildTriggerSql(
@@ -179,6 +181,7 @@ export function CreateSchemaObjectModal({
       triggerTiming,
       triggerEvent,
       triggerBody,
+      wizardCopy.errors,
     );
   }, [
     database,
@@ -195,6 +198,7 @@ export function CreateSchemaObjectModal({
     triggerTable,
     triggerTiming,
     viewBody,
+    wizardCopy,
   ]);
 
   const handleAddColumn = () => {

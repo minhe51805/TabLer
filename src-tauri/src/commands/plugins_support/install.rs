@@ -1,6 +1,7 @@
 //! Plugin install lifecycle: staging a validated bundle into place, computing
 //! rollback paths, and syncing the installed-plugin records on disk.
 
+use crate::database::sidecar::{platform_target, sidecar_executable_path};
 use crate::storage::plugin_storage::{InstalledPluginRecord, PluginStorage};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -35,7 +36,39 @@ pub(crate) fn verify_installed_record(mut record: InstalledPluginRecord) -> Inst
             record.validation_error = Some(error);
         }
     }
+    mark_missing_platform_binary(&mut record);
     record
+}
+
+/// A `driver-sidecar-v1` bundle is only usable when it ships a
+/// `bin/<os>-<arch>/` executable for the running platform. A digest-valid
+/// bundle without one can never connect, so the record is marked incomplete —
+/// the picker shows "missing binary" instead of flipping the engine to Ready
+/// or asking the user to enable a plugin that cannot run. The marker phrase
+/// "no binary for this platform" is load-bearing: the frontend keys the
+/// "incomplete" availability state off it (MISSING_PLATFORM_BINARY_MARKER).
+pub(crate) fn mark_missing_platform_binary(record: &mut InstalledPluginRecord) {
+    if !record.verified || record.validation_error.is_some() {
+        return;
+    }
+    let bundle_dir = Path::new(&record.bundle_path);
+    let missing = record
+        .manifest
+        .contributes
+        .drivers
+        .iter()
+        .filter(|driver| driver.runtime == "driver-sidecar-v1")
+        .find(|driver| !sidecar_executable_path(bundle_dir, &driver.id).is_file());
+    if let Some(driver) = missing {
+        record.enabled = false;
+        record.verified = false;
+        record.validation_error = Some(format!(
+            "Install incomplete — no binary for this platform ({}): sidecar '{}' is missing bin/{}/.",
+            platform_target(),
+            driver.id,
+            platform_target()
+        ));
+    }
 }
 
 pub(crate) fn sync_installed_plugins(
@@ -103,9 +136,8 @@ pub(crate) fn install_bundle_from_path(
             "Failed to activate the staged plugin bundle: {error}"
         ));
     }
-
     let now = now_unix_seconds();
-    let record = InstalledPluginRecord {
+    let mut record = InstalledPluginRecord {
         manifest: staged.manifest,
         bundle_path: destination.to_string_lossy().to_string(),
         enabled: true,
@@ -117,6 +149,9 @@ pub(crate) fn install_bundle_from_path(
         rollback_available: existing.is_some(),
         previous_version: existing.map(|record| record.manifest.version),
     };
+    // A sidecar bundle without a binary for this platform must surface as
+    // incomplete immediately — not only after the next sync pass.
+    mark_missing_platform_binary(&mut record);
 
     if let Some(index) = records
         .iter()

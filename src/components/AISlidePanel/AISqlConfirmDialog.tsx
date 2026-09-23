@@ -17,8 +17,6 @@ interface AISqlConfirmResponse {
 
 const CONFIRM_REQUEST_EVENT = "ai-sql-confirm-request";
 const CONFIRM_RESPONSE_EVENT = "ai-sql-confirm-response";
-const MAX_PREVIEW_CHARS = 800;
-
 
 interface AISqlConfirmDialogProps {
   copy: AIWorkspaceCopy["composer"];
@@ -84,9 +82,6 @@ export function AISqlConfirmDialog({ copy }: AISqlConfirmDialogProps) {
 
   const isHighRisk = request.requirement === "high-risk";
   const previewSql = request.statements.join(";\n\n");
-  const truncatedPreview = previewSql.length > MAX_PREVIEW_CHARS
-    ? `${previewSql.slice(0, MAX_PREVIEW_CHARS)}…`
-    : previewSql;
   const batchLabel = copy.sqlConfirmBatchLabel.replace(
     "{count}",
     String(request.statements.length),
@@ -107,9 +102,11 @@ export function AISqlConfirmDialog({ copy }: AISqlConfirmDialogProps) {
               isHighRisk ? "bg-red-500/10 text-red-500" : "bg-amber-500/10 text-amber-500"
             }`}
           >
-            {isHighRisk
-              ? <TriangleAlert className="h-5 w-5" />
-              : <DatabaseZap className="h-5 w-5" />}
+            {isHighRisk ? (
+              <TriangleAlert className="h-5 w-5" />
+            ) : (
+              <DatabaseZap className="h-5 w-5" />
+            )}
           </div>
           <div className="min-w-0 flex-1">
             <h2 className="text-base font-semibold text-[var(--text-primary)]">
@@ -137,14 +134,10 @@ export function AISqlConfirmDialog({ copy }: AISqlConfirmDialogProps) {
             </p>
             <div className="max-h-56 overflow-auto rounded-lg border border-[var(--border)] bg-[var(--bg-primary)] p-3">
               <pre className="whitespace-pre-wrap break-all font-mono text-xs text-[var(--text-secondary)]">
-                {truncatedPreview}
+                {previewSql}
               </pre>
             </div>
-            {previewSql.length > MAX_PREVIEW_CHARS && (
-              <p className="mt-1 text-xs text-[var(--text-muted)]">
-                ({previewSql.length} chars)
-              </p>
-            )}
+            <p className="mt-1 text-xs text-[var(--text-muted)]">({previewSql.length} chars)</p>
           </div>
         </div>
 

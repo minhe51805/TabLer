@@ -32,11 +32,15 @@ interface AgentInsightsState {
   insights: ScopedAgentInsight[];
   /** Folds a finished run's findings into the cards already on screen. */
   recordRunInsights: (incoming: readonly AgentInsight[], scope: string) => void;
-  dismissInsight: (id: string) => void;
+  /** Removes one card by its composite `scope::id` key (see `insightKey`). */
+  dismissInsight: (key: string) => void;
   clearInsights: () => void;
 }
 
-const scopeKey = (insight: ScopedAgentInsight) => `${insight.scope}::${insight.id}`;
+/** The uniqueness key a card is stored under: scope + finding id. Dismissal
+ * must filter on this — the bare `id` is only unique within one scope, so
+ * filtering on it would delete the same finding in every scope. */
+export const insightKey = (insight: ScopedAgentInsight) => `${insight.scope}::${insight.id}`;
 
 export const useAgentInsightsStore = create<AgentInsightsState>()(
   persist(
@@ -48,13 +52,13 @@ export const useAgentInsightsStore = create<AgentInsightsState>()(
           insights: mergeInsightCards(
             state.insights,
             incoming.map((insight) => ({ ...insight, scope })),
-            { now: Date.now(), keyOf: scopeKey },
+            { now: Date.now(), keyOf: insightKey },
           ),
         }));
       },
-      dismissInsight: (id) =>
+      dismissInsight: (key) =>
         set((state) => ({
-          insights: state.insights.filter((insight) => insight.id !== id),
+          insights: state.insights.filter((insight) => insightKey(insight) !== key),
         })),
       clearInsights: () => set({ insights: [] }),
     }),

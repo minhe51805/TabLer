@@ -12,8 +12,9 @@ import {
 import { emitAppToast } from "../utils/app-toast";
 import { getQueryProfile } from "../utils/query-profile";
 import { splitSqlStatements } from "../utils/sqlStatements";
-import { assertStatementsAllowed } from "../utils/safe-mode-query-guard";
+import { assertStatementsAllowed, SafeModeCancelledError } from "../utils/safe-mode-query-guard";
 import { invokeMutation } from "../utils/tauri-utils";
+import { requestAppConfirmation } from "../stores/confirmStore";
 import { invalidateQueryResultCache } from "../utils/query-result-cache";
 
 interface RestorePreview {
@@ -174,9 +175,15 @@ export function useDatabaseFileActions(language: string) {
         sql,
         dbType: activeConnection.db_type,
       });
-      const approved = window.confirm(
-        `Restore preview\n\nFile: ${fileName}\nStatements: ${preview.statement_count}\nSchema changes: ${preview.schema_change_count}\nData changes: ${preview.data_change_count}\nDestructive statements: ${preview.destructive_statement_count}\nMode: ${preview.transactional ? "transactional" : "best effort"}${preview.warning ? `\n\nWarning: ${preview.warning}` : ""}\n\nThe restore will run against ${activeConnection.name || currentDatabase || activeConnection.db_type}. Continue?`,
-      );
+      const approved = await requestAppConfirmation({
+        title: language === "vi" ? "Xem trước restore" : "Restore preview",
+        message:
+          `File: ${fileName}\nStatements: ${preview.statement_count}\nSchema changes: ${preview.schema_change_count}\nData changes: ${preview.data_change_count}\nDestructive statements: ${preview.destructive_statement_count}\nMode: ${preview.transactional ? "transactional" : "best effort"}${preview.warning ? `\n\nWarning: ${preview.warning}` : ""}\n\n` +
+          (language === "vi"
+            ? `Restore sẽ chạy trên ${activeConnection.name || currentDatabase || activeConnection.db_type}. Tiếp tục?`
+            : `The restore will run against ${activeConnection.name || currentDatabase || activeConnection.db_type}. Continue?`),
+        confirmText: language === "vi" ? "Chạy restore" : "Run restore",
+      });
       if (!approved) {
         emitAppToast({
           tone: "info",
@@ -215,6 +222,18 @@ export function useDatabaseFileActions(language: string) {
       });
     } catch (error) {
       if (error instanceof Error && error.message === "No file selected.") return;
+      // A declined Safe Mode confirmation is a user choice, not a failure.
+      if (error instanceof SafeModeCancelledError) {
+        emitAppToast({
+          tone: "info",
+          title: language === "vi" ? "Da huy restore" : "Restore cancelled",
+          description:
+            language === "vi"
+              ? "Khong co cau lenh nao duoc chay."
+              : "No restore statements were executed.",
+        });
+        return;
+      }
       const message = error instanceof Error ? error.message : String(error);
       setError(
         language === "vi"

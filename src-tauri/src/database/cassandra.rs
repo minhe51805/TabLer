@@ -639,9 +639,14 @@ impl DatabaseDriver for CassandraDriver {
         order_dir: Option<&str>,
         filter: Option<&str>,
     ) -> Result<QueryResult> {
+        let started_at = Instant::now();
         let (_, _, qualified_table) = self.resolve_table_target(table, database)?;
+        // CQL has no OFFSET, so the page is produced by streaming rows and
+        // skipping `offset` of them. A CQL LIMIT bounds how much the server
+        // sends; the +1 row detects whether another page exists. Paging goes
+        // through query_iter (not the 500-row capped query_to_result) so
+        // offsets beyond the interactive cap still return data.
         let fetch_limit = offset.saturating_add(limit).saturating_add(1);
-        let capped_limit = fetch_limit.min(MAX_QUERY_RESULT_ROWS as u64);
 
         let mut query = format!("SELECT * FROM {qualified_table}");
 
@@ -659,22 +664,69 @@ impl DatabaseDriver for CassandraDriver {
             ));
         }
 
-        query.push_str(&format!(" LIMIT {capped_limit}"));
+        query.push_str(&format!(" LIMIT {fetch_limit}"));
 
-        let mut result = self.query_to_result(&query, &query).await?;
+        let page_size = i32::try_from(fetch_limit.clamp(1, 5_000)).unwrap_or(5_000);
+        let statement = Statement::new(query.clone()).with_page_size(page_size);
+        let pager = self
+            .session
+            .query_iter(statement, &[])
+            .await
+            .with_context(|| format!("Cassandra query failed: {query}"))?;
+        let columns = pager
+            .column_specs()
+            .as_slice()
+            .iter()
+            .map(|spec| ColumnInfo {
+                name: spec.name().to_string(),
+                data_type: format!("{:?}", spec.typ()),
+                is_nullable: true,
+                is_primary_key: false,
+                max_length: None,
+                default_value: None,
+            })
+            .collect::<Vec<_>>();
+        let mut rows_stream = pager
+            .rows_stream::<ScyllaRow>()
+            .context("Failed to deserialize Cassandra rows")?;
+
         let start = usize::try_from(offset).unwrap_or(usize::MAX);
         let requested = usize::try_from(limit).unwrap_or(usize::MAX);
-        let has_more = result.rows.len() > start.saturating_add(requested);
-        let trimmed_rows = result
-            .rows
-            .into_iter()
-            .skip(start)
-            .take(requested)
-            .collect::<Vec<_>>();
+        let mut rows = Vec::new();
+        let mut seen = 0usize;
+        let mut truncated = false;
+        while let Some(row) = rows_stream.next().await {
+            let row = row.context("Failed to deserialize a Cassandra row")?;
+            if seen < start {
+                seen += 1;
+                continue;
+            }
+            if rows.len() == requested {
+                truncated = true;
+                break;
+            }
+            rows.push(
+                row.columns
+                    .into_iter()
+                    .map(|value| {
+                        value
+                            .map(Self::cql_value_to_json)
+                            .unwrap_or(JsonValue::Null)
+                    })
+                    .collect::<Vec<_>>(),
+            );
+            seen += 1;
+        }
 
-        result.rows = trimmed_rows;
-        result.truncated = result.truncated || has_more;
-        Ok(result)
+        Ok(QueryResult {
+            columns,
+            rows,
+            affected_rows: 0,
+            execution_time_ms: started_at.elapsed().as_millis(),
+            query,
+            sandboxed: false,
+            truncated,
+        })
     }
 
     fn export_table_rows<'a>(

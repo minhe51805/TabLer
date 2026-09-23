@@ -15,6 +15,7 @@ interface ImportPreview {
   totalRows: number;
   totalRowsTruncated?: boolean;
   delimiter?: string; // CSV only
+  hasHeader?: boolean; // CSV only: backend header detection
   shape?: string; // JSON only: "array" | "ndjson"
   sheetNames?: string[]; // XLSX only
   sheet?: string; // XLSX only: the active sheet
@@ -25,6 +26,11 @@ interface ImportSummary {
   batches: number;
   tableCreated: boolean;
   cancelled?: boolean;
+  rejectedRows?: number;
+  failedRows?: number;
+  error?: string | null;
+  rejectionReport?: string | null;
+  warnings?: string[];
 }
 
 interface CsvImportProgress {
@@ -93,6 +99,11 @@ export function ImportWizard() {
       const result = await invokeMutation<ImportPreview>(command, args);
       setFormat(chosen);
       setPreview(result);
+      // The backend flags headerless CSVs (first row looks like data) so the
+      // wizard doesn't silently eat row 1 as column names.
+      if (chosen === "csv") {
+        setHasHeader(result.hasHeader ?? true);
+      }
       setTargetColumns(
         result.columns.map((column) => column.trim().toLowerCase().replace(/\s+/g, "_")),
       );
@@ -370,24 +381,33 @@ export function ImportWizard() {
                 </div>
               ))}
             </div>
-
             {summary && (
               <div className="schema-diff-summary">
                 <span
                   style={{
-                    color: summary.cancelled
-                      ? "var(--fintech-amber, #f59e0b)"
-                      : "var(--fintech-green, #22c55e)",
+                    color:
+                      summary.cancelled || summary.error
+                        ? "var(--fintech-amber, #f59e0b)"
+                        : "var(--fintech-green, #22c55e)",
                   }}
                 >
                   {summary.cancelled
                     ? `Cancelled after importing ${summary.insertedRows} row(s)`
-                    : `Imported ${summary.insertedRows} rows in ${summary.batches} batch(es)`}
+                    : summary.error
+                      ? `Stopped: ${summary.error} — ${summary.insertedRows} row(s) inserted`
+                      : `Imported ${summary.insertedRows} rows in ${summary.batches} batch(es)`}
+                  {(summary.rejectedRows ?? 0) > 0 ? ` · ${summary.rejectedRows} rejected` : ""}
+                  {(summary.failedRows ?? 0) > 0 ? ` · ${summary.failedRows} not inserted` : ""}
                   {summary.tableCreated ? " · table created" : ""}
+                  {summary.rejectionReport ? ` · report: ${summary.rejectionReport}` : ""}
                 </span>
+                {(summary.warnings ?? []).map((warning, index) => (
+                  <span key={index} style={{ color: "var(--fintech-amber, #f59e0b)" }}>
+                    {warning}
+                  </span>
+                ))}
               </div>
             )}
-
             {isBusy && progress && progress.totalBytes > 0 && (
               <div className="schema-diff-summary">
                 <span>

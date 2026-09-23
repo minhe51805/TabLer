@@ -68,19 +68,19 @@ describe("AI SQL execution policy", () => {
     ).toBe("high-risk");
   });
 
-  it("full autonomy still confirms mutations and high-risk statements", () => {
-    // The standing grant covers reads and tool calls only — the autonomy
-    // dialog promises writes keep their confirmation.
+  it("full autonomy runs mutations without a dialog — the consent dialog granted it", () => {
+    // The full-access consent dialog is the standing grant: writes execute
+    // without per-statement confirmation (the copy now says so explicitly).
     expect(
       getAISqlConfirmationRequirement(
         ["UPDATE users SET active = 1 WHERE id = 1", "DROP TABLE legacy_users"],
         "full",
       ),
-    ).toBe("high-risk");
+    ).toBeNull();
     expect(
       getAISqlConfirmationRequirement(["UPDATE users SET active = 1 WHERE id = 1"], "full"),
-    ).toBe("mutation");
-    // Reads skip the dialog under full autonomy.
+    ).toBeNull();
+    // Reads skip the dialog under full autonomy too.
     expect(getAISqlConfirmationRequirement(["SELECT * FROM users"], "full")).toBeNull();
     // Other autonomy levels keep the dialog.
     expect(
@@ -110,12 +110,13 @@ describe("classifyAgentRun — single source for the safety nets", () => {
     expect(run.preApproved).toBe(true);
   });
 
-  it("full + UPDATE: willMutate + dialog + pre-approval via the dialog", () => {
-    // Full autonomy no longer skips the write confirmation; the dialog itself
-    // is what marks the run pre-approved for Safe Mode.
+  it("full + UPDATE: willMutate, no dialog, standing pre-approval", () => {
+    // Full autonomy's consent dialog is the standing grant — no per-run
+    // dialog, but the run still claims mutation so checkpoints/rollback hints
+    // fire.
     const run = classifyAgentRun(["UPDATE users SET x = 1"], "full");
-    expect(run.requirement).toBe("high-risk");
-    expect(run.needsDialog).toBe(true);
+    expect(run.requirement).toBeNull();
+    expect(run.needsDialog).toBe(false);
     expect(run.willMutate).toBe(true);
     expect(run.preApproved).toBe(true);
   });

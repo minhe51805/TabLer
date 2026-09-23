@@ -30,8 +30,12 @@ import {
 import type { AIConversationMessage, MetricsWidgetType } from "../../types";
 import type { AIMetricsWidgetSpec } from "../../utils/metrics-board-templates";
 import { normalizeAIProviderConfigs } from "../../utils/ai-provider-registry";
-import { resolveAIFailoverConsent } from "../../utils/ai-failover-consent";
-import { invokeMutation } from "../../utils/tauri-utils";
+import {
+  denyPendingAIFailoverConsent,
+  resolveAIFailoverConsent,
+} from "../../utils/ai-failover-consent";
+import { invokeMutation, invokeWithTimeout } from "../../utils/tauri-utils";
+import { getLinkedWorkspaceDir } from "../../hooks/useLinkedFolders";
 import {
   buildComposerCommandContext,
   describeMissingCommandContext,
@@ -189,6 +193,33 @@ export function AISlidePanel({
     (state) =>
       state.connections.find((connection) => connection.id === state.activeConnectionId)?.db_type,
   );
+  // Consent state lives ABOVE the agent hook so the hook's cancelGeneration
+  // can settle pending dialogs through onGenerationCancelled — a stopped run
+  // waiting on a consent promise would otherwise never unwind.
+  const visualizationConsentResolverRef = useRef<((value: boolean) => void) | null>(null);
+  const visualizationApprovalScopeRef = useRef<string | null>(null);
+  const destructiveConsentResolverRef = useRef<((approved: boolean) => void) | null>(null);
+  const [visualizationConsentPending, setVisualizationConsentPending] =
+    useState<VisualizationReadConsentState | null>(null);
+  const [destructiveConsentPending, setDestructiveConsentPending] =
+    useState<VisualizationReadConsentState | null>(null);
+  const [isFailoverConsentPending, setIsFailoverConsentPending] = useState(false);
+  const [isSessionDataReadEnabled, setIsSessionDataReadEnabled] = useState(false);
+
+  // Deny every consent this component can be waiting on. Denials are never
+  // persisted — a cancelled run is not a user decision, so the question may
+  // be asked again on the next run.
+  const denyPendingConsents = useCallback(() => {
+    visualizationConsentResolverRef.current?.(false);
+    visualizationConsentResolverRef.current = null;
+    setVisualizationConsentPending(null);
+    destructiveConsentResolverRef.current?.(false);
+    destructiveConsentResolverRef.current = null;
+    setDestructiveConsentPending(null);
+    denyPendingAIFailoverConsent();
+    setIsFailoverConsentPending(false);
+  }, []);
+
   const {
     activeProvider,
     tableContextCount,
@@ -206,7 +237,7 @@ export function AISlidePanel({
     copyText,
     insertSql,
     runSql,
-  } = useAISlidePanel({ isOpen });
+  } = useAISlidePanel({ isOpen, onGenerationCancelled: denyPendingConsents });
 
   // P10: the panel is the app's only agent runtime, so scheduled agent tasks
   // are executed here — read-only, one at a time, and only when the workspace is
@@ -222,8 +253,6 @@ export function AISlidePanel({
   const historySaveTimerRef = useRef<number | null>(null);
   const openSessionRef = useRef(0);
   const isOpenRef = useRef(isOpen);
-  const visualizationConsentResolverRef = useRef<((value: boolean) => void) | null>(null);
-  const visualizationApprovalScopeRef = useRef<string | null>(null);
   const activeGenerationBubbleIdRef = useRef<string | null>(null);
   const cancelledGenerationBubbleIdsRef = useRef(new Set<string>());
   const activeChatWorkspace = useMemo(
@@ -371,12 +400,6 @@ export function AISlidePanel({
   const [pendingQueue, setPendingQueue] = useState<PendingPrompt[]>([]);
   const pendingQueueRef = useRef<PendingPrompt[]>([]);
   const [isAttachmentManagerOpen, setIsAttachmentManagerOpen] = useState(false);
-  const [visualizationConsentPending, setVisualizationConsentPending] =
-    useState<VisualizationReadConsentState | null>(null);
-  const [destructiveConsentPending, setDestructiveConsentPending] =
-    useState<VisualizationReadConsentState | null>(null);
-  const destructiveConsentResolverRef = useRef<((approved: boolean) => void) | null>(null);
-  const [isFailoverConsentPending, setIsFailoverConsentPending] = useState(false);
 
   // The agent hook raises "ai-failover-consent-request" the first time a
   // provider fails; the dialog below collects the once-only decision.
@@ -401,8 +424,6 @@ export function AISlidePanel({
         cancelText: translateLanguage(language, "ai.failover.consentDeny"),
       }
     : null;
-
-  const [isSessionDataReadEnabled, setIsSessionDataReadEnabled] = useState(false);
 
   const workspaceThreads = useMemo(
     () => chatThreads.filter((thread) => thread.workspaceKey === currentWorkspaceKey),
@@ -568,11 +589,11 @@ export function AISlidePanel({
       : "Connect to a database before enabling session-wide live data reads."
     : isSessionDataReadEnabled
       ? language === "vi"
-        ? `Đang cho phép đọc live data liên tục cho ${currentDatabase || "database hiện tại"}. Bấm để quay lại chế độ hỏi từng lần.`
-        : `Live data reads are allowed for this AI session on ${currentDatabase || "the current database"}. Click to go back to ask-per-request mode.`
+        ? `Đang cho phép đọc live data cho ${currentDatabase || "database hiện tại"} — quyền được ghi nhớ cho database này, không hỏi lại. Bấm để thu hồi và quay lại chế độ hỏi từng lần.`
+        : `Live data reads are allowed for ${currentDatabase || "the current database"} — remembered for this database, so it won't ask again. Click to revoke and go back to ask-per-request mode.`
       : language === "vi"
         ? `Đang ở chế độ hỏi từng lần cho ${currentDatabase || "database hiện tại"}. Bấm để cho phép đọc live data liên tục (sẽ hiện modal xác nhận).`
-        : `The AI will ask before each live data read on ${currentDatabase || "the current database"}. Click to allow session-wide live data reads.`;
+        : `The AI will ask before each live data read on ${currentDatabase || "the current database"}. Click to allow live data reads (a confirmation appears).`;
 
   const persistHistoryState = useCallback(async (state: PersistedAIWorkspaceState) => {
     const prunedState = prunePersistedAIWorkspaceState(state);
@@ -1265,6 +1286,16 @@ export function AISlidePanel({
             }));
           } catch (memoryError) {
             console.error("[AIWorkspace] Failed to persist thread memory:", memoryError);
+            emitAppToast({
+              tone: "error",
+              title:
+                language === "vi" ? "Không lưu được ghi nhớ thread" : "Thread memory not saved",
+              description:
+                language === "vi"
+                  ? "Tóm tắt ngữ cảnh của thread này sẽ không khả dụng cho các lượt sau."
+                  : "This thread's context summary will not be available to future runs.",
+              durationMs: 5000,
+            });
           }
         }
         if (currentThread?.id) {
@@ -1313,6 +1344,7 @@ export function AISlidePanel({
       currentThread?.label,
       currentWorkspaceKey,
       isCompacting,
+      language,
       saveChatContextDigest,
       setError,
     ],
@@ -1390,13 +1422,29 @@ export function AISlidePanel({
         const registry = await invokeMutation<{
           commands: AgentFileCommand[];
           report?: { errors?: { path: string; reason: string }[] };
-        }>("list_user_slash_commands", {});
+        }>("list_user_slash_commands", {
+          // Linked-folder commands only load when the workspace dir is passed;
+          // without it the registry silently sees builtin/global commands only.
+          workspaceDir: await getLinkedWorkspaceDir(),
+        });
         if (cancelled) return;
         setFileCommands(registry.commands ?? []);
-        // A file that failed to parse is skipped by the loader; warn so "the
-        // command is not in the menu" is diagnosable instead of silent.
-        for (const error of registry.report?.errors ?? []) {
+        // A file that failed to parse is skipped by the loader; surface it so
+        // "the command is not in the menu" is diagnosable instead of silent.
+        const loadErrors = registry.report?.errors ?? [];
+        for (const error of loadErrors) {
           console.warn(`[AIWorkspace] skipped slash command ${error.path}: ${error.reason}`);
+        }
+        if (loadErrors.length > 0) {
+          emitAppToast({
+            tone: "error",
+            title: "Some slash commands failed to load",
+            description: loadErrors
+              .slice(0, 3)
+              .map((error) => `${error.path}: ${error.reason}`)
+              .join("\n"),
+            durationMs: 8_000,
+          });
         }
       } catch (error) {
         // A missing registry must never break the composer: the native commands
@@ -1426,9 +1474,10 @@ export function AISlidePanel({
       ),
     [aiCopy, fileCommands],
   );
-  // Menu opens only while the draft is exactly "/<letters>" — plain typing,
-  // not mid-sentence slashes, so normal prompts are never interrupted.
-  const slashQueryMatch = /^\/([a-zA-Z]*)$/.exec(promptDraft.trim());
+  // Menu opens only while the draft is exactly "/<name chars>" — plain typing,
+  // not mid-sentence slashes, so normal prompts are never interrupted. Command
+  // names allow letters, digits, dashes and underscores (review-sql etc.).
+  const slashQueryMatch = /^\/([a-zA-Z0-9_-]*)$/.exec(promptDraft.trim());
   const slashMatches = useMemo(
     () => (slashQueryMatch ? matchSlashCommands(slashQueryMatch[1], slashCommands) : []),
     [slashCommands, slashQueryMatch],
@@ -1445,7 +1494,7 @@ export function AISlidePanel({
     try {
       // "/backup <note>" — the trailing note becomes the checkpoint label.
       const noteMatch = /^\/backup\s+(.+)$/i.exec(promptDraft.trim());
-      const result = await invokeMutation<{
+      const result = await invokeWithTimeout<{
         fileName: string;
         label: string;
         createdAt: number;
@@ -1454,12 +1503,17 @@ export function AISlidePanel({
         tableCount: number;
         rowCount: number;
         sizeBytes: number;
-      }>("create_database_checkpoint", {
-        connectionId,
-        database: currentDatabase || null,
-        dbType: activeConnectionDbType,
-        label: noteMatch?.[1]?.trim() || null,
-      });
+      }>(
+        "create_database_checkpoint",
+        {
+          connectionId,
+          database: currentDatabase || null,
+          dbType: activeConnectionDbType,
+          label: noteMatch?.[1]?.trim() || null,
+        },
+        120_000,
+        "Creating checkpoint",
+      );
       emitAppToast({
         tone: "success",
         title: language === "vi" ? "Đã tạo điểm khôi phục" : "Restore checkpoint created",
@@ -1497,9 +1551,11 @@ export function AISlidePanel({
       return;
     }
     try {
-      const checkpoints = await invokeMutation<AIDatabaseCheckpoint[]>(
+      const checkpoints = await invokeWithTimeout<AIDatabaseCheckpoint[]>(
         "list_database_checkpoints",
         { connectionId },
+        60_000,
+        "Listing checkpoints",
       );
       const fileName = await requestAICheckpointPick(
         checkpoints ?? [],
@@ -1508,13 +1564,18 @@ export function AISlidePanel({
         activeConnectionDbType,
       );
       if (!fileName) return;
-      const restoreResult = await invokeMutation<{
+      const restoreResult = await invokeWithTimeout<{
         warning?: string | null;
-      }>("restore_database_checkpoint", {
-        connectionId,
-        fileName,
-        dbType: activeConnectionDbType,
-      });
+      }>(
+        "restore_database_checkpoint",
+        {
+          connectionId,
+          fileName,
+          dbType: activeConnectionDbType,
+        },
+        120_000,
+        "Restoring checkpoint",
+      );
       if (restoreResult?.warning) {
         emitAppToast({
           tone: "error",
@@ -1719,6 +1780,9 @@ export function AISlidePanel({
       // ordinary prompt — so it inherits the whole agent loop (guardrail rules,
       // verification, cost accounting) instead of opening a second execution path.
       let promptToRun = normalizedPrompt;
+      // A file command's `allowed-tools:` narrows the run's tool set for this
+      // send only — seeded into the executor as the initial restriction.
+      let commandToolRestriction: string[] | undefined;
       // Editor-assist commands (/explain, /optimize, /fix): the composer keeps
       // the short `/name` draft while the model receives the expanded prompt —
       // active editor SQL, the last recorded error, or an EXPLAIN plan plus
@@ -1748,16 +1812,55 @@ export function AISlidePanel({
           const connectionName = useConnectionStore
             .getState()
             .connections.find((connection) => connection.id === connectionId)?.name;
+          // All six inject keys: the real active query tab's SQL (not just the
+          // attached selection — /explain, /profile, /plan otherwise always
+          // report missing context), the focused table, a compact schema
+          // summary, and the checkpoint list.
+          const uiState = useUIStore.getState();
+          const activeTab = uiState.tabs.find((tab) => tab.id === uiState.activeTabId);
+          const activeQueryTab =
+            activeTab?.type === "query" && activeTab.connectionId === connectionId
+              ? activeTab
+              : null;
+          const schemaSummary = useConnectionStore
+            .getState()
+            .tables.slice(0, 60)
+            .map((table) => table.name)
+            .join(", ");
+          const checkpointList = connectionId
+            ? await listCheckpoints(connectionId)
+                .then((entries) =>
+                  entries
+                    .slice(0, 10)
+                    .map(
+                      (entry) =>
+                        `${entry.label} (${new Date(entry.createdAt).toISOString()}, ${entry.tableCount} tables, ${entry.rowCount} rows)`,
+                    )
+                    .join("\n"),
+                )
+                .catch(() => "")
+            : "";
           const resolved = await invokeMutation<ResolvedFileCommand>("resolve_ai_command", {
+            // Linked-folder commands only resolve when the workspace dir is passed.
+            workspaceDir: await getLinkedWorkspaceDir(),
             commandLine: normalizedPrompt,
             context: buildComposerCommandContext({
               currentDatabase,
               boundConnection: connectionName,
-              // The only SQL the panel actually holds is what the user attached.
-              activeTabSql: currentSelection?.text ?? null,
+              activeTabSql: activeQueryTab?.content ?? currentSelection?.text ?? null,
+              selectedTable:
+                activeTab?.type === "table" || activeTab?.type === "structure"
+                  ? (activeTab.tableName ?? activeTab.title)
+                  : null,
+              schemaSummary: schemaSummary || null,
+              checkpointList: checkpointList || null,
             }),
           });
           promptToRun = resolved.prompt;
+          // Narrowing-only contract: the command may take tools away, never
+          // grant them. Empty array = no narrowing.
+          commandToolRestriction =
+            resolved.allowedTools.length > 0 ? resolved.allowedTools : undefined;
           const missingContextNote = describeMissingCommandContext(resolved);
           if (missingContextNote) {
             emitAppToast({
@@ -1813,6 +1916,7 @@ export function AISlidePanel({
         threadId: currentThread?.id,
         interactionMode: activeInteractionMode,
         attachments: currentAttachments.length > 0 ? currentAttachments : undefined,
+        commandToolRestriction,
       });
 
       if (result?.success) {
@@ -1855,6 +1959,7 @@ export function AISlidePanel({
       handleCompactContext,
       handleRollbackCommand,
       isGenerating,
+      listCheckpoints,
       promptDraft,
       runEditedPrompt,
       setError,
@@ -2449,12 +2554,17 @@ export function AISlidePanel({
           title: trimmed,
           summary: memory.summary,
           keywords: memory.keywords,
-        }).catch((error: unknown) =>
-          console.error("[AIWorkspace] Failed to rename thread memory:", error),
-        );
+        }).catch((error: unknown) => {
+          console.error("[AIWorkspace] Failed to rename thread memory:", error);
+          emitAppToast({
+            tone: "error",
+            title: language === "vi" ? "Không lưu được ghi nhớ thread" : "Thread memory not saved",
+            durationMs: 4000,
+          });
+        });
       }
     },
-    [activeChatWorkspace, threadMemories],
+    [activeChatWorkspace, threadMemories, language],
   );
 
   const handleCancelDeleteThread = useCallback(() => {

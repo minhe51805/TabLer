@@ -1,6 +1,7 @@
 import { useCallback, type Dispatch, type RefObject, type SetStateAction } from "react";
 import type { QueryResult } from "../../../types";
 import type { StagedChange } from "../../../types/change-tracking";
+import { changeMatchesScope, changeScopeKey } from "../../../stores/change-tracking-store";
 import type { GridCellValue, ResolvedColumn } from "./useDataGrid";
 
 interface DataGridStagedChangesParams {
@@ -15,7 +16,7 @@ interface DataGridStagedChangesParams {
   setIsLoading: Dispatch<SetStateAction<boolean>>;
   setError: (message: string) => void;
 
-  unstageChange: (id: string) => void;
+  unstageChanges: (ids: string[]) => void;
   closePreview: () => void;
   applyTableUpdatesAtomically: (
     connectionId: string,
@@ -33,6 +34,7 @@ interface DataGridStagedChangesParams {
     operationId: string,
   ) => Promise<unknown>;
   invalidateTableCaches: (connectionId: string, tableName: string, database?: string) => void;
+  patchLoadedTableCell: (rowIndex: number, colIndex: number, value: GridCellValue) => void;
   refreshTableFromStart: () => Promise<unknown>;
 
   dataGridInstanceIdRef: RefObject<string>;
@@ -54,28 +56,24 @@ export function useDataGridStagedChanges({
   setIsLoading,
   setError,
 
-  unstageChange,
+  unstageChanges,
   closePreview,
   applyTableUpdatesAtomically,
   insertTableRowsAtomically,
   invalidateTableCaches,
   refreshTableFromStart,
+  patchLoadedTableCell,
 
   dataGridInstanceIdRef,
 }: DataGridStagedChangesParams) {
   const reconcileStagedChanges = useCallback(
     (nextChanges: typeof stagedChanges) => {
+      const scopeKey = tableName ? changeScopeKey(connectionId, database, tableName) : "";
       const currentTableChanges = stagedChanges.filter(
-        (change) =>
-          change.tableName === tableName &&
-          change.database === database &&
-          change.type === "update",
+        (change) => scopeKey && changeMatchesScope(change, scopeKey) && change.type === "update",
       );
       const nextTableChanges = nextChanges.filter(
-        (change) =>
-          change.tableName === tableName &&
-          change.database === database &&
-          change.type === "update",
+        (change) => scopeKey && changeMatchesScope(change, scopeKey) && change.type === "update",
       );
 
       const applyChanges = (
@@ -93,7 +91,13 @@ export function useDataGridStagedChanges({
           if (rowIndex < 0) continue;
           for (const [columnName, diff] of Object.entries(change.columns)) {
             const columnIndex = resolvedColumns.findIndex((column) => column.name === columnName);
-            if (columnIndex >= 0) rows[rowIndex][columnIndex] = diff[direction] as GridCellValue;
+            if (columnIndex >= 0) {
+              const value = diff[direction] as GridCellValue;
+              rows[rowIndex][columnIndex] = value;
+              // Keep the paged chunk cache in sync — otherwise scrolling to a
+              // cached page resurrects edits that were just undone/redone.
+              patchLoadedTableCell(rowIndex, columnIndex, value);
+            }
           }
         }
       };
@@ -107,17 +111,35 @@ export function useDataGridStagedChanges({
       });
       setStagedRowIndices(new Set(nextTableChanges.map((change) => change.rowIndex)));
     },
-    [database, resolvedColumns, setData, setStagedRowIndices, stagedChanges, tableName],
+    [
+      connectionId,
+      database,
+      patchLoadedTableCell,
+      resolvedColumns,
+      setData,
+      setStagedRowIndices,
+      stagedChanges,
+      tableName,
+    ],
   );
 
   const applyStagedChanges = useCallback(async () => {
-    const tableChanges = stagedChanges.filter(
-      (c) => c.tableName === tableName && c.database === database,
-    );
+    const scopeKey = tableName ? changeScopeKey(connectionId, database, tableName) : "";
+    const tableChanges = stagedChanges.filter((c) => scopeKey && changeMatchesScope(c, scopeKey));
     if (tableChanges.length === 0) return;
 
     if (tableChanges.some((change) => change.type === "delete")) {
       setError("The edit queue contains an operation that cannot be committed atomically yet.");
+      return;
+    }
+
+    const unresolved = tableChanges.find(
+      (change) => change.type !== "delete" && Object.keys(change.columns).length === 0,
+    );
+    if (unresolved) {
+      setError(
+        `A staged ${unresolved.type} on ${unresolved.tableName} has no resolved columns — the column map for this connection could not resolve it. Reload the table and re-stage the edit.`,
+      );
       return;
     }
 
@@ -165,9 +187,8 @@ export function useDataGridStagedChanges({
       }
 
       // The optimistic queue changes only after the backend transaction commits.
-      for (const change of tableChanges) {
-        unstageChange(change.id);
-      }
+      // One batched unstage = one undo snapshot for the whole apply.
+      unstageChanges(tableChanges.map((change) => change.id));
 
       closePreview();
       setStagedRowIndices(new Set());
@@ -198,17 +219,15 @@ export function useDataGridStagedChanges({
     invalidateTableCaches,
     dataGridInstanceIdRef,
     refreshTableFromStart,
-    unstageChange,
+    unstageChanges,
     closePreview,
   ]);
 
   const discardStagedChanges = useCallback(() => {
-    const tableChanges = stagedChanges.filter(
-      (c) => c.tableName === tableName && c.database === database,
-    );
-    for (const change of tableChanges) {
-      unstageChange(change.id);
-    }
+    const scopeKey = tableName ? changeScopeKey(connectionId, database, tableName) : "";
+    const tableChanges = stagedChanges.filter((c) => scopeKey && changeMatchesScope(c, scopeKey));
+    // One batched unstage = one undo snapshot for the whole discard.
+    unstageChanges(tableChanges.map((change) => change.id));
     setStagedRowIndices(new Set());
     closePreview();
     // Reload original data
@@ -220,7 +239,8 @@ export function useDataGridStagedChanges({
     setStagedRowIndices,
     tableName,
     database,
-    unstageChange,
+    connectionId,
+    unstageChanges,
     refreshTableFromStart,
     closePreview,
   ]);

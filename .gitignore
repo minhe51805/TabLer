@@ -13,6 +13,8 @@ dist-ssr
 dist-plugins/
 .artifacts/
 tmp/
+# Generated locally by scripts/prepare-release-config.mjs (CI generates its own)
+src-tauri/tauri.runtime-release.conf.json
 *.local
 
 # Editor directories and files

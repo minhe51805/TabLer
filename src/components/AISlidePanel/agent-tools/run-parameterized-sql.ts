@@ -12,6 +12,7 @@ import {
   agentSqlErrorHint,
   agentToolError,
   analyzeAgentSqlForAgent,
+  classifyAgentSqlReadonly,
   coerceAgentQueryParameter,
   isRetryableAgentToolError,
 } from "../agent-tool-executor-helpers";
@@ -20,7 +21,7 @@ import { stringifyAgentObservation, type AgentToolModule } from "./shared";
 export const tool: AgentToolModule = {
   name: "run_parameterized_sql",
   handler: async (ctx, args, frame) => {
-    if (ctx.toolAvailability && !ctx.toolAvailability.sqlRead) {
+    if (ctx.toolAvailability && !ctx.toolAvailability.parameterizedRead) {
       return agentSqlToolBlockedMessage("run_parameterized_sql", ctx.toolAvailability);
     }
     const sql = typeof args?.sql === "string" ? args.sql.trim() : "";
@@ -56,11 +57,23 @@ export const tool: AgentToolModule = {
       return `Tool blocked: ${guard.error}`;
     }
 
+    // Same backend-classifier second line as run_readonly_sql: the static
+    // guard cannot see through EXPLAIN ANALYZE <write>.
+    const backendGuard = await classifyAgentSqlReadonly(sql, ctx.dbType);
+    if (!backendGuard.ok) {
+      return `Tool blocked: ${backendGuard.error}`;
+    }
+
     if (ctx.requestDataReadConsent) {
       const approved = await ctx.requestDataReadConsent();
       if (!approved) {
         return "Tool blocked: The user did not grant permission to read live database rows for this request.";
       }
+    }
+    // A superseded run must not hit the database at all — check before the
+    // backend call, not only after it.
+    if (ctx.requestId !== ctx.requestIdRef.current) {
+      throw new Error(AI_REQUEST_REPLACED_MESSAGE);
     }
 
     try {

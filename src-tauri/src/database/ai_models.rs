@@ -221,7 +221,7 @@ impl AIRequest {
         // huge payload signals abuse rather than a legitimate call.
         if let Some(tools) = &self.tools {
             if tools.to_string().len() > crate::config::AI_MAX_TOOLS_CHARS {
-                return Err("Tool definitions are too large (max 20,000 characters)".to_string());
+                return Err("Tool definitions are too large (max 40,000 characters)".to_string());
             }
         }
 

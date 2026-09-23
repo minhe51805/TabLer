@@ -18,5 +18,7 @@ export const AI_MAX_CONTEXT_CHARS = 50_000;
 export const AI_MAX_HISTORY_MESSAGES = 12;
 /** Max total characters across all replayed history messages. */
 export const AI_MAX_HISTORY_CHARS = 24_000;
-/** Max characters in the machine-generated native tool definitions payload. */
-export const AI_MAX_TOOLS_CHARS = 20_000;
+/** Max characters in the machine-generated native tool definitions payload.
+ * Sized for the real catalog: 34 tool specs serialize to ~29.5k chars, so
+ * 40k leaves headroom for spec growth while still rejecting abusive payloads. */
+export const AI_MAX_TOOLS_CHARS = 40_000;

@@ -1,6 +1,13 @@
 import { createPortal } from "react-dom";
 import { BarChart3, ChevronDown, ChevronRight, Plus, Search } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useUIStore } from "../../stores/uiStore";
 import type { MetricsBoardDefinition, MetricsWidgetDefinition, Tab } from "../../types";
@@ -30,7 +37,9 @@ export function MetricsSidebar({ connectionId, database }: Props) {
   );
   const [boards, setBoards] = useState<MetricsBoardDefinition[]>([]);
   const [boardSearch, setBoardSearch] = useState("");
-  const [boardMenu, setBoardMenu] = useState<{ boardId: string; left: number; top: number } | null>(null);
+  const [boardMenu, setBoardMenu] = useState<{ boardId: string; left: number; top: number } | null>(
+    null,
+  );
   const [renameDialog, setRenameDialog] = useState<{ boardId: string; value: string } | null>(null);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
   const sidebarRef = useRef<HTMLDivElement | null>(null);
@@ -102,7 +111,16 @@ export function MetricsSidebar({ connectionId, database }: Props) {
   const filteredBoards = useMemo(() => {
     const query = boardSearch.trim().toLowerCase();
     if (!query) return boards;
-    return boards.filter((board) => board.name.toLowerCase().includes(query));
+    return boards.filter(
+      (board) =>
+        board.name.toLowerCase().includes(query) ||
+        board.widgets.some(
+          (w) =>
+            w.title.toLowerCase().includes(query) ||
+            (w.note ?? "").toLowerCase().includes(query) ||
+            w.query.toLowerCase().includes(query),
+        ),
+    );
   }, [boardSearch, boards]);
 
   const activeMetricsTab = useMemo(() => {
@@ -229,23 +247,28 @@ export function MetricsSidebar({ connectionId, database }: Props) {
     [connectionId, tabs, updateTab],
   );
 
-  const handleRenameBoard = useCallback(
-    (board: MetricsBoardDefinition) => {
-      setBoardMenu(null);
-      setRenameDialog({ boardId: board.id, value: board.name });
-    },
-    [],
-  );
+  const handleRenameBoard = useCallback((board: MetricsBoardDefinition) => {
+    setBoardMenu(null);
+    setRenameDialog({ boardId: board.id, value: board.name });
+  }, []);
 
   const handleDeleteBoard = useCallback(
     (board: MetricsBoardDefinition) => {
       const allBoards = readStoredBoards();
-      const sameConnectionBoards = allBoards.filter((entry) => entry.connection_id === connectionId);
-      const remainingConnectionBoards = sameConnectionBoards.filter((entry) => entry.id !== board.id);
+      const sameConnectionBoards = allBoards.filter(
+        (entry) => entry.connection_id === connectionId,
+      );
+      const remainingConnectionBoards = sameConnectionBoards.filter(
+        (entry) => entry.id !== board.id,
+      );
       const otherBoards = allBoards.filter((entry) => entry.connection_id !== connectionId);
       const fallbackBoard =
         remainingConnectionBoards[0] || createBoardDefinition(connectionId, database, []);
-      writeStoredBoards([...otherBoards, ...remainingConnectionBoards, ...(remainingConnectionBoards.length > 0 ? [] : [fallbackBoard])]);
+      writeStoredBoards([
+        ...otherBoards,
+        ...remainingConnectionBoards,
+        ...(remainingConnectionBoards.length > 0 ? [] : [fallbackBoard]),
+      ]);
 
       tabs
         .filter((tab) => tab.type === "metrics" && tab.metricsBoardId === board.id)
@@ -348,7 +371,11 @@ export function MetricsSidebar({ connectionId, database }: Props) {
                 onClick={() => handleBoardClick(board)}
                 onContextMenu={(event) => handleBoardContextMenu(event, board)}
               >
-                {isActive ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                {isActive ? (
+                  <ChevronDown className="w-3 h-3" />
+                ) : (
+                  <ChevronRight className="w-3 h-3" />
+                )}
                 <BarChart3 className="w-3.5 h-3.5" />
                 <div className="metrics-board-list-copy">
                   <span>{board.name}</span>
@@ -390,7 +417,11 @@ export function MetricsSidebar({ connectionId, database }: Props) {
           className="metrics-board-side-menu"
           style={{ left: `${boardMenu.left}px`, top: `${boardMenu.top}px` }}
         >
-          <button type="button" className="metrics-board-side-menu-item" onClick={handleCreateBoard}>
+          <button
+            type="button"
+            className="metrics-board-side-menu-item"
+            onClick={handleCreateBoard}
+          >
             {t("metrics.newBoard")}
           </button>
           <button
@@ -419,17 +450,18 @@ export function MetricsSidebar({ connectionId, database }: Props) {
 
       {renameDialog
         ? createPortal(
-            <div
-              className="metrics-board-rename-overlay"
-              onMouseDown={() => setRenameDialog(null)}
-            >
+            <div className="metrics-board-rename-overlay" onMouseDown={() => setRenameDialog(null)}>
               <div
                 className="metrics-board-rename-modal"
                 onMouseDown={(event) => event.stopPropagation()}
               >
                 <div className="metrics-board-rename-copy">
-                  <span className="metrics-board-rename-kicker">{t("metrics.renameBoardModalKicker")}</span>
-                  <strong className="metrics-board-rename-title">{t("metrics.renameBoardModalTitle")}</strong>
+                  <span className="metrics-board-rename-kicker">
+                    {t("metrics.renameBoardModalKicker")}
+                  </span>
+                  <strong className="metrics-board-rename-title">
+                    {t("metrics.renameBoardModalTitle")}
+                  </strong>
                   <p className="metrics-board-rename-subtitle">
                     {t("metrics.renameBoardModalSubtitle")}
                   </p>

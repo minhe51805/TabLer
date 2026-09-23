@@ -333,6 +333,11 @@ export function MetricsWidgetCard({
             <span className="metrics-widget-card-type">{widgetLibraryItem.label}</span>
             <strong className="metrics-widget-card-title">{widget.title}</strong>
           </div>
+          {widget.note ? (
+            <span className="metrics-widget-card-note" title={widget.note}>
+              {widget.note}
+            </span>
+          ) : null}
         </div>
         <button
           type="button"

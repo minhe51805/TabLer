@@ -379,6 +379,8 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "metrics.editor.previewing": "运行中…",
   "metrics.editor.history": "历史",
   "metrics.editor.previewResult": "{{rows}} 行",
+  "metrics.editor.note": "备注",
+  "metrics.editor.notePlaceholder": "可选描述…",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover": "提供者“{{failed}}”出现故障，正在切换到提供者“{{next}}”，请稍候。",

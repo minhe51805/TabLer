@@ -387,6 +387,8 @@ export const vi: Record<keyof typeof en, string> = {
   "metrics.editor.previewing": "Đang chạy…",
   "metrics.editor.history": "Lịch sử",
   "metrics.editor.previewResult": "{{rows}} dòng",
+  "metrics.editor.note": "Ghi chú",
+  "metrics.editor.notePlaceholder": "Mô tả tùy chọn…",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":

@@ -217,7 +217,16 @@ export function MetricsBoard({
   const filteredBoards = useMemo(() => {
     const query = boardSearch.trim().toLowerCase();
     if (!query) return boards;
-    return boards.filter((board) => board.name.toLowerCase().includes(query));
+    return boards.filter(
+      (board) =>
+        board.name.toLowerCase().includes(query) ||
+        board.widgets.some(
+          (w) =>
+            w.title.toLowerCase().includes(query) ||
+            (w.note ?? "").toLowerCase().includes(query) ||
+            w.query.toLowerCase().includes(query),
+        ),
+    );
   }, [boardSearch, boards]);
 
   const activeBoard = useMemo(

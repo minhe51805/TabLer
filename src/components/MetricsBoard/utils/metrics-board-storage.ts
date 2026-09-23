@@ -147,6 +147,7 @@ export function readStoredBoards(): MetricsBoardDefinition[] {
                     typeof widgetRecord.grid_y === "number" && widgetRecord.grid_y >= 0
                       ? widgetRecord.grid_y
                       : 0,
+                  note: typeof widgetRecord.note === "string" ? widgetRecord.note : undefined,
                 };
               })
               .filter(

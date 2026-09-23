@@ -218,3 +218,12 @@
   color: #fca5a5;
   font-size: 11px;
 }
+.metrics-widget-card-note {
+  display: block;
+  font-size: 10px;
+  color: var(--text-tertiary, #94a3b8);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}

@@ -208,6 +208,15 @@ export function MetricsEditor({
         />
       </label>
 
+      <label className="metrics-board-field">
+        <span>{t("metrics.editor.note")}</span>
+        <input
+          value={editingWidget.note ?? ""}
+          onChange={(event) => onUpdateWidget({ note: event.target.value || undefined })}
+          placeholder={t("metrics.editor.notePlaceholder")}
+        />
+      </label>
+
       <div className="metrics-board-field">
         <span>{t("metrics.editor.widgetType")}</span>
         <div className="metrics-widget-type-grid">

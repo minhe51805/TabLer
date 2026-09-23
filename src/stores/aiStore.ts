@@ -514,7 +514,7 @@ export const useAIStore = create<AIState>((set, get) => ({
       // the partial answer the user watched arrive.
       let streamedText = "";
       try {
-        if (mode === "panel" && !nativeToolPayload) {
+        if (mode === "panel") {
           let streamedReasoning = "";
           unlisten = await listen<{
             requestId: string;
@@ -564,6 +564,12 @@ export const useAIStore = create<AIState>((set, get) => ({
                 history,
                 attachments: attachments && attachments.length > 0 ? attachments : undefined,
                 enable_thinking: get().thinkingEnabled,
+                ...(nativeToolPayload
+                  ? {
+                      tools: nativeToolPayload.tools,
+                      tool_choice: nativeToolPayload.tool_choice,
+                    }
+                  : {}),
               },
             },
             timeoutMs,

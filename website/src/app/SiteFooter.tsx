@@ -62,6 +62,11 @@ export function SiteFooter({ t }: { t: Dictionary }) {
           </nav>
         ))}
       </div>
+      {/* giant wordmark — the reference sites' oversized footer type,
+          clipped to the dark band so it reads as a watermark */}
+      <div className="footer-wordmark" aria-hidden="true">
+        TableR
+      </div>
       <div className="shell site-footer-bottom">
         <span>{f.built}</span>
         <span>{f.license}</span>

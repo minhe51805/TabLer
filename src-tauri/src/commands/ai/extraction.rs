@@ -432,14 +432,136 @@ pub(crate) fn take_visible_stream_delta(
     *visible_started = true;
     std::mem::take(pending_text)
 }
+/// Streaming counterpart of `extract_tool_call_as_action_json`: providers that
+/// stream native tool calls emit the call name once, then the arguments as
+/// JSON text fragments. This accumulator re-wraps those fragments into the
+/// controller-action contract (`{"action":…,"args":…,"message":""}`) so the
+/// frontend sees the same text stream as the classic path — which is what lets
+/// `extractStreamingAgentAnswer` pull the finish answer out token by token.
+/// Text fragments pass through verbatim; only the wrapper is synthesized.
+#[derive(Default)]
+pub(crate) struct ToolCallStreamState {
+    /// True once the `{"action":"<name>","args":` prefix has been emitted.
+    opened: bool,
+    /// True once the closing `,"message":""}` has been emitted.
+    closed: bool,
+}
+
+impl ToolCallStreamState {
+    /// Extracts tool-call fragments from one streaming payload and returns the
+    /// text pieces to emit as `text_delta`, in order. Non-tool-call payloads
+    /// return an empty vec so the caller just forwards nothing extra.
+    pub(crate) fn push_payload(
+        &mut self,
+        provider: &AIProviderType,
+        payload: &serde_json::Value,
+    ) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        match provider {
+            AIProviderType::Anthropic => {
+                match payload.get("type").and_then(|value| value.as_str()) {
+                    // content_block_start carries the tool name.
+                    Some("content_block_start") => {
+                        if let Some(block) = payload.get("content_block") {
+                            if block.get("type").and_then(|v| v.as_str()) == Some("tool_use") {
+                                if let Some(name) = block.get("name").and_then(|v| v.as_str()) {
+                                    out.push(format!(
+                                        "{{\"action\":{},\"args\":",
+                                        serde_json::to_string(&serde_json::json!(name))
+                                            .unwrap_or_else(|_| "\"\"".to_string())
+                                    ));
+                                    self.opened = true;
+                                }
+                            }
+                        }
+                    }
+                    // content_block_delta carries `partial_json` fragments.
+                    Some("content_block_delta") => {
+                        if self.opened && !self.closed {
+                            if let Some(fragment) = payload
+                                .pointer("/delta/partial_json")
+                                .and_then(|value| value.as_str())
+                            {
+                                if !fragment.is_empty() {
+                                    out.push(fragment.to_string());
+                                }
+                            }
+                        }
+                    }
+                    // content_block_stop / message_stop close the args object.
+                    Some("content_block_stop") | Some("message_stop")
+                        if self.opened && !self.closed =>
+                    {
+                        out.push(",\"message\":\"\"}".to_string());
+                        self.closed = true;
+                    }
+                    _ => {}
+                }
+            }
+            AIProviderType::Gemini | AIProviderType::Vertex => {
+                // Gemini streams complete functionCall objects, not fragments —
+                // emit the whole action JSON once.
+                if !self.opened {
+                    if let Some(action) = extract_tool_call_as_action_json(provider, payload) {
+                        out.push(action);
+                        self.opened = true;
+                        self.closed = true;
+                    }
+                }
+            }
+            // OpenAI, OpenRouter, Ollama, Custom: chat-completions delta shape.
+            _ => {
+                let calls = payload
+                    .pointer("/choices/0/delta/tool_calls")
+                    .and_then(|value| value.as_array());
+                if let Some(calls) = calls {
+                    for call in calls {
+                        if !self.opened {
+                            if let Some(name) = call
+                                .pointer("/function/name")
+                                .and_then(|value| value.as_str())
+                            {
+                                out.push(format!(
+                                    "{{\"action\":{},\"args\":",
+                                    serde_json::to_string(&serde_json::json!(name))
+                                        .unwrap_or_else(|_| "\"\"".to_string())
+                                ));
+                                self.opened = true;
+                            }
+                        }
+                        if self.opened && !self.closed {
+                            if let Some(fragment) = call
+                                .pointer("/function/arguments")
+                                .and_then(|value| value.as_str())
+                            {
+                                if !fragment.is_empty() {
+                                    out.push(fragment.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                // finish_reason marks the end of the streamed tool call.
+                let finished = payload
+                    .pointer("/choices/0/finish_reason")
+                    .and_then(|value| value.as_str())
+                    .is_some();
+                if finished && self.opened && !self.closed {
+                    out.push(",\"message\":\"\"}".to_string());
+                    self.closed = true;
+                }
+            }
+        }
+        out
+    }
+}
 
 /// Pulls the first native tool call out of a *non-streaming* provider response
 /// and re-serializes it into the controller-action contract
 /// (`{"action","args","message"}`) that the frontend `parseAIAgentToolAction`
 /// already consumes. Returns `None` when the payload carries no tool call, so
-/// the caller cleanly falls back to normal text extraction. Native calling
-/// only ever uses the non-streaming path, so streaming delta accumulation is
-/// intentionally not handled here.
+/// the caller cleanly falls back to normal text extraction. The streaming path
+/// uses `ToolCallStreamState` instead, which reassembles argument fragments.
 pub(crate) fn extract_tool_call_as_action_json(
     provider: &AIProviderType,
     payload: &serde_json::Value,
@@ -556,6 +678,59 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&action).unwrap();
         assert_eq!(parsed["action"], "list_tables");
         assert_eq!(parsed["args"]["limit"], 5);
+    }
+
+    #[test]
+    fn tool_call_stream_reassembles_openai_argument_fragments() {
+        // OpenAI streams the tool name once, then the arguments JSON in
+        // arbitrary fragments; the accumulator must emit the action wrapper
+        // around them so the concatenated text parses as the action contract.
+        let mut state = ToolCallStreamState::default();
+        let mut text = String::new();
+        for payload in [
+            json!({ "choices": [{ "delta": { "tool_calls": [{ "function": { "name": "finish" } }] } }] }),
+            json!({ "choices": [{ "delta": { "tool_calls": [{ "function": { "arguments": "{\"response\":\"Hel" } }] } }] }),
+            json!({ "choices": [{ "delta": { "tool_calls": [{ "function": { "arguments": "lo\"}" } }] } }] }),
+            json!({ "choices": [{ "delta": {}, "finish_reason": "tool_calls" }] }),
+        ] {
+            for fragment in state.push_payload(&AIProviderType::OpenAI, &payload) {
+                text.push_str(&fragment);
+            }
+        }
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed["action"], "finish");
+        assert_eq!(parsed["args"]["response"], "Hello");
+        assert_eq!(parsed["message"], "");
+    }
+
+    #[test]
+    fn tool_call_stream_reassembles_anthropic_partial_json() {
+        let mut state = ToolCallStreamState::default();
+        let mut text = String::new();
+        for payload in [
+            json!({ "type": "content_block_start", "content_block": { "type": "tool_use", "name": "finish" } }),
+            json!({ "type": "content_block_delta", "delta": { "type": "input_json_delta", "partial_json": "{\"response\":\"Hi" } }),
+            json!({ "type": "content_block_delta", "delta": { "type": "input_json_delta", "partial_json": " there\"}" } }),
+            json!({ "type": "content_block_stop" }),
+        ] {
+            for fragment in state.push_payload(&AIProviderType::Anthropic, &payload) {
+                text.push_str(&fragment);
+            }
+        }
+        let parsed: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(parsed["action"], "finish");
+        assert_eq!(parsed["args"]["response"], "Hi there");
+    }
+
+    #[test]
+    fn tool_call_stream_ignores_plain_text_deltas() {
+        // A streamed prose answer (no tool call) must produce no fragments so
+        // the normal text-delta path stays byte-identical.
+        let mut state = ToolCallStreamState::default();
+        let payload = json!({ "choices": [{ "delta": { "content": "hello" } }] });
+        assert!(state
+            .push_payload(&AIProviderType::OpenAI, &payload)
+            .is_empty());
     }
 
     #[test]

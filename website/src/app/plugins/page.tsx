@@ -20,6 +20,7 @@ import { getSiteLanguage } from "@/lib/language";
 import { getDictionary } from "@/lib/i18n";
 import { LanguageToggle } from "../LanguageToggle";
 import { SiteFooter } from "../SiteFooter";
+import { ScrollProgress, ScrollReveal, CursorGlow, MagneticButtons } from "../Home3D";
 
 export const metadata: Metadata = {
   title: "TableR plugins",
@@ -50,6 +51,11 @@ export default async function PluginsPage() {
 
   return (
     <main className="neu plugins-page" id="main">
+      <div className="scroll-progress" aria-hidden="true" />
+      <ScrollProgress />
+      <ScrollReveal />
+      <CursorGlow />
+      <MagneticButtons />
       <header className="site-header">
         <div className="shell header-inner">
           <Link className="brand" href="/" aria-label="TableR home">

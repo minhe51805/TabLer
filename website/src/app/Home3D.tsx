@@ -122,8 +122,36 @@ export function ScrollReveal() {
     );
     sections.forEach((el) => {
       el.classList.add("reveal-pending");
-      revealObserver.observe(el);
+      // if the section is already inside the viewport when we attach
+      // (deep-link load, fast scroll), reveal it immediately instead of
+      // waiting for an intersection callback that may never fire
+      const r = el.getBoundingClientRect();
+      if (r.top < window.innerHeight * 0.94 && r.bottom > 0) {
+        el.classList.add("is-revealed");
+      } else {
+        revealObserver.observe(el);
+      }
     });
+
+    // safety net: a fast flick can jump past a section between observer
+    // ticks — sweep pending nodes on scroll and reveal anything whose top
+    // has already passed the reveal line
+    let sweepRaf = 0;
+    const sweep = () => {
+      sweepRaf = 0;
+      document
+        .querySelectorAll<HTMLElement>(".neu .reveal-pending:not(.is-revealed)")
+        .forEach((el) => {
+          if (el.getBoundingClientRect().top < window.innerHeight * 0.94) {
+            el.classList.add("is-revealed");
+            revealObserver.unobserve(el);
+          }
+        });
+    };
+    const onScrollSweep = () => {
+      if (!sweepRaf) sweepRaf = requestAnimationFrame(sweep);
+    };
+    window.addEventListener("scroll", onScrollSweep, { passive: true });
 
     const staggerObserver = new IntersectionObserver(
       (entries) => {
@@ -208,7 +236,9 @@ export function ScrollReveal() {
       staggerObserver.disconnect();
       counterObserver.disconnect();
       cancelAnimationFrame(raf);
+      cancelAnimationFrame(sweepRaf);
       window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("scroll", onScrollSweep);
       window.removeEventListener("resize", onScroll);
     };
   }, []);
@@ -248,6 +278,10 @@ export function HeroScrollFX({ phases }: { phases: HeroPhase[] }) {
     const images = Array.from(document.querySelectorAll<HTMLElement>(".neu .hero-phase-image"));
     if (!hero || !copy || !media || !frame || !header) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    // The 460vh pinned scrub is a desktop affordance — on phones it makes
+    // the hero feel endless and the per-frame transforms jank. Fall back
+    // to a plain hero (copy + frame visible, no scroll track).
+    if (window.matchMedia("(max-width: 720px)").matches) return;
 
     hero.classList.add("fx-on");
     frame.style.maxHeight = "none";
@@ -349,12 +383,13 @@ export function HeroScrollFX({ phases }: { phases: HeroPhase[] }) {
       }
 
       // header docks to the right edge + nav collapses to icons on first
-      // scroll; near the page end it un-docks so it rides back up with the
-      // footer
+      // scroll; near the page end it fades out entirely so the floating
+      // pill never sits on top of the final CTA / footer
       const nearEnd =
         window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 160;
       const docked = window.scrollY > 8 && !nearEnd;
       header.classList.toggle("is-docked", docked);
+      header.classList.toggle("is-hidden", nearEnd && window.scrollY > 8);
 
       // adaptive bar color: find where the dark/light boundary crosses the
       // bar and expose it as --dock-dark (0..1 from the top) so the bar's
@@ -541,5 +576,263 @@ export function HeroScrollFX({ phases }: { phases: HeroPhase[] }) {
     };
   }, [phases]);
 
+  return null;
+}
+
+/**
+ * Thin accent progress bar pinned to the top of the viewport — the
+ * reference sites' scroll-meter, flattened into a 3px line. Pure scroll
+ * listener, no layout work per frame.
+ */
+export function ScrollProgress() {
+  useEffect(() => {
+    const bar = document.querySelector<HTMLElement>(".scroll-progress");
+    if (!bar) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    let raf = 0;
+    const update = () => {
+      raf = 0;
+      const max = document.documentElement.scrollHeight - window.innerHeight;
+      const p = max > 0 ? window.scrollY / max : 0;
+      bar.style.transform = `scaleX(${p.toFixed(4)})`;
+    };
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    update();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    window.addEventListener("resize", onScroll);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("scroll", onScroll);
+      window.removeEventListener("resize", onScroll);
+    };
+  }, []);
+  return null;
+}
+
+/**
+ * Scrollspy — marks the nav link for the section currently in view with
+ * .is-current so it renders as a pressed chip. Observes sections that own
+ * an id matching a nav href.
+ */
+export function ScrollSpy() {
+  useEffect(() => {
+    const links = Array.from(
+      document.querySelectorAll<HTMLAnchorElement>(".neu .main-nav a[href^='#']"),
+    );
+    if (links.length === 0) return;
+    const byId: Record<string, HTMLAnchorElement> = {};
+    for (const a of links) {
+      const id = a.getAttribute("href")?.slice(1);
+      if (id) byId[id] = a;
+    }
+    const sections = Object.keys(byId)
+      .map((id) => document.getElementById(id))
+      .filter((el): el is HTMLElement => el !== null);
+    if (sections.length === 0) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          const link = byId[entry.target.id];
+          if (!link) continue;
+          links.forEach((a) => a.classList.remove("is-current"));
+          link.classList.add("is-current");
+        }
+      },
+      { rootMargin: "-38% 0px -55% 0px" },
+    );
+    sections.forEach((s) => observer.observe(s));
+    return () => observer.disconnect();
+  }, []);
+  return null;
+}
+
+/**
+ * Magnetic hover on primary CTAs — the button eases a few px toward the
+ * cursor and springs back on leave. Desktop pointers only.
+ */
+export function MagneticButtons() {
+  useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (window.matchMedia("(pointer: coarse)").matches) return;
+    const btns = Array.from(document.querySelectorAll<HTMLElement>(".neu .button-primary"));
+    const cleanups: Array<() => void> = [];
+    for (const btn of btns) {
+      let raf = 0;
+      const onMove = (e: PointerEvent) => {
+        const r = btn.getBoundingClientRect();
+        const dx = (e.clientX - (r.left + r.width / 2)) * 0.18;
+        const dy = (e.clientY - (r.top + r.height / 2)) * 0.3;
+        cancelAnimationFrame(raf);
+        raf = requestAnimationFrame(() => {
+          btn.style.transform = `translate(${dx.toFixed(1)}px, ${dy.toFixed(1)}px)`;
+        });
+      };
+      const onLeave = () => {
+        cancelAnimationFrame(raf);
+        btn.style.transform = "";
+      };
+      btn.addEventListener("pointermove", onMove);
+      btn.addEventListener("pointerleave", onLeave);
+      cleanups.push(() => {
+        btn.removeEventListener("pointermove", onMove);
+        btn.removeEventListener("pointerleave", onLeave);
+      });
+    }
+    return () => cleanups.forEach((fn) => fn());
+  }, []);
+  return null;
+}
+
+/**
+ * Cursor-tracked glow on cards — a soft radial highlight follows the
+ * pointer across feature/plugin/download cards via --mx/--my custom
+ * properties. One listener per card, rAF-throttled. Fine pointers only.
+ */
+export function CursorGlow() {
+  useEffect(() => {
+    if (window.matchMedia("(pointer: coarse)").matches) return;
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    const cards = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        ".neu .feature-card, .neu .plugin-card, .neu .download-option, .neu .changelog-entry",
+      ),
+    );
+    const cleanups: Array<() => void> = [];
+    for (const card of cards) {
+      let raf = 0;
+      const onMove = (e: PointerEvent) => {
+        const r = card.getBoundingClientRect();
+        cancelAnimationFrame(raf);
+        raf = requestAnimationFrame(() => {
+          card.style.setProperty("--mx", `${(e.clientX - r.left).toFixed(0)}px`);
+          card.style.setProperty("--my", `${(e.clientY - r.top).toFixed(0)}px`);
+        });
+      };
+      card.addEventListener("pointermove", onMove);
+      cleanups.push(() => card.removeEventListener("pointermove", onMove));
+    }
+    return () => cleanups.forEach((fn) => fn());
+  }, []);
+  return null;
+}
+
+/**
+ * Masked line-reveal for section headings — h2 elements get clip-path
+ * inset(0 0 100% 0) → 0 so the title wipes up out of its own box, the
+ * signature masked-text move from the reference sites. Applied via a
+ * class so the reveal-pending gate still owns visibility.
+ */
+export function HeadingReveal() {
+  useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (window.matchMedia("(max-width: 720px)").matches) return;
+    const heads = Array.from(
+      document.querySelectorAll<HTMLElement>(
+        ".neu .section-heading h2, .neu .erd-heading h2, .neu .engine-heading h2, .neu .open-source-copy h2, .neu .final-cta h2",
+      ),
+    );
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("h2-revealed");
+            observer.unobserve(entry.target);
+          }
+        }
+      },
+      { threshold: 0.3 },
+    );
+    heads.forEach((h) => {
+      h.classList.add("h2-masked");
+      observer.observe(h);
+    });
+    return () => observer.disconnect();
+  }, []);
+  return null;
+}
+
+/**
+ * Word-stagger for the hero headline — wraps each word in a masked span
+ * and cascades them up on load, the reference sites' signature text
+ * reveal. Runs once; the hero FX owns opacity afterwards.
+ */
+export function WordStagger() {
+  useEffect(() => {
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+    if (window.matchMedia("(max-width: 720px)").matches) return;
+    const h1 = document.querySelector<HTMLElement>(".neu .hero h1");
+    if (!h1 || h1.dataset.staggered) return;
+    h1.dataset.staggered = "1";
+    // wrap each word in an overflow-hidden mask + inner span that
+    // translates up; the accent span is left whole because its
+    // background-clip: text fill would be clipped by the masks
+    const wrapWords = (node: HTMLElement) => {
+      const text = node.textContent ?? "";
+      node.textContent = "";
+      text.split(/(\s+)/).forEach((piece, i) => {
+        if (/^\s+$/.test(piece)) {
+          node.appendChild(document.createTextNode(" "));
+          return;
+        }
+        const mask = document.createElement("span");
+        mask.className = "w-mask";
+        const inner = document.createElement("span");
+        inner.className = "w-inner";
+        inner.style.transitionDelay = `${i * 45}ms`;
+        inner.textContent = piece;
+        mask.appendChild(inner);
+        node.appendChild(mask);
+      });
+    };
+    Array.from(h1.childNodes).forEach((node) => {
+      if (node.nodeType === Node.TEXT_NODE && node.textContent?.trim()) {
+        const span = document.createElement("span");
+        span.textContent = node.textContent;
+        h1.replaceChild(span, node);
+        wrapWords(span);
+      }
+    });
+    // trigger on next frame so the masks mount hidden first
+    requestAnimationFrame(() => h1.classList.add("w-on"));
+  }, []);
+  return null;
+}
+
+/**
+ * Floating back-to-top — a soft round button that fades in once the user
+ * is a viewport and a half down, scrolls to top on click.
+ */
+export function BackToTop() {
+  useEffect(() => {
+    const btn = document.querySelector<HTMLElement>(".back-to-top");
+    const cta = document.querySelector<HTMLElement>(".mobile-cta");
+    if (!btn && !cta) return;
+    let raf = 0;
+    const update = () => {
+      raf = 0;
+      const past = window.scrollY > window.innerHeight * 1.4;
+      btn?.classList.toggle("is-visible", past);
+      // the mobile CTA appears once the hero is behind and hides again at
+      // the footer so it never sits on the dark band
+      const nearEnd =
+        window.scrollY + window.innerHeight >= document.documentElement.scrollHeight - 200;
+      cta?.classList.toggle("is-visible", past && !nearEnd);
+    };
+    const onScroll = () => {
+      if (!raf) raf = requestAnimationFrame(update);
+    };
+    const onClick = () => window.scrollTo({ top: 0, behavior: "smooth" });
+    update();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    btn?.addEventListener("click", onClick);
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("scroll", onScroll);
+      btn?.removeEventListener("click", onClick);
+    };
+  }, []);
   return null;
 }

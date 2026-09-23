@@ -8,6 +8,7 @@ import { getDictionary } from "@/lib/i18n";
 import { LanguageToggle } from "../LanguageToggle";
 import { SiteFooter } from "../SiteFooter";
 import { ReleaseNotes } from "./ReleaseNotes";
+import { ScrollProgress, ScrollReveal, CursorGlow } from "../Home3D";
 
 export const metadata: Metadata = {
   title: "TableR Changelog",
@@ -32,6 +33,10 @@ export default async function ChangelogPage() {
 
   return (
     <main className="neu download-page" id="main">
+      <div className="scroll-progress" aria-hidden="true" />
+      <ScrollProgress />
+      <ScrollReveal />
+      <CursorGlow />
       <header className="site-header">
         <div className="shell header-inner">
           <Link className="brand" href="/" aria-label="TableR home">

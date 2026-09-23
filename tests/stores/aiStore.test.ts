@@ -83,22 +83,49 @@ describe("aiStore", () => {
     );
   });
 
-  it("collects non-streaming agent responses using the agent timeout policy (native tool calling)", async () => {
+  it("streams agent responses with native tool calling over ask_ai_stream", async () => {
     useAIStore.setState({ aiConfigs: [provider] });
-    invokeWithTimeoutMock.mockImplementation(async (command) => {
-      if (command === "load_ai_configs") {
-        return [[provider], { "provider-1": true }];
-      }
-      // Native tool calling rides the non-streaming path.
-      return { text: "SELECT 1", reasoning: "private" };
-    });
+    invokeWithTimeoutMock.mockImplementation(
+      async (command: string, args?: { request?: { request_id?: string } }) => {
+        if (command === "load_ai_configs") {
+          return [[provider], { "provider-1": true }];
+        }
+        if (command === "ask_ai_stream") {
+          const requestId = args?.request?.request_id;
+          // The backend re-wraps streamed tool-call fragments into the
+          // action-JSON contract; emit it in two deltas like a real stream.
+          streamListener?.({
+            payload: {
+              requestId,
+              kind: "text_delta",
+              text: '{"action":"finish","args":{"response":"SEL',
+            },
+          });
+          streamListener?.({
+            payload: {
+              requestId,
+              kind: "text_delta",
+              text: 'ECT 1"},"message":""}',
+            },
+          });
+          return undefined;
+        }
+        return null;
+      },
+    );
 
     await expect(
       useAIStore.getState().askAIWithReasoning("write SQL", "schema", "panel", "agent"),
-    ).resolves.toEqual({ text: "SELECT 1", reasoning: "private", modelUsed: "gpt-test" });
+    ).resolves.toEqual({
+      text: '{"action":"finish","args":{"response":"SELECT 1"},"message":""}',
+      reasoning: undefined,
+      modelUsed: "gpt-test",
+    });
 
+    // Native tool calling now rides the streaming path: the tool payload is
+    // forwarded on ask_ai_stream and the finish answer streams token-by-token.
     expect(invokeWithTimeoutMock).toHaveBeenCalledWith(
-      "ask_ai",
+      "ask_ai_stream",
       expect.objectContaining({
         request: expect.objectContaining({
           prompt: "write SQL",
@@ -114,11 +141,17 @@ describe("aiStore", () => {
       "AI request",
       expect.objectContaining({ onTimeout: expect.any(Function) }),
     );
+    expect(invokeWithTimeoutMock).not.toHaveBeenCalledWith(
+      "ask_ai",
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+      expect.anything(),
+    );
     expect(useAIStore.getState().requestPhase).toBe("idle");
-    expect(useAIStore.getState().streamingText).toBe("");
-    // Native tool calling rides the non-streaming path: no stream subscription.
-    expect(listenMock).not.toHaveBeenCalledWith("ai-stream-event", expect.any(Function));
-    expect(streamListener).toBeUndefined();
+    // The finish answer was extracted live from the partial action JSON.
+    expect(useAIStore.getState().streamingText).toBe("SELECT 1");
+    expect(listenMock).toHaveBeenCalledWith("ai-stream-event", expect.any(Function));
   });
 
   it("cancels the active provider request", async () => {

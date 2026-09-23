@@ -28,7 +28,19 @@ import { getSiteLanguage } from "@/lib/language";
 import { getDictionary, type Dictionary } from "@/lib/i18n";
 import { repositoryUrl } from "@/lib/site";
 import { LanguageToggle } from "./LanguageToggle";
-import { DockToggle, HeroScrollFX, ScrollReveal, TiltFrame } from "./Home3D";
+import {
+  DockToggle,
+  HeroScrollFX,
+  ScrollReveal,
+  TiltFrame,
+  ScrollProgress,
+  ScrollSpy,
+  MagneticButtons,
+  CursorGlow,
+  HeadingReveal,
+  WordStagger,
+  BackToTop,
+} from "./Home3D";
 import { EngineMark } from "./engine-logos";
 import { SiteFooter } from "./SiteFooter";
 
@@ -110,6 +122,14 @@ export default async function Home() {
     <main id="main" className="neu">
       <ScrollReveal />
       <HeroScrollFX phases={t.hero.phases} />
+      <div className="scroll-progress" aria-hidden="true" />
+      <ScrollProgress />
+      <ScrollSpy />
+      <MagneticButtons />
+      <CursorGlow />
+      <HeadingReveal />
+      <WordStagger />
+      <BackToTop />
       <header className="site-header">
         <div className="shell header-inner">
           <a className="brand" href="#top" aria-label="TableR home">
@@ -149,7 +169,9 @@ export default async function Home() {
               <span className="status-dot" />
               {t.hero.kicker}
             </div>
-            <h1>{t.hero.headline}</h1>
+            <h1>
+              {t.hero.headline} <span className="hero-accent">{t.hero.headlineAccent}</span>
+            </h1>
             <p className="hero-lede">{t.hero.lede}</p>
             <div className="hero-actions">
               <a className="button button-primary" href={downloadUrl}>
@@ -167,6 +189,10 @@ export default async function Home() {
               </a>
             </div>
             <p className="hero-note">{t.hero.note}</p>
+            <div className="scroll-hint" aria-hidden="true">
+              <span className="scroll-hint-label">Scroll</span>
+              <span className="scroll-hint-line" />
+            </div>
           </div>
 
           <div className="shell hero-media-wrap">
@@ -235,10 +261,26 @@ export default async function Home() {
         </div>
       </section>
 
+      {/* infinite engine ticker — the reference sites' logo marquee,
+          neumorphic chips on a recessed track */}
+      <div className="engine-marquee" aria-hidden="true">
+        <div className="engine-marquee-track">
+          {[...engines, ...engines].map((engine, i) => (
+            <span className="engine-marquee-chip" key={`${engine}-${i}`}>
+              <EngineMark name={engine} size={15} />
+              <span>{engine}</span>
+            </span>
+          ))}
+        </div>
+      </div>
+
       <section className="section features-section" id="features">
         <div className="shell">
           <div className="section-heading">
-            <p className="eyebrow">{t.features.eyebrow}</p>
+            <p className="eyebrow">
+              <span className="eyebrow-index">01</span>
+              {t.features.eyebrow}
+            </p>
             <h2>{t.features.heading}</h2>
             <p>{t.features.intro}</p>
           </div>
@@ -263,7 +305,10 @@ export default async function Home() {
       <section className="section workflow-section" id="workflow">
         <div className="shell">
           <div className="section-heading section-heading-wide">
-            <p className="eyebrow">{t.workflow.eyebrow}</p>
+            <p className="eyebrow">
+              <span className="eyebrow-index">02</span>
+              {t.workflow.eyebrow}
+            </p>
             <h2>{t.workflow.heading}</h2>
           </div>
 
@@ -315,7 +360,10 @@ export default async function Home() {
       <section className="section features-section" id="agent">
         <div className="shell">
           <div className="section-heading">
-            <p className="eyebrow">{t.agent.eyebrow}</p>
+            <p className="eyebrow">
+              <span className="eyebrow-index">03</span>
+              {t.agent.eyebrow}
+            </p>
             <h2>{t.agent.heading}</h2>
             <p>{t.agent.intro}</p>
           </div>
@@ -341,7 +389,10 @@ export default async function Home() {
         <div className="shell">
           <div className="erd-heading">
             <div>
-              <p className="eyebrow">{t.erd.eyebrow}</p>
+              <p className="eyebrow">
+                <span className="eyebrow-index">04</span>
+                {t.erd.eyebrow}
+              </p>
               <h2>{t.erd.heading}</h2>
             </div>
             <p>{t.erd.intro}</p>
@@ -360,6 +411,7 @@ export default async function Home() {
               width={1920}
               height={1080}
               alt="TableR ER diagram workspace displaying database tables and relationships"
+              loading="eager"
               sizes="(max-width: 720px) 94vw, 1180px"
             />
           </div>
@@ -369,7 +421,10 @@ export default async function Home() {
       <section className="section engines-section" id="engines">
         <div className="shell engine-layout">
           <div className="section-heading engine-heading">
-            <p className="eyebrow">{t.engines.eyebrow}</p>
+            <p className="eyebrow">
+              <span className="eyebrow-index">05</span>
+              {t.engines.eyebrow}
+            </p>
             <h2>{t.engines.heading}</h2>
             <p>{t.engines.intro}</p>
             <a
@@ -399,7 +454,10 @@ export default async function Home() {
       <section className="open-source-section" id="open-source">
         <div className="shell open-source-layout">
           <div className="open-source-copy">
-            <p className="eyebrow eyebrow-on-dark">{t.openSource.eyebrow}</p>
+            <p className="eyebrow eyebrow-on-dark">
+              <span className="eyebrow-index">06</span>
+              {t.openSource.eyebrow}
+            </p>
             <h2>{t.openSource.heading}</h2>
             <p>{t.openSource.intro}</p>
             <div className="open-source-actions">
@@ -452,6 +510,14 @@ export default async function Home() {
       </section>
 
       <SiteFooter t={t} />
+
+      <button type="button" className="back-to-top" aria-label="Back to top">
+        <ArrowRight size={17} aria-hidden="true" style={{ transform: "rotate(-90deg)" }} />
+      </button>
+      <a className="mobile-cta" href={downloadUrl}>
+        <Download size={16} aria-hidden="true" />
+        {t.hero.download} {latestVersion}
+      </a>
     </main>
   );
 }

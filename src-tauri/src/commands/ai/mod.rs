@@ -67,7 +67,7 @@ struct AIStreamEvent {
     usage: Option<serde_json::Value>,
 }
 
-fn emit_ai_stream_event(
+pub(crate) fn emit_ai_stream_event(
     app: &AppHandle,
     request_id: &str,
     kind: &'static str,

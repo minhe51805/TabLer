@@ -397,6 +397,8 @@ export const vi: Record<keyof typeof en, string> = {
   "metrics.editor.colorDefault": "Mặc định",
   "metrics.renameBoardHint": "Nhấp đúp để đổi tên",
   "metrics.widget.copyQuery": "Sao chép truy vấn",
+  "metrics.boardAutoArrange": "Sắp xếp tự động",
+  "metrics.boardAutoArrangeDesc": "Xếp widget vào lưới 3 cột",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":

@@ -1284,6 +1284,32 @@ export function MetricsBoard({
                       <small>{t("metrics.boardRefreshAllDesc")}</small>
                     </span>
                   </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="metrics-board-widget-menu-item"
+                    onClick={() => {
+                      if (activeBoard) {
+                        const arranged = activeBoard.widgets.map((w, i) => ({
+                          ...w,
+                          grid_x: (i % 3) * 4,
+                          grid_y: Math.floor(i / 3) * 4,
+                        }));
+                        persistBoards(
+                          boards.map((b) =>
+                            b.id === activeBoard.id ? { ...b, widgets: arranged } : b,
+                          ),
+                        );
+                      }
+                      setIsBoardMenuOpen(false);
+                    }}
+                  >
+                    <LayoutGrid className="w-3.5 h-3.5 metrics-board-widget-menu-icon" />
+                    <span className="metrics-board-widget-menu-copy">
+                      <strong>{t("metrics.boardAutoArrange")}</strong>
+                      <small>{t("metrics.boardAutoArrangeDesc")}</small>
+                    </span>
+                  </button>
                 </div>
               )}
             </div>

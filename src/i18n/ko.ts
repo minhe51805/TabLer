@@ -398,6 +398,8 @@ export const ko: Record<keyof typeof en, string> = {
   "metrics.editor.colorDefault": "기본",
   "metrics.renameBoardHint": "더블클릭하여 이름 변경",
   "metrics.widget.copyQuery": "쿼리 복사",
+  "metrics.boardAutoArrange": "자동 정렬",
+  "metrics.boardAutoArrangeDesc": "위젯을 3열 그리드로 정렬",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":

@@ -577,20 +577,11 @@ export function MetricsWidgetCard({
               : widget.refresh_seconds > 0
                 ? t("metrics.everySeconds", { seconds: widget.refresh_seconds })
                 : t("metrics.manual")}
+            {state.lastRunAt ? ` · ${formatRelativeTime(state.lastRunAt)}` : ""}
+            {secondsUntilRefresh !== null && secondsUntilRefresh > 0
+              ? ` · ${secondsUntilRefresh}s`
+              : ""}
           </span>
-          {state.lastRunAt ? (
-            <span
-              className="metrics-widget-foot-time"
-              title={new Date(state.lastRunAt).toLocaleString()}
-            >
-              {formatRelativeTime(state.lastRunAt)}
-            </span>
-          ) : null}
-          {secondsUntilRefresh !== null && secondsUntilRefresh > 0 ? (
-            <span className="metrics-widget-foot-countdown" title={t("metrics.widget.nextRefresh")}>
-              {secondsUntilRefresh}s
-            </span>
-          ) : null}
         </div>
       </div>
 

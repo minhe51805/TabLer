@@ -653,3 +653,16 @@
   opacity: 0.4;
   cursor: not-allowed;
 }
+/* Footer: keep actions on one line, meta truncates instead of overlapping */
+.metrics-widget-foot-actions {
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+
+.metrics-widget-foot-meta {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex-shrink: 1;
+  min-width: 0;
+}

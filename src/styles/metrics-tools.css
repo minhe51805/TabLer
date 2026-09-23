@@ -384,3 +384,46 @@
     border: 1px solid #ccc !important;
   }
 }
+.metrics-widget-skeleton {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px;
+  height: 100%;
+}
+
+.metrics-widget-skeleton-bar {
+  height: 10px;
+  border-radius: 4px;
+  background: linear-gradient(
+    90deg,
+    var(--bg-secondary, #1e293b) 25%,
+    var(--bg-tertiary, #334155) 50%,
+    var(--bg-secondary, #1e293b) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s infinite;
+}
+
+.metrics-widget-skeleton-chart {
+  flex: 1;
+  border-radius: 6px;
+  background: linear-gradient(
+    90deg,
+    var(--bg-secondary, #1e293b) 25%,
+    var(--bg-tertiary, #334155) 50%,
+    var(--bg-secondary, #1e293b) 75%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s infinite;
+  min-height: 40px;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+  100% {
+    background-position: -200% 0;
+  }
+}

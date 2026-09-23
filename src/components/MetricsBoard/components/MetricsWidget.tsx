@@ -203,7 +203,14 @@ export function MetricsWidgetCard({
 
   const content = (() => {
     if (state.loading && !state.result) {
-      return <div className="metrics-widget-empty">{t("metrics.widget.loading")}</div>;
+      return (
+        <div className="metrics-widget-skeleton">
+          <div className="metrics-widget-skeleton-bar" style={{ width: "60%" }} />
+          <div className="metrics-widget-skeleton-bar" style={{ width: "80%" }} />
+          <div className="metrics-widget-skeleton-bar" style={{ width: "40%" }} />
+          <div className="metrics-widget-skeleton-chart" />
+        </div>
+      );
     }
 
     if (!validation.ok) {

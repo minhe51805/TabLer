@@ -108,3 +108,17 @@
   inset: 0;
   cursor: default;
 }
+.metrics-board-widget-menu-divider {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--border-subtle, rgba(148, 163, 184, 0.2));
+}
+
+.metrics-board-widget-menu-section {
+  padding: 4px 12px 2px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-tertiary, #94a3b8);
+}

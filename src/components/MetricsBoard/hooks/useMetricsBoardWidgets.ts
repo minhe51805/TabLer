@@ -107,9 +107,18 @@ export function useMetricsBoardWidgets({
   ]);
 
   const addWidget = useCallback(
-    (type: MetricsWidgetType, preferredPosition?: Partial<GridPosition>) => {
+    (
+      type: MetricsWidgetType,
+      preferredPosition?: Partial<GridPosition>,
+      overrides?: { title?: string; query?: string; colSpan?: number; rowSpan?: number },
+    ) => {
       if (!activeBoard) return;
-      const nextWidget = createWidgetDefinition(type, activeBoard.widgets, preferredPosition);
+      const nextWidget = createWidgetDefinition(
+        type,
+        activeBoard.widgets,
+        preferredPosition,
+        overrides,
+      );
       updateActiveBoard((board) => ({
         ...board,
         widgets: [...board.widgets, nextWidget],

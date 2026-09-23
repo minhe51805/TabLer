@@ -143,6 +143,80 @@ export const WIDGET_LIBRARY: WidgetLibraryBlueprint[] = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// Widget templates — pre-built queries for common monitoring patterns
+// ---------------------------------------------------------------------------
+
+export type WidgetTemplate = {
+  id: string;
+  type: MetricsWidgetType;
+  titleKey: TranslationKey;
+  descriptionKey: TranslationKey;
+  query: string;
+  colSpan: number;
+  rowSpan: number;
+};
+
+export const WIDGET_TEMPLATES: WidgetTemplate[] = [
+  {
+    id: "row-count",
+    type: "scoreboard",
+    titleKey: "metrics.template.rowCount",
+    descriptionKey: "metrics.template.rowCountDesc",
+    query: "SELECT COUNT(*) AS total, 'rows' AS label FROM your_table",
+    colSpan: 3,
+    rowSpan: 3,
+  },
+  {
+    id: "top-categories",
+    type: "bar",
+    titleKey: "metrics.template.topCategories",
+    descriptionKey: "metrics.template.topCategoriesDesc",
+    query:
+      "SELECT category AS label, COUNT(*) AS value FROM your_table GROUP BY category ORDER BY value DESC LIMIT 8",
+    colSpan: 4,
+    rowSpan: 4,
+  },
+  {
+    id: "daily-trend",
+    type: "line",
+    titleKey: "metrics.template.dailyTrend",
+    descriptionKey: "metrics.template.dailyTrendDesc",
+    query:
+      "SELECT DATE(created_at) AS label, COUNT(*) AS value FROM your_table GROUP BY label ORDER BY label LIMIT 30",
+    colSpan: 4,
+    rowSpan: 4,
+  },
+  {
+    id: "status-share",
+    type: "donut",
+    titleKey: "metrics.template.statusShare",
+    descriptionKey: "metrics.template.statusShareDesc",
+    query: "SELECT status AS label, COUNT(*) AS value FROM your_table GROUP BY status",
+    colSpan: 4,
+    rowSpan: 4,
+  },
+  {
+    id: "recent-rows",
+    type: "table",
+    titleKey: "metrics.template.recentRows",
+    descriptionKey: "metrics.template.recentRowsDesc",
+    query: "SELECT * FROM your_table ORDER BY created_at DESC LIMIT 20",
+    colSpan: 6,
+    rowSpan: 4,
+  },
+  {
+    id: "avg-by-group",
+    type: "horizontal-bar",
+    titleKey: "metrics.template.avgByGroup",
+    descriptionKey: "metrics.template.avgByGroupDesc",
+    query:
+      "SELECT group_name AS label, ROUND(AVG(amount), 2) AS value FROM your_table GROUP BY group_name ORDER BY value DESC LIMIT 8",
+    colSpan: 4,
+    rowSpan: 4,
+  },
+];
+
 export function getWidgetLibrary(): WidgetLibraryItem[] {
   return WIDGET_LIBRARY.map((item) => ({
     ...item,
@@ -160,7 +234,9 @@ export function getWidgetLibraryItem(type: MetricsWidgetType) {
 // Select options
 // ---------------------------------------------------------------------------
 
-export function getMetricsRefreshSelectOptions(): readonly MetricsSelectOption<(typeof REFRESH_OPTIONS)[number]>[] {
+export function getMetricsRefreshSelectOptions(): readonly MetricsSelectOption<
+  (typeof REFRESH_OPTIONS)[number]
+>[] {
   return REFRESH_OPTIONS.map((option) => ({
     value: option,
     label:

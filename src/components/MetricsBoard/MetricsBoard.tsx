@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Sparkles, ChevronDown, LayoutGrid } from "lucide-react";
+import { Plus, Sparkles, ChevronDown, LayoutGrid, LayoutTemplate } from "lucide-react";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUIStore } from "../../stores/uiStore";
 import { useI18n } from "../../i18n";
@@ -36,6 +36,7 @@ import {
   METRICS_GRID_ROW_HEIGHT,
   normalizeWidgetLayout,
   getSeriesLabelColumn,
+  WIDGET_TEMPLATES,
   readStoredBoards,
   rowSpanToHeightPx,
   widthPxToColSpan,
@@ -1112,6 +1113,34 @@ export function MetricsBoard({
                         </button>
                       );
                     })}
+                    <div className="metrics-board-widget-menu-divider" />
+                    <div className="metrics-board-widget-menu-section">
+                      {t("metrics.templates")}
+                    </div>
+                    {WIDGET_TEMPLATES.map((tpl) => (
+                      <button
+                        key={tpl.id}
+                        type="button"
+                        role="menuitem"
+                        className="metrics-board-widget-menu-item"
+                        onClick={() => {
+                          addWidget(tpl.type, undefined, {
+                            title: t(tpl.titleKey),
+                            query: tpl.query,
+                            colSpan: tpl.colSpan,
+                            rowSpan: tpl.rowSpan,
+                          });
+                          setIsWidgetMenuOpen(false);
+                        }}
+                        disabled={!activeBoard}
+                      >
+                        <LayoutTemplate className="w-3.5 h-3.5 metrics-board-widget-menu-icon" />
+                        <span className="metrics-board-widget-menu-copy">
+                          <strong>{t(tpl.titleKey)}</strong>
+                          <small>{t(tpl.descriptionKey)}</small>
+                        </span>
+                      </button>
+                    ))}
                   </div>
                 )}
               </div>

@@ -865,7 +865,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             wantsMetricsBoard
               ? toolAvailability.sqlRead
                 ? "This is a metrics/dashboard/summary request. Inspect the relevant tables, then in finish.args.metricsWidgets return 3-6 widgets that form a useful board. Each widget needs a clear title, a type (scoreboard for single totals, bar/pie/line for grouped aggregates, table for detailed breakdowns), and a runnable read-only query grounded in the verified schema. Build the board yourself; do not ask the user which widgets they want."
-                : "This is a metrics/dashboard/summary request. Inspect the relevant tables with describe_table and sample_table_data, then summarize in finish.args.response. Omit SQL-shaped widget queries."
+                : toolAvailability.documentPropose
+                  ? "This is a metrics/dashboard/summary request. Inspect the relevant collections, then in finish.args.metricsWidgets return 3-6 widgets that form a useful board. Each widget needs a clear title, a type (scoreboard for single totals, bar/pie/line for grouped aggregates, table for detailed breakdowns), and a runnable read-only SELECT query grounded in the verified schema — the metrics board translates SELECT ... GROUP BY into a MongoDB aggregation pipeline automatically. Build the board yourself; do not ask the user which widgets they want."
+                  : "This is a metrics/dashboard/summary request. Inspect the relevant tables with describe_table and sample_table_data, then summarize in finish.args.response. Omit SQL-shaped widget queries."
               : undefined,
           );
           // Summaries already fetched while preparing schema context are injected

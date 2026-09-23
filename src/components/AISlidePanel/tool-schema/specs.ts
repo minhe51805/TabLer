@@ -596,13 +596,13 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
   manage_metrics_widget: {
     name: "manage_metrics_widget",
     description:
-      "Manage widgets on the open metrics board (the dashboard the user is looking at). list shows every widget with its title, type, span and query; update changes a widget's title, query, chart type or grid span; delete removes one; refresh re-runs a widget's query and reports the fresh row count. Target a widget by widgetId (from list) or widgetTitle." +
+      "Manage widgets on the open metrics board (the dashboard the user is looking at). list shows every widget with its title, type, span and query; add appends a new widget (title + read-only SELECT query required, type/span optional); update changes a widget's title, query, chart type or grid span; delete removes one; refresh re-runs a widget's query and reports the fresh row count. Target a widget by widgetId (from list) or widgetTitle." +
       TOOL_ERROR_SHAPE_NOTE,
     parameters: objectSchema(
       {
         action: {
           type: "string",
-          enum: ["list", "update", "delete", "refresh"],
+          enum: ["list", "add", "update", "delete", "refresh"],
           description: "Which board operation to perform.",
         },
         boardId: {
@@ -617,10 +617,10 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
           type: "string",
           description: "Widget title to match when widgetId is unknown.",
         },
-        title: { type: "string", description: "update: new widget title." },
+        title: { type: "string", description: "add/update: widget title (required for add)." },
         query: {
           type: "string",
-          description: "update: new read-only SELECT feeding the widget.",
+          description: "add/update: read-only SELECT feeding the widget (required for add).",
         },
         type: {
           type: "string",
@@ -639,7 +639,8 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
             "delta",
             "markdown",
           ],
-          description: "update: new chart type.",
+          description:
+            "add/update: chart type (defaults to scoreboard for single-value queries, table otherwise).",
         },
         colSpan: {
           type: "integer",
@@ -834,7 +835,7 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
   finish: {
     name: "finish",
     description:
-      "End the run with the final answer for the user. args.response is REQUIRED: it must contain the complete user-facing answer (a full markdown table when a report, bảng, tổng hợp, or list was requested) built from verified observations — never an empty string or a one-line placeholder. Put the single best runnable SELECT in sql, and 3-6 dashboard widgets in metricsWidgets when the request is a metrics board.",
+      "End the run with the final answer for the user. args.response is REQUIRED: it must contain the complete user-facing answer (a full markdown table when a report, bảng, tổng hợp, or list was requested) built from verified observations — never an empty string or a one-line placeholder. Put the single best runnable SELECT in sql, and the dashboard widgets in metricsWidgets when the request is a metrics board — exactly the cards the user asked for, never padded with extras.",
     parameters: {
       type: "object",
       properties: {
@@ -884,7 +885,8 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
             required: ["title", "type", "query"],
             additionalProperties: false,
           },
-          description: "Optional dashboard widgets (3-6 for a metrics board).",
+          description:
+            "Optional dashboard widgets. Match the user's request exactly — same count, same cards; pick a sensible set only when the request leaves the contents open.",
         },
       },
       // finish carries a flexible payload consumed by the finalizer, so extra

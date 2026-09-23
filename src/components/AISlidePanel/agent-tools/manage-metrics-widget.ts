@@ -31,14 +31,15 @@ export const tool: AgentToolModule = {
       return agentToolError("manage_metrics_widget is unavailable in this context.");
     }
     const action = typeof args?.action === "string" ? args.action.trim() : "";
-    if (!["list", "update", "delete", "refresh"].includes(action)) {
+    if (!["list", "add", "update", "delete", "refresh"].includes(action)) {
       return agentToolError(
-        'manage_metrics_widget requires args.action: "list", "update", "delete", or "refresh".',
+        'manage_metrics_widget requires args.action: "list", "add", "update", "delete", or "refresh".',
       );
     }
     const widgetId = typeof args?.widgetId === "string" ? args.widgetId.trim() : "";
     const widgetTitle = typeof args?.widgetTitle === "string" ? args.widgetTitle.trim() : "";
-    if (action !== "list" && !widgetId && !widgetTitle) {
+    // "add" creates a widget — it needs title+query, not an existing target.
+    if (action !== "list" && action !== "add" && !widgetId && !widgetTitle) {
       return agentToolError(
         `manage_metrics_widget "${action}" needs a target widget: pass args.widgetId (from a list call) or args.widgetTitle.`,
       );
@@ -81,29 +82,32 @@ export const tool: AgentToolModule = {
       if (ctx.requestId !== ctx.requestIdRef.current) {
         throw new Error(AI_REQUEST_REPLACED_MESSAGE);
       }
-      if (action === "list") {
-        const widgets = result.widgets ?? [];
-        if (widgets.length === 0) {
-          return `Board "${result.boardName}" (${result.boardId}) has no widgets.`;
+      switch (action) {
+        case "list": {
+          const widgets = result.widgets ?? [];
+          if (widgets.length === 0) {
+            return `Board "${result.boardName}" (${result.boardId}) has no widgets.`;
+          }
+          const lines = widgets.map(
+            (widget, index) =>
+              `${index + 1}. "${widget.title}" [${widget.type}] id=${widget.id} span=${widget.colSpan}x${widget.rowSpan} query: ${widget.query || "(none)"}`,
+          );
+          return [
+            `Board "${result.boardName}" (${result.boardId}) — ${widgets.length} widget(s):`,
+            ...lines,
+          ].join("\n");
         }
-        const lines = widgets.map(
-          (widget, index) =>
-            `${index + 1}. "${widget.title}" [${widget.type}] id=${widget.id} span=${widget.colSpan}x${widget.rowSpan} query: ${widget.query || "(none)"}`,
-        );
-        return [
-          `Board "${result.boardName}" (${result.boardId}) — ${widgets.length} widget(s):`,
-          ...lines,
-        ].join("\n");
+        case "add":
+          return `Added widget "${result.widgetTitle}" (${result.widgetId}) to board "${result.boardName}". The board now has ${result.widgetCount} widget(s).`;
+        case "delete":
+          return `Deleted widget "${result.widgetTitle}" (${result.widgetId}) from board "${result.boardName}". ${result.widgetCount} widget(s) remain.`;
+        case "refresh":
+          return `Refreshed widget "${result.widgetTitle}" on board "${result.boardName}": the query ran successfully and returned ${result.rowCount} row(s). The card keeps re-querying on its own refresh interval.`;
+        default:
+          return result.changed
+            ? `Updated widget "${result.widgetTitle}" (${result.widgetId}) on board "${result.boardName}".`
+            : `Widget "${result.widgetTitle}" already matches the requested values — nothing changed.`;
       }
-      if (action === "delete") {
-        return `Deleted widget "${result.widgetTitle}" (${result.widgetId}) from board "${result.boardName}". ${result.widgetCount} widget(s) remain.`;
-      }
-      if (action === "refresh") {
-        return `Refreshed widget "${result.widgetTitle}" on board "${result.boardName}": the query ran successfully and returned ${result.rowCount} row(s). The card keeps re-querying on its own refresh interval.`;
-      }
-      return result.changed
-        ? `Updated widget "${result.widgetTitle}" (${result.widgetId}) on board "${result.boardName}".`
-        : `Widget "${result.widgetTitle}" already matches the requested values — nothing changed.`;
     } catch (errorValue) {
       if (isSupersededAIRequestError(errorValue)) throw errorValue;
       return agentToolError(`manage_metrics_widget failed. ${formatExecutionError(errorValue)}`, {

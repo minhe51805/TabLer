@@ -131,6 +131,7 @@ import { parseEditorAssistCommand, type EditorAssistCommand } from "../ai-slash-
 import { buildExplainQuery, parseExplainOutput } from "../../../utils/explain-parser";
 import { getIndexProposals, type IndexProposal } from "../../../utils/index-advisor";
 import { useAISqlRunner } from "./use-ai-sql-runner";
+import { useAIAutonomyStore } from "../../../stores/aiAutonomyStore";
 
 // Skill catalogs rarely change mid-session; caching for a minute keeps the
 // per-run filesystem discovery scan from repeating on every agent run.
@@ -960,9 +961,9 @@ export function useAISlidePanel({
               : undefined,
             wantsMetricsBoard
               ? toolAvailability.sqlRead
-                ? "This is a metrics/dashboard/summary request. Inspect the relevant tables, then in finish.args.metricsWidgets return 3-6 widgets that form a useful board. Each widget needs a clear title, a type (scoreboard for single totals, bar/pie/line for grouped aggregates, table for detailed breakdowns), and a runnable read-only query grounded in the verified schema. Build the board yourself; do not ask the user which widgets they want."
+                ? "This is a metrics/dashboard/summary request. Inspect the relevant tables, then in finish.args.metricsWidgets return exactly the widgets the user asked for — if they named a count or listed cards, match that number and those cards; only choose a sensible 3-6 set yourself when the request leaves the contents open. Each widget needs a clear title, a type (scoreboard for single totals, bar/pie/line for grouped aggregates, table for detailed breakdowns), and a runnable read-only query grounded in the verified schema. Build the board yourself; do not ask the user which widgets they want."
                 : toolAvailability.documentPropose
-                  ? "This is a metrics/dashboard/summary request. Inspect the relevant collections, then in finish.args.metricsWidgets return 3-6 widgets that form a useful board. Each widget needs a clear title, a type (scoreboard for single totals, bar/pie/line for grouped aggregates, table for detailed breakdowns), and a runnable read-only SELECT query grounded in the verified schema — the metrics board translates SELECT ... GROUP BY into a MongoDB aggregation pipeline automatically. Build the board yourself; do not ask the user which widgets they want."
+                  ? "This is a metrics/dashboard/summary request. Inspect the relevant collections, then in finish.args.metricsWidgets return exactly the widgets the user asked for — if they named a count or listed cards, match that number and those cards; only choose a sensible 3-6 set yourself when the request leaves the contents open. Each widget needs a clear title, a type (scoreboard for single totals, bar/pie/line for grouped aggregates, table for detailed breakdowns), and a runnable read-only SELECT query grounded in the verified schema — the metrics board translates SELECT ... GROUP BY into a MongoDB aggregation pipeline automatically. Build the board yourself; do not ask the user which widgets they want."
                   : "This is a metrics/dashboard/summary request. Inspect the relevant tables with describe_table and sample_table_data, then summarize in finish.args.response. Omit SQL-shaped widget queries."
               : undefined,
           );
@@ -1165,6 +1166,7 @@ export function useAISlidePanel({
               agentMemoryIndex,
               queryTabs,
               unattendedReadOnly,
+              agentAutonomy: useAIAutonomyStore.getState().getAutonomy(connectionId ?? ""),
             });
 
           // Model-call layer: transient retry + parse-repair (extracted).

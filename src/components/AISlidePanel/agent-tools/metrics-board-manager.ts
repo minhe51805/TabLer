@@ -14,6 +14,7 @@ import {
   canPlaceWidget,
   clampColSpan,
   clampRowSpan,
+  createWidgetDefinition,
   executeMetricsQuery,
   findFirstAvailablePosition,
   getWidgetLibraryItem,
@@ -89,6 +90,37 @@ function persistBoards(nextBoards: MetricsBoardDefinition[], connectionId: strin
   );
 }
 
+/** Replace one board inside stored state and notify open board views. */
+function persistBoard(nextBoard: MetricsBoardDefinition, connectionId: string) {
+  persistBoards(
+    readStoredBoards().map((entry) => (entry.id === nextBoard.id ? nextBoard : entry)),
+    connectionId,
+  );
+}
+
+/** update/delete/refresh all target an existing widget — resolve or fail once. */
+function requireWidget(
+  board: MetricsBoardDefinition,
+  request: AgentMetricsBoardRequest,
+): MetricsWidgetDefinition {
+  const widget = findWidget(board, request);
+  if (!widget) {
+    const titles = board.widgets.map((entry) => entry.title).join(", ");
+    throw new Error(
+      `Widget not found on board "${board.name}". Available widgets: ${titles || "(none)"}. Call manage_metrics_widget with action "list" first.`,
+    );
+  }
+  return widget;
+}
+
+function assertRunnableQuery(query: string, errorPrefix: string) {
+  const validation = validateMetricsQuery(query);
+  if (!validation.ok) {
+    throw new Error(`${errorPrefix}: ${validation.error}`);
+  }
+  return validation;
+}
+
 export async function manageAgentMetricsBoard(
   request: AgentMetricsBoardRequest,
   options: { connectionId: string | null; database: string | null },
@@ -106,131 +138,166 @@ export async function manageAgentMetricsBoard(
     );
   }
 
-  if (request.action === "list") {
-    return {
-      boardId: board.id,
-      boardName: board.name,
-      widgetCount: board.widgets.length,
-      widgets: board.widgets.map((widget) => ({
-        id: widget.id,
-        title: widget.title,
-        type: widget.type,
-        colSpan: widget.col_span,
-        rowSpan: widget.row_span,
-        query: widget.query,
-      })),
-    };
-  }
+  switch (request.action) {
+    case "list":
+      return {
+        boardId: board.id,
+        boardName: board.name,
+        widgetCount: board.widgets.length,
+        widgets: board.widgets.map((widget) => ({
+          id: widget.id,
+          title: widget.title,
+          type: widget.type,
+          colSpan: widget.col_span,
+          rowSpan: widget.row_span,
+          query: widget.query,
+        })),
+      };
 
-  const widget = findWidget(board, request);
-  if (!widget) {
-    const titles = board.widgets.map((entry) => entry.title).join(", ");
-    throw new Error(
-      `Widget not found on board "${board.name}". Available widgets: ${titles || "(none)"}. Call manage_metrics_widget with action "list" first.`,
-    );
-  }
-
-  if (request.action === "delete") {
-    const nextBoard: MetricsBoardDefinition = {
-      ...board,
-      widgets: board.widgets.filter((entry) => entry.id !== widget.id),
-      updated_at: Date.now(),
-    };
-    persistBoards(
-      readStoredBoards().map((entry) => (entry.id === board.id ? nextBoard : entry)),
-      connectionId,
-    );
-    return {
-      boardId: board.id,
-      boardName: board.name,
-      widgetCount: nextBoard.widgets.length,
-      widgetId: widget.id,
-      widgetTitle: widget.title,
-      deleted: true,
-    };
-  }
-
-  if (request.action === "refresh") {
-    const validation = validateMetricsQuery(widget.query);
-    if (!validation.ok) {
-      throw new Error(`Widget "${widget.title}" has no runnable query: ${validation.error}`);
-    }
-    const result = await executeMetricsQuery(connectionId, validation.statement);
-    // Re-dispatch so an open board re-reads storage; the card's own
-    // refresh_seconds interval keeps re-querying afterwards.
-    window.dispatchEvent(
-      new CustomEvent("metrics-boards-updated", {
-        detail: { connectionId },
-      }),
-    );
-    return {
-      boardId: board.id,
-      boardName: board.name,
-      widgetCount: board.widgets.length,
-      widgetId: widget.id,
-      widgetTitle: widget.title,
-      refreshed: true,
-      rowCount: result.rows?.length ?? 0,
-    };
-  }
-
-  // update
-  const nextType = request.type ?? widget.type;
-  const libraryItem = getWidgetLibraryItem(nextType);
-  if (!libraryItem) {
-    throw new Error(`Unknown widget type "${nextType}".`);
-  }
-  if (request.query !== undefined) {
-    const validation = validateMetricsQuery(request.query);
-    if (!validation.ok) {
-      throw new Error(
-        `Refusing to save a widget query that is not a single read-only statement: ${validation.error}`,
+    case "add": {
+      const title = request.title?.trim();
+      if (!title) {
+        throw new Error('add requires a widget "title".');
+      }
+      const query = request.query?.trim();
+      if (!query) {
+        throw new Error('add requires a read-only SELECT "query" feeding the widget.');
+      }
+      assertRunnableQuery(
+        query,
+        "Refusing to save a widget query that is not a single read-only statement",
       );
+      const type = request.type ?? "table";
+      if (!getWidgetLibraryItem(type)) {
+        throw new Error(`Unknown widget type "${type}".`);
+      }
+      const newWidget = createWidgetDefinition(type, board.widgets, undefined, {
+        title,
+        query,
+        colSpan: request.colSpan !== undefined ? clampColSpan(request.colSpan) : undefined,
+        rowSpan: request.rowSpan !== undefined ? clampRowSpan(request.rowSpan) : undefined,
+      });
+      const nextBoard: MetricsBoardDefinition = {
+        ...board,
+        widgets: [...board.widgets, newWidget],
+        updated_at: Date.now(),
+      };
+      persistBoard(nextBoard, connectionId);
+      return {
+        boardId: board.id,
+        boardName: board.name,
+        widgetCount: nextBoard.widgets.length,
+        widgetId: newWidget.id,
+        widgetTitle: newWidget.title,
+        added: true,
+      };
+    }
+
+    case "delete": {
+      const widget = requireWidget(board, request);
+      const nextBoard: MetricsBoardDefinition = {
+        ...board,
+        widgets: board.widgets.filter((entry) => entry.id !== widget.id),
+        updated_at: Date.now(),
+      };
+      persistBoard(nextBoard, connectionId);
+      return {
+        boardId: board.id,
+        boardName: board.name,
+        widgetCount: nextBoard.widgets.length,
+        widgetId: widget.id,
+        widgetTitle: widget.title,
+        deleted: true,
+      };
+    }
+
+    case "refresh": {
+      const widget = requireWidget(board, request);
+      const validation = assertRunnableQuery(
+        widget.query,
+        `Widget "${widget.title}" has no runnable query`,
+      );
+      const result = await executeMetricsQuery(connectionId, validation.statement);
+      // Re-dispatch so an open board re-reads storage; the card's own
+      // refresh_seconds interval keeps re-querying afterwards.
+      window.dispatchEvent(
+        new CustomEvent("metrics-boards-updated", {
+          detail: { connectionId },
+        }),
+      );
+      return {
+        boardId: board.id,
+        boardName: board.name,
+        widgetCount: board.widgets.length,
+        widgetId: widget.id,
+        widgetTitle: widget.title,
+        refreshed: true,
+        rowCount: result.rows?.length ?? 0,
+      };
+    }
+
+    case "update": {
+      const widget = requireWidget(board, request);
+      const nextType = request.type ?? widget.type;
+      const libraryItem = getWidgetLibraryItem(nextType);
+      if (!libraryItem) {
+        throw new Error(`Unknown widget type "${nextType}".`);
+      }
+      if (request.query !== undefined) {
+        assertRunnableQuery(
+          request.query,
+          "Refusing to save a widget query that is not a single read-only statement",
+        );
+      }
+      const grown: MetricsWidgetDefinition = {
+        ...widget,
+        type: nextType,
+        title: request.title?.trim() || widget.title,
+        query: request.query?.trim() || widget.query,
+        col_span:
+          request.colSpan !== undefined
+            ? clampColSpan(request.colSpan)
+            : nextType === widget.type
+              ? widget.col_span
+              : Math.max(widget.col_span, libraryItem.colSpan),
+        row_span:
+          request.rowSpan !== undefined
+            ? clampRowSpan(request.rowSpan)
+            : nextType === widget.type
+              ? widget.row_span
+              : Math.max(widget.row_span, libraryItem.rowSpan),
+      };
+      // Growing the span can push the widget off-grid or onto a neighbour —
+      // normalize and re-place when it no longer fits (same rule as the AI hook).
+      const normalized = normalizeWidgetLayout(grown);
+      const others = board.widgets.filter((entry) => entry.id !== widget.id);
+      const nextWidget = canPlaceWidget(others, normalized, widget.id)
+        ? normalized
+        : { ...normalized, ...findFirstAvailablePosition(others, normalized) };
+      const changed = JSON.stringify(nextWidget) !== JSON.stringify(widget);
+      if (changed) {
+        persistBoard(
+          {
+            ...board,
+            widgets: board.widgets.map((entry) => (entry.id === widget.id ? nextWidget : entry)),
+            updated_at: Date.now(),
+          },
+          connectionId,
+        );
+      }
+      return {
+        boardId: board.id,
+        boardName: board.name,
+        widgetCount: board.widgets.length,
+        widgetId: nextWidget.id,
+        widgetTitle: nextWidget.title,
+        changed,
+      };
+    }
+
+    default: {
+      const exhaustive: never = request.action;
+      throw new Error(`Unknown manage_metrics_widget action "${String(exhaustive)}".`);
     }
   }
-  const grown: MetricsWidgetDefinition = {
-    ...widget,
-    type: nextType,
-    title: request.title?.trim() || widget.title,
-    query: request.query?.trim() || widget.query,
-    col_span:
-      request.colSpan !== undefined
-        ? clampColSpan(request.colSpan)
-        : nextType === widget.type
-          ? widget.col_span
-          : Math.max(widget.col_span, libraryItem.colSpan),
-    row_span:
-      request.rowSpan !== undefined
-        ? clampRowSpan(request.rowSpan)
-        : nextType === widget.type
-          ? widget.row_span
-          : Math.max(widget.row_span, libraryItem.rowSpan),
-  };
-  // Growing the span can push the widget off-grid or onto a neighbour —
-  // normalize and re-place when it no longer fits (same rule as the AI hook).
-  const normalized = normalizeWidgetLayout(grown);
-  const others = board.widgets.filter((entry) => entry.id !== widget.id);
-  const nextWidget = canPlaceWidget(others, normalized, widget.id)
-    ? normalized
-    : { ...normalized, ...findFirstAvailablePosition(others, normalized) };
-  const changed = JSON.stringify(nextWidget) !== JSON.stringify(widget);
-  if (changed) {
-    const nextBoard: MetricsBoardDefinition = {
-      ...board,
-      widgets: board.widgets.map((entry) => (entry.id === widget.id ? nextWidget : entry)),
-      updated_at: Date.now(),
-    };
-    persistBoards(
-      readStoredBoards().map((entry) => (entry.id === board.id ? nextBoard : entry)),
-      connectionId,
-    );
-  }
-  return {
-    boardId: board.id,
-    boardName: board.name,
-    widgetCount: board.widgets.length,
-    widgetId: nextWidget.id,
-    widgetTitle: nextWidget.title,
-    changed,
-  };
 }

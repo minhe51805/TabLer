@@ -496,6 +496,12 @@ export function buildAgentControllerPrompt(params: {
    * so the model reports findings instead of asking or proposing writes.
    */
   unattendedReadOnly?: boolean;
+  /**
+   * The workspace's agent autonomy grant. Under "full" the finish SQL runs
+   * immediately (no review tab, no dialog); anything lower opens it for the
+   * user to run. The agent must narrate the real outcome, not guess.
+   */
+  agentAutonomy?: "review" | "smart" | "full";
 }) {
   const {
     userPrompt,
@@ -518,6 +524,7 @@ export function buildAgentControllerPrompt(params: {
     planLines,
     earlierContext,
     unattendedReadOnly,
+    agentAutonomy,
   } = params;
   const databaseMentionMismatch = detectDatabaseMentionMismatch({
     userPrompt,
@@ -769,8 +776,13 @@ export function buildAgentControllerPrompt(params: {
       ? "- For charts, run a chart-friendly aggregate and return that exact SQL in finish.args.sql."
       : "- For charts, sample the relevant data and describe the chart in finish.args.response. Omit finish.args.sql.",
     workspaceToolsEnabled
-      ? "- When the user asks for a dashboard, metrics board, or KPI widgets, call manage_metrics_widget to create or update the widgets on the open metrics board — do not only describe the layout. Run the aggregate queries first so each widget's query is grounded in verified data."
+      ? "- When the user asks for a dashboard, metrics board, or KPI widgets, call manage_metrics_widget to create or update the widgets on the open metrics board — do not only describe the layout. Run the aggregate queries first so each widget's query is grounded in verified data. Create exactly the widgets the user asked for — same count, same cards; never pad the board with extras they did not request."
       : "",
+    workspaceToolsEnabled && agentAutonomy === "full"
+      ? "- Autonomy is FULL: the SQL in finish.args.sql executes immediately when you finish — it does NOT open a review tab. Narrate the real outcome (what ran, what changed), never tell the user to run it themselves."
+      : workspaceToolsEnabled
+        ? "- Autonomy is SUPERVISED: the SQL in finish.args.sql opens in a review tab for the user to run — it does not execute on its own. Say so plainly."
+        : "",
     forceFinish
       ? "- You must finish now. Return action=finish."
       : workspaceToolsEnabled

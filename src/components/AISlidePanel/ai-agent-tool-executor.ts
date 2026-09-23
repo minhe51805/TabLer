@@ -52,7 +52,7 @@ export type { AgentColumnStatsScope } from "./agent-tool-executor-helpers";
 
 /** One manage_metrics_widget call, resolved by the hook-side board manager. */
 export interface AgentMetricsBoardRequest {
-  action: "list" | "update" | "delete" | "refresh";
+  action: "list" | "add" | "update" | "delete" | "refresh";
   boardId?: string;
   widgetId?: string;
   widgetTitle?: string;
@@ -83,6 +83,8 @@ export interface AgentMetricsBoardResult {
   refreshed?: boolean;
   /** Row count from the refresh re-query. */
   rowCount?: number;
+  /** add: the widget just created. */
+  added?: boolean;
 }
 
 export interface AgentToolExecutorDeps {
@@ -213,7 +215,7 @@ export interface AgentToolExecutorDeps {
     options: { isMutating: boolean; workspaceDir?: string | null },
   ) => Promise<AgentRuleVerdict>;
   /**
-   * manage_metrics_widget: applies one widget operation (list/update/delete/
+   * manage_metrics_widget: applies one widget operation (list/add/update/delete/
    * refresh) to the metrics board open in the workspace. The hook owns board
    * storage, layout normalization, and the refresh re-query so the tool file
    * stays a thin arg-validation layer.

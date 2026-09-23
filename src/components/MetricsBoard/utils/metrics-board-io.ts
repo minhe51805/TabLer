@@ -138,3 +138,38 @@ export function formatRelativeTime(timestamp: number): string {
   if (hours < 24) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
 }
+
+const ACTIVITY_KEY = "tabler.metricsBoardActivity.v1";
+const MAX_ACTIVITY = 50;
+
+export type BoardActivityEntry = {
+  boardId: string;
+  widgetId: string;
+  widgetTitle: string;
+  action: "run" | "error" | "add" | "delete" | "edit";
+  timestamp: number;
+  detail?: string;
+};
+
+export function pushBoardActivity(entry: Omit<BoardActivityEntry, "timestamp">) {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(ACTIVITY_KEY);
+    const list: BoardActivityEntry[] = raw ? JSON.parse(raw) : [];
+    list.unshift({ ...entry, timestamp: Date.now() });
+    window.localStorage.setItem(ACTIVITY_KEY, JSON.stringify(list.slice(0, MAX_ACTIVITY)));
+  } catch {
+    /* ignore */
+  }
+}
+
+export function readBoardActivity(boardId: string): BoardActivityEntry[] {
+  if (typeof window === "undefined") return [];
+  try {
+    const raw = window.localStorage.getItem(ACTIVITY_KEY);
+    const list: BoardActivityEntry[] = raw ? JSON.parse(raw) : [];
+    return list.filter((e) => e.boardId === boardId);
+  } catch {
+    return [];
+  }
+}

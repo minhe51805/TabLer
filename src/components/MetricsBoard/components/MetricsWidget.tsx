@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Code2, Copy, FileDown, ImageDown, Maximize2, RefreshCcw, Table2 } from "lucide-react";
 import { exportToCSV } from "../../../utils/export-utils";
 import { exportSvgAsPng } from "../../../utils/svg-png-export";
-import { formatRelativeTime } from "../utils/metrics-board-io";
+import { formatRelativeTime, pushBoardActivity } from "../utils/metrics-board-io";
 import { useI18n } from "../../../i18n";
 import type { MetricsWidgetDefinition, QueryResult } from "../../../types";
 import {
@@ -134,8 +134,15 @@ export function MetricsWidgetCard({
           void runWidgetQuery();
         }, 0);
       }
+      pushBoardActivity({
+        boardId: widget.id.split("-")[0] || "",
+        widgetId: widget.id,
+        widgetTitle: widget.title,
+        action: state.error ? "error" : "run",
+        detail: state.error ?? undefined,
+      });
     }
-  }, [connectionId, widget.query, onWidgetRefreshed]);
+  }, [connectionId, widget.query, widget.id, widget.title, onWidgetRefreshed, state.error]);
 
   useEffect(() => {
     void runWidgetQuery();

@@ -591,3 +591,65 @@
 .metrics-markdown-card a {
   color: var(--accent, #22d3ee);
 }
+.metrics-builder-toggle {
+  font-size: 10px;
+  color: var(--accent, #22d3ee);
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+  text-align: left;
+}
+
+.metrics-builder {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 6px;
+  padding: 8px;
+  background: var(--bg-secondary, #1e293b);
+  border-radius: 6px;
+  border: 1px solid var(--border-subtle, rgba(148, 163, 184, 0.2));
+}
+
+.metrics-builder-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+}
+
+.metrics-builder-field span {
+  width: 60px;
+  flex-shrink: 0;
+  color: var(--text-tertiary, #94a3b8);
+}
+
+.metrics-builder-field select,
+.metrics-builder-field input {
+  flex: 1;
+  font-size: 10px;
+  padding: 3px 6px;
+  border: 1px solid var(--border-subtle, rgba(148, 163, 184, 0.3));
+  border-radius: 4px;
+  background: var(--bg-primary, #0f172a);
+  color: inherit;
+  outline: none;
+}
+
+.metrics-builder-apply {
+  font-size: 10px;
+  padding: 4px 10px;
+  border: 1px solid var(--accent, #22d3ee);
+  border-radius: 4px;
+  background: var(--accent, #22d3ee);
+  color: var(--bg-primary, #0f172a);
+  cursor: pointer;
+  font-weight: 600;
+  align-self: flex-end;
+}
+
+.metrics-builder-apply:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

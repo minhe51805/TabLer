@@ -4,6 +4,7 @@ import type * as Monaco from "monaco-editor";
 import { History, Play, Trash2, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useConnectionStore } from "../../../stores/connectionStore";
+import { useQueryStore } from "../../../stores/queryStore";
 import type { MetricsWidgetDefinition, MetricsWidgetType } from "../../../types";
 import {
   executeMetricsQuery,
@@ -62,7 +63,42 @@ export function MetricsEditor({
     error: string | null;
   }>({ loading: false, result: null, error: null });
   const [showHistory, setShowHistory] = useState(false);
+  const [showBuilder, setShowBuilder] = useState(false);
+  const [builderTable, setBuilderTable] = useState("");
+  const [builderColumn, setBuilderColumn] = useState("");
+  const [builderAgg, setBuilderAgg] = useState<"count" | "sum" | "avg" | "min" | "max">("count");
+  const [builderGroup, setBuilderGroup] = useState("");
+  const [builderLimit, setBuilderLimit] = useState("100");
+  const [tableColumns, setTableColumns] = useState<string[]>([]);
   const history = readQueryHistory(connectionId);
+
+  const loadTableColumns = useCallback(
+    async (tableName: string) => {
+      if (!tableName) {
+        setTableColumns([]);
+        return;
+      }
+      try {
+        const { getTableColumnsPreview } = useQueryStore.getState();
+        const cols = await getTableColumnsPreview(connectionId, tableName);
+        setTableColumns(cols.map((c) => c.name));
+      } catch {
+        setTableColumns([]);
+      }
+    },
+    [connectionId],
+  );
+
+  const buildQuery = useCallback(() => {
+    if (!builderTable) return "";
+    const aggFn =
+      builderAgg === "count" ? "COUNT(*)" : `${builderAgg.toUpperCase()}(${builderColumn || "*"})`;
+    const parts = [`SELECT ${builderGroup ? `${builderGroup} AS label, ` : ""}${aggFn} AS value`];
+    parts.push(`FROM ${builderTable}`);
+    if (builderGroup) parts.push(`GROUP BY ${builderGroup}`);
+    if (builderLimit) parts.push(`LIMIT ${builderLimit}`);
+    return parts.join("\n");
+  }, [builderTable, builderColumn, builderAgg, builderGroup, builderLimit]);
 
   const runPreview = useCallback(async () => {
     const query = editingWidget.query;
@@ -235,6 +271,95 @@ export function MetricsEditor({
             ),
           )}
         </div>
+      </div>
+
+      <div className="metrics-board-field">
+        <button
+          type="button"
+          className="metrics-builder-toggle"
+          onClick={() => setShowBuilder((v) => !v)}
+        >
+          {showBuilder ? "▾" : "▸"} {t("metrics.editor.queryBuilder")}
+        </button>
+        {showBuilder && (
+          <div className="metrics-builder">
+            <label className="metrics-builder-field">
+              <span>{t("metrics.builder.table")}</span>
+              <select
+                value={builderTable}
+                onChange={(e) => {
+                  setBuilderTable(e.target.value);
+                  void loadTableColumns(e.target.value);
+                }}
+              >
+                <option value="">{t("metrics.builder.selectTable")}</option>
+                {tables.map((tb) => (
+                  <option key={tb.name} value={tb.name}>
+                    {tb.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="metrics-builder-field">
+              <span>{t("metrics.builder.aggregate")}</span>
+              <select
+                value={builderAgg}
+                onChange={(e) => setBuilderAgg(e.target.value as typeof builderAgg)}
+              >
+                <option value="count">COUNT</option>
+                <option value="sum">SUM</option>
+                <option value="avg">AVG</option>
+                <option value="min">MIN</option>
+                <option value="max">MAX</option>
+              </select>
+            </label>
+            {builderAgg !== "count" && (
+              <label className="metrics-builder-field">
+                <span>{t("metrics.builder.column")}</span>
+                <select value={builderColumn} onChange={(e) => setBuilderColumn(e.target.value)}>
+                  <option value="">{t("metrics.builder.selectColumn")}</option>
+                  {tableColumns.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <label className="metrics-builder-field">
+              <span>{t("metrics.builder.groupBy")}</span>
+              <select value={builderGroup} onChange={(e) => setBuilderGroup(e.target.value)}>
+                <option value="">{t("metrics.builder.noGroup")}</option>
+                {tableColumns.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="metrics-builder-field">
+              <span>{t("metrics.builder.limit")}</span>
+              <input
+                type="number"
+                value={builderLimit}
+                onChange={(e) => setBuilderLimit(e.target.value)}
+                min={1}
+                max={10000}
+              />
+            </label>
+            <button
+              type="button"
+              className="metrics-builder-apply"
+              disabled={!builderTable}
+              onClick={() => {
+                const sql = buildQuery();
+                if (sql) onQueryDraftChange(sql);
+              }}
+            >
+              {t("metrics.builder.apply")}
+            </button>
+          </div>
+        )}
       </div>
 
       <div className="metrics-board-field">

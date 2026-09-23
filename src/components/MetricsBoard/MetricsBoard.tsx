@@ -720,6 +720,38 @@ export function MetricsBoard({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [activeWidgetId, deleteWidgetWithUndo, duplicateWidget]);
 
+  // Keyboard: Ctrl+Z undoes the last widget delete.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, [contenteditable=true], .monaco-editor")) {
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z" && undoDelete) {
+        event.preventDefault();
+        if (undoDelete) restoreWidget(undoDelete.widget);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [undoDelete, restoreWidget]);
+
+  // Keyboard: Ctrl+R refreshes the selected widget.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, [contenteditable=true], .monaco-editor")) {
+        return;
+      }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "r" && activeWidgetId) {
+        event.preventDefault();
+        setRefreshToken((v) => v + 1);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeWidgetId]);
+
   // Keyboard: arrows move the selected widget one grid cell.
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {

@@ -322,3 +322,25 @@
   font-weight: 600;
   white-space: nowrap;
 }
+.metrics-widget-error-details {
+  margin-top: 4px;
+  font-size: 10px;
+}
+
+.metrics-widget-error-details summary {
+  cursor: pointer;
+  color: var(--text-tertiary, #94a3b8);
+  font-size: 9px;
+}
+
+.metrics-widget-error-query {
+  margin-top: 4px;
+  padding: 6px;
+  background: var(--bg-secondary, #1e293b);
+  border-radius: 4px;
+  font-size: 9px;
+  max-height: 80px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

@@ -207,6 +207,10 @@ export function MetricsWidgetCard({
       return (
         <div className="metrics-widget-empty error">
           <span>{state.error}</span>
+          <details className="metrics-widget-error-details">
+            <summary>{t("metrics.widget.errorDetails")}</summary>
+            <pre className="metrics-widget-error-query">{widget.query}</pre>
+          </details>
           <button
             type="button"
             className="metrics-widget-retry-btn"

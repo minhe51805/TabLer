@@ -393,6 +393,7 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "metrics.boardAutoArrangeDesc": "将组件排列成3列网格",
   "metrics.boardExportConfirm": "下载此面板为JSON？",
   "metrics.widget.nextRefresh": "下次自动刷新",
+  "metrics.widget.errorDetails": "查询详情",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover": "提供者“{{failed}}”出现故障，正在切换到提供者“{{next}}”，请稍候。",

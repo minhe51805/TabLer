@@ -401,6 +401,7 @@ export const vi: Record<keyof typeof en, string> = {
   "metrics.boardAutoArrangeDesc": "Xếp widget vào lưới 3 cột",
   "metrics.boardExportConfirm": "Tải bảng này dưới dạng JSON?",
   "metrics.widget.nextRefresh": "Tự động làm mới sau",
+  "metrics.widget.errorDetails": "Chi tiết truy vấn",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":

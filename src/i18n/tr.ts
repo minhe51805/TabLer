@@ -406,6 +406,7 @@ export const tr: Record<keyof typeof en, string> = {
   "metrics.boardAutoArrangeDesc": "Widget'ları 3 sütunlu ızgaraya yerleştir",
   "metrics.boardExportConfirm": "Bu panoyu JSON olarak indir?",
   "metrics.widget.nextRefresh": "Sonraki otomatik yenileme",
+  "metrics.widget.errorDetails": "Sorgu detayları",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":

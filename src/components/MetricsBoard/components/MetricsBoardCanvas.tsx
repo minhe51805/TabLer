@@ -72,6 +72,8 @@ interface Props {
   surfaceWidth: number;
   surfaceContentHeight: number;
   canvasRef: React.RefObject<HTMLDivElement | null>;
+  boardZoom?: number;
+  onZoomChange?: (zoom: number) => void;
   getWidgetLayoutStyle: (widget: MetricsWidgetDefinition) => CSSProperties;
   handleWidgetSelection: (widgetId: string) => void;
   handleWidgetDragStart: (
@@ -141,6 +143,8 @@ export function MetricsBoardCanvas({
   dragState,
   resizeState,
   surfaceWidth,
+  boardZoom,
+  onZoomChange,
   surfaceContentHeight,
   canvasRef,
   getWidgetLayoutStyle,
@@ -169,11 +173,22 @@ export function MetricsBoardCanvas({
   const { t } = useI18n();
 
   return (
-    <div className="metrics-board-canvas" ref={canvasRef}>
+    <div
+      className="metrics-board-canvas"
+      ref={canvasRef}
+      onWheel={(e) => {
+        if (!e.ctrlKey && !e.metaKey) return;
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? -0.1 : 0.1;
+        onZoomChange?.(Math.min(2, Math.max(0.5, (boardZoom ?? 1) + delta)));
+      }}
+    >
       <div
         className={`metrics-board-surface ${dragState ? "dragging" : ""}`}
         style={{
           width: `${surfaceWidth}px`,
+          transform: `scale(${boardZoom ?? 1})`,
+          transformOrigin: "top left",
           minHeight: `${surfaceContentHeight}px`,
         }}
         onContextMenu={openCanvasContextMenu}

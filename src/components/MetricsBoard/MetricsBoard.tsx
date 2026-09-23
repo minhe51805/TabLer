@@ -135,6 +135,7 @@ export function MetricsBoard({
     widget: MetricsWidgetDefinition;
     expiresAt: number;
   } | null>(null);
+  const [boardZoom, setBoardZoom] = useState(1);
   const [lastRefreshAt, setLastRefreshAt] = useState<number | null>(null);
 
   // Track the most recent widget refresh across the board.
@@ -1382,6 +1383,8 @@ export function MetricsBoard({
           surfaceWidth={surfaceWidth}
           surfaceContentHeight={surfaceContentHeight}
           canvasRef={canvasRef}
+          boardZoom={boardZoom}
+          onZoomChange={setBoardZoom}
           getWidgetLayoutStyle={getWidgetLayoutStyle}
           handleWidgetSelection={handleWidgetSelection}
           handleWidgetDragStart={handleWidgetDragStart}

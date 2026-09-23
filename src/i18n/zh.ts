@@ -387,6 +387,7 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "metrics.widget.stale": "数据过期",
   "metrics.editor.color": "强调色",
   "metrics.editor.colorDefault": "默认",
+  "metrics.renameBoardHint": "双击重命名",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover": "提供者“{{failed}}”出现故障，正在切换到提供者“{{next}}”，请稍候。",

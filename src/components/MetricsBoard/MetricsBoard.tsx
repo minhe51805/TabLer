@@ -133,6 +133,8 @@ export function MetricsBoard({
   const [editingWidgetId, setEditingWidgetId] = useState<string | null>(null);
   const [widgetQueryDraft, setWidgetQueryDraft] = useState("");
   const [canvasContextMenu, setCanvasContextMenu] = useState<CanvasContextMenuState | null>(null);
+  const [isRenamingBoard, setIsRenamingBoard] = useState(false);
+  const [boardRenameValue, setBoardRenameValue] = useState("");
   const [widgetContextMenu, setWidgetContextMenu] = useState<{
     widgetId: string;
     left: number;
@@ -727,6 +729,34 @@ export function MetricsBoard({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [activeWidgetId, deleteWidgetWithUndo, duplicateWidget]);
 
+  // Keyboard: arrows move the selected widget one grid cell.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (target?.closest("input, textarea, [contenteditable=true], .monaco-editor")) {
+        return;
+      }
+      if (!activeWidgetId || !activeBoard) return;
+      const widget = activeBoard.widgets.find((w) => w.id === activeWidgetId);
+      if (!widget) return;
+      const moves: Record<string, { dx: number; dy: number }> = {
+        ArrowLeft: { dx: -1, dy: 0 },
+        ArrowRight: { dx: 1, dy: 0 },
+        ArrowUp: { dx: 0, dy: -1 },
+        ArrowDown: { dx: 0, dy: 1 },
+      };
+      const move = moves[event.key];
+      if (!move) return;
+      event.preventDefault();
+      updateWidgetLayout(widget.id, {
+        grid_x: Math.max(0, widget.grid_x + move.dx),
+        grid_y: Math.max(0, widget.grid_y + move.dy),
+      });
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeWidgetId, activeBoard, updateWidgetLayout]);
+
   useEffect(() => {
     if (!editingWidget) return;
     if (widgetQueryDraft === editingWidget.query) return;
@@ -1079,9 +1109,40 @@ export function MetricsBoard({
         <div className="metrics-board-topbar">
           <div className="metrics-board-topbar-copy">
             <span className="metrics-board-topbar-kicker">{t("metrics.sidebarKicker")}</span>
-            <strong className="metrics-board-topbar-title">
-              {activeBoard?.name || t("metrics.createBoard")}
-            </strong>
+            {isRenamingBoard && activeBoard ? (
+              <input
+                className="metrics-board-rename-input"
+                value={boardRenameValue}
+                onChange={(e) => setBoardRenameValue(e.target.value)}
+                onBlur={() => {
+                  const name = boardRenameValue.trim();
+                  if (name && name !== activeBoard.name) {
+                    persistBoards(
+                      boards.map((b) => (b.id === activeBoard.id ? { ...b, name } : b)),
+                    );
+                  }
+                  setIsRenamingBoard(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") e.currentTarget.blur();
+                  if (e.key === "Escape") setIsRenamingBoard(false);
+                }}
+                autoFocus
+              />
+            ) : (
+              <strong
+                className="metrics-board-topbar-title"
+                onDoubleClick={() => {
+                  if (activeBoard) {
+                    setBoardRenameValue(activeBoard.name);
+                    setIsRenamingBoard(true);
+                  }
+                }}
+                title={t("metrics.renameBoardHint")}
+              >
+                {activeBoard?.name || t("metrics.createBoard")}
+              </strong>
+            )}
             <span className="metrics-board-topbar-meta">
               {displayConnectionLabel}
               {displayDatabaseLabel ? ` / ${displayDatabaseLabel}` : ""}

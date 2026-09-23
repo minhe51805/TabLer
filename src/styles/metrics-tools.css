@@ -282,3 +282,15 @@
 .metrics-widget-color-option.is-active {
   border-color: var(--accent, #22d3ee);
 }
+.metrics-board-rename-input {
+  font: inherit;
+  font-weight: 700;
+  font-size: 15px;
+  color: inherit;
+  background: var(--bg-secondary, #1e293b);
+  border: 1px solid var(--accent, #22d3ee);
+  border-radius: 6px;
+  padding: 2px 8px;
+  outline: none;
+  min-width: 180px;
+}

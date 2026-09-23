@@ -5,8 +5,8 @@ import { Download } from "lucide-react";
 import { getSiteLanguage } from "@/lib/language";
 import { getDictionary } from "@/lib/i18n";
 import { engineHref, engineOrder, getDocs } from "@/lib/docs";
-import { repositoryUrl } from "@/lib/site";
 import { LanguageToggle } from "../LanguageToggle";
+import { SiteFooter } from "../SiteFooter";
 import { DocsSidebar } from "./DocsSidebar";
 
 export default async function DocsLayout({ children }: { children: ReactNode }) {
@@ -66,23 +66,7 @@ export default async function DocsLayout({ children }: { children: ReactNode }) 
         <div className="docs-main">{children}</div>
       </div>
 
-      <footer>
-        <div className="shell footer-inner">
-          <Link className="brand footer-brand" href="/" aria-label="TableR home">
-            <Image src="/tabler-brand-mark.png" width={30} height={30} alt="" />
-            <span>TableR</span>
-          </Link>
-          <p>{t.footer.built}</p>
-          <div className="footer-links">
-            <a href={repositoryUrl} target="_blank" rel="noreferrer">
-              {t.footer.github}
-            </a>
-            <a href="/download">{t.footer.download}</a>
-            <Link href="/changelog">{t.footer.changelog}</Link>
-            <Link href="/docs">{t.footer.docs}</Link>
-          </div>
-        </div>
-      </footer>
+      <SiteFooter t={t} />
     </main>
   );
 }

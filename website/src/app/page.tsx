@@ -1,5 +1,4 @@
 import Image from "next/image";
-import Link from "next/link";
 import {
   ArrowRight,
   BookMarked,
@@ -29,7 +28,9 @@ import { getSiteLanguage } from "@/lib/language";
 import { getDictionary, type Dictionary } from "@/lib/i18n";
 import { repositoryUrl } from "@/lib/site";
 import { LanguageToggle } from "./LanguageToggle";
-import { HeroScrollFX, ScrollReveal, TiltFrame } from "./Home3D";
+import { DockToggle, HeroScrollFX, ScrollReveal, TiltFrame } from "./Home3D";
+import { EngineMark } from "./engine-logos";
+import { SiteFooter } from "./SiteFooter";
 
 const downloadUrl = "/download";
 
@@ -108,7 +109,7 @@ export default async function Home() {
   return (
     <main id="main" className="neu">
       <ScrollReveal />
-      <HeroScrollFX />
+      <HeroScrollFX phases={t.hero.phases} />
       <header className="site-header">
         <div className="shell header-inner">
           <a className="brand" href="#top" aria-label="TableR home">
@@ -127,10 +128,16 @@ export default async function Home() {
 
           <div className="header-actions">
             <LanguageToggle current={language} />
-            <a className="button button-small button-primary" href={downloadUrl}>
+            <a
+              className="button button-small button-primary"
+              href={downloadUrl}
+              aria-label={t.nav.download}
+              title={t.nav.download}
+            >
               <Download size={16} aria-hidden="true" />
-              {t.nav.download}
+              <span className="download-label">{t.nav.download}</span>
             </a>
+            <DockToggle />
           </div>
         </div>
       </header>
@@ -169,19 +176,50 @@ export default async function Home() {
                   <span />
                   <span />
                   <span />
-                  <strong>ant_language / Query workspace</strong>
+                  <strong className="frame-title">ant_language / Query workspace</strong>
                 </div>
-                <Image
-                  className="product-image"
-                  src="/screenshots/table-r-query-workspace.png"
-                  width={1920}
-                  height={1080}
-                  alt="TableR desktop app showing a PostgreSQL query and its result set"
-                  priority
-                  sizes="(max-width: 720px) 94vw, 1180px"
-                />
+                <div className="hero-phase-stack">
+                  {workflowMedia.map((media, index) => (
+                    <Image
+                      className="product-image hero-phase-image"
+                      src={media.image}
+                      width={media.width}
+                      height={media.height}
+                      alt={media.alt}
+                      priority={index === 0}
+                      key={media.image}
+                      sizes="(max-width: 720px) 94vw, 1180px"
+                    />
+                  ))}
+                </div>
               </div>
             </TiltFrame>
+          </div>
+          <div className="laptop-base" aria-hidden="true" />
+
+          <div className="hero-phase-caption" aria-hidden="true">
+            <p className="hero-phase-eyebrow" />
+            <h3 className="hero-phase-title" />
+            <p className="hero-phase-copy" />
+          </div>
+          <div className="hero-phase-line" aria-hidden="true" />
+          <div className="hero-phase-dots" aria-hidden="true">
+            <span />
+            <span />
+            <span />
+          </div>
+
+          <div className="hero-reveal" aria-hidden="true">
+            <p className="eyebrow">{t.hero.revealEyebrow}</p>
+            <h2>{t.hero.revealHeading}</h2>
+            <div className="hero-reveal-grid">
+              {engines.map((engine) => (
+                <span className="hero-reveal-chip" key={engine}>
+                  <EngineMark name={engine} size={15} />
+                  <span className="hero-reveal-chip-name">{engine}</span>
+                </span>
+              ))}
+            </div>
           </div>
         </div>
       </section>
@@ -346,10 +384,10 @@ export default async function Home() {
           </div>
 
           <div className="engine-grid">
-            {engines.map((engine, index) => (
+            {engines.map((engine) => (
               <div className="engine-item" key={engine}>
-                <span className={`engine-mark engine-mark-${(index % 4) + 1}`}>
-                  <Database size={16} aria-hidden="true" />
+                <span className="engine-mark">
+                  <EngineMark name={engine} size={17} />
                 </span>
                 <span>{engine}</span>
               </div>
@@ -413,27 +451,7 @@ export default async function Home() {
         </div>
       </section>
 
-      <footer>
-        <div className="shell footer-inner">
-          <a className="brand footer-brand" href="#top" aria-label="TableR home">
-            <Image src="/tabler-brand-mark.png" width={30} height={30} alt="" />
-            <span>TableR</span>
-          </a>
-          <p>{t.footer.built}</p>
-          <div className="footer-links">
-            <a href={repositoryUrl} target="_blank" rel="noreferrer">
-              {t.footer.github}
-            </a>
-            <a href={downloadUrl}>{t.footer.download}</a>
-            <Link href="/changelog">{t.footer.changelog}</Link>
-            <Link href="/docs">{t.footer.docs}</Link>
-            <Link href="/plugins">{t.nav.plugins}</Link>
-            <a href="https://buymeacoffee.com/minjev" target="_blank" rel="noreferrer">
-              {t.footer.support}
-            </a>
-          </div>
-        </div>
-      </footer>
+      <SiteFooter t={t} />
     </main>
   );
 }

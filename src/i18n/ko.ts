@@ -400,6 +400,7 @@ export const ko: Record<keyof typeof en, string> = {
   "metrics.widget.copyQuery": "쿼리 복사",
   "metrics.boardAutoArrange": "자동 정렬",
   "metrics.boardAutoArrangeDesc": "위젯을 3열 그리드로 정렬",
+  "metrics.boardExportConfirm": "이 보드를 JSON으로 다운로드하시겠습니까?",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":

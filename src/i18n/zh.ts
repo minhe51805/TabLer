@@ -391,6 +391,7 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "metrics.widget.copyQuery": "复制查询",
   "metrics.boardAutoArrange": "自动排列",
   "metrics.boardAutoArrangeDesc": "将组件排列成3列网格",
+  "metrics.boardExportConfirm": "下载此面板为JSON？",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover": "提供者“{{failed}}”出现故障，正在切换到提供者“{{next}}”，请稍候。",

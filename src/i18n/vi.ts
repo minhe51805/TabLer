@@ -399,6 +399,7 @@ export const vi: Record<keyof typeof en, string> = {
   "metrics.widget.copyQuery": "Sao chép truy vấn",
   "metrics.boardAutoArrange": "Sắp xếp tự động",
   "metrics.boardAutoArrangeDesc": "Xếp widget vào lưới 3 cột",
+  "metrics.boardExportConfirm": "Tải bảng này dưới dạng JSON?",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":

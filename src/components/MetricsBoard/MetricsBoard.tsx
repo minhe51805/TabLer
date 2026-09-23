@@ -1226,10 +1226,16 @@ export function MetricsBoard({
                     className="metrics-board-widget-menu-item"
                     onClick={() => {
                       if (activeBoard) {
-                        downloadTextFile(
-                          serializeBoard(activeBoard),
-                          `${activeBoard.name}.tabler-board.json`,
+                        const json = serializeBoard(activeBoard);
+                        const sizeKb = (new Blob([json]).size / 1024).toFixed(1);
+                        const ok = window.confirm(
+                          `${t("metrics.boardExport")}: ${activeBoard.name}\n` +
+                            `${activeBoard.widgets.length} widgets · ${sizeKb} KB\n\n` +
+                            `${t("metrics.boardExportConfirm")}`,
                         );
+                        if (ok) {
+                          downloadTextFile(json, `${activeBoard.name}.tabler-board.json`);
+                        }
                       }
                       setIsBoardMenuOpen(false);
                     }}

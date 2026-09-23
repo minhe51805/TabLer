@@ -233,3 +233,29 @@
   color: var(--text-tertiary, #94a3b8);
   margin-top: 2px;
 }
+.metrics-widget-retry-btn {
+  margin-top: 6px;
+  padding: 3px 10px;
+  border: 1px solid var(--border-subtle, rgba(148, 163, 184, 0.3));
+  border-radius: 6px;
+  background: var(--bg-secondary, #1e293b);
+  color: var(--text-secondary, #cbd5e1);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.metrics-widget-retry-btn:hover {
+  background: var(--bg-hover, rgba(148, 163, 184, 0.15));
+}
+
+.metrics-widget-stale {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: rgba(251, 191, 36, 0.15);
+  color: #fbbf24;
+  font-size: 9px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}

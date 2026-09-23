@@ -365,6 +365,8 @@ export const en = {
   "metrics.editor.notePlaceholder": "Optional description…",
   "metrics.widgets": "widgets",
   "metrics.lastRefresh": "updated",
+  "metrics.widget.retry": "Retry",
+  "metrics.widget.stale": "Stale",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "metrics.context.add": "Add",

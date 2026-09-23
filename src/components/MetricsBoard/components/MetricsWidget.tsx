@@ -171,6 +171,10 @@ export function MetricsWidgetCard({
   const metric = useMemo(() => getMetricValue(state.result), [state.result]);
   const validation = useMemo(() => validateMetricsQuery(widget.query), [widget.query]);
   const widgetLibraryItem = getWidgetLibraryItem(widget.type);
+  const isStale = useMemo(() => {
+    if (!state.lastRunAt || widget.refresh_seconds <= 0) return false;
+    return Date.now() - state.lastRunAt > widget.refresh_seconds * 2000;
+  }, [state.lastRunAt, widget.refresh_seconds]);
 
   const content = (() => {
     if (state.loading && !state.result) {
@@ -182,7 +186,21 @@ export function MetricsWidgetCard({
     }
 
     if (state.error) {
-      return <div className="metrics-widget-empty error">{state.error}</div>;
+      return (
+        <div className="metrics-widget-empty error">
+          <span>{state.error}</span>
+          <button
+            type="button"
+            className="metrics-widget-retry-btn"
+            onClick={(event) => {
+              event.stopPropagation();
+              void runWidgetQuery();
+            }}
+          >
+            {t("metrics.widget.retry")}
+          </button>
+        </div>
+      );
     }
 
     if (!state.result || state.result.rows.length === 0) {
@@ -339,6 +357,11 @@ export function MetricsWidgetCard({
           {widget.note ? (
             <span className="metrics-widget-card-note" title={widget.note}>
               {widget.note}
+            </span>
+          ) : null}
+          {isStale ? (
+            <span className="metrics-widget-stale" title={t("metrics.widget.stale")}>
+              {t("metrics.widget.stale")}
             </span>
           ) : null}
         </div>

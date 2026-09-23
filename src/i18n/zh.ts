@@ -383,6 +383,8 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "metrics.editor.notePlaceholder": "可选描述…",
   "metrics.widgets": "组件",
   "metrics.lastRefresh": "更新于",
+  "metrics.widget.retry": "重试",
+  "metrics.widget.stale": "数据过期",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover": "提供者“{{failed}}”出现故障，正在切换到提供者“{{next}}”，请稍候。",

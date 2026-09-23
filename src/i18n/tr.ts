@@ -396,6 +396,8 @@ export const tr: Record<keyof typeof en, string> = {
   "metrics.editor.notePlaceholder": "İsteğe bağlı açıklama…",
   "metrics.widgets": "widget",
   "metrics.lastRefresh": "güncellendi",
+  "metrics.widget.retry": "Yeniden dene",
+  "metrics.widget.stale": "Eski veri",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":

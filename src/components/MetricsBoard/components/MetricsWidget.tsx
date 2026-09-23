@@ -5,6 +5,8 @@ import { exportSvgAsPng } from "../../../utils/svg-png-export";
 import { applyQueryParams, formatRelativeTime, pushBoardActivity } from "../utils/metrics-board-io";
 import { useI18n } from "../../../i18n";
 import type { MetricsWidgetDefinition, QueryResult } from "../../../types";
+import { ChartStackedBars, ChartFunnel, ChartDelta } from "../utils/chart-renderer";
+import { MarkdownCard } from "./MarkdownCard";
 import {
   executeMetricsQuery,
   formatExecutionError,
@@ -86,6 +88,7 @@ export function MetricsWidgetCard({
   const suppressClickRef = useRef(false);
 
   const runWidgetQuery = useCallback(async () => {
+    if (widget.type === "markdown") return;
     if (isRunningRef.current) {
       rerunRequestedRef.current = true;
       return;
@@ -145,7 +148,16 @@ export function MetricsWidgetCard({
         detail: state.error ?? undefined,
       });
     }
-  }, [connectionId, widget.query, widget.id, widget.title, onWidgetRefreshed, state.error, params]);
+  }, [
+    connectionId,
+    widget.query,
+    widget.id,
+    widget.title,
+    widget.type,
+    onWidgetRefreshed,
+    state.error,
+    params,
+  ]);
 
   useEffect(() => {
     void runWidgetQuery();
@@ -305,6 +317,38 @@ export function MetricsWidgetCard({
 
     if (widget.type === "donut") {
       return <ChartPie series={series} donut onSelect={handleChartSelect} />;
+    }
+
+    if (widget.type === "stacked-bar") {
+      const keys = state.result!.columns.map((c) => c.name).filter((n) => n !== "label");
+      const data = state.result!.rows.map(
+        (row): { label: string; [key: string]: string | number } => {
+          const obj: { label: string; [key: string]: string | number } = {
+            label: String(row[0] ?? ""),
+          };
+          keys.forEach((k, i) => {
+            obj[k] = Number(row[i + 1]) || 0;
+          });
+          return obj;
+        },
+      );
+      return <ChartStackedBars series={data} onSelect={handleChartSelect} />;
+    }
+
+    if (widget.type === "funnel") {
+      return <ChartFunnel series={series} onSelect={handleChartSelect} />;
+    }
+
+    if (widget.type === "delta") {
+      const row = state.result!.rows[0];
+      const current = Number(row?.[0]) || 0;
+      const previous = Number(row?.[1]) || 0;
+      const label = String(row?.[2] ?? widget.title);
+      return <ChartDelta current={current} previous={previous} label={label} />;
+    }
+
+    if (widget.type === "markdown") {
+      return <MarkdownCard content={widget.note ?? widget.title} />;
     }
 
     if (widget.type === "radial") {

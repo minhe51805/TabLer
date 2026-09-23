@@ -346,3 +346,93 @@ export function ChartRadial({ series }: { series: MetricsSeriesPoint[] }) {
     </ResponsiveContainer>
   );
 }
+
+export function ChartStackedBars({
+  series,
+  onSelect,
+}: {
+  series: { label: string; [key: string]: string | number }[];
+  onSelect?: (label: string) => void;
+}) {
+  const keys = series.length > 0 ? Object.keys(series[0]).filter((k) => k !== "label") : [];
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <BarChart
+        data={series}
+        margin={{ top: 6, right: 10, bottom: 2, left: 0 }}
+        barCategoryGap="18%"
+        onClick={(data) => {
+          const label = clickedLabel(data);
+          if (label !== undefined) onSelect?.(label);
+        }}
+        style={onSelect ? { cursor: "pointer" } : undefined}
+      >
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
+        <XAxis dataKey="label" tick={AXIS_TICK} tickFormatter={shortLabel} interval={0} />
+        <YAxis tick={AXIS_TICK} tickFormatter={formatCompact} width={34} />
+        <Tooltip content={<MetricsTooltip />} cursor={{ fill: "var(--bg-hover)", opacity: 0.35 }} />
+        <Legend iconSize={9} wrapperStyle={{ fontSize: 10 }} />
+        {keys.map((key, i) => (
+          <Bar key={key} dataKey={key} stackId="stack" fill={colorAt(i)} isAnimationActive />
+        ))}
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+export function ChartFunnel({
+  series,
+  onSelect,
+}: {
+  series: MetricsSeriesPoint[];
+  onSelect?: (label: string) => void;
+}) {
+  const max = Math.max(...series.map((s) => s.value), 1);
+  return (
+    <div className="metrics-funnel">
+      {series.map((item, i) => {
+        const pct = (item.value / max) * 100;
+        return (
+          <button
+            key={item.label}
+            type="button"
+            className="metrics-funnel-row"
+            onClick={() => onSelect?.(item.label)}
+          >
+            <span className="metrics-funnel-label">{shortLabel(item.label)}</span>
+            <div className="metrics-funnel-bar-wrap">
+              <div
+                className="metrics-funnel-bar"
+                style={{ width: `${pct}%`, backgroundColor: colorAt(i) }}
+              />
+            </div>
+            <span className="metrics-funnel-value">{formatCompact(item.value)}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+export function ChartDelta({
+  current,
+  previous,
+  label,
+}: {
+  current: number;
+  previous: number;
+  label: string;
+}) {
+  const delta = current - previous;
+  const pct = previous !== 0 ? ((delta / Math.abs(previous)) * 100).toFixed(1) : "—";
+  const isUp = delta >= 0;
+  return (
+    <div className="metrics-delta">
+      <span className="metrics-delta-value">{formatCompact(current)}</span>
+      <span className={`metrics-delta-badge ${isUp ? "up" : "down"}`}>
+        {isUp ? "▲" : "▼"} {formatCompact(Math.abs(delta))} ({pct}%)
+      </span>
+      <span className="metrics-delta-label">{label}</span>
+    </div>
+  );
+}

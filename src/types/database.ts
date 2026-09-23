@@ -190,7 +190,19 @@ export interface TriggerInfo {
 }
 
 export type MetricsWidgetType =
-  "table" | "scoreboard" | "bar" | "horizontal-bar" | "line" | "area" | "pie" | "donut" | "radial";
+  | "table"
+  | "scoreboard"
+  | "bar"
+  | "horizontal-bar"
+  | "stacked-bar"
+  | "line"
+  | "area"
+  | "pie"
+  | "donut"
+  | "radial"
+  | "funnel"
+  | "delta"
+  | "markdown";
 
 export interface ChartReproductionSpec {
   version: 1;

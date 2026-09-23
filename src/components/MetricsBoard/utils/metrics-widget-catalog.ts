@@ -7,11 +7,14 @@ import {
   BarChart3,
   ChartColumnStacked,
   Donut,
+  FileText,
+  Filter,
   Gauge,
   Hash,
   LineChart,
   PieChart,
   Table2,
+  TrendingUp,
 } from "lucide-react";
 import type { MetricsWidgetType } from "../../../types";
 import { translateCurrent, type TranslationKey } from "../../../i18n";
@@ -140,6 +143,48 @@ export const WIDGET_LIBRARY: WidgetLibraryBlueprint[] = [
       "SELECT 'Target A' AS label, 80 AS value UNION ALL SELECT 'Target B', 55 UNION ALL SELECT 'Target C', 30",
     colSpan: 4,
     rowSpan: 4,
+  },
+  {
+    type: "stacked-bar",
+    labelKey: "metrics.widget.stackedBar",
+    description: "Stacked bars from label + multiple value columns.",
+    icon: ChartColumnStacked,
+    titleKey: "metrics.widget.untitledStackedBar",
+    defaultQuery:
+      "SELECT 'Q1' AS label, 10 AS a, 15 AS b UNION ALL SELECT 'Q2', 20, 12 UNION ALL SELECT 'Q3', 15, 18",
+    colSpan: 4,
+    rowSpan: 4,
+  },
+  {
+    type: "funnel",
+    labelKey: "metrics.widget.funnel",
+    description: "Funnel stages from label + value columns.",
+    icon: Filter,
+    titleKey: "metrics.widget.untitledFunnel",
+    defaultQuery:
+      "SELECT 'Visit' AS label, 1000 AS value UNION ALL SELECT 'Signup', 400 UNION ALL SELECT 'Active', 200 UNION ALL SELECT 'Paid', 80",
+    colSpan: 4,
+    rowSpan: 4,
+  },
+  {
+    type: "delta",
+    labelKey: "metrics.widget.delta",
+    description: "Current vs previous value with delta badge.",
+    icon: TrendingUp,
+    titleKey: "metrics.widget.untitledDelta",
+    defaultQuery: "SELECT 120 AS current, 100 AS previous, 'sales' AS label",
+    colSpan: 3,
+    rowSpan: 3,
+  },
+  {
+    type: "markdown",
+    labelKey: "metrics.widget.markdown",
+    description: "Static markdown card — no query needed.",
+    icon: FileText,
+    titleKey: "metrics.widget.untitledMarkdown",
+    defaultQuery: "",
+    colSpan: 3,
+    rowSpan: 3,
   },
 ];
 

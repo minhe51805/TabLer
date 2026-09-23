@@ -461,3 +461,133 @@
 .metrics-board-param-input:focus {
   border-color: var(--accent, #22d3ee);
 }
+.metrics-funnel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  height: 100%;
+  padding: 4px;
+}
+
+.metrics-funnel-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 2px 0;
+  font-size: 10px;
+  color: inherit;
+}
+
+.metrics-funnel-label {
+  width: 60px;
+  text-align: right;
+  flex-shrink: 0;
+  color: var(--text-secondary, #cbd5e1);
+}
+
+.metrics-funnel-bar-wrap {
+  flex: 1;
+  height: 14px;
+  background: var(--bg-secondary, #1e293b);
+  border-radius: 3px;
+  overflow: hidden;
+}
+
+.metrics-funnel-bar {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.3s;
+}
+
+.metrics-funnel-value {
+  width: 36px;
+  text-align: left;
+  flex-shrink: 0;
+  font-weight: 600;
+  font-size: 10px;
+}
+
+.metrics-delta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  height: 100%;
+}
+
+.metrics-delta-value {
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.metrics-delta-badge {
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 10px;
+}
+
+.metrics-delta-badge.up {
+  color: #34d399;
+  background: rgba(52, 211, 153, 0.12);
+}
+
+.metrics-delta-badge.down {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.12);
+}
+
+.metrics-delta-label {
+  font-size: 10px;
+  color: var(--text-tertiary, #94a3b8);
+}
+
+.metrics-markdown-card {
+  padding: 8px;
+  font-size: 11px;
+  line-height: 1.5;
+  overflow: auto;
+  height: 100%;
+}
+
+.metrics-markdown-card h1 {
+  font-size: 16px;
+  margin: 0 0 6px;
+}
+.metrics-markdown-card h2 {
+  font-size: 14px;
+  margin: 0 0 4px;
+}
+.metrics-markdown-card h3 {
+  font-size: 12px;
+  margin: 0 0 4px;
+}
+.metrics-markdown-card p {
+  margin: 0 0 6px;
+}
+.metrics-markdown-card ul {
+  margin: 0 0 6px;
+  padding-left: 16px;
+}
+.metrics-markdown-card code {
+  background: var(--bg-secondary, #1e293b);
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 10px;
+}
+.metrics-markdown-card .md-code {
+  background: var(--bg-secondary, #1e293b);
+  padding: 6px;
+  border-radius: 4px;
+  font-size: 10px;
+  overflow-x: auto;
+  margin: 0 0 6px;
+}
+.metrics-markdown-card a {
+  color: var(--accent, #22d3ee);
+}

@@ -666,3 +666,87 @@
   flex-shrink: 1;
   min-width: 0;
 }
+/* ---- Widget card redesign: hover action overlay + minimal footer ---- */
+.metrics-widget-card {
+  gap: 6px;
+  padding: 10px 12px 8px;
+  border-radius: 12px;
+}
+
+.metrics-widget-card-actions {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border-radius: 8px;
+  border: 1px solid var(--mm-border);
+  background: color-mix(in srgb, var(--mm-surface-1) 88%, transparent);
+  backdrop-filter: blur(6px);
+  box-shadow: 0 4px 14px rgba(5, 10, 15, 0.18);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--transition);
+  z-index: 3;
+}
+
+.metrics-widget-card:hover .metrics-widget-card-actions,
+.metrics-widget-card:focus-within .metrics-widget-card-actions,
+.metrics-widget-card.selected .metrics-widget-card-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+@media (hover: none) {
+  .metrics-widget-card-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+
+.metrics-widget-card-actions .metrics-widget-workspace-btn {
+  width: 20px;
+  height: 20px;
+  border: none;
+  background: transparent;
+}
+
+.metrics-widget-card-actions .metrics-widget-workspace-btn:hover {
+  background: var(--mm-surface-2);
+}
+
+/* Footer: status dot + single-line meta */
+.metrics-widget-card-foot {
+  justify-content: flex-start;
+  gap: 6px;
+  min-height: 14px;
+}
+
+.metrics-widget-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex: 0 0 auto;
+  background: var(--fintech-green, #34d399);
+}
+
+.metrics-widget-status-dot.error {
+  background: var(--fintech-red, #f87171);
+}
+
+.metrics-widget-status-dot.loading {
+  background: var(--accent, #22d3ee);
+  animation: metrics-widget-pulse 1s ease-in-out infinite;
+}
+
+@keyframes metrics-widget-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}

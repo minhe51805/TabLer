@@ -454,135 +454,141 @@ export function MetricsWidgetCard({
             </span>
           ) : null}
         </div>
+      </div>
+
+      <div className="metrics-widget-card-actions">
         <button
           type="button"
-          className="metrics-widget-refresh-btn"
+          className="metrics-widget-workspace-btn"
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.stopPropagation();
             void runWidgetQuery();
           }}
           title={t("metrics.widget.refresh")}
+          aria-label={t("metrics.widget.refresh")}
         >
           <RefreshCcw className={`w-3.5 h-3.5 ${state.loading ? "animate-spin" : ""}`} />
+        </button>
+        {state.result && !state.error && (
+          <button
+            type="button"
+            className="metrics-widget-workspace-btn"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              onOpenResult(widget, state.result as QueryResult);
+            }}
+            title={t("metrics.widget.openResult")}
+            aria-label={t("metrics.widget.openResult")}
+          >
+            <Table2 className="w-3.5 h-3.5" />
+          </button>
+        )}
+        {state.result && !state.error && (
+          <button
+            type="button"
+            className="metrics-widget-workspace-btn"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              void exportToCSV(
+                state.result!.columns.map((c) => c.name),
+                state.result!.rows as (string | number | boolean | null)[][],
+                `${widget.title || "metric"}.csv`,
+              );
+            }}
+            title={t("metrics.widget.exportCsv")}
+            aria-label={t("metrics.widget.exportCsv")}
+          >
+            <FileDown className="w-3.5 h-3.5" />
+          </button>
+        )}
+        {state.result &&
+          !state.error &&
+          widget.type !== "table" &&
+          widget.type !== "scoreboard" && (
+            <button
+              type="button"
+              className="metrics-widget-workspace-btn"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                const svg = cardRef.current?.querySelector("svg");
+                if (svg) void exportSvgAsPng(svg, `${widget.title || "chart"}.png`);
+              }}
+              title={t("metrics.widget.exportPng")}
+              aria-label={t("metrics.widget.exportPng")}
+            >
+              <ImageDown className="w-3.5 h-3.5" />
+            </button>
+          )}
+        <button
+          type="button"
+          className="metrics-widget-workspace-btn"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            void navigator.clipboard.writeText(widget.query);
+          }}
+          title={t("metrics.widget.copyQuery")}
+          aria-label={t("metrics.widget.copyQuery")}
+        >
+          <Copy className="w-3.5 h-3.5" />
+        </button>
+        <button
+          type="button"
+          className="metrics-widget-workspace-btn"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            onFullscreen(widget);
+          }}
+          title={t("metrics.widget.fullscreen")}
+          aria-label={t("metrics.widget.fullscreen")}
+        >
+          <Maximize2 className="w-3.5 h-3.5" />
+        </button>
+        <button
+          type="button"
+          className="metrics-widget-workspace-btn"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenQuery(widget);
+          }}
+          title={t("metrics.widget.openSourceSql")}
+          aria-label={t("metrics.widget.openSourceSql")}
+        >
+          <Code2 className="w-3.5 h-3.5" />
         </button>
       </div>
 
       <div className="metrics-widget-card-body">{content}</div>
 
       <div className="metrics-widget-card-foot">
-        <span className={`metrics-widget-status ${state.error ? "error" : ""}`}>
+        <span
+          className={`metrics-widget-status-dot ${
+            state.error ? "error" : state.loading ? "loading" : ""
+          }`}
+        />
+        <span className="metrics-widget-foot-meta">
           {state.error
             ? t("metrics.widget.issue")
             : state.loading
               ? t("metrics.widget.refreshing")
               : t("metrics.widget.live")}
+          {" · "}
+          {state.result
+            ? `${state.result.execution_time_ms}ms`
+            : widget.refresh_seconds > 0
+              ? t("metrics.everySeconds", { seconds: widget.refresh_seconds })
+              : t("metrics.manual")}
+          {state.lastRunAt ? ` · ${formatRelativeTime(state.lastRunAt)}` : ""}
+          {secondsUntilRefresh !== null && secondsUntilRefresh > 0
+            ? ` · ${secondsUntilRefresh}s`
+            : ""}
         </span>
-        <div className="metrics-widget-foot-actions">
-          {state.result && !state.error && (
-            <button
-              type="button"
-              className="metrics-widget-workspace-btn"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.stopPropagation();
-                onOpenResult(widget, state.result as QueryResult);
-              }}
-              title={t("metrics.widget.openResult")}
-              aria-label={t("metrics.widget.openResult")}
-            >
-              <Table2 className="w-3.5 h-3.5" />
-            </button>
-          )}
-          {state.result && !state.error && (
-            <button
-              type="button"
-              className="metrics-widget-workspace-btn"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.stopPropagation();
-                void exportToCSV(
-                  state.result!.columns.map((c) => c.name),
-                  state.result!.rows as (string | number | boolean | null)[][],
-                  `${widget.title || "metric"}.csv`,
-                );
-              }}
-              title={t("metrics.widget.exportCsv")}
-              aria-label={t("metrics.widget.exportCsv")}
-            >
-              <FileDown className="w-3.5 h-3.5" />
-            </button>
-          )}
-          {state.result &&
-            !state.error &&
-            widget.type !== "table" &&
-            widget.type !== "scoreboard" && (
-              <button
-                type="button"
-                className="metrics-widget-workspace-btn"
-                onPointerDown={(event) => event.stopPropagation()}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  const svg = cardRef.current?.querySelector("svg");
-                  if (svg) void exportSvgAsPng(svg, `${widget.title || "chart"}.png`);
-                }}
-                title={t("metrics.widget.exportPng")}
-                aria-label={t("metrics.widget.exportPng")}
-              >
-                <ImageDown className="w-3.5 h-3.5" />
-              </button>
-            )}
-          <button
-            type="button"
-            className="metrics-widget-workspace-btn"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              void navigator.clipboard.writeText(widget.query);
-            }}
-            title={t("metrics.widget.copyQuery")}
-            aria-label={t("metrics.widget.copyQuery")}
-          >
-            <Copy className="w-3.5 h-3.5" />
-          </button>
-          <button
-            type="button"
-            className="metrics-widget-workspace-btn"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              onFullscreen(widget);
-            }}
-            title={t("metrics.widget.fullscreen")}
-            aria-label={t("metrics.widget.fullscreen")}
-          >
-            <Maximize2 className="w-3.5 h-3.5" />
-          </button>
-          <button
-            type="button"
-            className="metrics-widget-workspace-btn"
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              onOpenQuery(widget);
-            }}
-            title={t("metrics.widget.openSourceSql")}
-            aria-label={t("metrics.widget.openSourceSql")}
-          >
-            <Code2 className="w-3.5 h-3.5" />
-          </button>
-          <span className="metrics-widget-foot-meta">
-            {state.result
-              ? `${state.result.execution_time_ms}ms`
-              : widget.refresh_seconds > 0
-                ? t("metrics.everySeconds", { seconds: widget.refresh_seconds })
-                : t("metrics.manual")}
-            {state.lastRunAt ? ` · ${formatRelativeTime(state.lastRunAt)}` : ""}
-            {secondsUntilRefresh !== null && secondsUntilRefresh > 0
-              ? ` · ${secondsUntilRefresh}s`
-              : ""}
-          </span>
-        </div>
       </div>
 
       <button

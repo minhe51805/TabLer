@@ -16,6 +16,7 @@ interface Props {
   onSelectWidget: (widgetId: string) => void;
   onOpenDatabaseSidebar: () => void;
   onFocusMetricsSidebar: () => void;
+  onReorderWidgets: (boardId: string, widgetIds: string[]) => void;
 }
 
 export function MetricsBoardSidebar({
@@ -31,6 +32,7 @@ export function MetricsBoardSidebar({
   onSelectBoard,
   onSelectWidget,
   onOpenDatabaseSidebar,
+  onReorderWidgets,
   onFocusMetricsSidebar,
 }: Props) {
   const handleFocus = () => {
@@ -150,6 +152,30 @@ export function MetricsBoardSidebar({
                             type="button"
                             className={`metrics-board-list-child ${activeWidgetId === widget.id ? "active" : ""}`}
                             onClick={() => onSelectWidget(widget.id)}
+                            draggable
+                            onDragStart={(e) => {
+                              e.dataTransfer.setData("text/plain", widget.id);
+                              e.dataTransfer.effectAllowed = "move";
+                            }}
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = "move";
+                            }}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              const draggedId = e.dataTransfer.getData("text/plain");
+                              if (!draggedId || draggedId === widget.id) return;
+                              const fromIdx = board.widgets.findIndex((w) => w.id === draggedId);
+                              const toIdx = board.widgets.findIndex((w) => w.id === widget.id);
+                              if (fromIdx < 0 || toIdx < 0) return;
+                              const next = [...board.widgets];
+                              const [moved] = next.splice(fromIdx, 1);
+                              next.splice(toIdx, 0, moved);
+                              onReorderWidgets(
+                                board.id,
+                                next.map((w) => w.id),
+                              );
+                            }}
                           >
                             <Icon className="w-3 h-3" />
                             <span>{widget.title}</span>

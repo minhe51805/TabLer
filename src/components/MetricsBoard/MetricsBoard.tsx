@@ -1092,6 +1092,20 @@ export function MetricsBoard({
           onSelectWidget={handleWidgetSelection}
           onOpenDatabaseSidebar={handleOpenDatabaseSidebar}
           onFocusMetricsSidebar={handleFocusMetricsSidebar}
+          onReorderWidgets={(boardId, widgetIds) => {
+            persistBoards(
+              boards.map((b) =>
+                b.id === boardId
+                  ? {
+                      ...b,
+                      widgets: widgetIds
+                        .map((id) => b.widgets.find((w) => w.id === id))
+                        .filter((w): w is MetricsWidgetDefinition => !!w),
+                    }
+                  : b,
+              ),
+            );
+          }}
         />
       )}
 

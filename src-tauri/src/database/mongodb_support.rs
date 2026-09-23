@@ -507,6 +507,26 @@ impl MongoDbDriver {
         output
     }
 
+    /// Extracts the first ``` fenced code block when the input is a markdown
+    /// paste (e.g. "```sql\nSELECT ...\n```"). Anything outside the block is
+    /// dropped — a trailing resolved-example block must not be executed.
+    /// Input that does not start with a fence is returned untouched.
+    pub(super) fn strip_markdown_fence(input: &str) -> &str {
+        let trimmed = input.trim_start();
+        if !trimmed.starts_with("```") {
+            return input;
+        }
+        // Opening fence: ``` plus an optional language tag, ending at newline.
+        let Some(open_end) = trimmed.find('\n') else {
+            return input;
+        };
+        let body = &trimmed[open_end + 1..];
+        let Some(close) = body.find("```") else {
+            return input;
+        };
+        body[..close].trim()
+    }
+
     pub(super) fn find_matching_closer(input: &str, open: char, close: char) -> Result<usize> {
         let mut depth = 1usize;
         let mut active_quote = None::<char>;
@@ -710,7 +730,10 @@ impl MongoDbDriver {
         // header (or any inline comment) never trips the "must start with db."
         // guard below. Comments inside string literals are preserved.
         let without_comments = Self::strip_mongo_comments(input);
-        let trimmed = Self::strip_optional_semicolon(&without_comments);
+        // A markdown paste ("```sql\nSELECT ...\n```") unwraps to its first
+        // fenced block — the fence itself is not shell syntax and would fall
+        // through to the "must start with db." error.
+        let trimmed = Self::strip_optional_semicolon(Self::strip_markdown_fence(&without_comments));
         if trimmed.is_empty() {
             return Err(anyhow!("MongoDB command cannot be empty"));
         }

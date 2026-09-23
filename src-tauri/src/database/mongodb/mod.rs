@@ -273,6 +273,34 @@ mod tests {
     }
 
     #[test]
+    fn unwraps_markdown_sql_fence_and_ignores_trailing_blocks() {
+        // Pasting an AI answer into a query tab carries the ```sql fence plus
+        // a second resolved-example block; only the first block runs.
+        let parsed = MongoDbDriver::parse_command(
+            "```sql\nSELECT * FROM media_assets WHERE resourceType = 'image' AND width > 1000\n```\n\
+             ```sql\nSELECT * FROM media_assets WHERE status = TRUE\n```",
+        )
+        .unwrap();
+        match parsed {
+            MongoQueryCommand::Find {
+                collection, filter, ..
+            } => {
+                assert_eq!(collection, "media_assets");
+                let conditions = filter.get_array("$and").unwrap();
+                assert_eq!(
+                    conditions[0]
+                        .as_document()
+                        .unwrap()
+                        .get_str("resourceType")
+                        .unwrap(),
+                    "image"
+                );
+            }
+            _ => panic!("expected find command"),
+        }
+    }
+
+    #[test]
     fn translates_select_columns_where_order_limit() {
         let parsed = MongoDbDriver::parse_command(
             "select name, profile.email from users where age >= 18 and status = 'active' \

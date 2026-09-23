@@ -43,10 +43,12 @@ function renderList(connections: ConnectionConfig[], overrides = {}) {
     onLeaveHover: vi.fn(),
     onNewConnection: vi.fn(),
     onOpenDatabaseFile: vi.fn(),
-    showSampleCard: false,
+    showEmptyStateCtas: false,
     sampleCopy: STARTUP_COPY.en.sampleCard,
     isCreatingSample: false,
     onCreateSample: vi.fn(),
+    onImportConnections: vi.fn(),
+    importCtaCopy: STARTUP_COPY.en.importCta,
     onToggleGroup: vi.fn(),
     onRenameGroup: vi.fn(),
     onChangeGroupColor: vi.fn(),
@@ -110,5 +112,38 @@ describe("ConnectionListView grouping", () => {
     expect(accent.style.backgroundColor).toBe("rgb(255, 0, 0)");
     const avatar = container.querySelector(".startup-connection-avatar") as HTMLElement;
     expect(avatar.style.backgroundColor).toBe("rgb(255, 0, 0)");
+  });
+});
+
+describe("ConnectionListView empty-state CTAs", () => {
+  it("shows create, sample, and import actions when the launcher is empty", () => {
+    const onNewConnection = vi.fn();
+    const onCreateSample = vi.fn();
+    const onImportConnections = vi.fn();
+    const { container } = renderList([], {
+      showEmptyStateCtas: true,
+      onNewConnection,
+      onCreateSample,
+      onImportConnections,
+    });
+
+    const empty = container.querySelector(".startup-manager-empty")!;
+    const buttons = empty.querySelectorAll("button");
+    expect(buttons).toHaveLength(3);
+
+    fireEvent.click(buttons[0]);
+    expect(onNewConnection).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(buttons[1]);
+    expect(onCreateSample).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(buttons[2]);
+    expect(onImportConnections).toHaveBeenCalledTimes(1);
+  });
+
+  it("hides the CTAs when the list is only filtered to zero", () => {
+    const { container } = renderList([], { showEmptyStateCtas: false });
+    const empty = container.querySelector(".startup-manager-empty")!;
+    expect(empty.querySelectorAll("button")).toHaveLength(0);
   });
 });

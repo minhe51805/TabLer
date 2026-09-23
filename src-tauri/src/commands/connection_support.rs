@@ -826,6 +826,7 @@ mod mssql_bootstrap_live {
             startup_commands: None,
             pre_connect_script: None,
             query_timeout_seconds: None,
+            read_only: false,
             ssh_config: None,
         };
 

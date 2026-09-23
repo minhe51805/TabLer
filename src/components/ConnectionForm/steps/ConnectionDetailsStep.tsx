@@ -290,10 +290,20 @@ export function ConnectionDetailsStep({
     },
     advanced: {
       kicker: isVi ? "Nâng cao" : "Advanced",
-      title: isVi ? "SSL, SSH & script" : "SSL, SSH & scripts",
-      copy: isVi
-        ? "Bảo mật kết nối và các lệnh chạy kèm khi mở phiên làm việc."
-        : "Connection security and commands that run around the session.",
+      title: isFileEngine
+        ? isVi
+          ? "Quyền truy cập"
+          : "Access"
+        : isVi
+          ? "SSL, SSH & script"
+          : "SSL, SSH & scripts",
+      copy: isFileEngine
+        ? isVi
+          ? "Khóa kết nối này ở chế độ chỉ đọc."
+          : "Lock this connection to read-only access."
+        : isVi
+          ? "Bảo mật kết nối và các lệnh chạy kèm khi mở phiên làm việc."
+          : "Connection security and commands that run around the session.",
       label: isVi ? "Nâng cao" : "Advanced",
     },
     engineFields: {
@@ -350,12 +360,10 @@ export function ConnectionDetailsStep({
 
   const railSections = [
     { key: "identity", icon: User },
-    ...(isFileEngine
-      ? [{ key: "storage", icon: FolderOpen }]
-      : [
-          { key: "network", icon: Server },
-          { key: "advanced", icon: ShieldCheck },
-        ]),
+    ...(isFileEngine ? [{ key: "storage", icon: FolderOpen }] : [{ key: "network", icon: Server }]),
+    // Advanced is always present: the read-only pin lives there and applies
+    // to file engines too.
+    { key: "advanced", icon: ShieldCheck },
     ...(engineExtraFields.length > 0 ? [{ key: "engineFields", icon: SlidersHorizontal }] : []),
     ...(showBootstrapSection ? [{ key: "bootstrap", icon: Database }] : []),
   ];
@@ -727,335 +735,367 @@ export function ConnectionDetailsStep({
             </section>
           )}
 
-          {/* Advanced section (server engines) */}
-          {!isFileEngine && (
-            <section
-              ref={(el) => {
-                sectionRefs.current.advanced = el;
-              }}
-              className="connection-form-panel-section"
-            >
-              <div className="connection-form-panel-head">
-                <div>
-                  <span className="connection-form-section-kicker">
-                    {sectionMeta.advanced.kicker}
-                  </span>
-                  <h3 className="connection-form-panel-title">{sectionMeta.advanced.title}</h3>
-                </div>
-                <p className="connection-form-section-copy">{sectionMeta.advanced.copy}</p>
+          {/* Advanced section — rendered for every engine: the read-only pin
+              applies to file engines too; SSL/SSH/scripts stay server-only. */}
+          <section
+            ref={(el) => {
+              sectionRefs.current.advanced = el;
+            }}
+            className="connection-form-panel-section"
+          >
+            <div className="connection-form-panel-head">
+              <div>
+                <span className="connection-form-section-kicker">
+                  {sectionMeta.advanced.kicker}
+                </span>
+                <h3 className="connection-form-panel-title">{sectionMeta.advanced.title}</h3>
               </div>
+              <p className="connection-form-section-copy">{sectionMeta.advanced.copy}</p>
+            </div>
 
-              {showSslToggle && (
-                <div className="connection-form-toggle-row">
+            {/* Read-only pin — available on every engine, blocks all writes
+                  at the backend command guards. */}
+            <div className="connection-form-toggle-row">
+              <label className="connection-form-toggle-card">
+                <input
+                  type="checkbox"
+                  checked={formData.read_only ?? false}
+                  onChange={(e) => onFieldChange("read_only", e.target.checked)}
+                  className="sr-only"
+                />
+                <div className="connection-form-toggle-copy">
+                  <span className="connection-form-toggle-title">
+                    {isVi ? "Chỉ đọc (chặn mọi ghi)" : "Read-only (block all writes)"}
+                  </span>
+                  <span className="connection-form-toggle-note">
+                    {isVi
+                      ? "SELECT vẫn chạy; INSERT/UPDATE/DELETE, DDL và import bị từ chối."
+                      : "SELECT still runs; INSERT/UPDATE/DELETE, DDL and imports are rejected."}
+                  </span>
+                </div>
+                <div className="connection-form-toggle-track" aria-hidden="true">
+                  <div className="connection-form-toggle-thumb" />
+                </div>
+              </label>
+            </div>
+
+            {!isFileEngine && (
+              <>
+                {showSslToggle && (
+                  <div className="connection-form-toggle-row">
+                    <label className="connection-form-toggle-card">
+                      <input
+                        type="checkbox"
+                        checked={formData.use_ssl}
+                        onChange={(e) => onFieldChange("use_ssl", e.target.checked)}
+                        className="sr-only"
+                      />
+                      <div className="connection-form-toggle-copy">
+                        <span className="connection-form-toggle-title">{strings.useSsl}</span>
+                        <span className="connection-form-toggle-note">{strings.useSslNote}</span>
+                      </div>
+                      <div className="connection-form-toggle-track" aria-hidden="true">
+                        <div className="connection-form-toggle-thumb" />
+                      </div>
+                    </label>
+                  </div>
+                )}
+
+                {/* SSH Tunnel section */}
+                <div
+                  className="connection-form-toggle-row"
+                  style={{ marginTop: "1.5rem", marginBottom: "0.5rem" }}
+                >
                   <label className="connection-form-toggle-card">
                     <input
                       type="checkbox"
-                      checked={formData.use_ssl}
-                      onChange={(e) => onFieldChange("use_ssl", e.target.checked)}
+                      checked={formData.ssh_config?.enabled || false}
+                      onChange={(e) => {
+                        const enabled = e.target.checked;
+                        onFieldChange("ssh_config", {
+                          enabled,
+                          host: formData.ssh_config?.host || "",
+                          port: formData.ssh_config?.port || 22,
+                          user: formData.ssh_config?.user || "",
+                          authType: formData.ssh_config?.authType || "password",
+                          password: formData.ssh_config?.password || "",
+                          privateKeyPath: formData.ssh_config?.privateKeyPath || "",
+                          passphrase: formData.ssh_config?.passphrase || "",
+                        });
+                      }}
                       className="sr-only"
                     />
                     <div className="connection-form-toggle-copy">
-                      <span className="connection-form-toggle-title">{strings.useSsl}</span>
-                      <span className="connection-form-toggle-note">{strings.useSslNote}</span>
+                      <span className="connection-form-toggle-title">SSH Tunnel</span>
+                      <span className="connection-form-toggle-note">
+                        Connect to the database via SSH.
+                      </span>
                     </div>
                     <div className="connection-form-toggle-track" aria-hidden="true">
                       <div className="connection-form-toggle-thumb" />
                     </div>
                   </label>
                 </div>
-              )}
 
-              {/* SSH Tunnel section */}
-              <div
-                className="connection-form-toggle-row"
-                style={{ marginTop: "1.5rem", marginBottom: "0.5rem" }}
-              >
-                <label className="connection-form-toggle-card">
-                  <input
-                    type="checkbox"
-                    checked={formData.ssh_config?.enabled || false}
-                    onChange={(e) => {
-                      const enabled = e.target.checked;
-                      onFieldChange("ssh_config", {
-                        enabled,
-                        host: formData.ssh_config?.host || "",
-                        port: formData.ssh_config?.port || 22,
-                        user: formData.ssh_config?.user || "",
-                        authType: formData.ssh_config?.authType || "password",
-                        password: formData.ssh_config?.password || "",
-                        privateKeyPath: formData.ssh_config?.privateKeyPath || "",
-                        passphrase: formData.ssh_config?.passphrase || "",
-                      });
-                    }}
-                    className="sr-only"
-                  />
-                  <div className="connection-form-toggle-copy">
-                    <span className="connection-form-toggle-title">SSH Tunnel</span>
-                    <span className="connection-form-toggle-note">
-                      Connect to the database via SSH.
-                    </span>
-                  </div>
-                  <div className="connection-form-toggle-track" aria-hidden="true">
-                    <div className="connection-form-toggle-thumb" />
-                  </div>
-                </label>
-              </div>
-
-              {formData.ssh_config?.enabled && (
-                <div className="connection-form-grid" style={{ marginBottom: "1.5rem" }}>
-                  <div className="connection-form-field">
-                    <label className="form-label uppercase tracking-wide">SSH Host</label>
-                    <input
-                      type="text"
-                      value={formData.ssh_config.host || ""}
-                      onChange={(e) =>
-                        onFieldChange("ssh_config", {
-                          ...formData.ssh_config!,
-                          host: e.target.value,
-                        })
-                      }
-                      placeholder="example.com or IP"
-                      className="input h-11"
-                    />
-                  </div>
-                  <div className="connection-form-field">
-                    <label className="form-label uppercase tracking-wide">SSH Port</label>
-                    <input
-                      type="number"
-                      min={1}
-                      max={65535}
-                      value={formData.ssh_config.port || ""}
-                      onChange={(e) => {
-                        const parsed = parseInt(e.target.value, 10);
-                        onFieldChange("ssh_config", {
-                          ...formData.ssh_config!,
-                          port:
-                            Number.isFinite(parsed) && parsed > 0 && parsed <= 65535 ? parsed : 22,
-                        });
-                      }}
-                      placeholder="22"
-                      className="input h-11"
-                    />
-                  </div>
-                  <div className="connection-form-field">
-                    <label className="form-label uppercase tracking-wide">SSH Username</label>
-                    <input
-                      type="text"
-                      value={formData.ssh_config.user || ""}
-                      onChange={(e) =>
-                        onFieldChange("ssh_config", {
-                          ...formData.ssh_config!,
-                          user: e.target.value,
-                        })
-                      }
-                      placeholder="ubuntu"
-                      className="input h-11"
-                    />
-                  </div>
-                  <div className="connection-form-field">
-                    <label className="form-label uppercase tracking-wide">SSH Auth Type</label>
-                    <select
-                      value={formData.ssh_config.authType || "password"}
-                      onChange={(e) =>
-                        onFieldChange("ssh_config", {
-                          ...formData.ssh_config!,
-                          authType: e.target.value as any,
-                        })
-                      }
-                      className="input h-11"
-                    >
-                      <option value="password">Password</option>
-                      <option value="privateKey">Private Key File</option>
-                      <option value="privateKeyWithPassphrase">Private Key + Passphrase</option>
-                    </select>
-                  </div>
-
-                  {formData.ssh_config.authType === "password" && (
+                {formData.ssh_config?.enabled && (
+                  <div className="connection-form-grid" style={{ marginBottom: "1.5rem" }}>
                     <div className="connection-form-field">
-                      <label className="form-label uppercase tracking-wide">SSH Password</label>
-                      <input
-                        type="password"
-                        value={formData.ssh_config.password || ""}
-                        onChange={(e) =>
-                          onFieldChange("ssh_config", {
-                            ...formData.ssh_config!,
-                            password: e.target.value,
-                          })
-                        }
-                        placeholder="Password"
-                        className="input h-11"
-                      />
-                    </div>
-                  )}
-
-                  {(formData.ssh_config.authType === "privateKey" ||
-                    formData.ssh_config.authType === "privateKeyWithPassphrase") && (
-                    <div className="connection-form-field">
-                      <label className="form-label uppercase tracking-wide">
-                        Private Key File Path
-                      </label>
+                      <label className="form-label uppercase tracking-wide">SSH Host</label>
                       <input
                         type="text"
-                        value={formData.ssh_config.privateKeyPath || ""}
+                        value={formData.ssh_config.host || ""}
                         onChange={(e) =>
                           onFieldChange("ssh_config", {
                             ...formData.ssh_config!,
-                            privateKeyPath: e.target.value,
+                            host: e.target.value,
                           })
                         }
-                        placeholder="~/.ssh/id_rsa"
+                        placeholder="example.com or IP"
                         className="input h-11"
                       />
                     </div>
-                  )}
-
-                  {(formData.ssh_config.authType === "privateKey" ||
-                    formData.ssh_config.authType === "privateKeyWithPassphrase") && (
                     <div className="connection-form-field">
-                      <label className="form-label uppercase tracking-wide">
-                        Private Key (paste, optional)
-                      </label>
-                      <textarea
-                        value={formData.ssh_config.privateKey || ""}
-                        onChange={(e) =>
-                          onFieldChange("ssh_config", {
-                            ...formData.ssh_config!,
-                            privateKey: e.target.value,
-                          })
-                        }
-                        placeholder={"Paste OpenSSH/PEM private key contents"}
-                        rows={4}
-                        className="input font-mono text-xs"
-                        spellCheck={false}
-                      />
-                      <p className="text-xs opacity-70 mt-1">
-                        Paste the key contents to authenticate without a file on disk. When set,
-                        this takes priority over the file path above.
-                      </p>
-                    </div>
-                  )}
-
-                  {formData.ssh_config.authType === "privateKeyWithPassphrase" && (
-                    <div className="connection-form-field">
-                      <label className="form-label uppercase tracking-wide">Passphrase</label>
+                      <label className="form-label uppercase tracking-wide">SSH Port</label>
                       <input
-                        type="password"
-                        value={formData.ssh_config.passphrase || ""}
-                        onChange={(e) =>
+                        type="number"
+                        min={1}
+                        max={65535}
+                        value={formData.ssh_config.port || ""}
+                        onChange={(e) => {
+                          const parsed = parseInt(e.target.value, 10);
                           onFieldChange("ssh_config", {
                             ...formData.ssh_config!,
-                            passphrase: e.target.value,
-                          })
-                        }
-                        placeholder="Passphrase"
+                            port:
+                              Number.isFinite(parsed) && parsed > 0 && parsed <= 65535
+                                ? parsed
+                                : 22,
+                          });
+                        }}
+                        placeholder="22"
                         className="input h-11"
                       />
                     </div>
-                  )}
-                </div>
-              )}
+                    <div className="connection-form-field">
+                      <label className="form-label uppercase tracking-wide">SSH Username</label>
+                      <input
+                        type="text"
+                        value={formData.ssh_config.user || ""}
+                        onChange={(e) =>
+                          onFieldChange("ssh_config", {
+                            ...formData.ssh_config!,
+                            user: e.target.value,
+                          })
+                        }
+                        placeholder="ubuntu"
+                        className="input h-11"
+                      />
+                    </div>
+                    <div className="connection-form-field">
+                      <label className="form-label uppercase tracking-wide">SSH Auth Type</label>
+                      <select
+                        value={formData.ssh_config.authType || "password"}
+                        onChange={(e) =>
+                          onFieldChange("ssh_config", {
+                            ...formData.ssh_config!,
+                            authType: e.target.value as any,
+                          })
+                        }
+                        className="input h-11"
+                      >
+                        <option value="password">Password</option>
+                        <option value="privateKey">Private Key File</option>
+                        <option value="privateKeyWithPassphrase">Private Key + Passphrase</option>
+                      </select>
+                    </div>
 
-              {/* Startup commands section */}
-              <div className="connection-form-field">
-                <div className="connection-form-field-label-row">
-                  <label className="form-label uppercase tracking-wide">
-                    Startup Commands <span className="opacity-60">({strings.optional})</span>
-                  </label>
-                </div>
-                <textarea
-                  value={formData.startupCommands || ""}
-                  onChange={(e) => onFieldChange("startupCommands", e.target.value)}
-                  placeholder="SET search_path TO 'public';&#10;SET timezone = 'UTC';&#10;SELECT 1;"
-                  className="input connection-form-textarea"
-                  rows={4}
-                />
-                <span className="connection-form-field-hint">
-                  SQL executed automatically after connecting. Separate multiple commands with
-                  semicolons.
-                </span>
-              </div>
+                    {formData.ssh_config.authType === "password" && (
+                      <div className="connection-form-field">
+                        <label className="form-label uppercase tracking-wide">SSH Password</label>
+                        <input
+                          type="password"
+                          value={formData.ssh_config.password || ""}
+                          onChange={(e) =>
+                            onFieldChange("ssh_config", {
+                              ...formData.ssh_config!,
+                              password: e.target.value,
+                            })
+                          }
+                          placeholder="Password"
+                          className="input h-11"
+                        />
+                      </div>
+                    )}
 
-              <div className="connection-form-field-group">
-                <div className="connection-form-field-header">
-                  <label className="connection-form-label">Pre-connect Shell Script</label>
-                </div>
-                <textarea
-                  value={formData.pre_connect_script || ""}
-                  onChange={(e) => onFieldChange("pre_connect_script", e.target.value)}
-                  placeholder="#!/bin/bash&#10;aws sso login --profile prod"
-                  className="input connection-form-textarea"
-                  rows={3}
-                />
-                <span className="connection-form-field-hint">
-                  Shell script executed locally before establishing the connection to the database.
-                </span>
-              </div>
+                    {(formData.ssh_config.authType === "privateKey" ||
+                      formData.ssh_config.authType === "privateKeyWithPassphrase") && (
+                      <div className="connection-form-field">
+                        <label className="form-label uppercase tracking-wide">
+                          Private Key File Path
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.ssh_config.privateKeyPath || ""}
+                          onChange={(e) =>
+                            onFieldChange("ssh_config", {
+                              ...formData.ssh_config!,
+                              privateKeyPath: e.target.value,
+                            })
+                          }
+                          placeholder="~/.ssh/id_rsa"
+                          className="input h-11"
+                        />
+                      </div>
+                    )}
 
-              {/* Pool size — server engines that build an SQLx pool (PostgreSQL / MySQL / MariaDB). */}
-              {engineSupportsPoolSizing(formData.db_type) && (
+                    {(formData.ssh_config.authType === "privateKey" ||
+                      formData.ssh_config.authType === "privateKeyWithPassphrase") && (
+                      <div className="connection-form-field">
+                        <label className="form-label uppercase tracking-wide">
+                          Private Key (paste, optional)
+                        </label>
+                        <textarea
+                          value={formData.ssh_config.privateKey || ""}
+                          onChange={(e) =>
+                            onFieldChange("ssh_config", {
+                              ...formData.ssh_config!,
+                              privateKey: e.target.value,
+                            })
+                          }
+                          placeholder={"Paste OpenSSH/PEM private key contents"}
+                          rows={4}
+                          className="input font-mono text-xs"
+                          spellCheck={false}
+                        />
+                        <p className="text-xs opacity-70 mt-1">
+                          Paste the key contents to authenticate without a file on disk. When set,
+                          this takes priority over the file path above.
+                        </p>
+                      </div>
+                    )}
+
+                    {formData.ssh_config.authType === "privateKeyWithPassphrase" && (
+                      <div className="connection-form-field">
+                        <label className="form-label uppercase tracking-wide">Passphrase</label>
+                        <input
+                          type="password"
+                          value={formData.ssh_config.passphrase || ""}
+                          onChange={(e) =>
+                            onFieldChange("ssh_config", {
+                              ...formData.ssh_config!,
+                              passphrase: e.target.value,
+                            })
+                          }
+                          placeholder="Passphrase"
+                          className="input h-11"
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Startup commands section */}
                 <div className="connection-form-field">
                   <div className="connection-form-field-label-row">
                     <label className="form-label uppercase tracking-wide">
-                      {isVi ? "Số kết nối tối đa của pool" : "Pool max connections"}{" "}
+                      Startup Commands <span className="opacity-60">({strings.optional})</span>
+                    </label>
+                  </div>
+                  <textarea
+                    value={formData.startupCommands || ""}
+                    onChange={(e) => onFieldChange("startupCommands", e.target.value)}
+                    placeholder="SET search_path TO 'public';&#10;SET timezone = 'UTC';&#10;SELECT 1;"
+                    className="input connection-form-textarea"
+                    rows={4}
+                  />
+                  <span className="connection-form-field-hint">
+                    SQL executed automatically after connecting. Separate multiple commands with
+                    semicolons.
+                  </span>
+                </div>
+
+                <div className="connection-form-field-group">
+                  <div className="connection-form-field-header">
+                    <label className="connection-form-label">Pre-connect Shell Script</label>
+                  </div>
+                  <textarea
+                    value={formData.pre_connect_script || ""}
+                    onChange={(e) => onFieldChange("pre_connect_script", e.target.value)}
+                    placeholder="#!/bin/bash&#10;aws sso login --profile prod"
+                    className="input connection-form-textarea"
+                    rows={3}
+                  />
+                  <span className="connection-form-field-hint">
+                    Shell script executed locally before establishing the connection to the
+                    database.
+                  </span>
+                </div>
+
+                {/* Pool size — server engines that build an SQLx pool (PostgreSQL / MySQL / MariaDB). */}
+                {engineSupportsPoolSizing(formData.db_type) && (
+                  <div className="connection-form-field">
+                    <div className="connection-form-field-label-row">
+                      <label className="form-label uppercase tracking-wide">
+                        {isVi ? "Số kết nối tối đa của pool" : "Pool max connections"}{" "}
+                        <span className="opacity-60">({strings.optional})</span>
+                      </label>
+                    </div>
+                    <input
+                      type="number"
+                      min={MIN_POOL_MAX_CONNECTIONS}
+                      max={MAX_POOL_MAX_CONNECTIONS}
+                      step={1}
+                      value={additionalFields[POOL_MAX_CONNECTIONS_KEY] ?? ""}
+                      onChange={(e) =>
+                        onAdditionalFieldChange(POOL_MAX_CONNECTIONS_KEY, e.target.value)
+                      }
+                      placeholder={String(POOL_MAX_CONNECTIONS_DEFAULT)}
+                      className="input h-11"
+                    />
+                    <span className="connection-form-field-hint">
+                      {isVi
+                        ? `Số kết nối tối đa trong pool cho kết nối này (mặc định ${POOL_MAX_CONNECTIONS_DEFAULT}, giới hạn ${MIN_POOL_MAX_CONNECTIONS}–${MAX_POOL_MAX_CONNECTIONS}). Để trống để dùng mặc định.`
+                        : `Maximum pooled connections for this connection (default ${POOL_MAX_CONNECTIONS_DEFAULT}, clamped ${MIN_POOL_MAX_CONNECTIONS}–${MAX_POOL_MAX_CONNECTIONS}). Leave blank to use the default.`}
+                    </span>
+                  </div>
+                )}
+
+                {/* Per-connection query timeout — blank keeps the backend default. */}
+                <div className="connection-form-field">
+                  <div className="connection-form-field-label-row">
+                    <label className="form-label uppercase tracking-wide">
+                      {isVi ? "Giới hạn thời gian truy vấn (giây)" : "Query timeout (seconds)"}{" "}
                       <span className="opacity-60">({strings.optional})</span>
                     </label>
                   </div>
                   <input
                     type="number"
-                    min={MIN_POOL_MAX_CONNECTIONS}
-                    max={MAX_POOL_MAX_CONNECTIONS}
+                    min={1}
+                    max={600}
                     step={1}
-                    value={additionalFields[POOL_MAX_CONNECTIONS_KEY] ?? ""}
-                    onChange={(e) =>
-                      onAdditionalFieldChange(POOL_MAX_CONNECTIONS_KEY, e.target.value)
-                    }
-                    placeholder={String(POOL_MAX_CONNECTIONS_DEFAULT)}
+                    value={formData.query_timeout_seconds ?? ""}
+                    onChange={(e) => {
+                      const raw = e.target.value.trim();
+                      if (raw === "") {
+                        onFieldChange("query_timeout_seconds", undefined);
+                        return;
+                      }
+                      const parsed = Number.parseInt(raw, 10);
+                      if (Number.isFinite(parsed) && parsed > 0) {
+                        onFieldChange("query_timeout_seconds", parsed);
+                      }
+                    }}
+                    placeholder="180"
                     className="input h-11"
                   />
                   <span className="connection-form-field-hint">
                     {isVi
-                      ? `Số kết nối tối đa trong pool cho kết nối này (mặc định ${POOL_MAX_CONNECTIONS_DEFAULT}, giới hạn ${MIN_POOL_MAX_CONNECTIONS}–${MAX_POOL_MAX_CONNECTIONS}). Để trống để dùng mặc định.`
-                      : `Maximum pooled connections for this connection (default ${POOL_MAX_CONNECTIONS_DEFAULT}, clamped ${MIN_POOL_MAX_CONNECTIONS}–${MAX_POOL_MAX_CONNECTIONS}). Leave blank to use the default.`}
+                      ? "Thời gian tối đa một truy vấn được chạy trên kết nối này (giới hạn 1–600 giây). Để trống để dùng mặc định."
+                      : "Maximum time a query may run on this connection (clamped 1–600s). Leave blank to use the default."}
                   </span>
                 </div>
-              )}
-
-              {/* Per-connection query timeout — blank keeps the backend default. */}
-              <div className="connection-form-field">
-                <div className="connection-form-field-label-row">
-                  <label className="form-label uppercase tracking-wide">
-                    {isVi ? "Giới hạn thời gian truy vấn (giây)" : "Query timeout (seconds)"}{" "}
-                    <span className="opacity-60">({strings.optional})</span>
-                  </label>
-                </div>
-                <input
-                  type="number"
-                  min={1}
-                  max={600}
-                  step={1}
-                  value={formData.query_timeout_seconds ?? ""}
-                  onChange={(e) => {
-                    const raw = e.target.value.trim();
-                    if (raw === "") {
-                      onFieldChange("query_timeout_seconds", undefined);
-                      return;
-                    }
-                    const parsed = Number.parseInt(raw, 10);
-                    if (Number.isFinite(parsed) && parsed > 0) {
-                      onFieldChange("query_timeout_seconds", parsed);
-                    }
-                  }}
-                  placeholder="180"
-                  className="input h-11"
-                />
-                <span className="connection-form-field-hint">
-                  {isVi
-                    ? "Thời gian tối đa một truy vấn được chạy trên kết nối này (giới hạn 1–600 giây). Để trống để dùng mặc định."
-                    : "Maximum time a query may run on this connection (clamped 1–600s). Leave blank to use the default."}
-                </span>
-              </div>
-            </section>
-          )}
+              </>
+            )}
+          </section>
 
           {/* Engine fields */}
           {engineExtraFields.length > 0 && (

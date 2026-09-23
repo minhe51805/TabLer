@@ -292,6 +292,12 @@ export interface AIWorkspacePanelViewModel {
   retryBubble: (bubble: AIWorkspaceBubbleData) => void;
   /** Re-runs a finished bubble's prompt in place (same chat slot). */
   regenerateBubble: (bubble: AIWorkspaceBubbleData) => void;
+  /** Number of sends parked while a run is in flight (composer chip). */
+  pendingQueueCount: number;
+  /** Drops every queued send. */
+  clearPendingQueue: () => void;
+  /** Edit a finished turn's prompt and re-run it into the same chat slot. */
+  editRerun: (bubble: AIWorkspaceBubbleData, editedPrompt: string) => void;
   /** Records 👍/👎 on a finished answer into the learning loop. */
   submitBubbleFeedback: (
     bubble: AIWorkspaceBubbleData,
@@ -585,6 +591,7 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
                 onRetry={m.retryBubble}
                 onRegenerate={m.regenerateBubble}
                 onFeedback={m.submitBubbleFeedback}
+                onEditRerun={m.editRerun}
                 onCopy={m.copyBubble}
                 onOpenRecord={m.openAgentRecord}
                 onUseSuggestion={handleUseSuggestion}
@@ -617,6 +624,8 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
                 providers={m.switchableProviders}
                 isSwitchingProvider={m.isSwitchingProvider}
                 isGenerating={m.isGenerating}
+                pendingQueueCount={m.pendingQueueCount}
+                onClearPendingQueue={m.clearPendingQueue}
                 isCancelling={m.isCancelling}
                 isConnectionAvailable={Boolean(m.connectionId)}
                 isSessionDataReadEnabled={m.isSessionDataReadEnabled}

@@ -1,11 +1,4 @@
-import {
-  BarChart3,
-  ChevronDown,
-  ChevronRight,
-  Database,
-  Plus,
-  Search,
-} from "lucide-react";
+import { BarChart3, ChevronDown, ChevronRight, Database, Plus, Search } from "lucide-react";
 import type { MetricsBoardDefinition } from "../../../types";
 import { getWidgetLibraryItem } from "../utils/query-builder";
 
@@ -23,6 +16,7 @@ interface Props {
   onSelectWidget: (widgetId: string) => void;
   onOpenDatabaseSidebar: () => void;
   onFocusMetricsSidebar: () => void;
+  onReorderWidgets: (boardId: string, widgetIds: string[]) => void;
 }
 
 export function MetricsBoardSidebar({
@@ -38,6 +32,7 @@ export function MetricsBoardSidebar({
   onSelectBoard,
   onSelectWidget,
   onOpenDatabaseSidebar,
+  onReorderWidgets,
   onFocusMetricsSidebar,
 }: Props) {
   const handleFocus = () => {
@@ -66,7 +61,9 @@ export function MetricsBoardSidebar({
         >
           <BarChart3 className="w-4 h-4" />
           <span>Metrics</span>
-          <small>{boards.length} board{boards.length === 1 ? "" : "s"}</small>
+          <small>
+            {boards.length} board{boards.length === 1 ? "" : "s"}
+          </small>
         </button>
       </aside>
 
@@ -86,7 +83,12 @@ export function MetricsBoardSidebar({
             onChange={(event) => onBoardSearchChange(event.target.value)}
             placeholder="Search for metrics board..."
           />
-          <button type="button" className="metrics-board-inline-action" onClick={onCreateBoard} title="Create metrics board">
+          <button
+            type="button"
+            className="metrics-board-inline-action"
+            onClick={onCreateBoard}
+            title="Create metrics board"
+          >
             <Plus className="w-3.5 h-3.5" />
           </button>
         </div>
@@ -101,7 +103,11 @@ export function MetricsBoardSidebar({
                   className={`metrics-board-list-item ${isActive ? "active" : ""}`}
                   onClick={() => onSelectBoard(board.id)}
                 >
-                  {isActive ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
+                  {isActive ? (
+                    <ChevronDown className="w-3 h-3" />
+                  ) : (
+                    <ChevronRight className="w-3 h-3" />
+                  )}
                   <BarChart3 className="w-3.5 h-3.5" />
                   <div className="metrics-board-list-copy">
                     <span>{board.name}</span>
@@ -109,24 +115,73 @@ export function MetricsBoardSidebar({
                       {board.widgets.length} widget{board.widgets.length === 1 ? "" : "s"}
                     </small>
                   </div>
+                  <div className="metrics-board-list-types">
+                    {Object.entries(
+                      board.widgets.reduce<Record<string, number>>((acc, w) => {
+                        acc[w.type] = (acc[w.type] || 0) + 1;
+                        return acc;
+                      }, {}),
+                    ).map(([type, count]) => {
+                      const Icon = getWidgetLibraryItem(type as never).icon;
+                      return (
+                        <span
+                          key={type}
+                          className="metrics-board-list-type"
+                          title={`${count} ${type}`}
+                        >
+                          <Icon className="w-2.5 h-2.5" />
+                          {count}
+                        </span>
+                      );
+                    })}
+                  </div>
                 </button>
 
                 {isActive && board.widgets.length > 0 && (
                   <div className="metrics-board-list-children">
-                    {board.widgets.map((widget) => {
-                      const Icon = getWidgetLibraryItem(widget.type).icon;
-                      return (
-                        <button
-                          key={widget.id}
-                          type="button"
-                          className={`metrics-board-list-child ${activeWidgetId === widget.id ? "active" : ""}`}
-                          onClick={() => onSelectWidget(widget.id)}
-                        >
-                          <Icon className="w-3 h-3" />
-                          <span>{widget.title}</span>
-                        </button>
-                      );
-                    })}
+                    {board.widgets
+                      .filter(
+                        (w) =>
+                          !boardSearch || w.title.toLowerCase().includes(boardSearch.toLowerCase()),
+                      )
+                      .map((widget) => {
+                        const Icon = getWidgetLibraryItem(widget.type).icon;
+                        return (
+                          <button
+                            key={widget.id}
+                            type="button"
+                            className={`metrics-board-list-child ${activeWidgetId === widget.id ? "active" : ""}`}
+                            onClick={() => onSelectWidget(widget.id)}
+                            draggable
+                            onDragStart={(e) => {
+                              e.dataTransfer.setData("text/plain", widget.id);
+                              e.dataTransfer.effectAllowed = "move";
+                            }}
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = "move";
+                            }}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              const draggedId = e.dataTransfer.getData("text/plain");
+                              if (!draggedId || draggedId === widget.id) return;
+                              const fromIdx = board.widgets.findIndex((w) => w.id === draggedId);
+                              const toIdx = board.widgets.findIndex((w) => w.id === widget.id);
+                              if (fromIdx < 0 || toIdx < 0) return;
+                              const next = [...board.widgets];
+                              const [moved] = next.splice(fromIdx, 1);
+                              next.splice(toIdx, 0, moved);
+                              onReorderWidgets(
+                                board.id,
+                                next.map((w) => w.id),
+                              );
+                            }}
+                          >
+                            <Icon className="w-3 h-3" />
+                            <span>{widget.title}</span>
+                          </button>
+                        );
+                      })}
                   </div>
                 )}
               </div>

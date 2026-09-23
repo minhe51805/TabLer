@@ -12,6 +12,8 @@ import { useAppLayoutStore } from "../../stores/appLayoutStore";
 import { emitAppToast } from "../../utils/app-toast";
 import { requestAppConfirmation } from "../../stores/confirmStore";
 import { getScheduleCopy } from "./schedule-copy";
+import { extractParams } from "../../utils/sql-params";
+import { getParamFillCopy } from "../SQLFavorites/param-fill-copy";
 import "../../styles/lazy-overlays.css";
 
 const MINUTE_OPTIONS = [5, 15, 30, 60, 180, 360, 720, 1440];
@@ -257,6 +259,9 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
                   }
                   spellCheck={false}
                 />
+                {extractParams(editor.sql).length > 0 ? (
+                  <p className="fav-entry-desc">{getParamFillCopy(language).scheduleWarning}</p>
+                ) : null}
               </div>
             ) : (
               <div className="fav-form-field">

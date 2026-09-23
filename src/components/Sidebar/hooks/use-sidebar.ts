@@ -9,6 +9,8 @@ import { useI18n } from "../../../i18n";
 import { useEvent, EventCenter } from "../../../stores/event-center";
 import { getQualifiedTableName, normalizeObjectSql, copyToClipboard } from "../SidebarUtils";
 import { getBulkActionsCopy } from "../bulk-actions-copy";
+import { getCodegenCopy } from "../codegen-copy";
+import { generateCode, type CodegenTarget } from "../../../utils/schema-codegen";
 import type { BulkDropTablePreview } from "../components/BulkDropTablesModal";
 import { getSeedRowsCopy } from "../../GenerateTestRows/seed-rows-copy";
 import {
@@ -367,6 +369,8 @@ export function useSidebar() {
     await copyToClipboard(getQualifiedTableName(table));
   }, []);
 
+  const codegenCopy = useMemo(() => getCodegenCopy(language), [language]);
+
   /** Generate a Markdown schema book for this table through the save dialog. */
   const [queryBuilderTable, setQueryBuilderTable] = useState<string | null>(null);
   const queryStore = useQueryStore.getState();
@@ -414,6 +418,32 @@ export function useSidebar() {
     [activeConnectionId, currentDatabase, t],
   );
 
+  /** Copy the table's columns as a generated type/schema in the target language. */
+  const handleCopyAsCode = useCallback(
+    async (table: Pick<TableInfo, "name" | "schema">, target: CodegenTarget) => {
+      if (!activeConnectionId) return;
+      try {
+        const structure = await queryStore.getTableStructure(
+          activeConnectionId,
+          table.name,
+          currentDatabase || undefined,
+        );
+        const result = generateCode(structure.columns, table.name, target);
+        await copyToClipboard(result.code);
+        emitAppToast({
+          title: codegenCopy.copiedTitle(result.typeName, result.fieldCount),
+          tone: "success",
+        });
+      } catch (error) {
+        emitAppToast({
+          title: codegenCopy.failedTitle,
+          description: error instanceof Error ? error.message : String(error),
+          tone: "error",
+        });
+      }
+    },
+    [activeConnectionId, currentDatabase, codegenCopy, queryStore],
+  );
   const handleRefresh = useCallback(async () => {
     if (!activeConnectionId) return;
     await fetchDatabases(activeConnectionId);
@@ -1024,6 +1054,15 @@ export function useSidebar() {
         action: () => void handleGenerateTableDocs(table),
       },
       {
+        key: "copy-as-code",
+        label: codegenCopy.menuLabel,
+        children: (["typescript", "zod", "rust", "go", "jsonschema"] as const).map((target) => ({
+          key: `codegen-${target}`,
+          label: codegenCopy.targets[target],
+          action: () => void handleCopyAsCode(table, target),
+        })),
+      },
+      {
         key: "visual-query-builder",
         label: t("querybuilder.title"),
         action: () => void handleOpenQueryBuilder(table.name),
@@ -1231,6 +1270,8 @@ export function useSidebar() {
     handleOpenStructureDraft,
     openQueryDraft,
     handleCopyTableName,
+    handleCopyAsCode,
+    codegenCopy,
     handleGenerateTableDocs,
     handleOpenQueryBuilder,
     handleGenerateTestRows,

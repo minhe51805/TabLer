@@ -41,6 +41,8 @@ import { ConfirmDialog } from "../ConfirmDialog";
 import type { AISlashCommand } from "./ai-slash-commands";
 import type { AIWorkspaceAgentAutonomy, AIWorkspaceInteractionMode } from "./ai-workspace-types";
 import { describeSandboxPolicy, type SandboxPolicy } from "./ai-execution-policy";
+import { formatPanelCopy, getAIPanelCopy } from "./ai-panel-copy";
+import { useI18n } from "../../i18n";
 
 interface AIComposerDockProps {
   copy: AIWorkspaceCopy;
@@ -55,6 +57,9 @@ interface AIComposerDockProps {
   providers: AIProviderConfig[];
   isSwitchingProvider: boolean;
   isGenerating: boolean;
+  /** Sends parked while a run is in flight; the chip lets the user drop them. */
+  pendingQueueCount?: number;
+  onClearPendingQueue?: () => void;
   isCancelling: boolean;
   isConnectionAvailable: boolean;
   isSessionDataReadEnabled: boolean;
@@ -148,6 +153,8 @@ export function AIComposerDock({
   providers,
   isSwitchingProvider,
   isGenerating,
+  pendingQueueCount = 0,
+  onClearPendingQueue,
   isCancelling,
   isConnectionAvailable,
   isSessionDataReadEnabled,
@@ -178,6 +185,9 @@ export function AIComposerDock({
   slashMenu = null,
   onSelectSlashCommand,
 }: AIComposerDockProps) {
+  const { language } = useI18n();
+  const panelCopy = getAIPanelCopy(language);
+
   const [openMenu, setOpenMenu] = useState<ComposerMenu | null>(null);
   const [expandedProviderId, setExpandedProviderId] = useState<string | null>(null);
   const [showHiddenModels, setShowHiddenModels] = useState(false);
@@ -374,6 +384,24 @@ export function AIComposerDock({
             activeIndex={slashMenu.activeIndex}
             onSelect={onSelectSlashCommand}
           />
+        )}
+        {pendingQueueCount > 0 && (
+          <div className="ai-workspace-queue-chip" role="status">
+            <span>
+              {formatPanelCopy(panelCopy.responseActions.queuedCount, {
+                count: String(pendingQueueCount),
+              })}
+            </span>
+            {onClearPendingQueue && (
+              <button
+                type="button"
+                className="ai-workspace-queue-chip-clear"
+                onClick={onClearPendingQueue}
+              >
+                {panelCopy.responseActions.queuedClear}
+              </button>
+            )}
+          </div>
         )}
         <textarea
           ref={textareaRef}

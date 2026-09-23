@@ -235,3 +235,81 @@ fn timeout_uses_read_only_window_only_for_read_batches() {
         mutating_query_timeout()
     );
 }
+
+#[tokio::test]
+async fn read_only_connection_rejects_writes_and_allows_reads() {
+    // The per-connection pin must hold at the earliest command guard: a
+    // read-only session runs SELECTs but refuses every mutating or
+    // unclassifiable statement before the driver is touched.
+    let root = std::env::temp_dir().join(format!("tabler-readonly-guard-{}", uuid::Uuid::new_v4()));
+    let storage = crate::storage::plugin_storage::PluginStorage::from_data_dir(root.clone())
+        .expect("plugin storage");
+    let manager = crate::database::manager::DatabaseManager::with_plugin_storage(storage);
+    let config = crate::database::models::ConnectionConfig {
+        id: "ro-sqlite".to_string(),
+        name: "RO SQLite".to_string(),
+        db_type: crate::database::models::DatabaseType::SQLite,
+        file_path: Some(":memory:".to_string()),
+        read_only: true,
+        ..crate::database::models::ConnectionConfig::default()
+    };
+    manager.connect(&config).await.expect("connect sqlite");
+
+    assert!(
+        super::assert_connection_writable_sql(&manager, &config.id, "SELECT 1")
+            .await
+            .is_ok()
+    );
+    for sql in [
+        "INSERT INTO t VALUES (1)",
+        "UPDATE t SET a = 1",
+        "DELETE FROM t",
+        "CREATE TABLE t (id INT)",
+        "DROP TABLE t",
+        "SELECT 1; DELETE FROM t",
+        "this is not sql",
+    ] {
+        let error = super::assert_connection_writable_sql(&manager, &config.id, sql)
+            .await
+            .expect_err("read-only connection must reject writes");
+        assert!(
+            error.to_string().contains("read-only"),
+            "expected read-only error for `{sql}`, got: {error}"
+        );
+    }
+    // The blanket write guard fires for write-only commands too.
+    let error = manager
+        .assert_write_allowed(&config.id)
+        .await
+        .expect_err("write commands must be blocked");
+    assert!(error.contains("read-only"));
+
+    manager.disconnect(&config.id).await.expect("disconnect");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[tokio::test]
+async fn writable_connection_passes_the_read_only_guard() {
+    // Same harness, pin unset: the guard must not interfere with normal
+    // connections regardless of statement kind.
+    let root = std::env::temp_dir().join(format!("tabler-writable-guard-{}", uuid::Uuid::new_v4()));
+    let storage = crate::storage::plugin_storage::PluginStorage::from_data_dir(root.clone())
+        .expect("plugin storage");
+    let manager = crate::database::manager::DatabaseManager::with_plugin_storage(storage);
+    let config = crate::database::models::ConnectionConfig {
+        id: "rw-sqlite".to_string(),
+        name: "RW SQLite".to_string(),
+        db_type: crate::database::models::DatabaseType::SQLite,
+        file_path: Some(":memory:".to_string()),
+        ..crate::database::models::ConnectionConfig::default()
+    };
+    manager.connect(&config).await.expect("connect sqlite");
+    assert!(
+        super::assert_connection_writable_sql(&manager, &config.id, "DELETE FROM t")
+            .await
+            .is_ok()
+    );
+    assert!(manager.assert_write_allowed(&config.id).await.is_ok());
+    manager.disconnect(&config.id).await.expect("disconnect");
+    let _ = std::fs::remove_dir_all(root);
+}

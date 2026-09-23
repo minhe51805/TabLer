@@ -1,5 +1,9 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
-import type { MetricsBoardDefinition, MetricsWidgetDefinition, MetricsWidgetType } from "../../../types";
+import type {
+  MetricsBoardDefinition,
+  MetricsWidgetDefinition,
+  MetricsWidgetType,
+} from "../../../types";
 import {
   canPlaceWidget,
   createBoardDefinition,
@@ -52,9 +56,7 @@ export function useMetricsBoardWidgets({
     (updater: (board: MetricsBoardDefinition) => MetricsBoardDefinition) => {
       if (!activeBoard) return;
       const nextBoards = boards.map((board) =>
-        board.id === activeBoard.id
-          ? { ...updater(board), updated_at: Date.now() }
-          : board,
+        board.id === activeBoard.id ? { ...updater(board), updated_at: Date.now() } : board,
       );
       persistBoards(nextBoards);
     },
@@ -66,9 +68,7 @@ export function useMetricsBoardWidgets({
       if (!activeBoard) return;
 
       updateActiveBoard((board) => {
-        const currentWidget = board.widgets.find(
-          (widget) => widget.id === widgetId,
-        );
+        const currentWidget = board.widgets.find((widget) => widget.id === widgetId);
         if (!currentWidget) return board;
 
         const others = board.widgets.filter((widget) => widget.id !== widgetId);
@@ -82,9 +82,7 @@ export function useMetricsBoardWidgets({
 
         return {
           ...board,
-          widgets: board.widgets.map((widget) =>
-            widget.id === widgetId ? positioned : widget,
-          ),
+          widgets: board.widgets.map((widget) => (widget.id === widgetId ? positioned : widget)),
         };
       });
     },
@@ -98,15 +96,28 @@ export function useMetricsBoardWidgets({
     setActiveBoardId(nextBoard.id);
     setActiveWidgetId(null);
     setEditingWidgetId(null);
-  }, [boards, connectionId, database, persistBoards, setActiveBoardId, setActiveWidgetId, setEditingWidgetId]);
+  }, [
+    boards,
+    connectionId,
+    database,
+    persistBoards,
+    setActiveBoardId,
+    setActiveWidgetId,
+    setEditingWidgetId,
+  ]);
 
   const addWidget = useCallback(
-    (type: MetricsWidgetType, preferredPosition?: Partial<GridPosition>) => {
+    (
+      type: MetricsWidgetType,
+      preferredPosition?: Partial<GridPosition>,
+      overrides?: { title?: string; query?: string; colSpan?: number; rowSpan?: number },
+    ) => {
       if (!activeBoard) return;
       const nextWidget = createWidgetDefinition(
         type,
         activeBoard.widgets,
         preferredPosition,
+        overrides,
       );
       updateActiveBoard((board) => ({
         ...board,
@@ -152,6 +163,71 @@ export function useMetricsBoardWidgets({
     setEditingWidgetId(null);
   }, [editingWidget, setActiveWidgetId, setEditingWidgetId, updateActiveBoard]);
 
+  /** Non-layout field updates on any widget (context menu: type, refresh). */
+  const updateWidgetById = useCallback(
+    (widgetId: string, updates: Partial<MetricsWidgetDefinition>) => {
+      updateActiveBoard((board) => ({
+        ...board,
+        widgets: board.widgets.map((widget) =>
+          widget.id === widgetId ? { ...widget, ...updates } : widget,
+        ),
+      }));
+    },
+    [updateActiveBoard],
+  );
+
+  /** Clone a widget next to the original (collision-aware placement). */
+  const duplicateWidget = useCallback(
+    (widgetId: string) => {
+      if (!activeBoard) return;
+      const source = activeBoard.widgets.find((widget) => widget.id === widgetId);
+      if (!source) return;
+      const clone = normalizeWidgetLayout({
+        ...source,
+        id: `widget-${crypto.randomUUID()}`,
+        title: `${source.title} copy`,
+        grid_x: source.grid_x + 1,
+        grid_y: source.grid_y + 1,
+      });
+      const others = activeBoard.widgets;
+      const positioned = canPlaceWidget(others, clone, clone.id)
+        ? clone
+        : { ...clone, ...findFirstAvailablePosition(others, clone) };
+      updateActiveBoard((board) => ({
+        ...board,
+        widgets: [...board.widgets, positioned],
+      }));
+      setActiveWidgetId(positioned.id);
+    },
+    [activeBoard, setActiveWidgetId, updateActiveBoard],
+  );
+
+  /** Delete any widget by id (context menu / Delete key). */
+  const deleteWidgetById = useCallback(
+    (widgetId: string) => {
+      updateActiveBoard((board) => ({
+        ...board,
+        widgets: board.widgets.filter((widget) => widget.id !== widgetId),
+      }));
+      setActiveWidgetId((current) => (current === widgetId ? null : current));
+      setEditingWidgetId((current) => (current === widgetId ? null : current));
+    },
+    [setActiveWidgetId, setEditingWidgetId, updateActiveBoard],
+  );
+
+  /** Re-insert a deleted widget (undo toast). */
+  const restoreWidget = useCallback(
+    (widget: MetricsWidgetDefinition) => {
+      updateActiveBoard((board) => {
+        const positioned = canPlaceWidget(board.widgets, widget, widget.id)
+          ? widget
+          : { ...widget, ...findFirstAvailablePosition(board.widgets, widget) };
+        return { ...board, widgets: [...board.widgets, positioned] };
+      });
+    },
+    [updateActiveBoard],
+  );
+
   return {
     updateActiveBoard,
     updateWidgetLayout,
@@ -159,5 +235,9 @@ export function useMetricsBoardWidgets({
     addWidget,
     updateSelectedWidget,
     deleteSelectedWidget,
+    updateWidgetById,
+    duplicateWidget,
+    deleteWidgetById,
+    restoreWidget,
   };
 }

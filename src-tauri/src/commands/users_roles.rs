@@ -135,6 +135,7 @@ pub async fn apply_user_role_change(
     confirmation_phrase: String,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<UserRoleSnapshot, String> {
+    db_manager.assert_write_allowed(&connection_id).await?;
     if confirmation_phrase.trim() != APPLY_CONFIRMATION {
         return Err("Explicit confirmation phrase did not match.".to_string());
     }

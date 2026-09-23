@@ -98,6 +98,7 @@ pub async fn restore_database_sql(
     db_manager: State<'_, DatabaseManager>,
     safe_mode: State<'_, SafeModeState>,
 ) -> Result<RestoreResult, String> {
+    db_manager.assert_write_allowed(&connection_id).await?;
     run_sql_restore(
         &connection_id,
         &sql,
@@ -134,6 +135,7 @@ pub(super) async fn run_sql_restore(
     require_backup_restore_capability: bool,
     pre_restore: PreRestoreSnapshot,
 ) -> Result<RestoreResult, String> {
+    db_manager.assert_write_allowed(connection_id).await?;
     if enforce_safe_mode {
         safe_mode.assert_sql_allowed(connection_id, sql).await?;
     }

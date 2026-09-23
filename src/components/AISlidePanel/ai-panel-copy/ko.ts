@@ -30,6 +30,11 @@ export const KO_PANEL_COPY: AIPanelCopy = {
       tooSlow: "너무 느림",
       other: "기타",
     },
+    editPrompt: "수정 후 다시 실행",
+    editPromptSave: "다시 실행",
+    editPromptCancel: "취소",
+    queuedCount: "{count}개 대기 중",
+    queuedClear: "모두 버리기",
   },
   rules: {
     title: "가드레일 규칙",

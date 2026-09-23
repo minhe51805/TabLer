@@ -71,7 +71,9 @@ function normalizeSqlForMetrics(statement: string) {
   return stripLeadingSqlNoise(statement).replace(/\s+/g, " ").trim().toUpperCase();
 }
 
-export function validateMetricsQuery(sql: string): { ok: true; statement: string } | { ok: false; error: string } {
+export function validateMetricsQuery(
+  sql: string,
+): { ok: true; statement: string } | { ok: false; error: string } {
   const statements = splitSqlStatements(sql)
     .map((statement) => statement.trim())
     .filter(Boolean);
@@ -174,6 +176,16 @@ export function getSeries(result: QueryResult | null) {
     .slice(0, 8);
 }
 
+/** The column a chart's category labels came from — mirrors getSeries' pick. */
+export function getSeriesLabelColumn(result: QueryResult | null): string | null {
+  if (!result || result.rows.length === 0 || result.columns.length === 0) return null;
+  const row = result.rows[0];
+  const numericIndex = row.findIndex((value) => toNumber(value) !== null);
+  if (numericIndex === -1) return null;
+  const labelIndex = numericIndex === 0 ? 1 : 0;
+  return result.columns[labelIndex]?.name ?? null;
+}
+
 // ---------------------------------------------------------------------------
 
 // Query execution
@@ -222,7 +234,10 @@ function enqueueMetricsQuery<T>(run: () => Promise<T>): Promise<T> {
   });
 }
 
-export async function executeMetricsQuery(connectionId: string, statement: string): Promise<QueryResult> {
+export async function executeMetricsQuery(
+  connectionId: string,
+  statement: string,
+): Promise<QueryResult> {
   return enqueueMetricsQuery(() =>
     withTimeout<QueryResult>(
       invoke("execute_sandboxed_query", {

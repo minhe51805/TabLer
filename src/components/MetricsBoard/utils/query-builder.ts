@@ -7,3 +7,5 @@ export * from "./metrics-grid-config";
 export * from "./metrics-widget-catalog";
 export * from "./metrics-query-engine";
 export * from "./metrics-board-storage";
+export * from "./metrics-board-io";
+export * from "./metrics-query-history";

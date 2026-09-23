@@ -25,7 +25,8 @@
   --radius-lg: 16px;
   --shadow-card: 0 1px 2px rgba(16, 24, 33, 0.04);
   --shadow-hover: 0 14px 34px rgba(16, 24, 33, 0.1);
-  --font-display: var(--font-display-dm), var(--font-geist-sans), "DM Sans", system-ui, sans-serif;
+  --font-display:
+    var(--font-display-grotesk), var(--font-geist-sans), "Space Grotesk", system-ui, sans-serif;
   --shell: 1180px;
 }
 
@@ -126,9 +127,16 @@ h2,
 h3,
 h4,
 .brand,
-.hero h1,
-.eyebrow {
+.hero h1 {
   font-family: var(--font-display);
+}
+
+.eyebrow,
+.hero-kicker,
+.workflow-label,
+.signal-grid span,
+.site-footer-col strong {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
 }
 
 h1,
@@ -217,13 +225,11 @@ a {
   font-weight: 600;
 }
 
-.main-nav a,
-.footer-links a {
+.main-nav a {
   transition: color 160ms ease;
 }
 
-.main-nav a:hover,
-.footer-links a:hover {
+.main-nav a:hover {
   color: var(--blue);
 }
 
@@ -702,7 +708,7 @@ a {
 .engine-layout {
   display: grid;
   grid-template-columns: 0.82fr 1.45fr;
-  gap: 84px;
+  gap: 56px;
   align-items: start;
 }
 
@@ -733,11 +739,11 @@ a {
 
 .engine-item {
   min-width: 0;
-  min-height: 68px;
+  min-height: 52px;
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 13px 15px;
+  gap: 10px;
+  padding: 9px 13px;
   border-right: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   font-size: 13px;
@@ -749,33 +755,15 @@ a {
 }
 
 .engine-mark {
-  width: 31px;
-  height: 31px;
+  width: 28px;
+  height: 28px;
   display: inline-flex;
   flex: 0 0 auto;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
-}
-
-.engine-mark-1 {
-  color: var(--blue);
-  background: var(--blue-soft);
-}
-
-.engine-mark-2 {
-  color: var(--green);
-  background: var(--green-soft);
-}
-
-.engine-mark-3 {
-  color: #ce456c;
-  background: #fff0f4;
-}
-
-.engine-mark-4 {
-  color: #9a6a0e;
-  background: #fff8e8;
+  border-radius: 7px;
+  color: #5b6673;
+  background: var(--canvas);
 }
 
 .open-source-section {
@@ -886,17 +874,28 @@ a {
   font-size: 40px;
 }
 
-footer {
-  padding: 34px 0;
-  color: #c3ccd6;
+/* ---------- site footer: dark band closing every page ---------- */
+
+.site-footer {
+  margin-top: auto;
+  padding: 64px 0 0;
+  color: #aeb8c3;
   background: var(--footer-bg);
 }
 
-.footer-inner {
+.site-footer-grid {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: 28px;
+  grid-template-columns: 1.4fr repeat(3, 1fr);
+  gap: 48px;
+  padding-bottom: 48px;
+}
+
+.site-footer-brand p {
+  max-width: 30ch;
+  margin: 14px 0 0;
+  color: #7d8894;
+  font-size: 13.5px;
+  line-height: 1.6;
 }
 
 .footer-brand {
@@ -904,23 +903,39 @@ footer {
   color: #f2f5f8;
 }
 
-.footer-inner > p {
-  margin: 0;
-  color: #8b95a1;
-  font-size: 12.5px;
-  text-align: center;
-}
-
-.footer-links {
+.site-footer-col {
   display: flex;
-  justify-content: flex-end;
-  gap: 24px;
-  color: #aeb8c3;
-  font-size: 12.5px;
+  flex-direction: column;
+  gap: 12px;
 }
 
-.footer-links a:hover {
+.site-footer-col strong {
+  color: #6d7885;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.site-footer-col a {
+  color: #aeb8c3;
+  font-size: 13.5px;
+  transition: color 0.15s ease;
+}
+
+.site-footer-col a:hover {
   color: #ffffff;
+}
+
+.site-footer-bottom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 20px 0;
+  border-top: 1px solid var(--footer-line);
+  color: #6d7885;
+  font-size: 12px;
 }
 
 .download-page {
@@ -1418,26 +1433,6 @@ footer {
 
 .download-help strong {
   color: var(--ink);
-}
-
-.download-footer {
-  border-top: 1px solid var(--line);
-  background: var(--paper);
-}
-
-.download-footer .shell {
-  min-height: 68px;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 20px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.download-footer a {
-  color: var(--blue);
-  font-weight: 680;
 }
 
 /* ---- Plugin repository / store page ---- */
@@ -1956,13 +1951,6 @@ footer {
   .release-summary-action {
     font-size: 0;
   }
-
-  .download-footer .shell {
-    align-items: flex-start;
-    flex-direction: column;
-    justify-content: center;
-    padding-block: 18px;
-  }
 }
 
 @media (max-width: 720px) {
@@ -2176,16 +2164,19 @@ footer {
     gap: 31px;
   }
 
-  .footer-inner {
-    grid-template-columns: 1fr;
-    justify-items: center;
-    gap: 17px;
+  .site-footer-grid {
+    grid-template-columns: 1fr 1fr;
+    gap: 32px;
   }
 
-  .footer-links {
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 14px 20px;
+  .site-footer-brand {
+    grid-column: 1 / -1;
+  }
+
+  .site-footer-bottom {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
   }
 }
 
@@ -3397,22 +3388,6 @@ footer {
   padding: 34px 38px;
 }
 
-.neu .footer-inner {
-  background: var(--neu-surface);
-  border-radius: var(--neu-radius) var(--neu-radius) 0 0;
-  box-shadow: var(--neu-shadow-out-sm);
-  padding: 26px 30px;
-}
-
-.neu .footer-inner > p,
-.neu .footer-links a {
-  color: var(--neu-muted);
-}
-
-.neu .footer-links a:hover {
-  color: var(--neu-ink);
-}
-
 /* ---------- scroll reveal ---------- */
 
 .neu .reveal-pending {
@@ -3436,11 +3411,6 @@ footer {
   }
 }
 
-.neu .footer-brand,
-.neu .footer-brand span {
-  color: var(--neu-ink);
-}
-
 /* ---------- scrollytelling hero FX ---------- */
 
 .neu {
@@ -3449,7 +3419,7 @@ footer {
 
 /* tall scroll track; only when JS FX is active (.fx-on added by HeroScrollFX) */
 .neu .hero.fx-on {
-  height: 220vh;
+  height: 460vh;
   overflow: clip;
   padding-top: 0;
 }
@@ -3460,6 +3430,7 @@ footer {
   height: 100vh;
   overflow: hidden;
   padding-top: 92px;
+  perspective: 1600px;
 }
 
 .neu .site-header {
@@ -3467,19 +3438,225 @@ footer {
   transition: transform 0.45s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
-/* docked: pill slides to bottom of viewport, nav labels collapse to icons */
-.neu .site-header.is-docked {
-  transform: translateY(calc(100vh - 100% - 14px));
+.neu .header-inner {
+  will-change: transform;
+  transition:
+    transform 0.45s cubic-bezier(0.22, 1, 0.36, 1),
+    width 0.4s ease,
+    padding 0.4s ease,
+    gap 0.4s ease,
+    background-color 0.35s ease,
+    border-color 0.35s ease,
+    box-shadow 0.35s ease;
 }
 
-/* docked pill shrinks to hug its content, centered, no side edge lines
-   and no neumorphic shadow bleeding over the content behind it */
+/* docked: pill becomes a slim vertical bar pinned to the right edge,
+   vertically centered; nav labels collapse to icons */
+.neu .site-header.is-docked {
+  transform: translateY(calc(50vh - 50% - 14px));
+}
+
 .neu .site-header.is-docked .header-inner {
+  transform: translateX(calc(50vw - 50% - 28px)) translateY(calc(-50% + 36px));
+  position: relative;
   width: fit-content;
-  margin-inline: auto;
-  border-right: none;
+  height: auto;
+  flex-direction: column;
+  gap: 12px;
+  padding: 14px 10px;
+}
+
+/* collapse toggle: plain chevron button sitting under the download button;
+   only rendered while docked */
+.neu .dock-toggle {
+  display: none;
+}
+
+.neu .site-header.is-docked .dock-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 30px;
+  padding: 0;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--neu-muted);
+  cursor: pointer;
+  transition:
+    box-shadow 0.2s ease,
+    color 0.2s ease;
+}
+
+.neu .site-header.is-docked .dock-toggle:hover {
+  color: var(--neu-ink);
+  box-shadow: var(--neu-shadow-in);
+}
+
+/* collapsible pieces shrink away so both ends of the bar retract toward
+   the middle, leaving the logo + chevron button */
+.neu .site-header.is-docked .main-nav,
+.neu .site-header.is-docked .header-actions > :not(.dock-toggle) {
+  max-height: 600px;
+  overflow: hidden;
+  opacity: 1;
+  transition:
+    max-height 0.4s ease,
+    opacity 0.25s ease;
+}
+
+.neu .site-header.is-docked.is-collapsed .main-nav,
+.neu .site-header.is-docked.is-collapsed .header-actions > :not(.dock-toggle) {
+  max-height: 0;
+  min-height: 0;
+  opacity: 0;
+}
+.neu .site-header.is-docked.is-collapsed .header-inner,
+.neu .site-header.is-docked.is-collapsed .header-actions {
+  gap: 0;
+}
+
+/* collapsed bar is a square holding just the brand mark; hovering pushes
+   the square open downward to reveal the chevron */
+.neu .site-header.is-docked.is-collapsed .header-inner {
+  width: 58px;
+  padding: 10px;
+}
+
+.neu .site-header.is-docked.is-collapsed .dock-toggle {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition:
+    max-height 0.3s ease,
+    opacity 0.2s ease;
+}
+
+.neu .site-header.is-docked.is-collapsed .header-inner:hover .dock-toggle,
+.neu .site-header.is-docked.is-collapsed .dock-toggle:focus-visible {
+  max-height: 30px;
+  opacity: 1;
+}
+
+.neu .site-header.is-docked.is-collapsed .header-inner:hover,
+.neu .site-header.is-docked.is-collapsed .header-inner:focus-within {
+  gap: 8px;
+}
+
+/* adaptive: the bar's background splits at the exact point where the
+   dark/light boundary crosses it — --dock-light is the fraction (from the
+   top) that stays light, the rest renders dark */
+.neu .site-header.is-docked .header-inner {
+  /* split at the boundary with a 6px soft edge so the rounded corner
+ doesn't notch; --dock-light = light fraction from the top */
+  background: var(--neu-bg-soft);
+  /* --dock-band is 0 at the snapped extremes (hard edge, no transition band
+ inside the bar) and 3px mid-split (soft 6px blend across the boundary) */
+  background-image: linear-gradient(
+    to bottom,
+    var(--neu-bg-soft) calc(var(--dock-light, 1) * 100% - var(--dock-band, 0px)),
+    #141c26 calc(var(--dock-light, 1) * 100% + var(--dock-band, 0px))
+  );
+  border: none;
+  /* same raised treatment as the feature cards: dual-tone shadow plus a
+ faint inset top-left highlight so the surface reads as extruded */
+  box-shadow:
+    var(--neu-shadow-out-sm),
+    inset -2px -2px 4px rgba(255, 255, 255, 0.7);
+}
+
+/* inverted split: the dark region sits above the light one (bar crossing
+ the bottom edge of a dark section) - same --dock-light fraction, stops
+ swapped */
+.neu .site-header.is-docked.dock-flip .header-inner {
+  background-image: linear-gradient(
+    to bottom,
+    #141c26 calc((1 - var(--dock-light, 1)) * 100% - var(--dock-band, 0px)),
+    var(--neu-bg-soft) calc((1 - var(--dock-light, 1)) * 100% + var(--dock-band, 0px))
+  );
+}
+
+.neu .site-header.is-docked.on-dark .main-nav a,
+.neu .site-header.is-docked.on-dark .dock-toggle {
+  color: #9fb0c1;
+}
+
+.neu .site-header.is-docked.on-dark .main-nav a:hover,
+.neu .site-header.is-docked.on-dark .dock-toggle:hover {
+  color: #f0f5fa;
+}
+
+.neu .site-header.is-docked.on-dark .main-nav a:hover,
+.neu .site-header.is-docked.on-dark .dock-toggle:hover,
+.neu .site-header.is-docked.on-dark .main-nav a.is-current {
+  box-shadow:
+    inset -3px -3px 7px rgba(255, 255, 255, 0.06),
+    inset 3px 3px 8px rgba(0, 0, 0, 0.5);
+}
+
+.neu .site-header.is-docked.on-dark .main-nav a.is-current {
+  color: #f0f5fa;
+}
+
+.neu .site-header.is-docked.on-dark .lang-toggle {
+  border-color: rgba(255, 255, 255, 0.16);
+  background: transparent;
+}
+
+.neu .site-header.is-docked.on-dark .lang-option {
+  color: #9fb0c1;
+}
+
+.neu .site-header.is-docked.on-dark .lang-option + .lang-option {
+  border-top-color: rgba(255, 255, 255, 0.16);
+}
+
+.neu .site-header.is-docked.on-dark .lang-option:not(.is-active):hover {
+  color: #f0f5fa;
+  background: rgba(255, 255, 255, 0.06);
+}
+.neu .site-header.is-docked .brand span {
+  display: none;
+}
+
+.neu .site-header.is-docked .main-nav {
+  flex-direction: column;
+  align-items: stretch;
+  margin-left: 0;
+}
+
+.neu .site-header.is-docked .header-actions {
+  flex-direction: column;
+  align-items: center;
+}
+
+.neu .site-header.is-docked .lang-toggle {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.neu .site-header.is-docked .lang-option {
+  width: 38px;
+  padding: 7px 0;
+  text-align: center;
+}
+
+.neu .site-header.is-docked .lang-option + .lang-option {
   border-left: none;
-  box-shadow: none;
+  border-top: 1px solid var(--line);
+}
+
+.neu .site-header.is-docked .download-label {
+  display: none;
+}
+.neu .site-header.is-docked .header-actions .button {
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  margin-left: 0;
+  border-radius: 12px;
+  justify-content: center;
 }
 
 .neu .main-nav .nav-icon {
@@ -3495,7 +3672,10 @@ footer {
 }
 
 .neu .site-header.is-docked .main-nav a {
-  padding: 7px 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 9px;
 }
 
 .neu .hero-copy {
@@ -3503,10 +3683,204 @@ footer {
 }
 
 .neu .hero-media-wrap {
+  position: relative;
+  z-index: 2;
   max-width: 920px;
   margin-bottom: 6rem;
-  transform-origin: 50% 50%;
-  will-change: transform;
+  transform-origin: 50% 100%;
+  will-change: transform, opacity;
+}
+
+.neu .hero.fx-on .hero-media-wrap {
+  margin-bottom: 0;
+}
+
+/* keyboard deck under the laptop lid — only visible while the FX runs */
+.neu .laptop-base {
+  display: none;
+}
+
+/* crossfading screenshots inside the pinned frame */
+.neu .hero-phase-stack {
+  position: relative;
+}
+
+.neu .hero-phase-stack .hero-phase-image + .hero-phase-image {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+}
+
+/* phase caption floating left of the pinned frame */
+.neu .hero-phase-caption {
+  position: absolute;
+  top: 50%;
+  left: max(24px, 4vw);
+  z-index: 3;
+  width: min(320px, 30vw);
+  opacity: 0;
+  transform: translateY(calc(-50% + var(--cap-drift, 0px)));
+  pointer-events: none;
+}
+
+.neu .hero-phase-eyebrow {
+  margin: 0 0 10px;
+  color: var(--neu-accent-deep);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+}
+
+.neu .hero-phase-title {
+  margin: 0;
+  font-size: clamp(20px, 2.2vw, 28px);
+  line-height: 1.15;
+  letter-spacing: -0.02em;
+  color: var(--neu-ink);
+}
+
+.neu .hero-phase-copy {
+  margin: 12px 0 0;
+  color: var(--neu-muted);
+  font-size: 14px;
+  line-height: 1.6;
+}
+
+/* connector line from caption toward the frame */
+.neu .hero-phase-line {
+  position: absolute;
+  top: 50%;
+  left: calc(max(24px, 4vw) + min(320px, 30vw) + 14px);
+  z-index: 3;
+  width: 72px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--neu-accent);
+  opacity: 0;
+  transform: scaleX(0);
+  transform-origin: left center;
+}
+
+/* phase progress dots under the stage */
+.neu .hero-phase-dots {
+  position: absolute;
+  bottom: 96px;
+  left: 50%;
+  display: flex;
+  gap: 9px;
+  transform: translateX(-50%);
+  opacity: 0;
+}
+
+.neu .hero-phase-dots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: rgba(107, 118, 134, 0.4);
+  transition:
+    background 0.25s ease,
+    transform 0.25s ease;
+}
+
+.neu .hero-phase-dots span.is-active {
+  background: var(--neu-accent);
+  transform: scale(1.35);
+}
+
+@media (max-width: 980px) {
+  .neu .hero-phase-line {
+    display: none;
+  }
+
+  .neu .hero-phase-caption {
+    top: 108px;
+    left: 24px;
+    right: 24px;
+    width: auto;
+    transform: translateY(var(--cap-drift, 0px));
+  }
+}
+
+.neu .hero.fx-on .laptop-base {
+  display: block;
+  width: min(760px, 80vw);
+  height: 13px;
+  margin: -3px auto 6rem;
+  border-radius: 0 0 14px 14px;
+  background: var(--neu-bg-soft);
+  box-shadow:
+    var(--neu-shadow-in),
+    0 10px 18px rgba(163, 177, 198, 0.45);
+}
+
+/* engines reveal — hidden layer behind the product frame, shown as the
+   open screen spins away at the end of the scroll track */
+.neu .hero-reveal {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 1;
+  width: min(880px, 92vw);
+  opacity: 0;
+  transform: translate(-50%, -50%) scale(0.92);
+  text-align: center;
+  pointer-events: none;
+  will-change: opacity, transform;
+}
+
+.neu .hero-reveal .eyebrow {
+  margin: 0;
+}
+
+.neu .hero-reveal h2 {
+  margin: 18px 0 30px;
+  font-size: clamp(30px, 4.6vw, 52px);
+  letter-spacing: -0.03em;
+  color: var(--neu-ink);
+}
+
+.neu .hero-reveal-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 10px;
+}
+
+.neu .hero-reveal-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 42px;
+  padding: 8px 10px;
+  border-radius: var(--neu-radius-sm);
+  background: var(--neu-surface);
+  box-shadow: var(--neu-shadow-out-sm);
+  color: var(--neu-ink);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.neu .hero-reveal-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .neu .hero-reveal-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .neu .hero-reveal-chip:nth-child(n + 13) {
+    display: none;
+  }
+
+  .neu .hero.fx-on .laptop-base {
+    height: 9px;
+    margin-bottom: 3rem;
+  }
 }
 
 /* ---------- subpages (changelog / plugins / docs) ---------- */
@@ -3627,12 +4001,6 @@ footer {
   border: none;
   background: var(--neu-bg);
   box-shadow: var(--neu-shadow-in);
-}
-
-/* plugins page footer blends into the canvas */
-.neu .download-footer {
-  border-top: none;
-  background: transparent;
 }
 
 /* docs: sidebar links press in, article surfaces soften */

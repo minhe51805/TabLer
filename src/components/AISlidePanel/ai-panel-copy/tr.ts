@@ -30,6 +30,11 @@ export const TR_PANEL_COPY: AIPanelCopy = {
       tooSlow: "Çok yavaş",
       other: "Diğer",
     },
+    editPrompt: "Düzenle ve yeniden çalıştır",
+    editPromptSave: "Yeniden çalıştır",
+    editPromptCancel: "İptal",
+    queuedCount: "{count} sırada",
+    queuedClear: "Tümünü at",
   },
   rules: {
     title: "Koruma kuralları",

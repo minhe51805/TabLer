@@ -51,7 +51,9 @@ use commands::ai_checkpoints::{
     preview_database_checkpoint_restore, rename_database_checkpoint, restore_database_checkpoint,
 };
 use commands::connection::*;
-use commands::connection_export::{export_connections_to_file, import_connections_from_file};
+use commands::connection_export::{
+    export_connections_to_file, import_connections_from_file, import_external_connections,
+};
 use commands::data_export::{
     cancel_table_export, export_table_data, export_tables_to_directory,
     TableExportCancellationState,
@@ -90,7 +92,7 @@ use commands::terminal::{
     close_terminal, open_terminal, resize_terminal, write_terminal, TerminalManager,
 };
 use commands::update::{
-    check_for_update, download_and_install_update, get_app_version, restart_app,
+    check_for_update, download_and_install_update, get_app_version, restart_app, updater_enabled,
 };
 use commands::users_roles::{
     apply_user_role_change, get_user_role_snapshot, review_user_role_change,
@@ -534,8 +536,10 @@ pub fn run() {
             // Connection export/import commands
             export_connections_to_file,
             import_connections_from_file,
+            import_external_connections,
             // Update commands
             check_for_update,
+            updater_enabled,
             download_and_install_update,
             get_app_version,
             restart_app,

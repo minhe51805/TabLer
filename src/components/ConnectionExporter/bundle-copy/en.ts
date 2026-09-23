@@ -39,5 +39,11 @@ export const EN_BUNDLE_COPY: BundleCopy = {
     working: "Importing...",
     done: "Imported",
     empty: "This bundle contains no items.",
+    external: {
+      button: "Import from DBeaver / DataGrip",
+      passwordNote:
+        "Passwords are never imported — DBeaver and DataGrip store them encrypted. Enter the database password for each connection you want to import.",
+      skipped: "{count} entries skipped (unsupported engine or malformed)",
+    },
   },
 };

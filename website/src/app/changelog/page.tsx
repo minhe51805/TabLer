@@ -6,6 +6,7 @@ import { getTableRReleases } from "@/lib/github-releases";
 import { getSiteLanguage } from "@/lib/language";
 import { getDictionary } from "@/lib/i18n";
 import { LanguageToggle } from "../LanguageToggle";
+import { SiteFooter } from "../SiteFooter";
 import { ReleaseNotes } from "./ReleaseNotes";
 
 export const metadata: Metadata = {
@@ -90,6 +91,8 @@ export default async function ChangelogPage() {
           </div>
         )}
       </div>
+
+      <SiteFooter t={t} />
     </main>
   );
 }

@@ -39,5 +39,11 @@ export const TR_BUNDLE_COPY: BundleCopy = {
     working: "İçe aktarılıyor...",
     done: "İçe aktarıldı",
     empty: "Bu pakette öğe yok.",
+    external: {
+      button: "DBeaver / DataGrip'ten İçe Aktar",
+      passwordNote:
+        "Parolalar asla içe aktarılmaz — DBeaver ve DataGrip bunları şifreli saklar. İçe aktarmak istediğiniz her bağlantı için veritabanı parolasını girin.",
+      skipped: "{count} öğe atlandı (desteklenmeyen motor veya hatalı biçim)",
+    },
   },
 };

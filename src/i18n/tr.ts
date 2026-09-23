@@ -363,6 +363,9 @@ export const tr: Record<keyof typeof en, string> = {
   "tabs.aiProposalProposed": "Onerilen SQL",
   "metrics.widget.openResult": "Open result in workspace",
   "metrics.widget.openSourceSql": "Open source SQL",
+  "metrics.widget.fullscreen": "Tam ekran",
+  "metrics.widget.exportCsv": "CSV dışa aktar",
+  "metrics.widget.exportPng": "PNG dışa aktar",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":

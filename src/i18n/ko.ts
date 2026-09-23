@@ -359,6 +359,9 @@ export const ko: Record<keyof typeof en, string> = {
   "tabs.aiProposalProposed": "제안된 SQL",
   "metrics.widget.openResult": "Open result in workspace",
   "metrics.widget.openSourceSql": "Open source SQL",
+  "metrics.widget.fullscreen": "전체 화면",
+  "metrics.widget.exportCsv": "CSV 내보내기",
+  "metrics.widget.exportPng": "PNG 내보내기",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":

@@ -35,13 +35,13 @@ import {
   METRICS_GRID_MIN_WIDTH,
   METRICS_GRID_ROW_HEIGHT,
   normalizeWidgetLayout,
+  getSeriesLabelColumn,
   readStoredBoards,
   rowSpanToHeightPx,
   widthPxToColSpan,
   writeStoredBoards,
 } from "./utils/query-builder";
-import { MetricsWidgetCard as _MetricsWidgetCard } from "./components/MetricsWidget";
-import { MetricsEditor as _MetricsEditor } from "./components/MetricsEditor";
+import { MetricsWidgetCard } from "./components/MetricsWidget";
 import { MetricsBoardSidebar } from "./components/MetricsBoardSidebar";
 import { MetricsBoardCanvas } from "./components/MetricsBoardCanvas";
 
@@ -123,6 +123,7 @@ export function MetricsBoard({
     boardId?: string;
     widgetId: string;
   } | null>(null);
+  const [fullscreenWidgetId, setFullscreenWidgetId] = useState<string | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const boardSearchInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -546,6 +547,43 @@ export function MetricsBoard({
       setActiveTab(id);
     },
     [activeBoard?.database, addTab, connectionId, database, setActiveTab],
+  );
+
+  /** Click a chart slice/bar/point: SQL engines get a filtered query tab,
+   * document/KV engines open the aggregated result instead. */
+  const drillDownWidget = useCallback(
+    (widget: MetricsWidgetDefinition, label: string, result: QueryResult) => {
+      const isSqlEngine =
+        activeConnection?.db_type !== "mongodb" && activeConnection?.db_type !== "redis";
+      if (!isSqlEngine) {
+        openWidgetResult(widget, result);
+        return;
+      }
+      const labelColumn = getSeriesLabelColumn(result);
+      const escaped = label.replace(/'/g, "''");
+      const drillSql = labelColumn
+        ? `SELECT * FROM (\n${widget.query.trim().replace(/;+\s*$/, "")}\n) AS drilldown WHERE "${labelColumn}" = '${escaped}'`
+        : widget.query;
+      const id = `metrics-drill-${crypto.randomUUID()}`;
+      addTab({
+        id,
+        type: "query",
+        title: `${widget.title || "Metric"}: ${label}`,
+        connectionId,
+        database: database || activeBoard?.database,
+        content: drillSql,
+      });
+      setActiveTab(id);
+    },
+    [
+      activeBoard?.database,
+      activeConnection?.db_type,
+      addTab,
+      connectionId,
+      database,
+      openWidgetResult,
+      setActiveTab,
+    ],
   );
 
   useEffect(() => {
@@ -1085,6 +1123,8 @@ export function MetricsBoard({
           connectionId={connectionId}
           onOpenResult={openWidgetResult}
           onOpenQuery={openWidgetQuery}
+          onFullscreen={(widget) => setFullscreenWidgetId(widget.id)}
+          onDrillDown={drillDownWidget}
           activeBoard={activeBoard}
           activeWidgetId={activeWidgetId}
           editingWidget={editingWidget}
@@ -1123,6 +1163,41 @@ export function MetricsBoard({
           setActiveWidgetId={setActiveWidgetId}
         />
       </div>
+
+      {fullscreenWidgetId ? (
+        <div
+          className="metrics-fullscreen-overlay"
+          onClick={() => setFullscreenWidgetId(null)}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") setFullscreenWidgetId(null);
+          }}
+        >
+          <div className="metrics-fullscreen-card" onClick={(event) => event.stopPropagation()}>
+            {(() => {
+              const widget = activeBoard?.widgets.find((w) => w.id === fullscreenWidgetId);
+              if (!widget) return null;
+              return (
+                <MetricsWidgetCard
+                  widget={widget}
+                  connectionId={connectionId}
+                  onOpenResult={openWidgetResult}
+                  onOpenQuery={openWidgetQuery}
+                  selected={false}
+                  dragging={false}
+                  resizing={false}
+                  layoutStyle={{ width: "100%", height: "100%" }}
+                  onSelect={() => undefined}
+                  onDragStart={() => undefined}
+                  onResizeStart={() => undefined}
+                  onContextMenu={() => undefined}
+                  onFullscreen={() => setFullscreenWidgetId(null)}
+                  onDrillDown={drillDownWidget}
+                />
+              );
+            })()}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

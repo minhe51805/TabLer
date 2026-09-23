@@ -85,3 +85,26 @@
 .metrics-undo-toast button:hover {
   text-decoration: underline;
 }
+.metrics-fullscreen-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  background: rgba(8, 12, 20, 0.72);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+}
+
+.metrics-fullscreen-card {
+  position: relative;
+  width: min(1200px, 100%);
+  height: min(760px, 100%);
+}
+
+.metrics-fullscreen-card .metrics-widget-card {
+  position: absolute;
+  inset: 0;
+  cursor: default;
+}

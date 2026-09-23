@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Code2, RefreshCcw, Table2 } from "lucide-react";
+import { Code2, FileDown, ImageDown, Maximize2, RefreshCcw, Table2 } from "lucide-react";
+import { exportToCSV } from "../../../utils/export-utils";
+import { exportSvgAsPng } from "../../../utils/svg-png-export";
 import { useI18n } from "../../../i18n";
 import type { MetricsWidgetDefinition, QueryResult } from "../../../types";
 import {
@@ -42,6 +44,8 @@ interface MetricsWidgetCardProps {
   onDragStart: (clientX: number, clientY: number) => void;
   onResizeStart: (clientX: number, clientY: number) => void;
   onContextMenu: (widgetId: string, clientX: number, clientY: number) => void;
+  onFullscreen: (widget: MetricsWidgetDefinition) => void;
+  onDrillDown: (widget: MetricsWidgetDefinition, label: string, result: QueryResult) => void;
 }
 
 export function MetricsWidgetCard({
@@ -57,6 +61,8 @@ export function MetricsWidgetCard({
   onDragStart,
   onResizeStart,
   onContextMenu,
+  onFullscreen,
+  onDrillDown,
 }: MetricsWidgetCardProps) {
   const { t } = useI18n();
   const [state, setState] = useState<WidgetRunState>({
@@ -66,6 +72,7 @@ export function MetricsWidgetCard({
     lastRunAt: null,
   });
   const requestIdRef = useRef(0);
+  const cardRef = useRef<HTMLDivElement | null>(null);
   const isRunningRef = useRef(false);
   const rerunRequestedRef = useRef(false);
   const holdTimerRef = useRef<number | null>(null);
@@ -140,6 +147,13 @@ export function MetricsWidgetCard({
     };
   }, [runWidgetQuery, widget.refresh_seconds]);
 
+  const handleChartSelect = useCallback(
+    (label: string) => {
+      if (state.result) onDrillDown(widget, label, state.result);
+    },
+    [onDrillDown, state.result, widget],
+  );
+
   const series = useMemo(() => getSeries(state.result), [state.result]);
   const metric = useMemo(() => getMetricValue(state.result), [state.result]);
   const validation = useMemo(() => validateMetricsQuery(widget.query), [widget.query]);
@@ -201,30 +215,30 @@ export function MetricsWidgetCard({
     }
 
     if (widget.type === "bar") {
-      return <ChartBars series={series} />;
+      return <ChartBars series={series} onSelect={handleChartSelect} />;
     }
 
     if (widget.type === "horizontal-bar") {
-      return <ChartBars series={series} horizontal />;
+      return <ChartBars series={series} horizontal onSelect={handleChartSelect} />;
     }
 
     if (widget.type === "line") {
-      return <ChartLine series={series} />;
+      return <ChartLine series={series} onSelect={handleChartSelect} />;
     }
 
     if (widget.type === "area") {
-      return <ChartLine series={series} area />;
+      return <ChartLine series={series} area onSelect={handleChartSelect} />;
     }
 
     if (widget.type === "donut") {
-      return <ChartPie series={series} donut />;
+      return <ChartPie series={series} donut onSelect={handleChartSelect} />;
     }
 
     if (widget.type === "radial") {
       return <ChartRadial series={series} />;
     }
 
-    return <ChartPie series={series} />;
+    return <ChartPie series={series} onSelect={handleChartSelect} />;
   })();
 
   const clearPendingHold = useCallback(() => {
@@ -280,6 +294,7 @@ export function MetricsWidgetCard({
       role="button"
       tabIndex={0}
       data-metrics-widget-id={widget.id}
+      ref={cardRef}
       className={`metrics-widget-card ${selected ? "selected" : ""} ${dragging ? "dragging" : ""} ${resizing ? "resizing" : ""}`}
       style={layoutStyle}
       onPointerDown={beginCardHoldDrag}
@@ -349,6 +364,57 @@ export function MetricsWidgetCard({
               <Table2 className="w-3.5 h-3.5" />
             </button>
           )}
+          {state.result && !state.error && (
+            <button
+              type="button"
+              className="metrics-widget-workspace-btn"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                void exportToCSV(
+                  state.result!.columns.map((c) => c.name),
+                  state.result!.rows as (string | number | boolean | null)[][],
+                  `${widget.title || "metric"}.csv`,
+                );
+              }}
+              title={t("metrics.widget.exportCsv")}
+              aria-label={t("metrics.widget.exportCsv")}
+            >
+              <FileDown className="w-3.5 h-3.5" />
+            </button>
+          )}
+          {state.result &&
+            !state.error &&
+            widget.type !== "table" &&
+            widget.type !== "scoreboard" && (
+              <button
+                type="button"
+                className="metrics-widget-workspace-btn"
+                onPointerDown={(event) => event.stopPropagation()}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  const svg = cardRef.current?.querySelector("svg");
+                  if (svg) void exportSvgAsPng(svg, `${widget.title || "chart"}.png`);
+                }}
+                title={t("metrics.widget.exportPng")}
+                aria-label={t("metrics.widget.exportPng")}
+              >
+                <ImageDown className="w-3.5 h-3.5" />
+              </button>
+            )}
+          <button
+            type="button"
+            className="metrics-widget-workspace-btn"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              onFullscreen(widget);
+            }}
+            title={t("metrics.widget.fullscreen")}
+            aria-label={t("metrics.widget.fullscreen")}
+          >
+            <Maximize2 className="w-3.5 h-3.5" />
+          </button>
           <button
             type="button"
             className="metrics-widget-workspace-btn"

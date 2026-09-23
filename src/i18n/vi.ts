@@ -358,6 +358,9 @@ export const vi: Record<keyof typeof en, string> = {
   "tabs.aiProposalProposed": "SQL đề xuất",
   "metrics.widget.openResult": "Open result in workspace",
   "metrics.widget.openSourceSql": "Open source SQL",
+  "metrics.widget.fullscreen": "Toàn màn hình",
+  "metrics.widget.exportCsv": "Xuất CSV",
+  "metrics.widget.exportPng": "Xuất PNG",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":

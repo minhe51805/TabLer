@@ -57,6 +57,8 @@ interface Props {
   connectionId: string;
   onOpenResult: (widget: MetricsWidgetDefinition, result: QueryResult) => void;
   onOpenQuery: (widget: MetricsWidgetDefinition) => void;
+  onFullscreen: (widget: MetricsWidgetDefinition) => void;
+  onDrillDown: (widget: MetricsWidgetDefinition, label: string, result: QueryResult) => void;
   activeBoard: MetricsBoardDefinition | null;
   activeWidgetId: string | null;
   editingWidget: MetricsWidgetDefinition | null;
@@ -124,6 +126,8 @@ export function MetricsBoardCanvas({
   connectionId,
   onOpenResult,
   onOpenQuery,
+  onFullscreen,
+  onDrillDown,
   activeBoard,
   activeWidgetId,
   editingWidget,
@@ -188,6 +192,8 @@ export function MetricsBoardCanvas({
                 handleWidgetResizeStart(widget, clientX, clientY)
               }
               onContextMenu={openWidgetContextMenu}
+              onFullscreen={onFullscreen}
+              onDrillDown={onDrillDown}
             />
           ))}
 

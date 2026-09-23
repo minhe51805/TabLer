@@ -1,5 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Plus, Sparkles, ChevronDown, LayoutGrid, LayoutTemplate } from "lucide-react";
+import {
+  Plus,
+  Sparkles,
+  ChevronDown,
+  LayoutGrid,
+  LayoutTemplate,
+  MoreHorizontal,
+  Copy,
+  Download,
+  Upload,
+  RefreshCw,
+} from "lucide-react";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUIStore } from "../../stores/uiStore";
 import { useI18n } from "../../i18n";
@@ -37,6 +48,10 @@ import {
   normalizeWidgetLayout,
   getSeriesLabelColumn,
   WIDGET_TEMPLATES,
+  duplicateBoardDefinition,
+  serializeBoard,
+  deserializeBoard,
+  downloadTextFile,
   readStoredBoards,
   rowSpanToHeightPx,
   widthPxToColSpan,
@@ -124,6 +139,8 @@ export function MetricsBoard({
     boardId?: string;
     widgetId: string;
   } | null>(null);
+  const [isBoardMenuOpen, setIsBoardMenuOpen] = useState(false);
+  const [refreshToken, setRefreshToken] = useState(0);
   const [fullscreenWidgetId, setFullscreenWidgetId] = useState<string | null>(null);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const boardSearchInputRef = useRef<HTMLInputElement | null>(null);
@@ -1064,12 +1081,113 @@ export function MetricsBoard({
             <button
               type="button"
               className="metrics-board-topbar-action metrics-board-topbar-action--primary"
+
               onClick={createBoard}
               title={t("metrics.createBoard")}
             >
               <Plus className="w-3.5 h-3.5" />
               <span>{t("metrics.createBoard")}</span>
             </button>
+            <div className="metrics-board-widget-menu">
+              <button
+                type="button"
+                className="metrics-board-topbar-action"
+                onClick={() => setIsBoardMenuOpen((v) => !v)}
+                disabled={!activeBoard}
+                aria-haspopup="menu"
+                aria-expanded={isBoardMenuOpen}
+                title={t("metrics.boardActions")}
+              >
+                <MoreHorizontal className="w-3.5 h-3.5" />
+              </button>
+              {isBoardMenuOpen && (
+                <div className="metrics-board-widget-menu-list" role="menu">
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="metrics-board-widget-menu-item"
+                    onClick={() => {
+                      if (activeBoard) {
+                        const copy = duplicateBoardDefinition(activeBoard, boards);
+                        persistBoards([copy, ...boards]);
+                        setActiveBoardId(copy.id);
+                      }
+                      setIsBoardMenuOpen(false);
+                    }}
+                  >
+                    <Copy className="w-3.5 h-3.5 metrics-board-widget-menu-icon" />
+                    <span className="metrics-board-widget-menu-copy">
+                      <strong>{t("metrics.boardDuplicate")}</strong>
+                      <small>{t("metrics.boardDuplicateDesc")}</small>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="metrics-board-widget-menu-item"
+                    onClick={() => {
+                      if (activeBoard) {
+                        downloadTextFile(
+                          serializeBoard(activeBoard),
+                          `${activeBoard.name}.tabler-board.json`,
+                        );
+                      }
+                      setIsBoardMenuOpen(false);
+                    }}
+                  >
+                    <Download className="w-3.5 h-3.5 metrics-board-widget-menu-icon" />
+                    <span className="metrics-board-widget-menu-copy">
+                      <strong>{t("metrics.boardExport")}</strong>
+                      <small>{t("metrics.boardExportDesc")}</small>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="metrics-board-widget-menu-item"
+                    onClick={() => {
+                      const input = document.createElement("input");
+                      input.type = "file";
+                      input.accept = ".json";
+                      input.onchange = async () => {
+                        const file = input.files?.[0];
+                        if (!file) return;
+                        const text = await file.text();
+                        const board = deserializeBoard(text, connectionId, boards);
+                        if (board) {
+                          persistBoards([board, ...boards]);
+                          setActiveBoardId(board.id);
+                        }
+                      };
+                      input.click();
+                      setIsBoardMenuOpen(false);
+                    }}
+                  >
+                    <Upload className="w-3.5 h-3.5 metrics-board-widget-menu-icon" />
+                    <span className="metrics-board-widget-menu-copy">
+                      <strong>{t("metrics.boardImport")}</strong>
+                      <small>{t("metrics.boardImportDesc")}</small>
+                    </span>
+                  </button>
+                  <div className="metrics-board-widget-menu-divider" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="metrics-board-widget-menu-item"
+                    onClick={() => {
+                      setRefreshToken((v) => v + 1);
+                      setIsBoardMenuOpen(false);
+                    }}
+                  >
+                    <RefreshCw className="w-3.5 h-3.5 metrics-board-widget-menu-icon" />
+                    <span className="metrics-board-widget-menu-copy">
+                      <strong>{t("metrics.boardRefreshAll")}</strong>
+                      <small>{t("metrics.boardRefreshAllDesc")}</small>
+                    </span>
+                  </button>
+                </div>
+              )}
+            </div>
 
             {widgetLibrary.length > 0 && (
               <div className="metrics-board-widget-menu" ref={widgetMenuRef}>
@@ -1154,6 +1272,7 @@ export function MetricsBoard({
           onOpenQuery={openWidgetQuery}
           onFullscreen={(widget) => setFullscreenWidgetId(widget.id)}
           onDrillDown={drillDownWidget}
+          refreshToken={refreshToken}
           activeBoard={activeBoard}
           activeWidgetId={activeWidgetId}
           editingWidget={editingWidget}
@@ -1221,6 +1340,7 @@ export function MetricsBoard({
                   onContextMenu={() => undefined}
                   onFullscreen={() => setFullscreenWidgetId(null)}
                   onDrillDown={drillDownWidget}
+                  refreshToken={refreshToken}
                 />
               );
             })()}

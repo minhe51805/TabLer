@@ -59,6 +59,7 @@ interface Props {
   onOpenQuery: (widget: MetricsWidgetDefinition) => void;
   onFullscreen: (widget: MetricsWidgetDefinition) => void;
   onDrillDown: (widget: MetricsWidgetDefinition, label: string, result: QueryResult) => void;
+  refreshToken: number;
   activeBoard: MetricsBoardDefinition | null;
   activeWidgetId: string | null;
   editingWidget: MetricsWidgetDefinition | null;
@@ -128,6 +129,7 @@ export function MetricsBoardCanvas({
   onOpenQuery,
   onFullscreen,
   onDrillDown,
+  refreshToken,
   activeBoard,
   activeWidgetId,
   editingWidget,
@@ -194,6 +196,7 @@ export function MetricsBoardCanvas({
               onContextMenu={openWidgetContextMenu}
               onFullscreen={onFullscreen}
               onDrillDown={onDrillDown}
+              refreshToken={refreshToken}
             />
           ))}
 

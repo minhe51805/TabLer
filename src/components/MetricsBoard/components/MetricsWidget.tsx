@@ -44,6 +44,7 @@ interface MetricsWidgetCardProps {
   onDragStart: (clientX: number, clientY: number) => void;
   onResizeStart: (clientX: number, clientY: number) => void;
   onContextMenu: (widgetId: string, clientX: number, clientY: number) => void;
+  refreshToken: number;
   onFullscreen: (widget: MetricsWidgetDefinition) => void;
   onDrillDown: (widget: MetricsWidgetDefinition, label: string, result: QueryResult) => void;
 }
@@ -61,6 +62,7 @@ export function MetricsWidgetCard({
   onDragStart,
   onResizeStart,
   onContextMenu,
+  refreshToken,
   onFullscreen,
   onDrillDown,
 }: MetricsWidgetCardProps) {
@@ -146,6 +148,14 @@ export function MetricsWidgetCard({
       window.clearInterval(timer);
     };
   }, [runWidgetQuery, widget.refresh_seconds]);
+
+  // Board-level "refresh all" — re-run when the token bumps.
+  const prevRefreshTokenRef = useRef(refreshToken);
+  useEffect(() => {
+    if (refreshToken === prevRefreshTokenRef.current) return;
+    prevRefreshTokenRef.current = refreshToken;
+    void runWidgetQuery();
+  }, [refreshToken, runWidgetQuery]);
 
   const handleChartSelect = useCallback(
     (label: string) => {

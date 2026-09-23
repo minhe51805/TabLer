@@ -10,6 +10,7 @@ import {
   Download,
   Upload,
   RefreshCw,
+  Printer,
 } from "lucide-react";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUIStore } from "../../stores/uiStore";
@@ -1320,6 +1321,21 @@ export function MetricsBoard({
                     <span className="metrics-board-widget-menu-copy">
                       <strong>{t("metrics.boardImport")}</strong>
                       <small>{t("metrics.boardImportDesc")}</small>
+                    </span>
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="metrics-board-widget-menu-item"
+                    onClick={() => {
+                      window.print();
+                      setIsBoardMenuOpen(false);
+                    }}
+                  >
+                    <Printer className="w-3.5 h-3.5 metrics-board-widget-menu-icon" />
+                    <span className="metrics-board-widget-menu-copy">
+                      <strong>{t("metrics.boardPrint")}</strong>
+                      <small>{t("metrics.boardPrintDesc")}</small>
                     </span>
                   </button>
                   <div className="metrics-board-widget-menu-divider" />

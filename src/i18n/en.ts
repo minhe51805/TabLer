@@ -377,6 +377,8 @@ export const en = {
   "metrics.widget.nextRefresh": "Next auto-refresh in",
   "metrics.widget.errorDetails": "Query details",
   "metrics.boardDescription": "Add a description...",
+  "metrics.boardPrint": "Print board",
+  "metrics.boardPrintDesc": "Print-friendly view of all widgets",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "metrics.context.add": "Add",

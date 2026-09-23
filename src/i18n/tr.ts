@@ -408,6 +408,8 @@ export const tr: Record<keyof typeof en, string> = {
   "metrics.widget.nextRefresh": "Sonraki otomatik yenileme",
   "metrics.widget.errorDetails": "Sorgu detayları",
   "metrics.boardDescription": "Açıklama ekle...",
+  "metrics.boardPrint": "Panoyu yazdır",
+  "metrics.boardPrintDesc": "Yazdırma dostu görünüm",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":

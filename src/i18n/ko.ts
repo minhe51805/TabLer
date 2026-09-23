@@ -404,6 +404,8 @@ export const ko: Record<keyof typeof en, string> = {
   "metrics.widget.nextRefresh": "다음 자동 새로고침",
   "metrics.widget.errorDetails": "쿼리 상세",
   "metrics.boardDescription": "설명 추가...",
+  "metrics.boardPrint": "보드 인쇄",
+  "metrics.boardPrintDesc": "인쇄용 위젯 보기",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":

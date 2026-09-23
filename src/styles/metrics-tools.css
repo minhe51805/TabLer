@@ -364,3 +364,23 @@
   color: var(--text-tertiary, #94a3b8);
   opacity: 0.5;
 }
+@media print {
+  .metrics-board-sidebar,
+  .metrics-board-rail,
+  .metrics-board-topbar-actions,
+  .metrics-widget-workspace-btn,
+  .metrics-widget-resize-handle,
+  .metrics-board-widget-menu {
+    display: none !important;
+  }
+
+  .metrics-board-canvas {
+    overflow: visible !important;
+  }
+
+  .metrics-widget-card {
+    break-inside: avoid;
+    box-shadow: none !important;
+    border: 1px solid #ccc !important;
+  }
+}

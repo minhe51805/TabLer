@@ -594,7 +594,7 @@ impl MongoDbDriver {
         Ok(parts.into_iter().filter(|part| !part.is_empty()).collect())
     }
 
-    pub(super) fn parse_collection_call(input: &str) -> Result<(String, String, String)> {
+    pub(super) fn parse_collection_call(input: &str) -> Result<(String, String, String, String)> {
         let trimmed = Self::strip_optional_semicolon(input);
         let after_db = trimmed.strip_prefix("db.").ok_or_else(|| {
             anyhow!(
@@ -639,13 +639,57 @@ impl MongoDbDriver {
         let close_index = Self::find_matching_closer(inside, '(', ')')?;
         let args = inside[..close_index].trim().to_string();
         let trailing = inside[close_index + 1..].trim();
-        if !trailing.is_empty() {
-            return Err(anyhow!(
-                "Unexpected trailing characters after MongoDB command"
-            ));
+
+        Ok((collection, method, args, trailing.to_string()))
+    }
+
+    /// Cursor-style chains after `db.<collection>.find(...)`: `.sort({...})`,
+    /// `.limit(n)`, `.skip(n)` in any order. Anything else is rejected so a
+    /// typo like `.limt(5)` fails loudly instead of being silently dropped.
+    pub(super) fn parse_find_chains(
+        input: &str,
+    ) -> Result<(Option<Document>, Option<i64>, Option<u64>)> {
+        let mut sort = None;
+        let mut limit = None;
+        let mut skip = None;
+        let mut rest = input.trim();
+
+        while !rest.is_empty() {
+            let after_dot = rest
+                .strip_prefix('.')
+                .ok_or_else(|| anyhow!("Unexpected trailing characters after MongoDB command"))?;
+            let open_index = after_dot
+                .find('(')
+                .ok_or_else(|| anyhow!("Unexpected trailing characters after MongoDB command"))?;
+            let name = after_dot[..open_index].trim();
+            let inside = &after_dot[open_index + 1..];
+            let close_index = Self::find_matching_closer(inside, '(', ')')?;
+            let arg = inside[..close_index].trim();
+
+            match name.to_ascii_lowercase().as_str() {
+                "sort" => sort = Some(Self::parse_json_document_arg(arg)?),
+                "limit" => {
+                    limit =
+                        Some(arg.parse::<i64>().map_err(|_| {
+                            anyhow!(".limit(...) expects a single integer argument")
+                        })?)
+                }
+                "skip" => {
+                    skip = Some(arg.parse::<u64>().map_err(|_| {
+                        anyhow!(".skip(...) expects a single non-negative integer argument")
+                    })?)
+                }
+                _ => {
+                    return Err(anyhow!(
+                    "Unsupported find() chain '.{name}(...)'. Supported chains: sort, limit, skip."
+                ))
+                }
+            }
+
+            rest = inside[close_index + 1..].trim();
         }
 
-        Ok((collection, method, args))
+        Ok((sort, limit, skip))
     }
 
     pub(super) fn parse_update_payload(input: &str) -> Result<MongoUpdatePayload> {
@@ -698,21 +742,33 @@ impl MongoDbDriver {
             return Ok(MongoQueryCommand::RunCommand(command));
         }
 
-        let (collection, method, args) = Self::parse_collection_call(trimmed)?;
+        let (collection, method, args, trailing) = Self::parse_collection_call(trimmed)?;
         let split_args = Self::split_top_level_args(&args)?;
 
+        if !trailing.is_empty() && !method.eq_ignore_ascii_case("find") {
+            return Err(anyhow!(
+                "Unexpected trailing characters after MongoDB command"
+            ));
+        }
+
         match method.to_ascii_lowercase().as_str() {
-            "find" => Ok(MongoQueryCommand::Find {
-                collection,
-                filter: match split_args.first() {
-                    Some(value) => Self::parse_json_document_arg(value)?,
-                    None => Document::new(),
-                },
-                projection: None,
-                sort: None,
-                limit: None,
-                skip: None,
-            }),
+            "find" => {
+                let (sort, limit, skip) = Self::parse_find_chains(&trailing)?;
+                Ok(MongoQueryCommand::Find {
+                    collection,
+                    filter: match split_args.first() {
+                        Some(value) => Self::parse_json_document_arg(value)?,
+                        None => Document::new(),
+                    },
+                    projection: match split_args.get(1) {
+                        Some(value) => Some(Self::parse_json_document_arg(value)?),
+                        None => None,
+                    },
+                    sort,
+                    limit,
+                    skip,
+                })
+            }
             "findone" => Ok(MongoQueryCommand::FindOne {
                 collection,
                 filter: match split_args.first() {

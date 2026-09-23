@@ -35,6 +35,8 @@ import {
 } from "../../../utils/sql-parameters";
 import { EventCenter, type AiProposalExplainResult } from "../../../stores/event-center";
 import { captureAgentEditedRunCheckpoint } from "../agent-edit-safety";
+import { useConnectionCapabilities } from "../../../hooks/useConnectionCapabilities";
+import { isCapabilitySupported } from "../../../types/capabilities";
 
 export interface QueryChromeState {
   isRunning: boolean;
@@ -95,6 +97,13 @@ export function useSQLEditor({
   const isVimModeEnabled = useEditorPreferencesStore((state) => state.vimModeEnabled);
   const dbType = connections.find((connection) => connection.id === connectionId)?.db_type;
   const queryProfile = getQueryProfile(dbType);
+  // Engines without prepared-parameter support (MongoDB, ClickHouse, …) must
+  // not even scan for :name/$name/@name — Mongo operators like $gt would be
+  // misread as parameters and the run would fail on the capability gate.
+  const capabilityProfile = useConnectionCapabilities(connectionId);
+  const supportsPreparedParams =
+    capabilityProfile === null ||
+    isCapabilitySupported(capabilityProfile.capabilities.preparedParameters);
   const usesDirectExecution = queryProfile.executionPath === "direct";
 
   const editorRef = useRef<any>(null);
@@ -307,7 +316,7 @@ export function useSQLEditor({
       );
     }
 
-    const parameterNames = extractNamedSqlParameters(sql);
+    const parameterNames = supportsPreparedParams ? extractNamedSqlParameters(sql) : [];
     if (parameterNames.length > 0) {
       const commandText = sql.trim();
       setNotice(null);
@@ -529,6 +538,7 @@ export function useSQLEditor({
     saveQueryEntry,
     switchDatabase,
     tabSource,
+    supportsPreparedParams,
     usesDirectExecution,
   ]);
 

@@ -223,6 +223,56 @@ mod tests {
     }
 
     #[test]
+    fn parses_find_with_projection_and_cursor_chains() {
+        let parsed = MongoDbDriver::parse_command(
+            "db.media_assets.find({ resourceType: \"image\", width: { $gt: 1000 } }, \
+             { publicId: 1, url: 1 }).sort({ width: -1 }).limit(50).skip(10)",
+        )
+        .unwrap();
+        match parsed {
+            MongoQueryCommand::Find {
+                collection,
+                filter,
+                projection,
+                sort,
+                limit,
+                skip,
+            } => {
+                assert_eq!(collection, "media_assets");
+                assert_eq!(filter.get_str("resourceType").unwrap(), "image");
+                assert!(matches!(
+                    filter.get_document("width").unwrap().get("$gt"),
+                    Some(Bson::Int32(1000)) | Some(Bson::Int64(1000))
+                ));
+                let projection = projection.unwrap();
+                assert!(matches!(
+                    projection.get("publicId"),
+                    Some(Bson::Int32(1)) | Some(Bson::Int64(1))
+                ));
+                assert!(matches!(
+                    sort.unwrap().get("width"),
+                    Some(Bson::Int32(-1)) | Some(Bson::Int64(-1))
+                ));
+                assert_eq!(limit, Some(50));
+                assert_eq!(skip, Some(10));
+            }
+            _ => panic!("expected find command"),
+        }
+    }
+
+    #[test]
+    fn rejects_unknown_find_chain() {
+        let error = MongoDbDriver::parse_command("db.users.find({}).limt(5)").unwrap_err();
+        assert!(error.to_string().contains("Unsupported find() chain"));
+    }
+
+    #[test]
+    fn rejects_trailing_chain_on_non_find_methods() {
+        let error = MongoDbDriver::parse_command("db.users.findOne({}).limit(5)").unwrap_err();
+        assert!(error.to_string().contains("Unexpected trailing characters"));
+    }
+
+    #[test]
     fn translates_select_columns_where_order_limit() {
         let parsed = MongoDbDriver::parse_command(
             "select name, profile.email from users where age >= 18 and status = 'active' \

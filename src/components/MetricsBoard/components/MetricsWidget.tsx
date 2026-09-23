@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Code2, Copy, FileDown, ImageDown, Maximize2, RefreshCcw, Table2 } from "lucide-react";
 import { exportToCSV } from "../../../utils/export-utils";
 import { exportSvgAsPng } from "../../../utils/svg-png-export";
-import { formatRelativeTime, pushBoardActivity } from "../utils/metrics-board-io";
+import { applyQueryParams, formatRelativeTime, pushBoardActivity } from "../utils/metrics-board-io";
 import { useI18n } from "../../../i18n";
 import type { MetricsWidgetDefinition, QueryResult } from "../../../types";
 import {
@@ -49,6 +49,7 @@ interface MetricsWidgetCardProps {
   onFullscreen: (widget: MetricsWidgetDefinition) => void;
   onDrillDown: (widget: MetricsWidgetDefinition, label: string, result: QueryResult) => void;
   onWidgetRefreshed: () => void;
+  params?: Record<string, string>;
 }
 
 export function MetricsWidgetCard({
@@ -67,6 +68,7 @@ export function MetricsWidgetCard({
   refreshToken,
   onFullscreen,
   onDrillDown,
+  params,
   onWidgetRefreshed,
 }: MetricsWidgetCardProps) {
   const { t } = useI18n();
@@ -89,7 +91,8 @@ export function MetricsWidgetCard({
       return;
     }
 
-    const validation = validateMetricsQuery(widget.query);
+    const effectiveQuery = params ? applyQueryParams(widget.query, params) : widget.query;
+    const validation = validateMetricsQuery(effectiveQuery);
     if (!validation.ok) {
       setState({
         result: null,
@@ -142,7 +145,7 @@ export function MetricsWidgetCard({
         detail: state.error ?? undefined,
       });
     }
-  }, [connectionId, widget.query, widget.id, widget.title, onWidgetRefreshed, state.error]);
+  }, [connectionId, widget.query, widget.id, widget.title, onWidgetRefreshed, state.error, params]);
 
   useEffect(() => {
     void runWidgetQuery();
@@ -194,7 +197,10 @@ export function MetricsWidgetCard({
 
   const series = useMemo(() => getSeries(state.result), [state.result]);
   const metric = useMemo(() => getMetricValue(state.result), [state.result]);
-  const validation = useMemo(() => validateMetricsQuery(widget.query), [widget.query]);
+  const validation = useMemo(
+    () => validateMetricsQuery(params ? applyQueryParams(widget.query, params) : widget.query),
+    [widget.query, params],
+  );
   const widgetLibraryItem = getWidgetLibraryItem(widget.type);
   const isStale = useMemo(() => {
     if (!state.lastRunAt || widget.refresh_seconds <= 0) return false;

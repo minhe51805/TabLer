@@ -74,6 +74,7 @@ interface Props {
   canvasRef: React.RefObject<HTMLDivElement | null>;
   boardZoom?: number;
   onZoomChange?: (zoom: number) => void;
+  boardParams?: Record<string, string>;
   getWidgetLayoutStyle: (widget: MetricsWidgetDefinition) => CSSProperties;
   handleWidgetSelection: (widgetId: string) => void;
   handleWidgetDragStart: (
@@ -144,6 +145,7 @@ export function MetricsBoardCanvas({
   resizeState,
   surfaceWidth,
   boardZoom,
+  boardParams,
   onZoomChange,
   surfaceContentHeight,
   canvasRef,
@@ -200,6 +202,7 @@ export function MetricsBoardCanvas({
               widget={widget}
               connectionId={connectionId}
               onOpenResult={onOpenResult}
+              params={boardParams}
               onOpenQuery={onOpenQuery}
               selected={activeWidgetId === widget.id}
               dragging={dragState?.widgetId === widget.id}

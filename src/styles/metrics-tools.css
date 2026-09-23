@@ -427,3 +427,37 @@
     background-position: -200% 0;
   }
 }
+.metrics-board-params {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.metrics-board-param {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 10px;
+}
+
+.metrics-board-param-name {
+  color: var(--accent, #22d3ee);
+  font-weight: 600;
+  font-family: monospace;
+}
+
+.metrics-board-param-input {
+  font-size: 10px;
+  padding: 2px 6px;
+  border: 1px solid var(--border-subtle, rgba(148, 163, 184, 0.3));
+  border-radius: 4px;
+  background: var(--bg-secondary, #1e293b);
+  color: inherit;
+  width: 100px;
+  outline: none;
+}
+
+.metrics-board-param-input:focus {
+  border-color: var(--accent, #22d3ee);
+}

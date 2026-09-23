@@ -61,7 +61,7 @@ import {
 import { MetricsWidgetCard } from "./components/MetricsWidget";
 import { MetricsBoardSidebar } from "./components/MetricsBoardSidebar";
 import { MetricsBoardCanvas } from "./components/MetricsBoardCanvas";
-import { formatRelativeTime } from "./utils/metrics-board-io";
+import { extractQueryParams, formatRelativeTime } from "./utils/metrics-board-io";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -242,6 +242,27 @@ export function MetricsBoard({
   const activeBoard = useMemo(
     () => boards.find((board) => board.id === activeBoardId) || null,
     [activeBoardId, boards],
+  );
+
+  const boardParamNames = useMemo(() => {
+    if (!activeBoard) return [];
+    const names = new Set<string>();
+    for (const w of activeBoard.widgets) {
+      for (const n of extractQueryParams(w.query)) names.add(n);
+    }
+    return [...names];
+  }, [activeBoard]);
+
+  const updateBoardParam = useCallback(
+    (name: string, value: string) => {
+      if (!activeBoard) return;
+      persistBoards(
+        boards.map((b) =>
+          b.id === activeBoard.id ? { ...b, params: { ...(b.params ?? {}), [name]: value } } : b,
+        ),
+      );
+    },
+    [activeBoard, boards, persistBoards],
   );
   const widgetLibrary = useMemo(() => _getWidgetLibrary(), []);
 
@@ -1188,6 +1209,21 @@ export function MetricsBoard({
               {displayConnectionLabel}
               {displayDatabaseLabel ? ` / ${displayDatabaseLabel}` : ""}
             </span>
+            {boardParamNames.length > 0 && (
+              <div className="metrics-board-params">
+                {boardParamNames.map((name) => (
+                  <label key={name} className="metrics-board-param">
+                    <span className="metrics-board-param-name">{name}</span>
+                    <input
+                      className="metrics-board-param-input"
+                      value={activeBoard?.params?.[name] ?? ""}
+                      placeholder={`{{${name}}}`}
+                      onChange={(e) => updateBoardParam(name, e.target.value)}
+                    />
+                  </label>
+                ))}
+              </div>
+            )}
             {activeBoard && (
               <span className="metrics-board-topbar-stats">
                 {activeBoard.widgets.length} {t("metrics.widgets")}
@@ -1479,6 +1515,7 @@ export function MetricsBoard({
           surfaceWidth={surfaceWidth}
           surfaceContentHeight={surfaceContentHeight}
           canvasRef={canvasRef}
+          boardParams={activeBoard?.params}
           boardZoom={boardZoom}
           onZoomChange={setBoardZoom}
           getWidgetLayoutStyle={getWidgetLayoutStyle}
@@ -1540,6 +1577,7 @@ export function MetricsBoard({
                   onDrillDown={drillDownWidget}
                   onWidgetRefreshed={handleWidgetRefreshed}
                   refreshToken={refreshToken}
+                  params={activeBoard?.params}
                 />
               );
             })()}

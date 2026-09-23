@@ -225,6 +225,7 @@ export interface MetricsBoardDefinition {
   created_at: number;
   updated_at: number;
   description?: string;
+  params?: Record<string, string>;
 }
 
 // ER Diagram types

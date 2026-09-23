@@ -175,6 +175,10 @@ export function readStoredBoards(): MetricsBoardDefinition[] {
           updated_at:
             migrated || typeof board.updated_at !== "number" ? Date.now() : board.updated_at,
           description: typeof board.description === "string" ? board.description : undefined,
+          params:
+            board.params && typeof board.params === "object"
+              ? (board.params as Record<string, string>)
+              : undefined,
         };
       })
       .filter((board): board is MetricsBoardDefinition => !!board);

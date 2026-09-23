@@ -173,3 +173,20 @@ export function readBoardActivity(boardId: string): BoardActivityEntry[] {
     return [];
   }
 }
+
+/** Extract unique {{param}} names from a SQL string. */
+export function extractQueryParams(sql: string): string[] {
+  const names = new Set<string>();
+  for (const match of sql.matchAll(/\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g)) {
+    names.add(match[1]);
+  }
+  return [...names];
+}
+
+/** Substitute {{param}} placeholders with board param values. */
+export function applyQueryParams(sql: string, params: Record<string, string>): string {
+  return sql.replace(/\{\{\s*([A-Za-z_][A-Za-z0-9_]*)\s*\}\}/g, (_, name: string) => {
+    const value = params[name];
+    return value !== undefined && value !== "" ? value : "";
+  });
+}

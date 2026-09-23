@@ -113,6 +113,26 @@ export function MetricsBoardSidebar({
                       {board.widgets.length} widget{board.widgets.length === 1 ? "" : "s"}
                     </small>
                   </div>
+                  <div className="metrics-board-list-types">
+                    {Object.entries(
+                      board.widgets.reduce<Record<string, number>>((acc, w) => {
+                        acc[w.type] = (acc[w.type] || 0) + 1;
+                        return acc;
+                      }, {}),
+                    ).map(([type, count]) => {
+                      const Icon = getWidgetLibraryItem(type as never).icon;
+                      return (
+                        <span
+                          key={type}
+                          className="metrics-board-list-type"
+                          title={`${count} ${type}`}
+                        >
+                          <Icon className="w-2.5 h-2.5" />
+                          {count}
+                        </span>
+                      );
+                    })}
+                  </div>
                 </button>
 
                 {isActive && board.widgets.length > 0 && (

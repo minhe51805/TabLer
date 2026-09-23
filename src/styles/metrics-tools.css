@@ -299,3 +299,20 @@
   color: var(--text-tertiary, #94a3b8);
   white-space: nowrap;
 }
+.metrics-board-list-types {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.metrics-board-list-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  font-size: 9px;
+  color: var(--text-tertiary, #94a3b8);
+  background: var(--bg-secondary, #1e293b);
+  padding: 1px 4px;
+  border-radius: 4px;
+}

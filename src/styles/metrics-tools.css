@@ -750,3 +750,16 @@
     opacity: 0.35;
   }
 }
+/* Pie legend: value sits next to the label, not pushed to the far edge */
+.metrics-widget-pie-legend-item {
+  display: flex;
+  gap: 6px;
+}
+
+.metrics-widget-pie-legend-label {
+  flex: 0 1 auto;
+}
+
+.metrics-widget-pie-legend-value {
+  flex: 0 0 auto;
+}

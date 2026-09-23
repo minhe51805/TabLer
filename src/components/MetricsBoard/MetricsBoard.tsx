@@ -1050,6 +1050,9 @@ export function MetricsBoard({
       );
       const nextColSpan = widthPxToColSpan(nextWidthPx, columnWidth);
       const nextRowSpan = heightPxToRowSpan(nextHeightPx);
+      // Snap preview to the grid cell size.
+      const snappedWidthPx = colSpanToWidthPx(nextColSpan, columnWidth);
+      const snappedHeightPx = rowSpanToHeightPx(nextRowSpan);
 
       setResizeState((current) => {
         if (!current || current.widgetId !== resizeState.widgetId) return current;
@@ -1065,8 +1068,8 @@ export function MetricsBoard({
           ...current,
           previewColSpan: nextColSpan,
           previewRowSpan: nextRowSpan,
-          previewWidthPx: nextWidthPx,
-          previewHeightPx: nextHeightPx,
+          previewWidthPx: snappedWidthPx,
+          previewHeightPx: snappedHeightPx,
         };
       });
     };

@@ -57,8 +57,9 @@ database-aware AI assistant beside the query instead of in another window.
 
 ### Connection launcher
 
-Reopen a saved workspace, or create a new one from 18 ready engines. The picker
-shows what each engine can do — remote connections, file databases, or a local
+Reopen a saved workspace, or create a new one from 19 engines — 10 work out of
+the box and 9 more unlock through installable driver plugins. The picker shows
+what each engine can do — remote connections, file databases, or a local
 bootstrap — before you fill in the form. Credentials stay in the operating
 system keyring.
 
@@ -81,20 +82,32 @@ fit the canvas, and export PNG or SQL.
 
 ## Supported Databases
 
-TableR currently exposes connection workflows for 18 database engines:
+TableR currently exposes connection workflows for 19 database engines:
 
 | Category                  | Engines                                                                                                                   |
 | ------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
 | Relational and analytical | PostgreSQL, MySQL, MariaDB, CockroachDB, Greenplum, Amazon Redshift, SQL Server, Vertica, ClickHouse, Snowflake, BigQuery |
 | Embedded and file-based   | SQLite, DuckDB                                                                                                            |
-| NoSQL and cloud-native    | Cassandra, Redis, MongoDB, LibSQL, Cloudflare D1                                                                          |
+| NoSQL and cloud-native    | Cassandra, Redis, MongoDB, LibSQL, Cloudflare D1, OpenSearch                                                              |
+
+Ten engines are ready out of the box — PostgreSQL, MySQL, MariaDB, SQLite,
+SQL Server, MongoDB, CockroachDB, Greenplum, Amazon Redshift, and Vertica.
+The rest are plugin-gated:
+
+- **HTTP driver plugins** — Snowflake, ClickHouse, BigQuery, Cloudflare D1, and
+  OpenSearch connect once their declarative driver plugin is installed and
+  enabled (Plugin Manager or a local `.tableplugin` bundle).
+- **Native sidecar plugins** — DuckDB, Cassandra, Redis, and LibSQL need a
+  `driver-sidecar-v1` plugin that ships a binary for your platform
+  (`bin/<os>-<arch>/`), unless the app was compiled with the matching driver
+  feature.
 
 > Feature depth can vary by engine because metadata, explain plans, schema
 > editing, and export behavior depend on each database driver.
 
-Local bootstrap workflows are available for PostgreSQL, MySQL, MariaDB, and
-SQLite. Existing databases can also be opened through saved connection
-profiles, connection strings, or file selection where supported.
+Local bootstrap workflows are available for PostgreSQL, MySQL, MariaDB,
+SQL Server, and SQLite. Existing databases can also be opened through saved
+connection profiles, connection strings, or file selection where supported.
 
 ## Technology
 

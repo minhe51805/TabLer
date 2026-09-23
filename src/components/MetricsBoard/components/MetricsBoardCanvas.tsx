@@ -1,5 +1,5 @@
 import { ChevronRight } from "lucide-react";
-import type { CSSProperties } from "react";
+import { useEffect, type CSSProperties } from "react";
 import type {
   MetricsBoardDefinition,
   MetricsWidgetDefinition,
@@ -55,6 +55,7 @@ interface WidgetEditorLayout {
 
 interface Props {
   connectionId: string;
+  database?: string;
   onOpenResult: (widget: MetricsWidgetDefinition, result: QueryResult) => void;
   onOpenQuery: (widget: MetricsWidgetDefinition) => void;
   onFullscreen: (widget: MetricsWidgetDefinition) => void;
@@ -120,7 +121,7 @@ interface Props {
   updateWidgetById: (widgetId: string, updates: Partial<MetricsWidgetDefinition>) => void;
   duplicateWidget: (widgetId: string) => void;
   deleteWidgetWithUndo: (widgetId: string) => void;
-  undoDelete: { widget: MetricsWidgetDefinition; expiresAt: number } | null;
+  undoDelete: { boardId: string; widget: MetricsWidgetDefinition; expiresAt: number } | null;
   onUndoDelete: () => void;
   onDismissUndo: () => void;
   setEditingWidgetId: (id: string | null) => void;
@@ -129,6 +130,7 @@ interface Props {
 
 export function MetricsBoardCanvas({
   connectionId,
+  database,
   onOpenResult,
   onOpenQuery,
   onFullscreen,
@@ -173,172 +175,193 @@ export function MetricsBoardCanvas({
   setActiveWidgetId,
 }: Props) {
   const { t } = useI18n();
+  const zoom = boardZoom ?? 1;
+
+  // Ctrl/Cmd+wheel zooms the board. React attaches wheel listeners passively,
+  // so preventDefault must go through a native non-passive listener.
+  useEffect(() => {
+    const element = canvasRef.current;
+    if (!element || !onZoomChange) return;
+    const handleWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      const delta = event.deltaY > 0 ? -0.1 : 0.1;
+      onZoomChange(Math.min(2, Math.max(0.5, zoom + delta)));
+    };
+    element.addEventListener("wheel", handleWheel, { passive: false });
+    return () => element.removeEventListener("wheel", handleWheel);
+  }, [canvasRef, onZoomChange, zoom]);
 
   return (
-    <div
-      className="metrics-board-canvas"
-      ref={canvasRef}
-      onWheel={(e) => {
-        if (!e.ctrlKey && !e.metaKey) return;
-        e.preventDefault();
-        const delta = e.deltaY > 0 ? -0.1 : 0.1;
-        onZoomChange?.(Math.min(2, Math.max(0.5, (boardZoom ?? 1) + delta)));
-      }}
-    >
+    <div className="metrics-board-canvas" ref={canvasRef}>
+      {/* transform: scale() does not grow the layout box, so size the scroll
+          surface explicitly by the scaled dimensions. */}
       <div
-        className={`metrics-board-surface ${dragState ? "dragging" : ""}`}
         style={{
-          width: `${surfaceWidth}px`,
-          transform: `scale(${boardZoom ?? 1})`,
-          transformOrigin: "top left",
-          minHeight: `${surfaceContentHeight}px`,
+          width: `${surfaceWidth * zoom}px`,
+          height: `${surfaceContentHeight * zoom}px`,
         }}
-        onContextMenu={openCanvasContextMenu}
       >
-        <div className="metrics-board-grid">
-          {activeBoard?.widgets.map((widget) => (
-            <MetricsWidgetCard
-              key={widget.id}
-              widget={widget}
-              connectionId={connectionId}
-              onOpenResult={onOpenResult}
-              params={boardParams}
-              onOpenQuery={onOpenQuery}
-              selected={activeWidgetId === widget.id}
-              dragging={dragState?.widgetId === widget.id}
-              resizing={resizeState?.widgetId === widget.id}
-              layoutStyle={getWidgetLayoutStyle(widget)}
-              onSelect={() => handleWidgetSelection(widget.id)}
-              onDragStart={(clientX, clientY) => handleWidgetDragStart(widget, clientX, clientY)}
-              onResizeStart={(clientX, clientY) =>
-                handleWidgetResizeStart(widget, clientX, clientY)
-              }
-              onContextMenu={openWidgetContextMenu}
-              onFullscreen={onFullscreen}
-              onDrillDown={onDrillDown}
-              refreshToken={refreshToken}
-              onWidgetRefreshed={onWidgetRefreshed}
-            />
-          ))}
+        <div
+          className={`metrics-board-surface ${dragState ? "dragging" : ""}`}
+          style={{
+            width: `${surfaceWidth}px`,
+            transform: `scale(${zoom})`,
+            transformOrigin: "top left",
+            minHeight: `${surfaceContentHeight}px`,
+          }}
+          onContextMenu={openCanvasContextMenu}
+        >
+          <div className="metrics-board-grid">
+            {activeBoard?.widgets.map((widget) => (
+              <MetricsWidgetCard
+                key={widget.id}
+                widget={widget}
+                connectionId={connectionId}
+                onOpenResult={onOpenResult}
+                params={boardParams}
+                onOpenQuery={onOpenQuery}
+                selected={activeWidgetId === widget.id}
+                dragging={dragState?.widgetId === widget.id}
+                resizing={resizeState?.widgetId === widget.id}
+                layoutStyle={getWidgetLayoutStyle(widget)}
+                onSelect={() => handleWidgetSelection(widget.id)}
+                onDragStart={(clientX, clientY) => handleWidgetDragStart(widget, clientX, clientY)}
+                onResizeStart={(clientX, clientY) =>
+                  handleWidgetResizeStart(widget, clientX, clientY)
+                }
+                onContextMenu={openWidgetContextMenu}
+                onFullscreen={onFullscreen}
+                onDrillDown={onDrillDown}
+                refreshToken={refreshToken}
+                onWidgetRefreshed={onWidgetRefreshed}
+              />
+            ))}
 
-          {widgetContextMenu ? (
-            <WidgetContextMenu
-              menu={widgetContextMenu}
-              widget={activeBoard?.widgets.find((w) => w.id === widgetContextMenu.widgetId) ?? null}
-              onClose={() => setWidgetContextMenu(null)}
-              onSubmenu={(submenu) =>
-                setWidgetContextMenu(widgetContextMenu ? { ...widgetContextMenu, submenu } : null)
-              }
-              onEdit={(id) => {
-                setActiveWidgetId(id);
-                setEditingWidgetId(id);
-                setWidgetContextMenu(null);
-              }}
-              onDuplicate={(id) => {
-                duplicateWidget(id);
-                setWidgetContextMenu(null);
-              }}
-              onChangeType={(id, type) => {
-                updateWidgetById(id, { type });
-                setWidgetContextMenu(null);
-              }}
-              onChangeRefresh={(id, seconds) => {
-                updateWidgetById(id, { refresh_seconds: seconds });
-                setWidgetContextMenu(null);
-              }}
-              onDelete={(id) => {
-                deleteWidgetWithUndo(id);
-                setWidgetContextMenu(null);
-              }}
-            />
-          ) : null}
+            {widgetContextMenu ? (
+              <WidgetContextMenu
+                menu={widgetContextMenu}
+                widget={
+                  activeBoard?.widgets.find((w) => w.id === widgetContextMenu.widgetId) ?? null
+                }
+                onClose={() => setWidgetContextMenu(null)}
+                onSubmenu={(submenu) =>
+                  setWidgetContextMenu(widgetContextMenu ? { ...widgetContextMenu, submenu } : null)
+                }
+                onEdit={(id) => {
+                  setActiveWidgetId(id);
+                  setEditingWidgetId(id);
+                  setWidgetContextMenu(null);
+                }}
+                onDuplicate={(id) => {
+                  duplicateWidget(id);
+                  setWidgetContextMenu(null);
+                }}
+                onChangeType={(id, type) => {
+                  updateWidgetById(id, { type });
+                  setWidgetContextMenu(null);
+                }}
+                onChangeRefresh={(id, seconds) => {
+                  updateWidgetById(id, { refresh_seconds: seconds });
+                  setWidgetContextMenu(null);
+                }}
+                onDelete={(id) => {
+                  deleteWidgetWithUndo(id);
+                  setWidgetContextMenu(null);
+                }}
+              />
+            ) : null}
 
-          {undoDelete ? (
-            <div className="metrics-undo-toast" role="status">
-              <span>{t("metrics.widget.deleted")}</span>
-              <button type="button" onClick={onUndoDelete}>
-                {t("metrics.widget.undo")}
-              </button>
-              <button type="button" aria-label={t("common.close")} onClick={onDismissUndo}>
-                ×
-              </button>
-            </div>
-          ) : null}
-        </div>
+            {undoDelete ? (
+              <div className="metrics-undo-toast" role="status">
+                <span>{t("metrics.widget.deleted")}</span>
+                <button type="button" onClick={onUndoDelete}>
+                  {t("metrics.widget.undo")}
+                </button>
+                <button type="button" aria-label={t("common.close")} onClick={onDismissUndo}>
+                  ×
+                </button>
+              </div>
+            ) : null}
+          </div>
 
-        {canvasContextMenu ? (
-          <div
-            className="metrics-board-context-menu-shell"
-            style={{
-              left: `${canvasContextMenu.left}px`,
-              top: `${canvasContextMenu.top}px`,
-            }}
-            onPointerDown={(event) => event.stopPropagation()}
-          >
+          {canvasContextMenu ? (
             <div
-              className="metrics-board-context-trigger"
-              onMouseEnter={() =>
-                setCanvasContextMenu((current) =>
-                  current ? { ...current, submenuOpen: true } : current,
-                )
-              }
-              onMouseLeave={() =>
-                setCanvasContextMenu((current) =>
-                  current ? { ...current, submenuOpen: false } : current,
-                )
-              }
+              className="metrics-board-context-menu-shell"
+              style={{
+                left: `${canvasContextMenu.left}px`,
+                top: `${canvasContextMenu.top}px`,
+              }}
+              onPointerDown={(event) => event.stopPropagation()}
             >
-              <button
-                type="button"
-                className="metrics-board-context-button"
-                onClick={() =>
+              <div
+                className="metrics-board-context-trigger"
+                onMouseEnter={() =>
                   setCanvasContextMenu((current) =>
-                    current ? { ...current, submenuOpen: !current.submenuOpen } : current,
+                    current ? { ...current, submenuOpen: true } : current,
+                  )
+                }
+                onMouseLeave={() =>
+                  setCanvasContextMenu((current) =>
+                    current ? { ...current, submenuOpen: false } : current,
                   )
                 }
               >
-                <span>{t("metrics.context.add")}</span>
-                <ChevronRight className="w-3.5 h-3.5" />
-              </button>
+                <button
+                  type="button"
+                  className="metrics-board-context-button"
+                  onClick={() =>
+                    setCanvasContextMenu((current) =>
+                      current ? { ...current, submenuOpen: !current.submenuOpen } : current,
+                    )
+                  }
+                >
+                  <span>{t("metrics.context.add")}</span>
+                  <ChevronRight className="w-3.5 h-3.5" />
+                </button>
 
-              {canvasContextMenu.submenuOpen ? (
-                <div className="metrics-board-context-submenu">
-                  {getWidgetLibrary().map((item) => {
-                    const Icon = item.icon;
-                    return (
-                      <button
-                        key={item.type}
-                        type="button"
-                        className="metrics-board-context-item"
-                        onClick={() =>
-                          addWidget(item.type, {
-                            grid_x: canvasContextMenu.grid_x,
-                            grid_y: canvasContextMenu.grid_y,
-                          })
-                        }
-                      >
-                        <Icon className="w-3.5 h-3.5" />
-                        <span>{item.label}</span>
-                      </button>
-                    );
-                  })}
-                </div>
-              ) : null}
+                {canvasContextMenu.submenuOpen ? (
+                  <div className="metrics-board-context-submenu">
+                    {getWidgetLibrary().map((item) => {
+                      const Icon = item.icon;
+                      return (
+                        <button
+                          key={item.type}
+                          type="button"
+                          className="metrics-board-context-item"
+                          onClick={() =>
+                            addWidget(item.type, {
+                              grid_x: canvasContextMenu.grid_x,
+                              grid_y: canvasContextMenu.grid_y,
+                            })
+                          }
+                        >
+                          <Icon className="w-3.5 h-3.5" />
+                          <span>{item.label}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
             </div>
-          </div>
-        ) : null}
+          ) : null}
 
-        {editingWidget && widgetEditorLayout ? (
-          <MetricsEditor
-            connectionId={connectionId}
-            editingWidget={editingWidget}
-            widgetEditorLayout={widgetEditorLayout}
-            onQueryDraftChange={setWidgetQueryDraft}
-            onUpdateWidget={updateSelectedWidget}
-            onClearSelection={clearWidgetSelection}
-            onDelete={deleteSelectedWidget}
-          />
-        ) : null}
+          {editingWidget && widgetEditorLayout ? (
+            <MetricsEditor
+              connectionId={connectionId}
+              database={database}
+              boardParams={boardParams}
+              queryDraft={_widgetQueryDraft}
+              editingWidget={editingWidget}
+              widgetEditorLayout={widgetEditorLayout}
+              onQueryDraftChange={setWidgetQueryDraft}
+              onUpdateWidget={updateSelectedWidget}
+              onClearSelection={clearWidgetSelection}
+              onDelete={deleteSelectedWidget}
+            />
+          ) : null}
+        </div>
       </div>
     </div>
   );

@@ -16,6 +16,7 @@ import {
   readQueryHistory,
   validateMetricsQuery,
 } from "../utils/query-builder";
+import { applyQueryParams } from "../utils/metrics-board-io";
 import { MetricsCompactSelect } from "./MetricsCompactSelect";
 import { useI18n } from "../../../i18n";
 
@@ -25,6 +26,12 @@ import { useI18n } from "../../../i18n";
 
 export interface MetricsEditorProps {
   editingWidget: MetricsWidgetDefinition;
+  /** Current board params, applied to {{param}} placeholders in previews. */
+  boardParams?: Record<string, string>;
+  /** Board database, used for column lookups in the query builder. */
+  database?: string;
+  /** Live editor draft — the persisted widget query lags ~160ms behind. */
+  queryDraft?: string;
   connectionId: string;
   widgetEditorLayout: {
     left: number;
@@ -45,6 +52,9 @@ export interface MetricsEditorProps {
 
 export function MetricsEditor({
   editingWidget,
+  boardParams,
+  database,
+  queryDraft,
   connectionId,
   widgetEditorLayout,
   onQueryDraftChange,
@@ -80,13 +90,13 @@ export function MetricsEditor({
       }
       try {
         const { getTableColumnsPreview } = useQueryStore.getState();
-        const cols = await getTableColumnsPreview(connectionId, tableName);
+        const cols = await getTableColumnsPreview(connectionId, tableName, database);
         setTableColumns(cols.map((c) => c.name));
       } catch {
         setTableColumns([]);
       }
     },
-    [connectionId],
+    [connectionId, database],
   );
 
   const buildQuery = useCallback(() => {
@@ -100,8 +110,13 @@ export function MetricsEditor({
     return parts.join("\n");
   }, [builderTable, builderColumn, builderAgg, builderGroup, builderLimit]);
 
+  const previewRequestIdRef = useRef(0);
   const runPreview = useCallback(async () => {
-    const query = editingWidget.query;
+    // Preview the live draft (the persisted query lags the debounce) with
+    // board params applied, and ignore results superseded by a newer run.
+    const requestId = ++previewRequestIdRef.current;
+    const rawQuery = queryDraft ?? editingWidget.query;
+    const query = boardParams ? applyQueryParams(rawQuery, boardParams) : rawQuery;
     const validation = validateMetricsQuery(query);
     if (!validation.ok) {
       setPreview({ loading: false, result: null, error: validation.error });
@@ -110,7 +125,8 @@ export function MetricsEditor({
     setPreview({ loading: true, result: null, error: null });
     try {
       const result = await executeMetricsQuery(connectionId, validation.statement);
-      pushQueryHistory(connectionId, query);
+      if (previewRequestIdRef.current !== requestId) return;
+      pushQueryHistory(connectionId, rawQuery);
       setPreview({
         loading: false,
         result: {
@@ -120,9 +136,10 @@ export function MetricsEditor({
         error: null,
       });
     } catch (error) {
+      if (previewRequestIdRef.current !== requestId) return;
       setPreview({ loading: false, result: null, error: formatExecutionError(error) });
     }
-  }, [connectionId, editingWidget.query]);
+  }, [boardParams, connectionId, editingWidget.query, queryDraft]);
 
   useEffect(() => {
     onQueryDraftChange(editingWidget?.query ?? "");

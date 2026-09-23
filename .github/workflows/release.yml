@@ -83,6 +83,11 @@ jobs:
         if: steps.signing-mode.outputs.apple != 'true'
         run: echo "macOS will be built unsigned. Set the repository variable ENABLE_APPLE_SIGNING=true only after valid Apple signing and notarization secrets are configured."
 
+      - name: Warn when updater artifacts are disabled
+        if: steps.signing-mode.outputs.updater != 'true'
+        run: |
+          echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not configured — this release will ship WITHOUT updater artifacts (no latest.json, no .sig files). Installed builds will NOT be able to auto-update; the release notes will carry an 'auto-update disabled' banner."
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -238,6 +243,8 @@ jobs:
           } >> "$GITHUB_ENV"
 
       - name: Load release notes for tag
+        env:
+          HAS_UPDATER_SIGNING: ${{ needs.verify.outputs.has_updater_signing }}
         shell: bash
         run: |
           # Tags may carry a letter suffix (v0.1.6a) while notes are named by base version (v0.1.6.md).
@@ -256,6 +263,15 @@ jobs:
             cat "$notes_file"
             echo "TABLER_RELEASE_BODY_EOF"
           } >> "$GITHUB_ENV"
+          if [ "$HAS_UPDATER_SIGNING" != "true" ]; then
+            {
+              echo "RELEASE_BODY<<TABLER_RELEASE_BODY_EOF"
+              echo "> **Auto-update disabled in this build.** This release was built without updater signing (TAURI_SIGNING_PRIVATE_KEY is not configured), so it cannot be installed via in-app update. Download and install it manually."
+              echo ""
+              cat "$notes_file"
+              echo "TABLER_RELEASE_BODY_EOF"
+            } >> "$GITHUB_ENV"
+          fi
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v1
@@ -404,6 +420,8 @@ jobs:
           node scripts/validate-updater-manifest.mjs --file release-assets/latest.json --tag "$RELEASE_TAG" --assets release-assets
 
       - name: Verify downloaded release asset matrix
+        env:
+          EXPECT_UPDATER_ARTIFACTS: ${{ needs.verify.outputs.has_updater_signing }}
         run: node scripts/verify-release-assets.mjs release-assets
 
       - name: Generate internal release checksums

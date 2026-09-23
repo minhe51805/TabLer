@@ -73,6 +73,15 @@ export type AIWorkspaceAgentActionName =
   | "restore_checkpoint"
   | "delegate"
   | "read_page"
+  // Workspace app-surface tools (P6 coverage expansion): metrics board widget
+  // management, scheduled tasks, table tabs, skill/rule management, and the
+  // database picker.
+  | "manage_metrics_widget"
+  | "manage_schedule"
+  | "open_table_tab"
+  | "manage_skill"
+  | "manage_rule"
+  | "switch_database"
   // One step carrying several tool calls: read-only sub-calls run in
   // parallel, mutating ones serialize in order (ai-agent-tool-executor).
   | "batch"
@@ -175,6 +184,9 @@ export interface AIWorkspaceBubbleData {
   /** Cumulative model tokens this run spent (0 when the provider reports no
    *  usage); surfaced as the run footer next to the per-run budget. */
   tokensUsed?: number;
+  /** True when the run's token ceiling forced the finish — the answer may be
+   *  truncated, so the footer warns instead of just showing the count. */
+  tokenBudgetExhausted?: boolean;
   /** Model id that produced the final answer (the configured fast model when
    *  the intent was trivial); shown in the run footer next to tokens. */
   modelUsed?: string;

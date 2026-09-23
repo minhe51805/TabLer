@@ -561,15 +561,17 @@ export const AIConversationView = memo(function AIConversationView({
                     (step.action === "run_readonly_sql" || step.action === "sample_table_data") &&
                     step.status === "done",
                 ) === true;
-              const canInsert =
-                !agentReadLiveData &&
-                Boolean(bubble.sql) &&
-                aiModeAllowsInsert(bubble.interactionMode);
-              const canRun =
+              const hasRunnableSql =
                 Boolean(bubble.sql) &&
                 bubble.kind !== "result" &&
-                !agentReadLiveData &&
                 aiModeAllowsRun(bubble.interactionMode);
+              const hasInsertableSql =
+                Boolean(bubble.sql) && aiModeAllowsInsert(bubble.interactionMode);
+              // After the agent already read live data, Run/Insert stay
+              // visible but disabled — hiding them made the answer look like
+              // it had no SQL at all.
+              const canInsert = hasInsertableSql && !agentReadLiveData;
+              const canRun = hasRunnableSql && !agentReadLiveData;
               const canRetry =
                 bubble.retryable !== false &&
                 (bubble.status === "error" ||
@@ -823,11 +825,17 @@ export const AIConversationView = memo(function AIConversationView({
                             <span>{copy.bubbleActions.retry}</span>
                           </button>
                         )}
-                        {canRun && (
+                        {hasRunnableSql && (
                           <button
                             type="button"
                             className="ai-workspace-mode-action-btn primary"
                             onClick={() => onRun(bubble)}
+                            disabled={!canRun}
+                            title={
+                              canRun
+                                ? copy.bubbleActions.approveRun
+                                : copy.bubbleActions.liveDataDisabledHint
+                            }
                           >
                             <Play className="w-3.5 h-3.5" />
                             <span>{copy.bubbleActions.approveRun}</span>
@@ -848,12 +856,17 @@ export const AIConversationView = memo(function AIConversationView({
                             )}
                           </button>
                         )}
-                        {canInsert && (
+                        {(canInsert || hasInsertableSql) && (
                           <button
                             type="button"
                             className="ai-workspace-chat-action-icon"
                             onClick={() => onInsert(bubble)}
-                            title={copy.bubbleActions.insert}
+                            disabled={!canInsert}
+                            title={
+                              canInsert
+                                ? copy.bubbleActions.insert
+                                : copy.bubbleActions.liveDataDisabledHint
+                            }
                             aria-label={copy.bubbleActions.insert}
                           >
                             <CornerDownLeft className="w-3.5 h-3.5" />
@@ -942,6 +955,15 @@ export const AIConversationView = memo(function AIConversationView({
                             budget: DEFAULT_AGENT_TOKEN_BUDGET.toLocaleString(),
                           })}
                           {bubble.modelUsed ? ` · ${bubble.modelUsed}` : ""}
+                          {bubble.tokenBudgetExhausted && (
+                            <span
+                              className="ai-workspace-chat-run-cost-warning"
+                              title={panelCopy.tokenBudgetReached}
+                            >
+                              {" "}
+                              · ⚠ {panelCopy.tokenBudgetReached}
+                            </span>
+                          )}
                           {(() => {
                             const runCost = estimateUsageCostUsd(bubble.modelUsed, {
                               promptTokens: 0,

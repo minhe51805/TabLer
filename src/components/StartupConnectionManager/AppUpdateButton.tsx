@@ -1,55 +1,43 @@
 import { ArrowUpCircle, RefreshCw, X } from "lucide-react";
 import { useState } from "react";
 import { useI18n } from "../../i18n";
+import { getAppUpdateCopy } from "./app-update-copy";
 import { useAppUpdater } from "./use-app-updater";
+import "./app-update.css";
 
 /**
  * Compact "Update" pill shown next to the app version in the topbars once a
  * newer release is detected. Clicking it opens a confirm popup; accepting
- * downloads + installs the update and relaunches the app.
+ * downloads + installs the update and relaunches the app. When the background
+ * check fails the pill degrades to a quiet retry state instead of vanishing.
  */
 export function AppUpdateButton() {
   const { language } = useI18n();
-  const { update, phase, progress, error, installUpdate, dismiss } =
+  const { update, phase, progress, error, checkError, checkForUpdate, installUpdate, dismiss } =
     useAppUpdater();
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const labels = getAppUpdateCopy(language);
 
-  if (!update || phase === "idle") return null;
+  if (!update || phase === "idle") {
+    if (checkError && phase !== "checking") {
+      return (
+        <div className="app-update" data-no-window-drag="true">
+          <button
+            type="button"
+            className="app-update-btn is-retry"
+            onClick={() => void checkForUpdate()}
+            title={labels.checkFailed(checkError)}
+          >
+            <RefreshCw className="w-3 h-3" />
+            {labels.retry}
+          </button>
+        </div>
+      );
+    }
+    return null;
+  }
 
   const busy = phase === "downloading" || phase === "installing";
-  const labels =
-    language === "vi"
-      ? {
-          button: "Cập nhật",
-          title: "Cập nhật TableR",
-          available: "Phiên bản mới đã sẵn sàng:",
-          install: "Tải xuống & cài đặt",
-          later: "Để sau",
-          downloading: "Đang tải bản cập nhật…",
-          installing: "Đang cài đặt — ứng dụng sẽ khởi động lại…",
-          skip: "Bỏ qua bản này",
-        }
-      : language === "zh"
-        ? {
-            button: "更新",
-            title: "更新 TableR",
-            available: "新版本已就绪：",
-            install: "下载并安装",
-            later: "稍后",
-            downloading: "正在下载更新…",
-            installing: "正在安装 — 应用即将重启…",
-            skip: "跳过此版本",
-          }
-        : {
-            button: "Update",
-            title: "Update TableR",
-            available: "A new version is ready:",
-            install: "Download & install",
-            later: "Later",
-            downloading: "Downloading update…",
-            installing: "Installing — the app will restart…",
-            skip: "Skip this version",
-          };
 
   return (
     <div className="app-update" data-no-window-drag="true">
@@ -66,11 +54,7 @@ export function AppUpdateButton() {
         ) : (
           <ArrowUpCircle className="w-3 h-3" />
         )}
-        {phase === "downloading"
-          ? `${progress}%`
-          : phase === "installing"
-            ? "…"
-            : labels.button}
+        {phase === "downloading" ? `${progress}%` : phase === "installing" ? "…" : labels.button}
       </button>
 
       {confirmOpen && phase === "available" ? (
@@ -89,9 +73,7 @@ export function AppUpdateButton() {
           <p className="app-update-popup-version">
             {labels.available} <strong>v{update.version}</strong>
           </p>
-          {update.notes ? (
-            <pre className="app-update-notes">{update.notes}</pre>
-          ) : null}
+          {update.notes ? <pre className="app-update-notes">{update.notes}</pre> : null}
           {error ? <p className="app-update-error">{error}</p> : null}
           {busy ? (
             <div>

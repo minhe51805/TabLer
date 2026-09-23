@@ -2,6 +2,7 @@ import type { RefObject } from "react";
 import type {
   ColumnDetail,
   DatabaseType,
+  MetricsWidgetType,
   QueryParameterType,
   QueryResult,
   TableInfo,
@@ -49,6 +50,41 @@ export {
 } from "./agent-tool-executor-helpers";
 export type { AgentColumnStatsScope } from "./agent-tool-executor-helpers";
 
+/** One manage_metrics_widget call, resolved by the hook-side board manager. */
+export interface AgentMetricsBoardRequest {
+  action: "list" | "update" | "delete" | "refresh";
+  boardId?: string;
+  widgetId?: string;
+  widgetTitle?: string;
+  title?: string;
+  query?: string;
+  type?: MetricsWidgetType;
+  colSpan?: number;
+  rowSpan?: number;
+}
+
+/** What the board manager reports back for the tool observation. */
+export interface AgentMetricsBoardResult {
+  boardId: string;
+  boardName: string;
+  widgetCount: number;
+  widgets?: Array<{
+    id: string;
+    title: string;
+    type: string;
+    colSpan: number;
+    rowSpan: number;
+    query: string;
+  }>;
+  widgetId?: string;
+  widgetTitle?: string;
+  changed?: boolean;
+  deleted?: boolean;
+  refreshed?: boolean;
+  /** Row count from the refresh re-query. */
+  rowCount?: number;
+}
+
 export interface AgentToolExecutorDeps {
   connectionId: string | null;
   /**
@@ -62,6 +98,9 @@ export interface AgentToolExecutorDeps {
    * skill tool refuses anything outside the list so "injected == loadable"
    * stays true even if the catalog is later filtered or capped. */
   allowedSkillNames?: string[];
+  /** A file command's `allowed-tools:` narrowing, seeded as the run's initial
+   *  `skillToolRestriction` (narrowing-only; empty/undefined = no narrowing). */
+  initialToolRestriction?: string[];
   /** Scope for the agent-memory store (read_memory/save_memory tools). Memory
    * is keyed by connection+database — the same scope as the glossary — so a
    * different connection or database can never see another's memories. */
@@ -173,6 +212,19 @@ export interface AgentToolExecutorDeps {
     statements: string[],
     options: { isMutating: boolean; workspaceDir?: string | null },
   ) => Promise<AgentRuleVerdict>;
+  /**
+   * manage_metrics_widget: applies one widget operation (list/update/delete/
+   * refresh) to the metrics board open in the workspace. The hook owns board
+   * storage, layout normalization, and the refresh re-query so the tool file
+   * stays a thin arg-validation layer.
+   */
+  manageMetricsBoard?: (request: AgentMetricsBoardRequest) => Promise<AgentMetricsBoardResult>;
+  /**
+   * open_table_tab: opens a data/browse tab for a table on the current
+   * connection. Returns false when no tab was created so the tool can report
+   * failure instead of claiming a tab that never opened.
+   */
+  openTableTab?: (args: { table: string; database?: string }) => boolean;
 }
 
 /**
@@ -254,6 +306,9 @@ const CACHE_INVALIDATING_AGENT_TOOLS: Record<string, true> = {
   restore_checkpoint: true,
   save_memory: true,
   delete_memory: true,
+  // A database switch makes every cached read from the previous database
+  // stale — the same (tool, args) call now means a different catalog.
+  switch_database: true,
 };
 
 /**
@@ -343,7 +398,6 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     }
     return preWriteCheckpoint.note;
   };
-
   /**
    * Shared deps + mutable run state handed to every tool handler. Handlers
    * mutate the budget counters, skill state, previewed-statement set, and
@@ -355,12 +409,45 @@ export function createAgentToolExecutor(deps: AgentToolExecutorDeps) {
     checkpointCallsUsed: 0,
     restoreCallsUsed: 0,
     loadedSkillResources: new Map<string, Set<string>>(),
-    skillToolRestriction: null,
+    // Seed from a file command's `allowed-tools:` (filtered to real tool names
+    // so a typo can't brick the run); loaded skills then intersect onto it.
+    skillToolRestriction: deps.initialToolRestriction?.length
+      ? new Set(
+          deps.initialToolRestriction.filter(
+            (entry): entry is AIAgentToolName =>
+              typeof entry === "string" &&
+              (AI_AGENT_TOOL_NAMES as readonly string[]).includes(entry),
+          ),
+        )
+      : null,
     previewedMutatingStatements: new Set<string>(),
     observationArchive: [],
     ensurePreWriteCheckpoint,
     tableNotFoundHint,
   };
+
+  /**
+   * Consent prompts are single-slot: a second request while one is pending
+   * resolves the first as denied. Parallel batch calls (run_readonly_sql,
+   * run_parameterized_sql, run_preset all gate on the read consent) would
+   * race that slot, so consent acquisition is serialized here — the tools
+   * themselves still run concurrently; only the prompt is queued. With a
+   * standing grant each call resolves immediately, so the happy path keeps
+   * its parallelism.
+   */
+  let consentQueue: Promise<unknown> = Promise.resolve();
+  const serializeConsent = <A extends unknown[], T>(
+    request: ((...args: A) => Promise<T>) | undefined,
+  ) => {
+    if (!request) return undefined;
+    return (...args: A) => {
+      const result = consentQueue.then(() => request(...args));
+      consentQueue = result.catch(() => undefined);
+      return result;
+    };
+  };
+  ctx.requestDataReadConsent = serializeConsent(deps.requestDataReadConsent);
+  ctx.requestDataDestructiveConsent = serializeConsent(deps.requestDataDestructiveConsent);
 
   const dispatchAgentTool = async (
     action: AIAgentToolAction,

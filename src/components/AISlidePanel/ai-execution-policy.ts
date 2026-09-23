@@ -1,6 +1,7 @@
 import { isHighRiskStatement, isMutatingStatement } from "../SQLEditor/SQLEditorUtils";
 import { isBlockedAtLevel, type SafeModeLevel } from "../../types/safe-mode";
 import { splitSqlStatements } from "../../utils/sqlStatements";
+import { classifySqlSafety } from "../../utils/sql-safety";
 import type { AIWorkspaceAgentAutonomy } from "./ai-workspace-types";
 
 export type AISqlRiskLevel = "safe" | "review" | "dangerous" | undefined;
@@ -34,21 +35,18 @@ export function isSqlBlockedBySafeMode(sql: string, safeModeLevel: SafeModeLevel
 /**
  * What the AI bubble must confirm with the user before running. `null` means
  * the run needs no dialog: either the SQL is read-only, or the user granted
- * the standing "full autonomy" permission ("Toàn quyền") which replaces the
- * per-run dialog.
+ * the standing "full autonomy" permission — which the consent dialog states
+ * plainly: reads AND writes execute without per-statement confirmation, and
+ * Safe Mode is suspended for as long as the grant is active.
  */
 export function getAISqlConfirmationRequirement(
   statements: string[],
   autonomy?: AIWorkspaceAgentAutonomy,
 ): AISqlConfirmationRequirement {
-  // "full" autonomy removes per-read prompts only; statements that mutate or
-  // are high-risk still require explicit confirmation — that is the contract
-  // the autonomy dialog promises.
-  if (autonomy === "full") {
-    if (statements.some(isHighRiskStatement)) return "high-risk";
-    if (statements.some(isMutatingStatement)) return "mutation";
-    return null;
-  }
+  // "full" is danger-full-access: the standing grant replaces every
+  // per-statement dialog. The user opted into that explicitly in the consent
+  // dialog (which also gates the Safe Mode suspension), so nothing asks here.
+  if (autonomy === "full") return null;
   if (statements.some(isHighRiskStatement)) return "high-risk";
   if (statements.some(isMutatingStatement)) return "mutation";
   return null;
@@ -71,11 +69,10 @@ export interface AgentRunClassification {
  * Everything is derived from the statements + autonomy here so the bug class
  * "boolean derived from a derived boolean" cannot come back.
  *
- * Known residual: under "full" autonomy a mutating statement the frontend
- * regex mis-reads as a read (e.g. mutating CTEs) gets preApproved=true from
- * the standing grant — that is by design (the grant covers levels 1-3), but
- * it also means willMutate can be false for such a run, so no checkpoint is
- * taken. The backend's stricter parser is the last line of defense there.
+ * Under "full" autonomy no dialog is shown (the standing grant covers writes
+ * too), but `willMutate` still tracks the real statement kinds so the
+ * pre-write checkpoint and rollback hint keep working — the grant removes
+ * the prompt, not the safety net.
  */
 export function classifyAgentRun(
   statements: string[],
@@ -85,9 +82,46 @@ export function classifyAgentRun(
   const needsDialog = requirement !== null;
   const willMutate =
     needsDialog ||
-    (autonomy === "full" && statements.some((statement) => isMutatingStatement(statement)));
+    (autonomy === "full" &&
+      statements.some(
+        (statement) => isMutatingStatement(statement) || isHighRiskStatement(statement),
+      ));
   const preApproved = autonomy === "full" || needsDialog;
   return { requirement, needsDialog, willMutate, preApproved };
+}
+
+/**
+ * `classifyAgentRun` backed by the backend AST classifier. The frontend
+ * keyword scan cannot see `EXPLAIN ANALYZE <write>` or `EXPLAIN <write>` —
+ * both look read-only and would run without a dialog. Anything the backend
+ * does not classify as read-only escalates to at least a "mutation" dialog
+ * (and counts as mutating for the pre-write checkpoint / rollback hint).
+ * A classifier failure keeps the frontend verdict — the run still executes
+ * inside the backend sandbox, which is the real boundary.
+ */
+export async function classifyAgentRunWithBackend(
+  statements: string[],
+  autonomy?: AIWorkspaceAgentAutonomy,
+  databaseType?: string | null,
+): Promise<AgentRunClassification> {
+  const frontend = classifyAgentRun(statements, autonomy);
+  try {
+    const decision = await classifySqlSafety(statements.join(";\n"), databaseType ?? null);
+    if (decision.readOnly) return frontend;
+    // Backend says at least one statement is not read-only.
+    if (autonomy === "full") {
+      // The standing grant removes the dialog but not the safety nets.
+      return { ...frontend, willMutate: true };
+    }
+    return {
+      requirement: frontend.requirement ?? "mutation",
+      needsDialog: true,
+      willMutate: true,
+      preApproved: true,
+    };
+  } catch {
+    return frontend;
+  }
 }
 
 /**

@@ -305,6 +305,58 @@ export type AIAgentProposeSeedDataAction = AIAgentToolActionBase<
   AIAgentProposeSeedDataArgs
 >;
 
+export interface AIAgentManageMetricsWidgetArgs extends Record<string, unknown> {
+  action: "list" | "update" | "delete" | "refresh";
+}
+
+export type AIAgentManageMetricsWidgetAction = AIAgentToolActionBase<
+  "manage_metrics_widget",
+  AIAgentManageMetricsWidgetArgs
+>;
+
+export interface AIAgentManageScheduleArgs extends Record<string, unknown> {
+  action: "list" | "create" | "delete";
+}
+
+export type AIAgentManageScheduleAction = AIAgentToolActionBase<
+  "manage_schedule",
+  AIAgentManageScheduleArgs
+>;
+
+export interface AIAgentOpenTableTabArgs extends Record<string, unknown> {
+  table: string;
+  database?: string;
+}
+
+export type AIAgentOpenTableTabAction = AIAgentToolActionBase<
+  "open_table_tab",
+  AIAgentOpenTableTabArgs
+>;
+
+export interface AIAgentManageSkillArgs extends Record<string, unknown> {
+  action: "list" | "update" | "enable" | "disable";
+}
+
+export type AIAgentManageSkillAction = AIAgentToolActionBase<
+  "manage_skill",
+  AIAgentManageSkillArgs
+>;
+
+export interface AIAgentManageRuleArgs extends Record<string, unknown> {
+  action: "list" | "create";
+}
+
+export type AIAgentManageRuleAction = AIAgentToolActionBase<"manage_rule", AIAgentManageRuleArgs>;
+
+export interface AIAgentSwitchDatabaseArgs extends Record<string, unknown> {
+  database: string;
+}
+
+export type AIAgentSwitchDatabaseAction = AIAgentToolActionBase<
+  "switch_database",
+  AIAgentSwitchDatabaseArgs
+>;
+
 /**
  * One step that carries several tool calls. Read-only sub-calls run in
  * parallel inside the executor; mutating/ordering-sensitive ones serialize in
@@ -349,6 +401,12 @@ export type AIAgentToolAction =
   | AIAgentRestoreCheckpointAction
   | AIAgentDelegateAction
   | AIAgentReadPageAction
+  | AIAgentManageMetricsWidgetAction
+  | AIAgentManageScheduleAction
+  | AIAgentOpenTableTabAction
+  | AIAgentManageSkillAction
+  | AIAgentManageRuleAction
+  | AIAgentSwitchDatabaseAction
   | AIAgentBatchAction
   | AIAgentFinishAction;
 

@@ -30,8 +30,8 @@ describe("GenerateTestRowsDialog", () => {
   beforeEach(() => {
     useChangeTrackingStore.setState({
       stagedChanges: [],
-      history: [],
-      future: [],
+      history: {},
+      future: {},
       isPreviewOpen: false,
       selectedChangeId: null,
       _columnNameMap: {},

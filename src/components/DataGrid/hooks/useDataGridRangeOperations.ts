@@ -1,6 +1,6 @@
 import { useCallback, type Dispatch, type SetStateAction } from "react";
 import type { QueryResult } from "../../../types";
-import type { StagedChange } from "../../../types/change-tracking";
+import type { StagedChangeInput } from "../../../stores/change-tracking-store";
 import { emitAppToast } from "../../../utils/app-toast";
 import { getCurrentAppLanguage, translateCurrent } from "../../../i18n";
 import { buildStableRowIdentity } from "../row-identity";
@@ -29,16 +29,26 @@ import {
 } from "./useDataGrid";
 
 interface DataGridRangeOperationsParams {
+  /**
+   * Selection state lives in DISPLAYED row space: keyboard navigation,
+   * Ctrl+A and cell clicks all address the rows the user can see, so
+   * filtered-out rows can never enter a range.
+   */
   gridSelection: GridSelectionState;
   data: QueryResult | null;
+  /** Rows in display order (quick filter + local sort applied). */
+  displayedRows: GridCellValue[][];
+  /** displayed index → source index into data.rows. */
+  displayedRowIndices: number[];
   resolvedColumns: ResolvedColumn[];
   primaryKeyColumns: ResolvedColumn[];
   tableName?: string;
+  connectionId: string;
   database?: string;
   /** Same gate as inline editing — range operations stage nothing when false. */
   enabled: boolean;
 
-  stageChanges: (changes: Array<Omit<StagedChange, "id" | "timestamp" | "sqlPreview">>) => void;
+  stageChanges: (changes: StagedChangeInput[]) => void;
   setData: Dispatch<SetStateAction<QueryResult | null>>;
   setStagedRowIndices: Dispatch<SetStateAction<Set<number>>>;
   patchLoadedTableCell: (rowIndex: number, colIndex: number, value: GridCellValue) => void;
@@ -56,9 +66,12 @@ interface DataGridRangeOperationsParams {
 export function useDataGridRangeOperations({
   gridSelection,
   data,
+  displayedRows,
+  displayedRowIndices,
   resolvedColumns,
   primaryKeyColumns,
   tableName,
+  connectionId,
   database,
   enabled,
   stageChanges,
@@ -70,7 +83,8 @@ export function useDataGridRangeOperations({
   const buildContext = useCallback((): RangeUpdateContext | null => {
     if (!data) return null;
     return {
-      rows: data.rows as RangeCellValue[][],
+      // Plans walk the VISIBLE rows only — hidden rows are unreachable.
+      rows: displayedRows as RangeCellValue[][],
       columns: resolvedColumns,
       // The walker feeds back columns from context.columns, which are the
       // same ResolvedColumn instances — the narrowing cast is safe.
@@ -78,31 +92,35 @@ export function useDataGridRangeOperations({
         parseEditorValue(raw, column as ResolvedColumn),
       valuesEqual: areCellValuesEqual,
       rowIsTargetable: (rowIndex: number) => {
-        const row = data.rows[rowIndex];
+        const row = displayedRows[rowIndex];
         if (!row || primaryKeyColumns.length === 0) return false;
         return buildStableRowIdentity(row, resolvedColumns) !== null;
       },
     };
-  }, [data, primaryKeyColumns, resolvedColumns]);
+  }, [data, displayedRows, primaryKeyColumns, resolvedColumns]);
 
   /** Stage + optimistic-apply a planned batch. Returns false when nothing was staged. */
   const commitUpdates = useCallback(
     (plan: RangeUpdatePlan, toastTitle: string): boolean => {
       if (!enabled || !data || !tableName || plan.updates.length === 0) return false;
 
-      const changes: Array<Omit<StagedChange, "id" | "timestamp" | "sqlPreview">> = [];
+      // Plan updates carry displayed row indices; staged changes and the
+      // chunk cache are keyed by source indices into data.rows.
+      const changes: StagedChangeInput[] = [];
       for (const update of plan.updates) {
-        const rowValues = data.rows[update.rowIndex];
-        if (!rowValues) continue;
+        const sourceRowIndex = displayedRowIndices[update.rowIndex];
+        const rowValues = sourceRowIndex === undefined ? undefined : data.rows[sourceRowIndex];
+        if (sourceRowIndex === undefined || !rowValues) continue;
         const rowKey: Record<string, unknown> = {};
         for (const pk of buildRowPrimaryKeys(rowValues, resolvedColumns, primaryKeyColumns)) {
           rowKey[pk.column] = pk.value;
         }
         changes.push({
           type: "update",
+          connectionId,
           tableName,
           database,
-          rowIndex: update.rowIndex,
+          rowIndex: sourceRowIndex,
           rowKey,
           columns: { [update.colIndex]: { old: update.oldValue, new: update.nextValue } },
           originalRow: [...rowValues] as (string | number | boolean | null)[],
@@ -118,17 +136,23 @@ export function useDataGridRangeOperations({
         if (!previous) return previous;
         const rows = previous.rows.map((row) => [...row]);
         for (const update of plan.updates) {
-          const row = rows[update.rowIndex];
+          const sourceRowIndex = displayedRowIndices[update.rowIndex];
+          const row = sourceRowIndex === undefined ? undefined : rows[sourceRowIndex];
           if (row) row[update.colIndex] = update.nextValue as GridCellValue;
         }
         return { ...previous, rows };
       });
       for (const update of plan.updates) {
-        patchLoadedTableCell(update.rowIndex, update.colIndex, update.nextValue as GridCellValue);
+        const sourceRowIndex = displayedRowIndices[update.rowIndex];
+        if (sourceRowIndex === undefined) continue;
+        patchLoadedTableCell(sourceRowIndex, update.colIndex, update.nextValue as GridCellValue);
       }
       setStagedRowIndices((previous) => {
         const next = new Set(previous);
-        for (const update of plan.updates) next.add(update.rowIndex);
+        for (const update of plan.updates) {
+          const sourceRowIndex = displayedRowIndices[update.rowIndex];
+          if (sourceRowIndex !== undefined) next.add(sourceRowIndex);
+        }
         return next;
       });
 
@@ -136,8 +160,10 @@ export function useDataGridRangeOperations({
       return true;
     },
     [
+      connectionId,
       database,
       data,
+      displayedRowIndices,
       enabled,
       patchLoadedTableCell,
       primaryKeyColumns,
@@ -151,13 +177,13 @@ export function useDataGridRangeOperations({
 
   /** Copy the selected rectangle as TSV. Returns true when the grid owned the shortcut. */
   const handleRangeCopy = useCallback((): boolean => {
-    if (!data || data.rows.length === 0 || resolvedColumns.length === 0) return false;
+    if (!data || displayedRows.length === 0 || resolvedColumns.length === 0) return false;
     const range = getPrimaryGridRange(gridSelection, {
-      rowCount: data.rows.length,
+      rowCount: displayedRows.length,
       columnCount: resolvedColumns.length,
     });
     if (!range) return false;
-    const tsv = buildRangeTsv(data.rows as RangeCellValue[][], range);
+    const tsv = buildRangeTsv(displayedRows as RangeCellValue[][], range);
     if (!tsv) return false;
     navigator.clipboard
       .writeText(tsv)
@@ -168,7 +194,7 @@ export function useDataGridRangeOperations({
         setError("Could not write to the clipboard.");
       });
     return true;
-  }, [data, gridSelection, resolvedColumns, setError]);
+  }, [data, displayedRows, gridSelection, resolvedColumns, setError]);
 
   /**
    * Paste a TSV/CSV matrix at the active cell as ONE staged batch.

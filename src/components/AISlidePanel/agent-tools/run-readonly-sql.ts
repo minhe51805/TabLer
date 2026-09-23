@@ -13,6 +13,7 @@ import {
   summarizeAgentQueryObservation,
 } from "../ai-agent-grounding";
 import { validateAIAgentReadonlySql } from "../ai-agent-tools";
+import { classifyAgentSqlReadonly } from "../agent-tool-executor-helpers";
 import {
   agentQueryTimeoutHint,
   agentSqlErrorHint,
@@ -46,6 +47,14 @@ export const tool: AgentToolModule = {
       });
     }
 
+    // Second-line defense: the backend classifier sees through
+    // `EXPLAIN ANALYZE <write>` and dialect constructs the prefix guard
+    // cannot — anything it does not call read-only is rejected here.
+    const backendGuard = await classifyAgentSqlReadonly(sql, ctx.dbType);
+    if (!backendGuard.ok) {
+      return `Tool blocked: ${backendGuard.error}`;
+    }
+
     // System catalogs have engine-specific columns and are the #1 source of
     // hallucinated SQL (e.g. information_schema.tables has no row_count).
     // The workspace tools already provide everything the catalogs would.
@@ -72,6 +81,11 @@ export const tool: AgentToolModule = {
         return "Tool blocked: The user did not grant permission to read live database rows for this request.";
       }
     }
+    // A superseded run must not hit the database at all — check before the
+    // backend call, not only after it.
+    if (ctx.requestId !== ctx.requestIdRef.current) {
+      throw new Error(AI_REQUEST_REPLACED_MESSAGE);
+    }
 
     // Heavy-read guard: an unbounded SELECT gets an automatic EXPLAIN
     // first so the model sees scan estimates before pulling data.
@@ -90,6 +104,9 @@ export const tool: AgentToolModule = {
       if (ctx.requestId !== ctx.requestIdRef.current) {
         throw new Error(AI_REQUEST_REPLACED_MESSAGE);
       }
+    }
+    if (ctx.requestId !== ctx.requestIdRef.current) {
+      throw new Error(AI_REQUEST_REPLACED_MESSAGE);
     }
 
     let queryResult: QueryResult;

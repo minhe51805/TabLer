@@ -22,7 +22,7 @@
 
 use std::path::{Component, Path, PathBuf};
 
-use crate::agent_memory::sanitize_scope_component;
+use crate::agent_memory::scope_component_or;
 use crate::utils::paths::resolve_data_dir;
 
 /// Root folder (under the app data dir) that holds every scope's native
@@ -35,6 +35,12 @@ const VIRTUAL_ROOT: &str = "memories";
 /// Hard ceiling on a single memory file, so a runaway `create`/`insert` cannot
 /// fill the disk or blow up the next request's token budget when viewed.
 const MAX_FILE_BYTES: usize = 64_000;
+/// Aggregate ceiling on one scope's whole tree: the per-file cap alone left
+/// total growth unbounded (file count × 64KB), so a loop of `create` calls
+/// could fill the disk one legal file at a time.
+const MAX_SCOPE_BYTES: usize = 1_000_000;
+/// Bound on the number of files in one scope's tree, for the same reason.
+const MAX_SCOPE_FILES: usize = 128;
 /// Ceiling on how much a single `view` returns, so listing/reading stays cheap
 /// to feed back as a tool_result.
 const MAX_VIEW_CHARS: usize = 16_000;
@@ -201,6 +207,58 @@ fn ensure_size_ok(text: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Total bytes and file count under `root` (symlinks skipped, same as `view`).
+fn scope_usage(root: &Path) -> (u64, usize) {
+    let mut bytes: u64 = 0;
+    let mut files: usize = 0;
+    let mut stack: Vec<PathBuf> = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_symlink() {
+                continue;
+            }
+            if file_type.is_dir() {
+                stack.push(entry.path());
+            } else if file_type.is_file() {
+                files += 1;
+                bytes += entry.metadata().map(|meta| meta.len()).unwrap_or(0);
+            }
+        }
+    }
+    (bytes, files)
+}
+
+/// Enforce the aggregate scope budget before a write. `target` is the file
+/// about to be written and `new_len` its post-write size: overwriting an
+/// existing file only costs the delta, while a brand-new file also counts
+/// against the file cap. Checked before every mutating command so a runaway
+/// agent cannot grow the tree without bound.
+fn ensure_scope_budget(root: &Path, target: &Path, new_len: usize) -> Result<(), String> {
+    let (bytes, files) = scope_usage(root);
+    let existing_len = std::fs::metadata(target)
+        .map(|meta| meta.len())
+        .unwrap_or(0);
+    if !target.exists() && files + 1 > MAX_SCOPE_FILES {
+        return Err(format!(
+            "Memory scope already holds {MAX_SCOPE_FILES} files; delete some before creating more."
+        ));
+    }
+    let projected = bytes.saturating_sub(existing_len) + new_len as u64;
+    if projected > MAX_SCOPE_BYTES as u64 {
+        return Err(format!(
+            "Memory scope would exceed its {}-byte budget; delete or shrink files first.",
+            MAX_SCOPE_BYTES
+        ));
+    }
+    Ok(())
+}
+
 /// List a directory as a stable, sorted tree fragment for `view`.
 fn render_directory(dir: &Path, segments: &[String]) -> Result<String, String> {
     let mut names: Vec<(String, bool)> = Vec::new();
@@ -313,6 +371,7 @@ pub fn execute_memory_command_in(root: &Path, command: &MemoryCommand) -> Result
                     display_path(&segments)
                 ));
             }
+            ensure_scope_budget(root, &target, file_text.len())?;
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent)
                     .map_err(|error| format!("Failed to create parent directory: {error}"))?;
@@ -346,6 +405,7 @@ pub fn execute_memory_command_in(root: &Path, command: &MemoryCommand) -> Result
             }
             let updated = contents.replacen(old_str.as_str(), new_str.as_str(), 1);
             ensure_size_ok(&updated)?;
+            ensure_scope_budget(root, &target, updated.len())?;
             write_atomic(&target, &updated)?;
             Ok(format!("File {} has been edited.", display_path(&segments)))
         }
@@ -373,6 +433,7 @@ pub fn execute_memory_command_in(root: &Path, command: &MemoryCommand) -> Result
             }
             let updated = lines.join("\n");
             ensure_size_ok(&updated)?;
+            ensure_scope_budget(root, &target, updated.len())?;
             write_atomic(&target, &updated)?;
             Ok(format!("File {} has been edited.", display_path(&segments)))
         }
@@ -433,12 +494,8 @@ fn native_scope_root(
     connection_id: Option<&str>,
     database: Option<&str>,
 ) -> PathBuf {
-    let connection = connection_id
-        .and_then(sanitize_scope_component)
-        .unwrap_or_else(|| "global".to_string());
-    let database = database
-        .and_then(sanitize_scope_component)
-        .unwrap_or_else(|| "default".to_string());
+    let connection = scope_component_or(connection_id, "global");
+    let database = scope_component_or(database, "default");
     data_dir
         .join(NATIVE_MEMORY_ROOT)
         .join(connection)

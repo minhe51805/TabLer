@@ -283,7 +283,7 @@ pub async fn rollback_plugin_bundle(
 
         let current_version = records[index].manifest.version.clone();
         let now = now_unix_seconds();
-        records[index] = InstalledPluginRecord {
+        let mut restored = InstalledPluginRecord {
             manifest: validated.manifest,
             bundle_path: destination.to_string_lossy().to_string(),
             enabled: records[index].enabled,
@@ -295,6 +295,10 @@ pub async fn rollback_plugin_bundle(
             rollback_available: true,
             previous_version: Some(current_version),
         };
+        // A rolled-back sidecar bundle without a binary for this platform is
+        // incomplete too — same check as install/sync.
+        mark_missing_platform_binary(&mut restored);
+        records[index] = restored;
         storage
             .save_plugins(&records)
             .map_err(|e| format!("Failed to save rollback state: {e}"))?;

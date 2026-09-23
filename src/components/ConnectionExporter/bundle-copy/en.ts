@@ -1,9 +1,33 @@
 import type { BundleCopy } from "./types";
 
 export const EN_BUNDLE_COPY: BundleCopy = {
+  common: {
+    done: "Done",
+    cancel: "Cancel",
+  },
   modes: {
     connections: "Connections only",
     bundle: "Full workspace bundle",
+  },
+  connectionsExport: {
+    title: "Export Connections",
+    subtitle: "Save connections as an encrypted, versioned export",
+    selectLabel: (selected, total) => `Select (${selected}/${total})`,
+    selectAll: "Select All",
+    deselectAll: "Deselect All",
+    empty: "No saved connections to export.",
+    encryptionNote:
+      "Connections will be encrypted with AES-256-GCM. Passwords are not exported — you will need to re-enter them when importing.",
+    passwordLabel: "Encryption Password",
+    passwordPlaceholder: "Min. 10 characters",
+    confirmLabel: "Confirm Password",
+    confirmPlaceholder: "Repeat password",
+    errorPasswordShort: "Password must be at least 10 characters.",
+    errorPasswordMismatch: "Passwords do not match.",
+    errorNoSelection: "Please select at least one connection.",
+    button: (count) => `Export ${count} Connection${count === 1 ? "" : "s"}`,
+    working: "Exporting...",
+    done: (count, path) => `Exported ${count} connection(s) to ${path}`,
   },
   export: {
     title: "Export Workspace Bundle",
@@ -45,5 +69,24 @@ export const EN_BUNDLE_COPY: BundleCopy = {
         "Passwords are never imported — DBeaver and DataGrip store them encrypted. Enter the database password for each connection you want to import.",
       skipped: "{count} entries skipped (unsupported engine or malformed)",
     },
+    connectionsTitle: "Import Connections",
+    connectionsSubtitle: "Load connections from an encrypted TableR file",
+    sourceFile: "Source file",
+    dropzonePick: "Click to select a .tabler-connections or .tabler-bundle file",
+    externalWorking: "Reading file...",
+    decryptLabel: "Decryption Password",
+    decryptPlaceholder: "Enter the export password",
+    decryptButton: "Open File",
+    decryptWorking: "Decrypting...",
+    importButton: (count) => `Import ${count} Connection${count === 1 ? "" : "s"}`,
+    importWorking: "Importing...",
+    importedMessage: (count) =>
+      `Successfully imported ${count} connection${count === 1 ? "" : "s"}`,
+    passwordNote:
+      "Passwords were not exported. Enter the database password for each connection you want to import.",
+    passwordPlaceholder: "Database password (optional)",
+    errorIncorrectPassword: "Incorrect password. Please try again.",
+    errorOpenDialog: (detail) => `Failed to open file dialog: ${detail}`,
+    errorImportFailed: (detail) => `Import failed: ${detail}`,
   },
 };

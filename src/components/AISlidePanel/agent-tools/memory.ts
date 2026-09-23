@@ -2,8 +2,13 @@ import { formatExecutionError } from "../../SQLEditor/SQLEditorUtils";
 import { isSupersededAIRequestError } from "../ai-agent-action-requestor";
 import { agentToolError, isRetryableAgentToolError } from "../agent-tool-executor-helpers";
 import { invalidateAgentMemoryIndex } from "../hooks/use-agent-memory";
+import { formatMemoryCopy, getAIMemoryCopy } from "../ai-memory-copy";
+import { emitAppToast } from "../../../utils/app-toast";
 import { invokeMutation } from "../../../utils/tauri-utils";
 import type { AgentToolModule } from "./shared";
+
+/** Native memory-tool commands that destroy stored content. */
+const NATIVE_MEMORY_DESTRUCTIVE_COMMANDS: Record<string, true> = { delete: true };
 
 export const tools: AgentToolModule[] = [
   {
@@ -29,11 +34,12 @@ export const tools: AgentToolModule[] = [
       if (!ctx.requestDataDestructiveConsent) {
         return "Tool blocked: delete_memory requires a destructive-action confirmation dialog, which is unavailable in this context.";
       }
+      const memoryCopy = getAIMemoryCopy(ctx.language ?? "en");
       const approved = await ctx.requestDataDestructiveConsent({
-        title: "Permanently delete this memory?",
-        message: `The agent wants to permanently delete the memory "${memoryName}" from this connection's memory store. This cannot be undone.`,
-        confirmText: "Delete memory",
-        cancelText: "Keep it",
+        title: memoryCopy.deleteTitle,
+        message: formatMemoryCopy(memoryCopy.deleteBody, { name: memoryName }),
+        confirmText: memoryCopy.deleteConfirm,
+        cancelText: memoryCopy.cancelLabel,
       });
       if (!approved) {
         return "Tool blocked: The user did not approve deleting this memory.";
@@ -80,13 +86,19 @@ export const tools: AgentToolModule[] = [
           },
         );
       }
+      // Same scope contract as delete_memory: without a connection scope the
+      // backend would silently read the shared "global" scope — a different
+      // connection's memories leaking into this run.
+      if (!ctx.memoryScope?.connectionId) {
+        return agentToolError("read_memory requires an active connection scope.");
+      }
       try {
         const content = await invokeMutation<{ name: string; body: string; updatedAt?: string }>(
           "read_agent_memory",
           {
             name: memoryName,
-            connectionId: ctx.memoryScope?.connectionId ?? null,
-            database: ctx.memoryScope?.database ?? null,
+            connectionId: ctx.memoryScope.connectionId,
+            database: ctx.memoryScope.database ?? null,
           },
         );
         window.dispatchEvent(
@@ -130,6 +142,12 @@ export const tools: AgentToolModule[] = [
           },
         );
       }
+      // Same scope contract as delete_memory: a null scope would orphan the
+      // save into the shared "global" scope instead of this run's
+      // connection/database — a silent cross-scope write.
+      if (!ctx.memoryScope?.connectionId) {
+        return agentToolError("save_memory requires an active connection scope.");
+      }
       try {
         const saved = await invokeMutation<{ name: string; updatedAt: string }>(
           "save_agent_memory",
@@ -137,10 +155,20 @@ export const tools: AgentToolModule[] = [
             name: memoryName,
             body: memoryBody,
             description: memoryDescription || null,
-            connectionId: ctx.memoryScope?.connectionId ?? null,
-            database: ctx.memoryScope?.database ?? null,
+            connectionId: ctx.memoryScope.connectionId,
+            database: ctx.memoryScope.database ?? null,
           },
         );
+        // Memory writes are invisible to the user by default — a toast keeps
+        // "the agent remembered something" observable instead of silent.
+        emitAppToast({
+          tone: "info",
+          title: getAIMemoryCopy(ctx.language ?? "en").savedToastTitle,
+          description: formatMemoryCopy(getAIMemoryCopy(ctx.language ?? "en").savedToastBody, {
+            name: saved.name,
+          }),
+          durationMs: 4000,
+        });
         window.dispatchEvent(
           new CustomEvent("workspace-activity", {
             detail: {
@@ -152,7 +180,7 @@ export const tools: AgentToolModule[] = [
         );
         // The injected index must not serve a stale (pre-save) view on the
         // next run within the TTL window.
-        invalidateAgentMemoryIndex(ctx.connectionId ?? undefined);
+        invalidateAgentMemoryIndex(ctx.memoryScope.connectionId);
         return `Memory "${saved.name}" saved for this connection/database scope${saved.updatedAt ? ` at ${saved.updatedAt}` : ""}. Future runs in this scope will see it in their <agent_memory> index. Never store credentials in memory.`;
       } catch (errorValue) {
         if (isSupersededAIRequestError(errorValue)) throw errorValue;
@@ -174,6 +202,33 @@ export const tools: AgentToolModule[] = [
       // returned as observations (not thrown) so Claude can self-correct — the
       // same contract as an `is_error` tool_result.
       const memoryArgs = args;
+      // Same scope contract as the other memory tools: the native tree is
+      // sandboxed per (connection, database), and a null scope would write the
+      // shared "global" tree from a scoped run.
+      if (!ctx.memoryScope?.connectionId) {
+        return agentToolError("memory requires an active connection scope.");
+      }
+      // Destructive commands ride the same per-call consent as delete_memory:
+      // the native tool must not bypass the confirmation the JSON tool needs.
+      const command = typeof memoryArgs.command === "string" ? memoryArgs.command : "";
+      if (NATIVE_MEMORY_DESTRUCTIVE_COMMANDS[command]) {
+        if (!ctx.requestDataDestructiveConsent) {
+          return `Tool blocked: memory "${command}" requires a destructive-action confirmation dialog, which is unavailable in this context.`;
+        }
+        const memoryCopy = getAIMemoryCopy(ctx.language ?? "en");
+        const approved = await ctx.requestDataDestructiveConsent({
+          title: memoryCopy.nativeDeleteTitle,
+          message: formatMemoryCopy(memoryCopy.nativeDeleteBody, {
+            command,
+            path: typeof memoryArgs.path === "string" ? memoryArgs.path : "/memories",
+          }),
+          confirmText: memoryCopy.nativeDeleteConfirm,
+          cancelText: memoryCopy.cancelLabel,
+        });
+        if (!approved) {
+          return `Tool blocked: The user did not approve the memory "${command}" command.`;
+        }
+      }
       try {
         const result = await invokeMutation<string>("run_agent_memory_tool", {
           command: memoryArgs.command,
@@ -186,9 +241,22 @@ export const tools: AgentToolModule[] = [
           oldPath: memoryArgs.old_path ?? null,
           newPath: memoryArgs.new_path ?? null,
           viewRange: Array.isArray(memoryArgs.view_range) ? memoryArgs.view_range : null,
-          connectionId: ctx.memoryScope?.connectionId ?? null,
-          database: ctx.memoryScope?.database ?? null,
+          connectionId: ctx.memoryScope.connectionId,
+          database: ctx.memoryScope.database ?? null,
         });
+        // Writes through the native tool are as invisible as save_memory —
+        // toast the mutating commands so the store never changes silently.
+        if (command && command !== "view") {
+          const memoryCopy = getAIMemoryCopy(ctx.language ?? "en");
+          emitAppToast({
+            tone: "info",
+            title: memoryCopy.savedToastTitle,
+            description: formatMemoryCopy(memoryCopy.savedToastBody, {
+              name: typeof memoryArgs.path === "string" ? memoryArgs.path : command,
+            }),
+            durationMs: 4000,
+          });
+        }
         window.dispatchEvent(
           new CustomEvent("workspace-activity", {
             detail: {

@@ -5,7 +5,10 @@ import {
   isSessionSwitchStatement,
   normalizeStatementForGuard,
 } from "../../SQLEditor/SQLEditorUtils";
-import { isSupersededAIRequestError } from "../ai-agent-action-requestor";
+import {
+  AI_REQUEST_REPLACED_MESSAGE,
+  isSupersededAIRequestError,
+} from "../ai-agent-action-requestor";
 import { agentSqlToolBlockedMessage } from "../ai-agent-engine-gates";
 import {
   describeRuleVerdict,
@@ -19,12 +22,13 @@ import {
   agentToolError,
   isRetryableAgentToolError,
 } from "../agent-tool-executor-helpers";
+import { classifySqlSafety } from "../../../utils/sql-safety";
 import { stringifyAgentObservation, type AgentToolModule } from "./shared";
 
 export const tool: AgentToolModule = {
   name: "preview_write",
   handler: async (ctx, args, frame) => {
-    if (ctx.toolAvailability && !ctx.toolAvailability.sqlWritePreview) {
+    if (ctx.toolAvailability && !ctx.toolAvailability.previewWrite) {
       return agentSqlToolBlockedMessage("preview_write", ctx.toolAvailability);
     }
     const requested = Array.isArray(args?.statements) ? args.statements : [];
@@ -40,8 +44,26 @@ export const tool: AgentToolModule = {
 
     // Safety rails: at least one real change, no session switching,
     // and explicit user consent before touching live rows.
+    const frontendMutating = (statement: string) =>
+      isMutatingStatement(statement) || isHighRiskStatement(statement);
+    // The backend classifier is authoritative for what counts as a write —
+    // `EXPLAIN ANALYZE <write>` executes its inner statement and must take
+    // the preview path (rolled-back transaction) instead of being refused.
+    let backendNonReadonly = new Set<string>();
+    try {
+      const decision = await classifySqlSafety(statements.join(";\n"), ctx.dbType ?? null);
+      backendNonReadonly = new Set(
+        decision.statements
+          .filter((entry) => !entry.readOnly)
+          .map((entry) => normalizeStatementForGuard(entry.sql)),
+      );
+    } catch {
+      // Fail-open: the frontend keyword guard still applies below.
+    }
     const mutatingCount = statements.filter(
-      (statement) => isMutatingStatement(statement) || isHighRiskStatement(statement),
+      (statement) =>
+        frontendMutating(statement) ||
+        backendNonReadonly.has(normalizeStatementForGuard(statement)),
     ).length;
     if (mutatingCount === 0) {
       return agentToolError(
@@ -93,6 +115,11 @@ export const tool: AgentToolModule = {
         return "Tool blocked: The user did not grant permission to run the write preview for this request.";
       }
     }
+    // A superseded run must not hit the database at all — check before the
+    // checkpoint + preview calls, not only after them.
+    if (ctx.requestId !== ctx.requestIdRef.current) {
+      throw new Error(AI_REQUEST_REPLACED_MESSAGE);
+    }
 
     // Pre-write safety net: snapshot the database under the
     // "agent-pre-write" label before the first mutating preview of the
@@ -103,7 +130,13 @@ export const tool: AgentToolModule = {
     try {
       const preview = await ctx.previewWriteTransaction(ctx.connectionId!, statements);
       for (const statement of statements) {
-        if (isMutatingStatement(statement) || isHighRiskStatement(statement)) {
+        // Record every statement the mutating gate counted (frontend keyword
+        // OR backend classifier) so edit_query_sql's preview gate accepts
+        // exactly what was previewed — e.g. EXPLAIN ANALYZE <write>.
+        if (
+          frontendMutating(statement) ||
+          backendNonReadonly.has(normalizeStatementForGuard(statement))
+        ) {
           ctx.previewedMutatingStatements.add(normalizeStatementForGuard(statement));
         }
       }

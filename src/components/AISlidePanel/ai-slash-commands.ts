@@ -128,6 +128,11 @@ export interface AgentFileCommand {
   description: string;
   argumentHint: string | null;
   argumentNames: string[];
+  /**
+   * Tools this command narrows the run to (empty = no narrowing). Narrowing
+   * only — it can take tools away, never grant one policy would refuse.
+   */
+  allowedTools: string[];
   inject: string[];
   origin: "builtin" | "global" | "workspace";
 }
@@ -138,6 +143,8 @@ export interface ResolvedFileCommand {
   /** The body with `$ARGUMENTS` substituted and observed facts prepended. */
   prompt: string;
   arguments: string;
+  /** Tools this command narrows the run to (empty = no narrowing). */
+  allowedTools: string[];
   /**
    * Context keys the command asked for that the app could not supply. Surfacing
    * them lets the composer say "there is no active SQL" instead of the agent

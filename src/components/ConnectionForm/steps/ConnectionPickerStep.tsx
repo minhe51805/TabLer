@@ -2,11 +2,8 @@ import { Search, X, Plug, Database } from "lucide-react";
 import type { CSSProperties } from "react";
 import { DatabaseBrandIcon } from "../DatabaseBrandIcon";
 import type { AppLanguage } from "../../../i18n";
-import {
-  LOCAL_BOOTSTRAP_PLANNED,
-  LOCAL_BOOTSTRAP_READY,
-  type DbEntry,
-} from "../engine-registry";
+import { isPluginHttpProtocol, isPluginNativeProtocol } from "../../../utils/plugin-driver-runtime";
+import { LOCAL_BOOTSTRAP_PLANNED, LOCAL_BOOTSTRAP_READY, type DbEntry } from "../engine-registry";
 
 interface PickerSection {
   key: string;
@@ -86,7 +83,8 @@ export interface ConnectionPickerStepProps {
 
 function getPickerMetaLabel(db: DbEntry, language: AppLanguage) {
   if (db.isFile) return language === "vi" ? "Quy trình dựa trên tệp" : "File-based workflow";
-  if (db.defaultPort) return language === "vi" ? `Cổng mặc định ${db.defaultPort}` : `Default port ${db.defaultPort}`;
+  if (db.defaultPort)
+    return language === "vi" ? `Cổng mặc định ${db.defaultPort}` : `Default port ${db.defaultPort}`;
   return language === "vi" ? "Quy trình cloud-native" : "Cloud-native flow";
 }
 
@@ -107,14 +105,15 @@ function getPickerDescription(db: DbEntry, bootstrapMode: boolean, language: App
         ? "Đã hiển thị trong lộ trình, nhưng luồng bootstrap local chưa được nối xong."
         : "Visible in the roadmap, but the local bootstrap flow is not wired yet.";
     }
-
     if (db.supported) {
       return language === "vi"
         ? "Bạn có thể kết nối tới engine này ngay hôm nay, nhưng bootstrap local vẫn chưa sẵn sàng."
         : "You can connect to this engine today, but local bootstrap is still pending.";
     }
 
-    return language === "vi" ? "Chưa khả dụng trong bản build này." : "Not available in this build yet.";
+    return language === "vi"
+      ? "Chưa khả dụng trong bản build này."
+      : "Not available in this build yet.";
   }
 
   if (db.supported) {
@@ -129,9 +128,27 @@ function getPickerDescription(db: DbEntry, bootstrapMode: boolean, language: App
       : "The driver plugin is installed but disabled. Enable it in Plugin Manager to connect.";
   }
 
+  if (db.pluginHttpState === "incomplete") {
+    return language === "vi"
+      ? "Plugin driver đã được cài nhưng không có bản binary cho nền tảng này. Hãy cài một bundle có binary phù hợp."
+      : "The driver plugin is installed but has no binary for this platform. Install a bundle that ships one.";
+  }
+
+  if (isPluginNativeProtocol(db.key)) {
+    return language === "vi"
+      ? "Engine này không được biên dịch trong bản build này. Nó cần một plugin driver native có binary cho nền tảng của bạn."
+      : "This engine is not compiled into this build. It needs a native driver plugin with a binary for your platform.";
+  }
+
+  if (isPluginHttpProtocol(db.key)) {
+    return language === "vi"
+      ? 'Engine này cần cài plugin driver mới dùng được. Bấm "Cài plugin" để thêm.'
+      : 'This engine needs a driver plugin before you can use it. Use "Install plugin" to add one.';
+  }
+
   return language === "vi"
-    ? "Engine này cần cài plugin driver mới dùng được. Bấm \"Cài plugin\" để thêm."
-    : "This engine needs a driver plugin before you can use it. Use \"Install plugin\" to add one.";
+    ? "Chưa khả dụng trong bản build này."
+    : "Not available in this build yet.";
 }
 
 function getPickerCapabilities(db: DbEntry, bootstrapMode: boolean, language: AppLanguage) {
@@ -157,9 +174,21 @@ function getPickerCapabilities(db: DbEntry, bootstrapMode: boolean, language: Ap
           ? language === "vi"
             ? "Đã cài · cần bật"
             : "Installed · off"
-          : language === "vi"
-            ? "Lộ trình"
-            : "Roadmap",
+          : db.pluginHttpState === "incomplete"
+            ? language === "vi"
+              ? "Thiếu binary"
+              : "Missing binary"
+            : isPluginNativeProtocol(db.key)
+              ? language === "vi"
+                ? "Không có trong build"
+                : "Not in build"
+              : isPluginHttpProtocol(db.key)
+                ? language === "vi"
+                  ? "Cần plugin"
+                  : "Needs plugin"
+                : language === "vi"
+                  ? "Lộ trình"
+                  : "Roadmap",
     );
   }
 
@@ -260,7 +289,6 @@ function getPickerHighlights(db: DbEntry, bootstrapMode: boolean, language: AppL
           "Good default choice if this is already part of your stack today.",
         ];
   }
-
   if (db.pluginHttpState === "installed") {
     return language === "vi"
       ? [
@@ -272,6 +300,48 @@ function getPickerHighlights(db: DbEntry, bootstrapMode: boolean, language: AppL
           "The driver bundle for this engine is already installed locally.",
           "It is currently disabled, so connections are not possible yet.",
           "Open Plugin Manager and enable it to start connecting.",
+        ];
+  }
+
+  if (db.pluginHttpState === "incomplete") {
+    return language === "vi"
+      ? [
+          "Bundle driver cho engine này đã được cài trong máy của bạn.",
+          "Nhưng bundle không chứa binary sidecar cho nền tảng này nên không thể chạy.",
+          "Hãy cài một bundle có thư mục bin/ cho hệ điều hành và kiến trúc của bạn.",
+        ]
+      : [
+          "The driver bundle for this engine is already installed locally.",
+          "It does not ship a sidecar binary for this platform, so it cannot run.",
+          "Install a bundle that includes a bin/ folder for your OS and architecture.",
+        ];
+  }
+
+  if (isPluginNativeProtocol(db.key)) {
+    return language === "vi"
+      ? [
+          "Engine này dùng driver native và không được biên dịch trong bản build này.",
+          "Nó chỉ kết nối được qua một plugin driver-sidecar có binary cho nền tảng của bạn.",
+          "Hãy chọn một engine đã sẵn sàng nếu bạn muốn kết nối ngay.",
+        ]
+      : [
+          "This engine uses a native driver that is not compiled into this build.",
+          "It can only connect through a driver-sidecar plugin with a binary for your platform.",
+          "Choose a ready engine if you want to connect right away.",
+        ];
+  }
+
+  if (isPluginHttpProtocol(db.key)) {
+    return language === "vi"
+      ? [
+          "Engine này kết nối qua một plugin driver HTTP có thể cài đặt.",
+          "Cài plugin từ registry hoặc một bundle .tableplugin local để mở khóa nó.",
+          "Sau khi plugin được cài và bật, engine sẽ chuyển sang Sẵn sàng.",
+        ]
+      : [
+          "This engine connects through an installable HTTP driver plugin.",
+          "Install the plugin from the registry or a local .tableplugin bundle to unlock it.",
+          "Once the plugin is installed and enabled, the engine turns Ready.",
         ];
   }
 
@@ -291,26 +361,62 @@ function getPickerHighlights(db: DbEntry, bootstrapMode: boolean, language: AppL
 function getPickerStatus(db: DbEntry, bootstrapMode: boolean, language: AppLanguage) {
   if (bootstrapMode) {
     if (LOCAL_BOOTSTRAP_READY.has(db.key)) {
-      return { label: language === "vi" ? "Local sẵn sàng" : "Local Ready", tone: "supported", canContinue: true };
+      return {
+        label: language === "vi" ? "Local sẵn sàng" : "Local Ready",
+        tone: "supported",
+        canContinue: true,
+      };
     }
 
     if (LOCAL_BOOTSTRAP_PLANNED.has(db.key)) {
-      return { label: language === "vi" ? "Local sắp có" : "Local Soon", tone: "soon", canContinue: false };
-    }
-
-    if (db.supported) {
-      return { label: language === "vi" ? "Sắp có" : "Soon", tone: "soon", canContinue: false };
+      return {
+        label: language === "vi" ? "Local sắp có" : "Local Soon",
+        tone: "soon",
+        canContinue: false,
+      };
     }
 
     return { label: language === "vi" ? "Sắp có" : "Soon", tone: "soon", canContinue: false };
   }
 
   if (db.supported) {
-    return { label: language === "vi" ? "Sẵn sàng" : "Ready", tone: "supported", canContinue: true };
+    return {
+      label: language === "vi" ? "Sẵn sàng" : "Ready",
+      tone: "supported",
+      canContinue: true,
+    };
   }
 
   if (db.pluginHttpState === "installed") {
-    return { label: language === "vi" ? "Cần bật" : "Needs enabling", tone: "soon", canContinue: false };
+    return {
+      label: language === "vi" ? "Cần bật" : "Needs enabling",
+      tone: "soon",
+      canContinue: false,
+    };
+  }
+
+  if (db.pluginHttpState === "incomplete") {
+    return {
+      label: language === "vi" ? "Thiếu binary" : "Missing binary",
+      tone: "soon",
+      canContinue: false,
+    };
+  }
+
+  if (isPluginNativeProtocol(db.key)) {
+    return {
+      label: language === "vi" ? "Không có trong build" : "Not in build",
+      tone: "soon",
+      canContinue: false,
+    };
+  }
+
+  if (isPluginHttpProtocol(db.key)) {
+    return {
+      label: language === "vi" ? "Cần plugin" : "Needs plugin",
+      tone: "soon",
+      canContinue: false,
+    };
   }
 
   return { label: language === "vi" ? "Sắp có" : "Soon", tone: "soon", canContinue: false };
@@ -342,9 +448,15 @@ export function ConnectionPickerStep({
   const roadmapTotal = bootstrapMode ? localRoadmapCount : roadmapCount;
   const selectedStatus = selectedDb ? getPickerStatus(selectedDb, bootstrapMode, language) : null;
   const selectedMeta = selectedDb ? getPickerMetaLabel(selectedDb, language) : "";
-  const selectedDescription = selectedDb ? getPickerDescription(selectedDb, bootstrapMode, language) : "";
-  const selectedCapabilities = selectedDb ? getPickerCapabilities(selectedDb, bootstrapMode, language).slice(0, 2) : [];
-  const selectedHighlights = selectedDb ? getPickerHighlights(selectedDb, bootstrapMode, language).slice(0, 2) : [];
+  const selectedDescription = selectedDb
+    ? getPickerDescription(selectedDb, bootstrapMode, language)
+    : "";
+  const selectedCapabilities = selectedDb
+    ? getPickerCapabilities(selectedDb, bootstrapMode, language).slice(0, 2)
+    : [];
+  const selectedHighlights = selectedDb
+    ? getPickerHighlights(selectedDb, bootstrapMode, language).slice(0, 2)
+    : [];
   const selectedBrandStyle = selectedDb
     ? ({ "--picker-selected-brand": selectedDb.color } as CSSProperties)
     : undefined;
@@ -369,7 +481,11 @@ export function ConnectionPickerStep({
         <div className="connection-picker-topbar">
           <div className="connection-picker-flow-card">
             {!editConnection ? (
-              <div className="connection-picker-mode-switch" role="group" aria-label={strings.flowLabel}>
+              <div
+                className="connection-picker-mode-switch"
+                role="group"
+                aria-label={strings.flowLabel}
+              >
                 <button
                   type="button"
                   className={`connection-picker-mode-btn ${!bootstrapMode ? "active" : ""}`}
@@ -465,7 +581,7 @@ export function ConnectionPickerStep({
                     key={section.key}
                     className="connection-picker-rail-group"
                     data-tone={
-                      section.key.includes("roadmap") || section.key === "installed-disabled"
+                      section.key.includes("roadmap") || section.key.startsWith("installed-")
                         ? "roadmap"
                         : "ready"
                     }
@@ -564,11 +680,15 @@ export function ConnectionPickerStep({
                     </div>
                     <div className="connection-picker-inspector-fact">
                       <span>{strings.mode}</span>
-                      <strong>{bootstrapMode ? strings.localBootstrap : strings.connectionSetup}</strong>
+                      <strong>
+                        {bootstrapMode ? strings.localBootstrap : strings.connectionSetup}
+                      </strong>
                     </div>
                     <div className="connection-picker-inspector-fact">
                       <span>{strings.engineType}</span>
-                      <strong>{selectedDb.isFile ? strings.fileDatabase : strings.serverDatabase}</strong>
+                      <strong>
+                        {selectedDb.isFile ? strings.fileDatabase : strings.serverDatabase}
+                      </strong>
                     </div>
                   </div>
 
@@ -600,9 +720,7 @@ export function ConnectionPickerStep({
                   )}
 
                   {bootstrapMode && (
-                    <div className="connection-picker-selection-note">
-                      {strings.prismaNote}
-                    </div>
+                    <div className="connection-picker-selection-note">{strings.prismaNote}</div>
                   )}
                 </>
               ) : (
@@ -615,7 +733,9 @@ export function ConnectionPickerStep({
               )}
 
               <div className="connection-picker-footer-actions">
-                <button onClick={onClose} className="btn btn-secondary">{strings.cancel}</button>
+                <button onClick={onClose} className="btn btn-secondary">
+                  {strings.cancel}
+                </button>
                 <button
                   onClick={onContinue}
                   disabled={!selectedDb || !selectedStatus?.canContinue}
@@ -636,4 +756,10 @@ export { LOCAL_BOOTSTRAP_PLANNED, LOCAL_BOOTSTRAP_READY };
 // Shared picker helpers live beside the component so one wizard file stays
 // self-contained; splitting them out would be churn for fast-refresh only.
 // eslint-disable-next-line react-refresh/only-export-components
-export { getPickerStatus, getPickerMetaLabel, getPickerDescription, getPickerCapabilities, getPickerHighlights };
+export {
+  getPickerStatus,
+  getPickerMetaLabel,
+  getPickerDescription,
+  getPickerCapabilities,
+  getPickerHighlights,
+};

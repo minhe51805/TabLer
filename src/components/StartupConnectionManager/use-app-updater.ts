@@ -1,8 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useSyncExternalStore } from "react";
 
-export type AppUpdatePhase = "idle" | "available" | "downloading" | "installing";
+export type AppUpdatePhase = "idle" | "checking" | "available" | "downloading" | "installing";
 
 export interface AppUpdateInfo {
   version: string;
@@ -15,84 +15,159 @@ interface UpdateStatusPayload {
   body: string | null;
 }
 
-const isDesktopWindow = () =>
-  typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+interface AppUpdaterState {
+  update: AppUpdateInfo | null;
+  phase: AppUpdatePhase;
+  progress: number;
+  /** Install/download failure, shown inside the update popup. */
+  error: string | null;
+  /** Background check failure — the pill renders a quiet retry state. */
+  checkError: string | null;
+}
+
+const isDesktopWindow = () => typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 
 /**
- * In-app update lifecycle: check for a newer release shortly after mount,
- * expose the found version/notes, then download + install + relaunch on
- * demand. Backed by the Tauri updater plugin via the app's own commands
- * (check_for_update / download_and_install_update / restart_app).
+ * Minimum gap between automatic checks. The pill mounts in both the startup
+ * manager and the workspace titlebar — without this every mount fired its own
+ * `check_for_update` invoke.
  */
-export function useAppUpdater() {
-  const [update, setUpdate] = useState<AppUpdateInfo | null>(null);
-  const [phase, setPhase] = useState<AppUpdatePhase>("idle");
-  const [progress, setProgress] = useState(0);
-  const [error, setError] = useState<string | null>(null);
-  const busyRef = useRef(false);
-  const desktop = isDesktopWindow();
+const AUTO_CHECK_MIN_INTERVAL_MS = 60_000;
+const AUTO_CHECK_DELAY_MS = 2_500;
 
-  const checkForUpdate = useCallback(async () => {
-    if (!isDesktopWindow()) return;
+// ─── Shared module-level store ───────────────────────────────────────────────
+// `useAppUpdater` is consumed by every mounted `AppUpdateButton`; keeping the
+// state in one store means a single check/install lifecycle no matter how many
+// pills are on screen, and a check failure is visible everywhere.
+
+let state: AppUpdaterState = {
+  update: null,
+  phase: "idle",
+  progress: 0,
+  error: null,
+  checkError: null,
+};
+
+const listeners = new Set<() => void>();
+let progressUnlisten: UnlistenFn | null = null;
+let checkInFlight: Promise<void> | null = null;
+let lastCheckAt = 0;
+let autoCheckTimer: number | null = null;
+let installBusy = false;
+
+function setState(patch: Partial<AppUpdaterState>) {
+  state = { ...state, ...patch };
+  for (const listener of listeners) listener();
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  if (listeners.size === 1) {
+    attachProgressListener();
+    scheduleAutoCheck();
+  }
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+function attachProgressListener() {
+  if (!isDesktopWindow() || progressUnlisten) return;
+  void listen<number>("update-download-progress", (event) => {
+    setState({ progress: event.payload });
+  }).then((fn) => {
+    progressUnlisten = fn;
+  });
+}
+
+function scheduleAutoCheck() {
+  if (!isDesktopWindow() || autoCheckTimer !== null) return;
+  autoCheckTimer = window.setTimeout(() => {
+    autoCheckTimer = null;
+    void requestUpdateCheck();
+  }, AUTO_CHECK_DELAY_MS);
+}
+
+async function requestUpdateCheck(options?: { force?: boolean }): Promise<void> {
+  if (!isDesktopWindow()) return;
+  if (checkInFlight) return checkInFlight;
+  if (!options?.force && Date.now() - lastCheckAt < AUTO_CHECK_MIN_INTERVAL_MS) {
+    return;
+  }
+  lastCheckAt = Date.now();
+  checkInFlight = (async () => {
+    setState({ phase: "checking" });
     try {
       const status = await invoke<UpdateStatusPayload>("check_for_update");
       if (status.available && status.version) {
-        setUpdate({ version: status.version, notes: status.body ?? "" });
+        setState({
+          update: { version: status.version, notes: status.body ?? "" },
+          phase: "available",
+          checkError: null,
+        });
+      } else {
+        setState({ update: null, phase: "idle", checkError: null });
       }
     } catch (checkError) {
-      // Offline / GitHub unreachable / updater disabled — stay silent, the
-      // button simply never appears.
+      // Offline / GitHub unreachable / updater disabled — surface a quiet
+      // retry affordance instead of the button silently never appearing.
       console.error("Update check failed", checkError);
+      setState({
+        phase: "idle",
+        checkError: checkError instanceof Error ? checkError.message : String(checkError),
+      });
+    } finally {
+      checkInFlight = null;
     }
-  }, []);
+  })();
+  return checkInFlight;
+}
 
-  // Check once, a few seconds after launch so it never blocks startup.
-  useEffect(() => {
-    if (!desktop) return;
-    const timer = window.setTimeout(() => {
-      void checkForUpdate();
-    }, 2500);
-    return () => window.clearTimeout(timer);
-  }, [checkForUpdate, desktop]);
-
-  // Track download progress emitted from the Rust side.
-  useEffect(() => {
-    if (!desktop) return;
-    let unlisten: UnlistenFn | null = null;
-    void listen<number>("update-download-progress", (event) => {
-      setProgress(event.payload);
-    }).then((fn) => {
-      unlisten = fn;
+async function requestInstall(): Promise<void> {
+  if (!state.update || installBusy) return;
+  installBusy = true;
+  setState({ error: null, progress: 0, phase: "downloading" });
+  try {
+    await invoke("download_and_install_update");
+    setState({ phase: "installing" });
+    await invoke("restart_app");
+  } catch (installError) {
+    installBusy = false;
+    setState({
+      phase: "available",
+      error: installError instanceof Error ? installError.message : String(installError),
     });
-    return () => unlisten?.();
-  }, [desktop]);
+  }
+}
 
-  const installUpdate = useCallback(async () => {
-    if (!update || busyRef.current) return;
-    busyRef.current = true;
-    setError(null);
-    setProgress(0);
-    setPhase("downloading");
-    try {
-      await invoke("download_and_install_update");
-      setPhase("installing");
-      await invoke("restart_app");
-    } catch (installError) {
-      busyRef.current = false;
-      setPhase("available");
-      setError(
-        installError instanceof Error
-          ? installError.message
-          : String(installError),
-      );
-    }
-  }, [update]);
+/**
+ * In-app update lifecycle: check for a newer release shortly after mount,
+ * expose the found version/notes plus a retryable check-failure state, then
+ * download + install + relaunch on demand. Backed by the Tauri updater plugin
+ * via the app's own commands (check_for_update /
+ * download_and_install_update / restart_app).
+ */
+export function useAppUpdater() {
+  const snapshot = useSyncExternalStore(
+    subscribe,
+    () => state,
+    () => state,
+  );
 
+  const checkForUpdate = useCallback(() => requestUpdateCheck({ force: true }), []);
+  const installUpdate = useCallback(() => requestInstall(), []);
   const dismiss = useCallback(() => {
-    setUpdate(null);
-    setPhase("idle");
-    setError(null);
+    setState({ update: null, phase: "idle", error: null });
   }, []);
 
-  return { update, phase, progress, error, checkForUpdate, installUpdate, dismiss };
+  return {
+    update: snapshot.update,
+    phase: snapshot.phase,
+    progress: snapshot.progress,
+    error: snapshot.error,
+    checkError: snapshot.checkError,
+    checkForUpdate,
+    installUpdate,
+    dismiss,
+  };
 }

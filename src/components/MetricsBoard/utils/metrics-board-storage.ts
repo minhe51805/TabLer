@@ -149,6 +149,10 @@ export function readStoredBoards(): MetricsBoardDefinition[] {
                       : 0,
                   note: typeof widgetRecord.note === "string" ? widgetRecord.note : undefined,
                   color: typeof widgetRecord.color === "string" ? widgetRecord.color : undefined,
+                  chart_spec:
+                    widgetRecord.chart_spec && typeof widgetRecord.chart_spec === "object"
+                      ? (widgetRecord.chart_spec as MetricsWidgetDefinition["chart_spec"])
+                      : undefined,
                 };
               })
               .filter(

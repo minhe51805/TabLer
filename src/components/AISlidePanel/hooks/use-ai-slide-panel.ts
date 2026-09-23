@@ -10,8 +10,8 @@ import {
   type AIProviderConfig,
   type AIRequestAttachment,
   type AIRequestIntent,
-  type AIRequestMode,
   type DatabaseType,
+  type AIRequestMode,
   type QueryHistoryEntry,
   type QueryResult,
 } from "../../../types";
@@ -21,11 +21,19 @@ import {
   type AIAttachmentDraft,
 } from "../../../utils/ai-attachments";
 import { getActiveAIProvider, isLocalAIProvider } from "../../../utils/ai-provider-registry";
-import { getAIFailoverConsent, requestAIFailoverConsent } from "../../../utils/ai-failover-consent";
+import {
+  denyPendingAIFailoverConsent,
+  getAIFailoverConsent,
+  requestAIFailoverConsent,
+} from "../../../utils/ai-failover-consent";
 import { normalizeAIRequestError } from "../../../utils/ai-request-errors";
 import { getSemanticGlossary } from "../../../utils/semantic-glossary";
-import { invokeMutation } from "../../../utils/tauri-utils";
-import { analyzeGeneratedSql, type SqlRiskAnalysis } from "../AISlidePanelUtils";
+import { invokeMutation, invokeWithTimeout } from "../../../utils/tauri-utils";
+import {
+  analyzeGeneratedSql,
+  analyzeGeneratedSqlWithBackend,
+  type SqlRiskAnalysis,
+} from "../AISlidePanelUtils";
 import { extractAskUserOptionsFromQuestion } from "../ai-conversation-state";
 import { AI_AGENT_ASK_USER_OPTIONS_LIMIT } from "../ai-agent-tool-schema";
 import {
@@ -96,12 +104,15 @@ import { isAgentRecordLookupRequest } from "../ai-agent-schema-search";
 import { resolveAgentRequestContext } from "../ai-agent-request-context";
 import { agentToolAvailability, engineAwareDataPlaneHints } from "../ai-agent-engine-gates";
 import { createAgentToolExecutor } from "../ai-agent-tool-executor";
+import { manageAgentMetricsBoard } from "../agent-tools/metrics-board-manager";
 import {
   createAgentActionRequestor,
   isSupersededAIRequestError,
   AI_REQUEST_REPLACED_MESSAGE,
 } from "../ai-agent-action-requestor";
 import { runAgentEvidenceLoop } from "../ai-agent-evidence-loop";
+import { denyPendingAISqlConfirmation } from "../ai-sql-confirm";
+import { denyPendingAICheckpointPick } from "../ai-checkpoint-picker";
 import { collectRunEndInsights } from "../ai-agent-insights";
 import { proposeRunLearnings } from "../ai-agent-learning";
 import { trackUsage } from "../../../utils/usage-counter";
@@ -155,6 +166,9 @@ export interface AIGeneratedAssistResult {
   /** Cumulative model tokens the run spent across every model call (0 when the
    *  provider reports no usage); the bubble footer shows it against the budget. */
   tokensUsed?: number;
+  /** True when the token ceiling forced the finish — the answer may be
+   *  truncated; the bubble footer warns instead of just showing the count. */
+  tokenBudgetExhausted?: boolean;
   /** Model id that produced the run's answer (the configured fast model when
    *  the intent was trivial); the bubble footer shows it next to tokens. */
   modelUsed?: string;
@@ -349,7 +363,18 @@ export async function resolveEditorAssistPrompt(params: {
   };
 }
 
-export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
+export function useAISlidePanel({
+  isOpen,
+  onGenerationCancelled,
+}: {
+  isOpen: boolean;
+  /**
+   * Called when the user stops a run so the panel can settle its own pending
+   * consent dialogs (data-read, destructive). Module-level consents (failover,
+   * SQL confirm, checkpoint pick) are denied inside cancelGeneration itself.
+   */
+  onGenerationCancelled?: () => void;
+}) {
   const { askAIWithReasoning, cancelAIRequest, aiConfigs, requestPhase } = useAIStore(
     useShallow((state) => ({
       askAIWithReasoning: state.askAIWithReasoning,
@@ -408,7 +433,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
 
   const listCheckpoints = useCallback(
     (listConnectionId: string) =>
-      invokeMutation<
+      invokeWithTimeout<
         Array<{
           fileName: string;
           label: string;
@@ -419,18 +444,27 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           rowCount: number;
           sizeBytes: number;
         }>
-      >("list_database_checkpoints", { connectionId: listConnectionId }),
+      >(
+        "list_database_checkpoints",
+        { connectionId: listConnectionId },
+        60_000,
+        "Listing checkpoints",
+      ),
     [],
   );
   const restoreCheckpoint = useCallback(
     async (restoreConnectionId: string, fileName: string, restoreDbType: string) => {
-      const result = await invokeMutation<{ warning?: string | null }>(
+      // Bounded: a restore replays a full dump — a stuck backend call must not
+      // hang the run (Stop cannot kill an in-flight invoke).
+      const result = await invokeWithTimeout<{ warning?: string | null }>(
         "restore_database_checkpoint",
         {
           connectionId: restoreConnectionId,
           fileName,
           dbType: restoreDbType,
         },
+        120_000,
+        "Restoring checkpoint",
       );
       // The rollback itself succeeded, but its safety snapshot may not have —
       // the user must know /rollback has no fresh fallback point.
@@ -470,6 +504,10 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         preferredModel?: string;
       },
     ): Promise<string> => {
+      // Captured before the await: a reply landing after this run was
+      // superseded must not overwrite the live run's reasoning/model refs or
+      // ledger entries.
+      const requestId = requestIdRef.current;
       const { text, reasoning, modelUsed } = await askAIWithReasoning(
         prompt,
         context,
@@ -479,6 +517,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
         attachments,
         options,
       );
+      if (requestId !== requestIdRef.current) {
+        return text;
+      }
       if (reasoning && reasoning.trim()) {
         lastReasoningRef.current = reasoning.trim();
       }
@@ -539,19 +580,31 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
     } else {
       // Closing the panel must also stop the backend stream; bumping the
       // request id alone only silences the result, the provider keeps
-      // generating until it finishes on its own.
+      // generating until it finishes on its own. Pending module-level
+      // consents are denied too — a dialog nobody can see must not hold a
+      // run (or a runSql call) open forever.
       requestIdRef.current += 1;
       void cancelAIRequest();
+      denyPendingAIFailoverConsent();
+      denyPendingAISqlConfirmation();
+      denyPendingAICheckpointPick();
     }
   }, [isOpen, cancelAIRequest]);
 
   const cancelGeneration = useCallback(() => {
+    // Settle every consent a stopped run could be waiting on: an unresolved
+    // dialog promise would keep the run alive forever after Stop. Denials are
+    // not persisted — a cancelled run is not a user decision.
+    denyPendingAIFailoverConsent();
+    denyPendingAISqlConfirmation();
+    denyPendingAICheckpointPick();
+    onGenerationCancelled?.();
     if (!isGenerating) return;
     requestIdRef.current += 1;
     setIsGenerating(false);
     setError(null);
     void cancelAIRequest();
-  }, [cancelAIRequest, isGenerating]);
+  }, [cancelAIRequest, isGenerating, onGenerationCancelled]);
 
   const generateAssist = useCallback(
     async (
@@ -581,6 +634,12 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
          * by the executor — and the model is told to report instead of asking.
          */
         unattendedReadOnly?: boolean;
+        /**
+         * A file command's `allowed-tools:` narrowing for this run only —
+         * seeded into the executor as the initial tool restriction (same
+         * narrowing-only contract as a loaded skill's allowed-tools).
+         */
+        commandToolRestriction?: string[];
       },
     ): Promise<AIGeneratedAssistResult> => {
       const normalizedPrompt = prompt.trim();
@@ -615,6 +674,11 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
       // the 120k budget; this one is the honest whole-run figure (it also
       // covers the plan turn, retries, evidence loop and finish recovery).
       let runTokensUsed = 0;
+      // High-water mark of runTokensUsed already reported to the runner's
+      // token budget; the delta between the two is what each action request
+      // actually cost (plan/compaction/delegate calls spend too, so sampling
+      // only the last call's usage would undercount the run).
+      let runTokensSampled = 0;
       // Model id that produced the run's answer; the bubble footer shows it
       // next to the token total. Updated after every tracked call so a
       // mid-run failover still reports the model that actually answered.
@@ -680,16 +744,10 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           isTrivialAssistIntent(assistIntent, normalizedPrompt)
             ? configuredFastModel
             : undefined;
-        let schemaSharingEnabled = effectiveProvider.allow_schema_context;
-
-        if (needsWorkspaceContext && modeUsesSchemaContext && !schemaSharingEnabled) {
-          // The user turned schema sharing off for this provider — never flip
-          // it back on silently. Surface the choice instead of deciding for them.
-          const message =
-            'Schema sharing is off for the active AI provider. Enable "Allow schema context" in AI settings, or ask without workspace context.';
-          setError(message);
-          throw new Error(message);
-        }
+        const schemaSharingEnabled = effectiveProvider.allow_schema_context;
+        // The user turned schema sharing off for this provider — never flip
+        // it back on silently. The buildSchemaContextRequiredMessage path
+        // below answers with the choice instead of deciding for them.
 
         const schemaContextEnabled =
           needsWorkspaceContext && schemaSharingEnabled && modeUsesSchemaContext;
@@ -825,6 +883,44 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             });
             onAgentProgress(completed, getAgentRunTrace());
           };
+          // Liveness ticker for phases outside the runner's own think ticker:
+          // the plan turn, long tool calls, evidence-loop rounds and
+          // finalization model calls republish their pending step with
+          // elapsed seconds so the trace never looks frozen.
+          let runningPhaseTicker: number | null = null;
+          const stopRunningPhaseTicker = () => {
+            if (runningPhaseTicker !== null) {
+              window.clearInterval(runningPhaseTicker);
+              runningPhaseTicker = null;
+            }
+          };
+          const startRunningPhaseTicker = (pending: {
+            action: AIWorkspaceAgentActionName;
+            message: string;
+          }) => {
+            stopRunningPhaseTicker();
+            publishAgentProgress(pending);
+            const startedAt = Date.now();
+            runningPhaseTicker = window.setInterval(() => {
+              const elapsedSeconds = Math.round((Date.now() - startedAt) / 1000);
+              publishAgentProgress({
+                action: pending.action,
+                message: `${pending.message} (${elapsedSeconds}s)`,
+              });
+            }, 5000);
+          };
+          const runWithProgressTicker = async <T>(
+            pending: { action: AIWorkspaceAgentActionName; message: string },
+            work: () => Promise<T>,
+          ): Promise<T> => {
+            startRunningPhaseTicker(pending);
+            try {
+              return await work();
+            } finally {
+              stopRunningPhaseTicker();
+            }
+          };
+
           const needsExtendedAgentBudget = wantsVisualization || assistIntent === "overview";
           const agentStepBudget = isLocalProvider
             ? needsExtendedAgentBudget
@@ -913,9 +1009,11 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                   return skillsCatalogCache.entries;
                 }
                 try {
-                  const entries = await invokeMutation<
-                    { name: string; description: string; source: string }[]
-                  >("list_ai_skills", {});
+                  const report = await invokeWithTimeout<{
+                    skills: { name: string; description: string; source: string }[];
+                    errors?: { path: string; reason: string }[];
+                  }>("list_ai_skills", {}, 60_000, "Loading skill catalog");
+                  const entries = report.skills ?? [];
                   skillsCatalogCache = { at: Date.now(), entries };
                   return entries;
                 } catch (error) {
@@ -1120,6 +1218,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             // Fail-closed: an absent catalog means NO skill may load, otherwise
             // a model could call the skill tool for entries never vetted.
             allowedSkillNames: availableSkills?.map((entry) => entry.name) ?? [],
+            // A file command's `allowed-tools:` seeds the run's restriction —
+            // same narrowing-only contract as a loaded skill's allowed-tools.
+            initialToolRestriction: options?.commandToolRestriction,
             // Memory tools must operate on the run's (connection, database)
             // scope — a null scope would orphan saves into global/default.
             memoryScope: { connectionId, database: currentDatabase ?? null },
@@ -1156,6 +1257,32 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                 .getState()
                 .tabs.some((tab) => tab.type === "query" && !tabIdsBefore.has(tab.id));
             },
+            // manage_metrics_widget: board storage + layout + refresh live in
+            // agent-tools/metrics-board-manager; the dep just binds the run's
+            // connection/database scope.
+            manageMetricsBoard: (request) =>
+              manageAgentMetricsBoard(request, {
+                connectionId,
+                database: currentDatabase ?? null,
+              }),
+            // open_table_tab: same addTab shape as the record-link handler in
+            // AISlidePanel (type "table" + connection/database scope). Verified
+            // synchronously like openQueryTab so a failed open reports failure.
+            openTableTab: ({ table, database }) => {
+              if (!connectionId) return false;
+              const tabIdsBefore = new Set(useUIStore.getState().tabs.map((tab) => tab.id));
+              useUIStore.getState().addTab({
+                id: `table-${connectionId}-${database || currentDatabase || ""}-${table}-${crypto.randomUUID()}`,
+                type: "table",
+                title: table,
+                connectionId,
+                tableName: table,
+                database: database || currentDatabase || undefined,
+              });
+              return useUIStore
+                .getState()
+                .tabs.some((tab) => tab.type === "table" && !tabIdsBefore.has(tab.id));
+            },
             requestDataReadConsent,
             requestDataDestructiveConsent,
             publishAgentProgress,
@@ -1173,9 +1300,12 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                   options.workspaceDir !== undefined
                     ? options.workspaceDir
                     : await getLinkedWorkspaceDir(),
-                // `invokeMutation` requires an args bag; the rule payload always
-                // has one, but the shared InvokeFn type allows `undefined`.
-                invoke: (command, args) => invokeMutation(command, args ?? {}),
+                // `invokeWithTimeout` requires an args bag; the rule payload
+                // always has one, but the shared InvokeFn type allows
+                // `undefined`. Bounded so a stalled rules engine cannot hang
+                // the tool call.
+                invoke: (command, args) =>
+                  invokeWithTimeout(command, args ?? {}, 60_000, "Evaluating guardrail rules"),
               }),
             onAgentPlanUpdate: (plan) => {
               agentPlanLines = plan.map(
@@ -1190,17 +1320,22 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               if (!connectionId || !dbType) {
                 return Promise.reject(new Error("No active connection for checkpoint."));
               }
-              return invokeMutation<{
+              return invokeWithTimeout<{
                 fileName: string;
                 label: string;
                 tableCount: number;
                 rowCount: number;
-              }>("create_database_checkpoint", {
-                connectionId,
-                database: state.currentDatabase || null,
-                dbType,
-                label: label ?? null,
-              });
+              }>(
+                "create_database_checkpoint",
+                {
+                  connectionId,
+                  database: state.currentDatabase || null,
+                  dbType,
+                  label: label ?? null,
+                },
+                120_000,
+                "Creating checkpoint",
+              );
             },
             listCheckpoints,
             restoreCheckpoint,
@@ -1240,10 +1375,15 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             // so the plan (or syntax error) lands on the review card before
             // the user accepts. Never executes the write itself.
             explainStatement: (explainConnectionId, explainSql) =>
-              invokeMutation<QueryResult>("explain_agent_statement", {
-                connectionId: explainConnectionId,
-                sql: explainSql,
-              }),
+              invokeWithTimeout<QueryResult>(
+                "explain_agent_statement",
+                {
+                  connectionId: explainConnectionId,
+                  sql: explainSql,
+                },
+                60_000,
+                "Explaining statement",
+              ),
             toolAvailability,
           });
           getAgentRunTrace = getRunTrace;
@@ -1316,23 +1456,26 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           // sketch a short plan before any tool runs, so the user sees it "get it"
           // the way Claude's agent does, instead of silently working.
           if (workspaceToolsEnabled) {
-            publishAgentProgress({ action: "plan", message: "" });
             try {
-              const planText = await trackedAskAI(
-                buildAgentPlanPrompt({
-                  userPrompt: normalizedPrompt,
-                  assistIntent,
-                  currentDatabase,
-                  availableTableNames:
-                    agentPromptTableNames.length > 0
-                      ? agentPromptTableNames
-                      : availableSchemaTables,
-                  appLanguage,
-                }),
-                strictRecoveryContext || context,
-                "panel",
-                "explain",
-                [],
+              const planText = await runWithProgressTicker(
+                { action: "plan", message: "Planning…" },
+                () =>
+                  trackedAskAI(
+                    buildAgentPlanPrompt({
+                      userPrompt: normalizedPrompt,
+                      assistIntent,
+                      currentDatabase,
+                      availableTableNames:
+                        agentPromptTableNames.length > 0
+                          ? agentPromptTableNames
+                          : availableSchemaTables,
+                      appLanguage,
+                    }),
+                    strictRecoveryContext || context,
+                    "panel",
+                    "explain",
+                    [],
+                  ),
               );
               if (requestId !== requestIdRef.current) {
                 throw new Error(AI_REQUEST_REPLACED_MESSAGE);
@@ -1385,6 +1528,11 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           // A provider the user picked manually during this run must not be
           // silently rotated away by automatic failover.
           const runStartedAt = Date.now();
+          // The provider the user had when the run started: automatic
+          // failover is a loan, not a switch — the run hands it back at the
+          // end unless the user picked a different provider mid-run.
+          const providerAtRunStart =
+            getActiveAIProvider(useAIStore.getState().aiConfigs)?.id ?? null;
 
           // Announce a manual provider pick (mid-run) as a settled step in the
           // live trace, so the conversation shows the switch right below the
@@ -1457,10 +1605,15 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               workspaceToolsEnabled,
               stepBudget: agentStepBudget,
               tokenBudget: DEFAULT_AGENT_TOKEN_BUDGET,
-              // streamingUsage holds the most recent model call's raw usage; the
-              // runner accumulates this after each action request.
-              getLastRequestTokens: () =>
-                extractAgentUsageTokens(useAIStore.getState().streamingUsage),
+              // The runner accumulates whatever this returns after each action
+              // request. Reporting the DELTA of the run-wide counter (instead
+              // of the last call's usage) means plan/compaction/delegate calls
+              // and in-line retries all count toward the budget.
+              getLastRequestTokens: () => {
+                const delta = runTokensUsed - runTokensSampled;
+                runTokensSampled = runTokensUsed;
+                return delta;
+              },
               initialSteps: agentTraceSteps,
               requestAction: async ({ forceFinish, includeHistory, iteration, reason, steps }) => {
                 const completedToolSteps = steps.filter((step) => step.action !== "plan");
@@ -1708,7 +1861,15 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                     // ever switches providers on its own. An approval (or decline)
                     // is remembered, so the question never comes back.
                     let failoverAllowed = getAIFailoverConsent() === "approved";
-                    if (!failoverAllowed && getAIFailoverConsent() === "unset") {
+                    // An unattended scheduled run can never show the consent
+                    // dialog (the panel may be closed) — auto-deny so the run
+                    // falls through to same-provider retry/recovery instead of
+                    // hanging forever on a question nobody can answer.
+                    if (
+                      !unattendedReadOnly &&
+                      !failoverAllowed &&
+                      getAIFailoverConsent() === "unset"
+                    ) {
                       failoverAllowed = await requestAIFailoverConsent();
                     }
                     if (failoverAllowed) {
@@ -1788,208 +1949,259 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               onStateChange: (snapshot) => {
                 agentTraceSteps = snapshot.steps.map((step) => ({ ...step }));
                 if (snapshot.phase === "running-tool" && snapshot.action) {
-                  publishAgentProgress({
+                  // A tool call can run as long as a model call (backend
+                  // invoke + consent wait); keep the same elapsed-time
+                  // heartbeat so a slow tool never looks frozen.
+                  startRunningPhaseTicker({
                     action: snapshot.action,
                     message: snapshot.message || "No message provided.",
                   });
-                } else if (snapshot.phase === "tool-completed") {
-                  publishAgentProgress();
-                } else if (snapshot.phase === "requesting-action") {
-                  // The model call is the longest part of every step; show it
-                  // explicitly so the trace never looks frozen between tools.
-                  // Kept terse on purpose: this text is surfaced verbatim in the
-                  // collapsed "Agent steps" header, so no step counters or long
-                  // clauses — just the live verb.
-                  publishAgentProgress({
-                    action: "think",
-                    message:
-                      snapshot.requestReason === "budget"
-                        ? "Wrapping up…"
-                        : snapshot.requestReason === "direct"
-                          ? "Composing response…"
-                          : "Thinking…",
-                  });
-                } else if (snapshot.phase === "recovering-finish") {
-                  publishAgentProgress({ action: "think", message: "Finalizing answer." });
+                } else {
+                  stopRunningPhaseTicker();
+                  if (snapshot.phase === "tool-completed") {
+                    publishAgentProgress();
+                  } else if (snapshot.phase === "requesting-action") {
+                    // The model call is the longest part of every step; show it
+                    // explicitly so the trace never looks frozen between tools.
+                    // Kept terse on purpose: this text is surfaced verbatim in the
+                    // collapsed "Agent steps" header, so no step counters or long
+                    // clauses — just the live verb.
+                    publishAgentProgress({
+                      action: "think",
+                      message:
+                        snapshot.requestReason === "budget"
+                          ? "Wrapping up…"
+                          : snapshot.requestReason === "direct"
+                            ? "Composing response…"
+                            : "Thinking…",
+                    });
+                  } else if (snapshot.phase === "recovering-finish") {
+                    startRunningPhaseTicker({
+                      action: "think",
+                      message: "Finalizing answer.",
+                    });
+                  }
                 }
               },
             });
+            // The try's finally sits after the evidence loop and finalization
+            // below so the listeners stay live for every phase of the run.
+            if (!agentRunnerResult) {
+              throw new Error("Agent runner returned no result");
+            }
+            agentTraceSteps = agentRunnerResult.steps;
+            let finalAction = agentRunnerResult.finalAction;
+            let finalSteps = agentRunnerResult.steps;
+            if (endedWithAskUser && typeof finalAction.args?.response === "string") {
+              const askStep: AgentTraceStep = {
+                step: finalSteps.length + 1,
+                action: "ask_user",
+                message: finalAction.args.response,
+                observation: "",
+              };
+              finalSteps = [...finalSteps, askStep];
+              agentTraceSteps = [...agentTraceSteps, askStep];
+            }
+
+            // Quality gate: a data-seeking request must not end in a finish that
+            // neither executed a read nor proposed SQL — that is how runs used to
+            // stop with "I have enough data" and no deliverable. The gate retries
+            // a bounded number of rounds, then accepts the best available answer.
+            // Quality gate: bounded evidence-recovery rounds via ai-agent-evidence-loop.
+            const wantsReportTable =
+              /(báo cáo|bảng báo cáo|report|tổng hợp|summary|dashboard)/i.test(normalizedPrompt);
+            ({ finalAction, finalSteps } = await runAgentEvidenceLoop({
+              workspaceToolsEnabled,
+              endedWithAskUser,
+              assistIntent,
+              wantsReportTable,
+              // Complex, synthesis-heavy asks (reports/overviews) earn one extra
+              // self-correction round; simple asks keep the conservative default.
+              maxRounds: resolveEvidenceRounds({ assistIntent, wantsReportTable }),
+              // Allow-list the live schema names so claim verification never flags a
+              // real table the run simply never touched as a fabrication.
+              knownIdentifiers: availableSchemaTables,
+              sharedAgentInstruction,
+              initialAction: finalAction,
+              initialSteps: finalSteps,
+              // Post-loop model/tool calls get the same elapsed-time heartbeat
+              // as the runner's own phases so the trace never looks frozen.
+              requestAgentAction: (prompt, includeHistory) =>
+                runWithProgressTicker({ action: "think", message: "Thinking…" }, () =>
+                  requestAgentAction(prompt, includeHistory),
+                ),
+              buildControllerPrompt,
+              isSupersededAIRequestError,
+              runAgentTool: (action) =>
+                runWithProgressTicker(
+                  {
+                    action: action.action,
+                    message: action.message || "Gathering the missing data.",
+                  },
+                  () => runAgentTool(action),
+                ),
+              publishAgentProgress,
+              recoverAgentFinishAction: (reason) =>
+                runWithProgressTicker({ action: "think", message: "Finalizing answer." }, () =>
+                  recoverAgentFinishAction(reason),
+                ),
+            }));
+
+            // Proactive insights (P8): a pure, synchronous pass over the trace
+            // the run already produced — no extra model call, and a card only
+            // exists if a statement in that trace backs it. Collected before
+            // finalization so the evidence is the run's own.
+            if (requestId === requestIdRef.current) {
+              const insights = collectRunEndInsights(finalSteps);
+              const scope = buildInsightScope(connectionId, currentDatabase);
+              useAgentInsightsStore.getState().recordRunInsights(insights, scope);
+              // Learning loop (P9): the same evidence, offered as things the
+              // workspace could keep. Nothing is written here — the user approves
+              // each proposal on its card.
+              useAgentLearningStore
+                .getState()
+                .recordRunLearnings(proposeRunLearnings({ insights, steps: finalSteps }), scope, {
+                  connectionId,
+                  database: currentDatabase,
+                });
+            }
+
+            // Best-effort debug artifact: persist the full snapshot stream so
+            // failed or surprising runs can be replayed offline.
+            try {
+              const traceLines = [
+                JSON.stringify({
+                  kind: "meta",
+                  at: new Date().toISOString(),
+                  prompt: normalizedPrompt,
+                  intent: assistIntent,
+                  connectionId,
+                  database: currentDatabase,
+                  workspaceToolsEnabled,
+                }),
+                ...agentRunnerResult.snapshots.map((snapshot) =>
+                  JSON.stringify({
+                    kind: "snapshot",
+                    phase: snapshot.phase,
+                    iteration: snapshot.iteration,
+                    action: snapshot.action ?? null,
+                    steps: snapshot.steps,
+                  }),
+                ),
+                JSON.stringify({ kind: "final", steps: finalSteps }),
+              ].join("\n");
+              void invokeMutation<string>("save_agent_trace", {
+                requestId,
+                content: traceLines,
+              }).catch(() => undefined);
+            } catch {
+              // Tracing must never break the run.
+            }
+
+            const finalization = await finalizeAgentResult({
+              availableSchemaTables,
+              buildControllerPrompt,
+              sharedAgentInstruction,
+              language: appLanguage,
+              initialAction: finalAction,
+              initialSteps: finalSteps,
+              // Finalization model calls (finish repair, SQL pre-flight fix)
+              // get the same elapsed-time heartbeat as the runner's phases.
+              recoverFinishAction: (reason) =>
+                runWithProgressTicker({ action: "think", message: "Finalizing answer." }, () =>
+                  recoverAgentFinishAction(reason),
+                ),
+              requestAgentAction: (prompt, includeHistory) =>
+                runWithProgressTicker({ action: "think", message: "Thinking…" }, () =>
+                  requestAgentAction(prompt, includeHistory),
+                ),
+              validateSql: async (proposedSql) => {
+                // Mutating proposals are already guarded by preview/confirmation
+                // flows; the pre-flight only verifies read-only SQL.
+                if (isMutatingStatement(proposedSql) || isHighRiskStatement(proposedSql)) {
+                  return null;
+                }
+                if (!connectionId || requestId !== requestIdRef.current) {
+                  return null;
+                }
+                if (requestDataReadConsent) {
+                  const approved = await requestDataReadConsent();
+                  if (!approved) return null;
+                }
+                if (requestId !== requestIdRef.current) {
+                  return null;
+                }
+                try {
+                  await executeSandboxQuery(connectionId, [proposedSql], true);
+                  return null;
+                } catch (errorValue) {
+                  if (isSupersededAIRequestError(errorValue)) {
+                    throw errorValue;
+                  }
+                  return formatExecutionError(errorValue);
+                }
+              },
+            });
+            // Structured options from an ask_user finish; the conversation view
+            // renders them as one-click reply buttons on the final bubble.
+            const finalActionArgs = (finalAction.args ?? {}) as Record<string, unknown>;
+            const askUserOptions = Array.isArray(finalActionArgs.options)
+              ? (finalActionArgs.options as unknown[])
+                  .filter(
+                    (value): value is string =>
+                      typeof value === "string" && value.trim().length > 0,
+                  )
+                  .slice(0, 8)
+              : undefined;
+            const hasValidSql = Boolean(finalization.sql);
+
+            return {
+              prompt: normalizedPrompt,
+              rawResponse: finalization.rawResponse,
+              sql: finalization.sql,
+              risk:
+                hasValidSql && finalization.sql
+                  ? await analyzeGeneratedSqlWithBackend(finalization.sql, activeDbType)
+                  : undefined,
+              intent: assistIntent,
+              reasoning: lastReasoningRef.current,
+              // Persist the run notes (switches, chain failovers, retry waits)
+              // alongside the runner trace so they survive reloads.
+              agentSteps: mergeRunNotes(finalization.agentSteps ?? [], manualSwitchNotes),
+              agentWidgets: finalization.agentWidgets,
+              askUserOptions,
+              failoverNotes: failoverNotes.length > 0 ? failoverNotes : undefined,
+              // Read-only compliance evidence: which tools an unattended run
+              // reached for and was refused (empty = it never tried to write).
+              unattendedBlockedTools: unattendedReadOnly ? getUnattendedBlockedTools() : undefined,
+              tokensUsed: runTokensUsed,
+              tokenBudgetExhausted: agentRunnerResult?.tokenBudgetExhausted === true || undefined,
+              modelUsed: runModelUsed,
+              runTrace: getRunTrace(),
+            };
           } finally {
-            // Always detach, including when the run throws mid-loop; otherwise a
-            // failed run leaks its manual-switch listener (and its closures).
+            // Detach only after EVERY phase (tool loop, evidence loop,
+            // finalization) — a manual provider switch must be able to cancel
+            // in-flight model calls in the post-loop phases too, and a failed
+            // run must never leak its listeners or the liveness ticker.
+            stopRunningPhaseTicker();
             window.removeEventListener(
               "ai-provider-switched-during-run",
               handleManualProviderSwitch,
             );
             window.removeEventListener("ai-provider-chain-failover", handleChainFailoverNote);
+            // Automatic failover promoted a provider for THIS run only —
+            // restore the user's pick so the selector doesn't silently stay
+            // on a provider they never chose. A manual switch during the run
+            // is the newer decision and wins.
+            if (
+              providerAtRunStart &&
+              providerRetryCount > 0 &&
+              getManualProviderOverrideAt() <= runStartedAt
+            ) {
+              useAIStore.getState().restoreProvider(providerAtRunStart);
+            }
           }
-          if (!agentRunnerResult) {
-            throw new Error("Agent runner returned no result");
-          }
-          agentTraceSteps = agentRunnerResult.steps;
-          let finalAction = agentRunnerResult.finalAction;
-          let finalSteps = agentRunnerResult.steps;
-          if (endedWithAskUser && typeof finalAction.args?.response === "string") {
-            const askStep: AgentTraceStep = {
-              step: finalSteps.length + 1,
-              action: "ask_user",
-              message: finalAction.args.response,
-              observation: "",
-            };
-            finalSteps = [...finalSteps, askStep];
-            agentTraceSteps = [...agentTraceSteps, askStep];
-          }
-
-          // Quality gate: a data-seeking request must not end in a finish that
-          // neither executed a read nor proposed SQL — that is how runs used to
-          // stop with "I have enough data" and no deliverable. The gate retries
-          // a bounded number of rounds, then accepts the best available answer.
-          // Quality gate: bounded evidence-recovery rounds via ai-agent-evidence-loop.
-          const wantsReportTable = /(báo cáo|bảng báo cáo|report|tổng hợp|summary|dashboard)/i.test(
-            normalizedPrompt,
-          );
-
-          ({ finalAction, finalSteps } = await runAgentEvidenceLoop({
-            workspaceToolsEnabled,
-            endedWithAskUser,
-            assistIntent,
-            wantsReportTable,
-            // Complex, synthesis-heavy asks (reports/overviews) earn one extra
-            // self-correction round; simple asks keep the conservative default.
-            maxRounds: resolveEvidenceRounds({ assistIntent, wantsReportTable }),
-            // Allow-list the live schema names so claim verification never flags a
-            // real table the run simply never touched as a fabrication.
-            knownIdentifiers: availableSchemaTables,
-            sharedAgentInstruction,
-            initialAction: finalAction,
-            initialSteps: finalSteps,
-            requestAgentAction,
-            buildControllerPrompt,
-            isSupersededAIRequestError,
-            runAgentTool,
-            publishAgentProgress,
-            recoverAgentFinishAction,
-          }));
-
-          // Proactive insights (P8): a pure, synchronous pass over the trace
-          // the run already produced — no extra model call, and a card only
-          // exists if a statement in that trace backs it. Collected before
-          // finalization so the evidence is the run's own.
-          if (requestId === requestIdRef.current) {
-            const insights = collectRunEndInsights(finalSteps);
-            const scope = buildInsightScope(connectionId, currentDatabase);
-            useAgentInsightsStore.getState().recordRunInsights(insights, scope);
-            // Learning loop (P9): the same evidence, offered as things the
-            // workspace could keep. Nothing is written here — the user approves
-            // each proposal on its card.
-            useAgentLearningStore
-              .getState()
-              .recordRunLearnings(proposeRunLearnings({ insights, steps: finalSteps }), scope, {
-                connectionId,
-                database: currentDatabase,
-              });
-          }
-
-          // Best-effort debug artifact: persist the full snapshot stream so
-          // failed or surprising runs can be replayed offline.
-          try {
-            const traceLines = [
-              JSON.stringify({
-                kind: "meta",
-                at: new Date().toISOString(),
-                prompt: normalizedPrompt,
-                intent: assistIntent,
-                connectionId,
-                database: currentDatabase,
-                workspaceToolsEnabled,
-              }),
-              ...agentRunnerResult.snapshots.map((snapshot) =>
-                JSON.stringify({
-                  kind: "snapshot",
-                  phase: snapshot.phase,
-                  iteration: snapshot.iteration,
-                  action: snapshot.action ?? null,
-                  steps: snapshot.steps,
-                }),
-              ),
-              JSON.stringify({ kind: "final", steps: finalSteps }),
-            ].join("\n");
-            void invokeMutation<string>("save_agent_trace", {
-              requestId,
-              content: traceLines,
-            }).catch(() => undefined);
-          } catch {
-            // Tracing must never break the run.
-          }
-
-          const finalization = await finalizeAgentResult({
-            availableSchemaTables,
-            buildControllerPrompt,
-            initialAction: finalAction,
-            initialSteps: finalSteps,
-            recoverFinishAction: recoverAgentFinishAction,
-            requestAgentAction,
-            sharedAgentInstruction,
-            validateSql: async (proposedSql) => {
-              // Mutating proposals are already guarded by preview/confirmation
-              // flows; the pre-flight only verifies read-only SQL.
-              if (isMutatingStatement(proposedSql) || isHighRiskStatement(proposedSql)) {
-                return null;
-              }
-              if (!connectionId || requestId !== requestIdRef.current) {
-                return null;
-              }
-              if (requestDataReadConsent) {
-                const approved = await requestDataReadConsent();
-                if (!approved) return null;
-              }
-              if (requestId !== requestIdRef.current) {
-                return null;
-              }
-              try {
-                await executeSandboxQuery(connectionId, [proposedSql], true);
-                return null;
-              } catch (errorValue) {
-                if (isSupersededAIRequestError(errorValue)) {
-                  throw errorValue;
-                }
-                return formatExecutionError(errorValue);
-              }
-            },
-          });
-          // Structured options from an ask_user finish; the conversation view
-          // renders them as one-click reply buttons on the final bubble.
-          const finalActionArgs = (finalAction.args ?? {}) as Record<string, unknown>;
-          const askUserOptions = Array.isArray(finalActionArgs.options)
-            ? (finalActionArgs.options as unknown[])
-                .filter(
-                  (value): value is string => typeof value === "string" && value.trim().length > 0,
-                )
-                .slice(0, 8)
-            : undefined;
-          const hasValidSql = Boolean(finalization.sql);
-
-          return {
-            prompt: normalizedPrompt,
-            rawResponse: finalization.rawResponse,
-            sql: finalization.sql,
-            risk:
-              hasValidSql && finalization.sql ? analyzeGeneratedSql(finalization.sql) : undefined,
-            intent: assistIntent,
-            reasoning: lastReasoningRef.current,
-            // Persist the run notes (switches, chain failovers, retry waits)
-            // alongside the runner trace so they survive reloads.
-            agentSteps: mergeRunNotes(finalization.agentSteps ?? [], manualSwitchNotes),
-            agentWidgets: finalization.agentWidgets,
-            askUserOptions,
-            failoverNotes: failoverNotes.length > 0 ? failoverNotes : undefined,
-            // Read-only compliance evidence: which tools an unattended run
-            // reached for and was refused (empty = it never tried to write).
-            unattendedBlockedTools: unattendedReadOnly ? getUnattendedBlockedTools() : undefined,
-            tokensUsed: runTokensUsed,
-            modelUsed: runModelUsed,
-            runTrace: getRunTrace(),
-          };
         }
         const finalResponse = await recoverNonAgentAssistResponse({
           appLanguage,
@@ -2020,7 +2232,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
           prompt: normalizedPrompt,
           rawResponse: finalResponse,
           sql: shouldAttachSql ? extractedSql : null,
-          risk: hasValidSql ? analyzeGeneratedSql(extractedSql) : undefined,
+          risk: hasValidSql
+            ? await analyzeGeneratedSqlWithBackend(extractedSql, activeDbType)
+            : undefined,
           intent: assistIntent,
           reasoning: lastReasoningRef.current,
           tokensUsed: runTokensUsed,

@@ -35,6 +35,8 @@ export const VI_COPY: AIWorkspaceCopy = {
     insert: "Chèn",
     approveRun: "Duyệt chạy",
     retry: "Thử lại",
+    liveDataDisabledHint:
+      "Agent đã đọc dữ liệu trực tiếp cho câu trả lời này — chạy lại SQL sẽ bị trùng.",
   },
   modal: {
     kicker: "Chi tiết bong bóng",
@@ -128,8 +130,7 @@ export const VI_COPY: AIWorkspaceCopy = {
     agentAutonomySmart: "Thông minh",
     agentAutonomySmartHint: "Tự chạy câu đọc an toàn, hỏi trước khi ghi.",
     agentAutonomyFull: "Toàn quyền",
-    agentAutonomyFullHint:
-      "Tự chạy truy vấn đọc an toàn; thao tác ghi và đổi schema vẫn cần xác nhận.",
+    agentAutonomyFullHint: "Chạy mọi thứ không hỏi; tắt Safe Mode.",
     thinkingToggleLabel: "Suy luận",
     thinkingToggleHint: "Hiện hoặc ẩn suy luận trực tiếp của agent",
     thinkingOn: "Bật",
@@ -168,8 +169,12 @@ export const VI_COPY: AIWorkspaceCopy = {
     sqlConfirmBatchLabel: "{count} câu lệnh trong lượt chạy này.",
     autonomyFullConfirmTitle: "Bật toàn quyền?",
     autonomyFullConfirmBody:
-      "Agent sẽ tự chạy các lệnh đọc và tool call mà không hỏi trước. Thao tác ghi và đổi schema vẫn cần bạn xác nhận trước khi thực thi.",
+      "Agent sẽ chạy cả lệnh đọc, ghi và đổi schema MÀ KHÔNG hỏi trước — câu lệnh được thực thi ngay khi được đề xuất. Chỉ bật cho công việc bạn hoàn toàn tin tưởng.",
     autonomyFullConfirmAllow: "Bật toàn quyền",
+    autonomyFullSafeModeTitle: "Tắt Safe Mode?",
+    autonomyFullSafeModeBody:
+      "Toàn quyền cũng TẮT Safe Mode trong thời gian hoạt động — các thao tác ghi của agent sẽ không được kiểm tra hay xác nhận. Safe Mode được khôi phục tự động khi bạn chuyển lại Thông minh hoặc Luôn duyệt.",
+    autonomyFullSafeModeAllow: "Tắt Safe Mode và bật",
     promptIdeas: [
       {
         title: "Tạo bảng",

@@ -148,11 +148,24 @@ describe("useAgentScheduleRunner", () => {
       requestDataReadConsent?: () => Promise<boolean>;
       requestDataDestructiveConsent?: unknown;
     };
-    // Creating a task that says it reads data is the consent for reading it.
-    await expect(options.requestDataReadConsent?.()).resolves.toBe(true);
+    // Without the per-schedule opt-in the unattended run stays schema-only:
+    // shipping rows to the provider needs the explicit allowDataRead grant.
+    await expect(options.requestDataReadConsent?.()).resolves.toBe(false);
     // No standing destructive consent: a write stays impossible, not merely
     // "approved in advance".
     expect(options.requestDataDestructiveConsent).toBeUndefined();
+  });
+
+  it("honours the per-schedule data-read opt-in", async () => {
+    enqueueTask({ allowDataRead: true });
+    const { generateAssist } = renderRunner();
+    await settle();
+
+    const options = generateAssist.mock.calls[0][2] as {
+      requestDataReadConsent?: () => Promise<boolean>;
+    };
+    // The creation-time checkbox is the consent for reading live data.
+    await expect(options.requestDataReadConsent?.()).resolves.toBe(true);
   });
 
   it("reports a refused write tool as needing a human, never as a success", async () => {

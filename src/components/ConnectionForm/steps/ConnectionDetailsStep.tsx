@@ -114,6 +114,7 @@ export interface DetailsStrings {
   connectionDetails: string;
   detailsCopy: string;
   host: string;
+  pasteUrlHint: string;
   port: string;
   username: string;
   password: string;
@@ -627,6 +628,7 @@ export function ConnectionDetailsStep({
                     placeholder={hostPlaceholder}
                     className="input h-11"
                   />
+                  <small className="connection-form-field-hint">{strings.pasteUrlHint}</small>
                 </div>
 
                 <div className="connection-form-field">

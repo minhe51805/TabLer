@@ -2,7 +2,7 @@ use crate::database::manager::DatabaseManager;
 use crate::mcp_security::{authorize_mcp_access, McpPermission};
 use crate::storage::connection_storage::ConnectionStorage;
 use crate::storage::mcp_storage::{McpAuditEvent, McpStorage};
-use crate::utils::sql::classify_sql;
+use crate::utils::sql::{classify_sql, detect_dangerous_capability};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
@@ -22,6 +22,14 @@ pub fn validate_read_only_mcp_query(sql: &str) -> Result<String> {
     }
     if !decision.read_only {
         return Err(anyhow!("MCP is read-only. Only inspection SQL is allowed."));
+    }
+    // A "read-only" SELECT can still reach the filesystem, the network, or an
+    // OS command through a dialect capability (pg_read_file, read_csv,
+    // INTO OUTFILE, …) — reject those before the statement is accepted.
+    if decision.filesystem_access {
+        let reason = detect_dangerous_capability(sql, None)
+            .unwrap_or_else(|| "uses a filesystem/network/OS capability".to_string());
+        return Err(anyhow!("MCP read-only boundary blocks SQL that {reason}."));
     }
     Ok(decision.statements[0].sql.clone())
 }

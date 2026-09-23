@@ -139,8 +139,8 @@ describe("stageGeneratedRows", () => {
   beforeEach(() => {
     useChangeTrackingStore.setState({
       stagedChanges: [],
-      history: [],
-      future: [],
+      history: {},
+      future: {},
       isPreviewOpen: false,
       selectedChangeId: null,
       _columnNameMap: {},
@@ -157,8 +157,8 @@ describe("stageGeneratedRows", () => {
     const state = useChangeTrackingStore.getState();
     expect(state.stagedChanges).toHaveLength(3);
     expect(state.isPreviewOpen).toBe(true);
-    // One batch = one undo step.
-    expect(state.history).toHaveLength(1);
+    // One batch = one undo step under the table's scope key.
+    expect(state.history["||users"]).toHaveLength(1);
     for (const change of state.stagedChanges) {
       expect(change.type).toBe("insert");
       expect(change.tableName).toBe("users");

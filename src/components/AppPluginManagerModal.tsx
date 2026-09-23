@@ -69,12 +69,13 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
 
   // Which native-crate engines this build actually compiled in (Cargo features);
   // mirrors the connection picker so the Plugin Manager reflects the same
-  // "installed / connectable" truth instead of the static build-time flag. Fails
-  // open (empty map) so the shipped build — which enables all of them — is
-  // unchanged, and a failed report never hides a supported engine.
-  const [nativeDriverAvailability, setNativeDriverAvailability] = useState<Record<string, boolean>>(
-    {},
-  );
+  // "installed / connectable" truth instead of the static build-time flag.
+  // Starts undefined and fails closed — the shipped build is lean (Cargo
+  // default features are empty), so an unreported engine must not render as
+  // available.
+  const [nativeDriverAvailability, setNativeDriverAvailability] = useState<
+    Record<string, boolean> | undefined
+  >(undefined);
   useEffect(() => {
     let cancelled = false;
     void invokeWithTimeout<Record<string, boolean>>(
@@ -87,8 +88,8 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
         if (!cancelled && availability) setNativeDriverAvailability(availability);
       })
       .catch(() => {
-        // Fail open: keep native engines visible; the backend still guards the
-        // connect path with a clear "not compiled into this build" error.
+        // Fail closed: an unreported engine stays unavailable; the backend
+        // still guards the connect path with a clear error either way.
       });
     return () => {
       cancelled = true;
@@ -109,7 +110,8 @@ export function AppPluginManagerModal({ onClose }: AppPluginManagerModalProps) {
   // so keep it out of the External plugin roadmap to avoid the contradictory
   // "installed here / roadmap there" state. Identical filter to the picker.
   const roadmapAdapters = databaseAdapters.filter(
-    (db) => !db.supported && db.pluginHttpState !== "installed",
+    (db) =>
+      !db.supported && db.pluginHttpState !== "installed" && db.pluginHttpState !== "incomplete",
   );
   const latestRegistryPackages = useMemo(() => {
     const latest = new Map<string, PluginRegistryPackage>();

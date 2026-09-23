@@ -36,7 +36,10 @@ pub enum CapabilitySupport {
 }
 
 /// How the agent should talk to this engine. SQL-shaped tools
-/// (`run_readonly_sql`, `preview_write`) only apply to `Sql` (and CQL SELECT).
+/// (`run_readonly_sql`, `preview_write`) apply to `Sql`, CQL SELECT, and
+/// MongoDB's translated SELECT subset; write previews additionally require a
+/// driver `preview_write_transaction` impl (see
+/// [`agent_allows_sql_write_preview`]).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum QueryModel {
@@ -88,15 +91,36 @@ pub const fn driver_distribution(database_type: DatabaseType) -> DriverDistribut
     }
 }
 
+/// Agent SQL-read boundary. SQL and CQL engines run SELECT-shaped statements
+/// directly; MongoDB's driver translates a practical SELECT subset into
+/// find/aggregate commands (mongodb_sql.rs), so document engines read through
+/// the same pinned read-only command. KV and search engines have no SQL
+/// surface at all.
 pub const fn agent_allows_sql_read(database_type: DatabaseType) -> bool {
     matches!(
         query_model_for(database_type),
-        QueryModel::Sql | QueryModel::Cql
+        QueryModel::Sql | QueryModel::Cql | QueryModel::Document
     )
 }
 
+/// Agent write-preview boundary. The preview runs inside a rollback-only
+/// transaction, so it is only honest on drivers that override
+/// `preview_write_transaction` (MySQL/MariaDB, SQLite, the shared PostgreSQL
+/// wire driver, MSSQL). Every other engine hits the default "not supported"
+/// error — advertising the tool there dead-ends the run.
 pub const fn agent_allows_sql_write_preview(database_type: DatabaseType) -> bool {
-    matches!(query_model_for(database_type), QueryModel::Sql)
+    matches!(
+        database_type,
+        DatabaseType::MySQL
+            | DatabaseType::MariaDB
+            | DatabaseType::SQLite
+            | DatabaseType::PostgreSQL
+            | DatabaseType::CockroachDB
+            | DatabaseType::Greenplum
+            | DatabaseType::Redshift
+            | DatabaseType::Vertica
+            | DatabaseType::MSSQL
+    )
 }
 
 /// SQLite-family engines: embedded/file engines that share SQLite's SQL dialect
@@ -629,10 +653,11 @@ mod tests {
         assert!(agent_allows_sql_read(DatabaseType::ClickHouse));
         assert!(agent_allows_sql_read(DatabaseType::Cassandra));
         assert!(!agent_allows_sql_read(DatabaseType::Redis));
-        assert!(!agent_allows_sql_read(DatabaseType::MongoDB));
+        assert!(agent_allows_sql_read(DatabaseType::MongoDB));
         assert!(!agent_allows_sql_read(DatabaseType::OpenSearch));
 
-        assert!(agent_allows_sql_write_preview(DatabaseType::ClickHouse));
+        assert!(agent_allows_sql_write_preview(DatabaseType::PostgreSQL));
+        assert!(!agent_allows_sql_write_preview(DatabaseType::ClickHouse));
         assert!(!agent_allows_sql_write_preview(DatabaseType::Cassandra));
         assert!(!agent_allows_sql_write_preview(DatabaseType::Redis));
         assert!(agent_sql_read_unsupported_error(DatabaseType::Redis).is_some());
@@ -645,12 +670,30 @@ mod tests {
             let model = query_model_for(database_type);
             let read = agent_allows_sql_read(database_type);
             let write = agent_allows_sql_write_preview(database_type);
+            let preview_capable = matches!(
+                database_type,
+                DatabaseType::MySQL
+                    | DatabaseType::MariaDB
+                    | DatabaseType::SQLite
+                    | DatabaseType::PostgreSQL
+                    | DatabaseType::CockroachDB
+                    | DatabaseType::Greenplum
+                    | DatabaseType::Redshift
+                    | DatabaseType::Vertica
+                    | DatabaseType::MSSQL
+            );
             match model {
                 QueryModel::Sql => {
                     assert!(read, "{database_type:?} sql must allow reads");
-                    assert!(write, "{database_type:?} sql must allow write previews");
+                    assert_eq!(
+                        write, preview_capable,
+                        "{database_type:?} write preview must match the driver impl"
+                    );
                     assert!(agent_sql_read_unsupported_error(database_type).is_none());
-                    assert!(agent_sql_write_preview_unsupported_error(database_type).is_none());
+                    assert_eq!(
+                        agent_sql_write_preview_unsupported_error(database_type).is_none(),
+                        preview_capable
+                    );
                 }
                 QueryModel::Cql => {
                     assert!(read, "{database_type:?} cql must allow SELECT-shaped reads");
@@ -660,7 +703,18 @@ mod tests {
                     );
                     assert!(agent_sql_write_preview_unsupported_error(database_type).is_some());
                 }
-                QueryModel::Document | QueryModel::Kv | QueryModel::Search => {
+                QueryModel::Document => {
+                    assert!(
+                        read,
+                        "{database_type:?} document engine reads via the translated SELECT subset"
+                    );
+                    assert!(
+                        !write,
+                        "{database_type:?} must not allow SQL write previews"
+                    );
+                    assert!(agent_sql_read_unsupported_error(database_type).is_none());
+                }
+                QueryModel::Kv | QueryModel::Search => {
                     assert!(!read, "{database_type:?} must not allow SQL reads");
                     assert!(
                         !write,

@@ -227,7 +227,13 @@ pub(crate) async fn fetch_registry_index(
                     return Ok(index);
                 }
             }
-            Err(fetch_error)
+            // No cached copy either — explain where bundles come from so the
+            // empty catalog is not a silent dead-end: a plugin-gated engine
+            // only needs its driver bundle on disk, which can also be
+            // installed from a local .tableplugin folder.
+            Err(format!(
+                "{fetch_error} The plugin registry could not be reached and no cached catalog is available yet. Check your connection or the registry URL, or install a local .tableplugin bundle instead."
+            ))
         }
     }
 }

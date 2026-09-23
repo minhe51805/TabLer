@@ -17,6 +17,24 @@ pub struct AISkillSummary {
     pub version: Option<String>,
 }
 
+/// One SKILL.md entry skipped during discovery, with the reason — surfaced in
+/// the skills manager so a malformed file is diagnosable instead of silently
+/// absent from the catalog.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AISkillLoadError {
+    pub path: String,
+    pub reason: String,
+}
+
+/// Discovery result: the valid catalog plus every entry that failed to load.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AISkillListReport {
+    pub skills: Vec<AISkillSummary>,
+    pub errors: Vec<AISkillLoadError>,
+}
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AISkillContent {
@@ -38,6 +56,10 @@ pub struct AISkillContent {
     /// the agent may pull on demand via `read_ai_skill_resource` — the third
     /// progressive-disclosure level. Never loaded into context until requested.
     pub resources: Vec<String>,
+    /// SKILL.md modification time (millis epoch). The editor echoes it back as
+    /// `expected_updated_at` so a save cannot silently clobber a concurrent
+    /// external edit.
+    pub updated_at: Option<i64>,
 }
 
 /// One bundled resource file resolved on demand (progressive disclosure level 3).
@@ -114,7 +136,9 @@ fn parse_inline_tool_list(raw: &str) -> Vec<String> {
 /// Minimal YAML frontmatter reader. Supports bare/quoted scalars for the metadata
 /// keys, plus `allowed-tools` as an inline (`[a, b]`) or block (`- a`) list.
 fn parse_skill_md(raw: &str) -> (SkillFrontmatter, String) {
-    let trimmed = raw.trim_start();
+    // A UTF-8 BOM survives `trim_start()` (it is not whitespace), so a
+    // BOM-saved SKILL.md would fail the `---` check and be silently dropped.
+    let trimmed = raw.trim_start_matches('\u{feff}').trim_start();
     let Some(rest) = trimmed.strip_prefix("---") else {
         return (SkillFrontmatter::default(), trimmed.to_string());
     };
@@ -279,8 +303,9 @@ fn skill_md_path(dir: &Path) -> PathBuf {
 /// Scan every skill root for `<name>/SKILL.md` directories. Workspace skills
 /// shadow global ones sharing the same name (first hit wins, and workspace
 /// roots are scanned first).
-pub fn discover_ai_skills_in_roots(roots: &[(PathBuf, String)]) -> Vec<AISkillSummary> {
+pub fn discover_ai_skills_in_roots(roots: &[(PathBuf, String)]) -> AISkillListReport {
     let mut summaries: Vec<AISkillSummary> = Vec::new();
+    let mut errors: Vec<AISkillLoadError> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for (root, source) in roots {
         let entries = match std::fs::read_dir(root) {
@@ -326,6 +351,10 @@ pub fn discover_ai_skills_in_roots(roots: &[(PathBuf, String)]) -> Vec<AISkillSu
                     file_path.display(),
                     source
                 );
+                errors.push(AISkillLoadError {
+                    path: file_path.display().to_string(),
+                    reason: "SKILL.md could not be read.".to_string(),
+                });
                 continue;
             };
             let (meta, _) = parse_skill_md(&raw);
@@ -336,6 +365,10 @@ pub fn discover_ai_skills_in_roots(roots: &[(PathBuf, String)]) -> Vec<AISkillSu
                     dir_name,
                     source
                 );
+                errors.push(AISkillLoadError {
+                    path: file_path.display().to_string(),
+                    reason: "SKILL.md has no frontmatter name.".to_string(),
+                });
                 continue;
             };
             if parsed_name != dir_name || parsed_name.len() > 64 {
@@ -344,6 +377,12 @@ pub fn discover_ai_skills_in_roots(roots: &[(PathBuf, String)]) -> Vec<AISkillSu
                     parsed_name,
                     source
                 );
+                errors.push(AISkillLoadError {
+                    path: file_path.display().to_string(),
+                    reason: format!(
+                        "Frontmatter name '{parsed_name}' must match the directory name and be at most 64 characters."
+                    ),
+                });
                 continue;
             }
             if seen.contains(&parsed_name) {
@@ -367,10 +406,13 @@ pub fn discover_ai_skills_in_roots(roots: &[(PathBuf, String)]) -> Vec<AISkillSu
         );
         summaries.truncate(MAX_SKILLS_PER_CATALOG);
     }
-    summaries
+    AISkillListReport {
+        skills: summaries,
+        errors,
+    }
 }
 
-pub fn discover_ai_skills(workspace_dir: Option<&str>) -> Vec<AISkillSummary> {
+pub fn discover_ai_skills(workspace_dir: Option<&str>) -> AISkillListReport {
     discover_ai_skills_in_roots(&skill_roots(workspace_dir))
 }
 
@@ -456,15 +498,17 @@ pub fn read_skill_in_roots(
             effort: meta.effort.clone(),
             allowed_tools: meta.allowed_tools.clone(),
             resources: list_skill_resource_files(&dir_path),
+            updated_at: skill_md_updated_at(&file_path),
         });
     }
     Err(format!("Skill '{trimmed}' was not found."))
 }
 
 /// List discovered Agent Skills (name + description only) for the picker and
-/// the agent's `<available_skills>` block.
+/// the agent's `<available_skills>` block, plus every SKILL.md that failed to
+/// load so the manager can surface it instead of dropping it silently.
 #[tauri::command]
-pub fn list_ai_skills(workspace_dir: Option<String>) -> Result<Vec<AISkillSummary>, String> {
+pub fn list_ai_skills(workspace_dir: Option<String>) -> Result<AISkillListReport, String> {
     Ok(discover_ai_skills(workspace_dir.as_deref()))
 }
 
@@ -557,6 +601,40 @@ pub fn read_ai_skill_resource(
     read_skill_resource_in_roots(&skill_roots(workspace_dir.as_deref()), &name, &resource)
 }
 
+/// SKILL.md modification time in millis epoch — the version token the editor
+/// round-trips so `update_ai_skill` can refuse to overwrite a file that changed
+/// since it was opened. `None` when the timestamp cannot be read.
+fn skill_md_updated_at(file_path: &Path) -> Option<i64> {
+    let modified = std::fs::metadata(file_path).ok()?.modified().ok()?;
+    let millis = modified
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_millis();
+    Some(i64::try_from(millis).unwrap_or(i64::MAX))
+}
+
+/// Crash-safe SKILL.md write, mirroring `agent_memory::write_memory_file`:
+/// refuse to write *through* a pre-existing symlink, stage to a sibling temp
+/// file, then rename over the target (same-volume atomic) so a crash mid-write
+/// can never leave a torn SKILL.md behind.
+pub(crate) fn write_skill_file(file_path: &Path, contents: &str) -> Result<(), String> {
+    let target_is_symlink = std::fs::symlink_metadata(file_path)
+        .map(|meta| meta.file_type().is_symlink())
+        .unwrap_or(false);
+    if target_is_symlink {
+        return Err("SKILL.md is a symlink — refusing to write through it.".to_string());
+    }
+    let staging_path = file_path.with_extension("md.tmp");
+    std::fs::write(&staging_path, contents)
+        .map_err(|error| format!("Failed to write skill staging file: {error}"))?;
+    if let Err(rename_error) = std::fs::rename(&staging_path, file_path) {
+        // Never leave an orphaned staging file inside the skill directory.
+        let _ = std::fs::remove_file(&staging_path);
+        return Err(format!("Failed to finalize skill write: {rename_error}"));
+    }
+    Ok(())
+}
+
 /// A skill name is a bare directory segment: ASCII alphanumerics and dashes,
 /// 1..=64 chars. Shared by the read/create paths so authoring can never produce
 /// a skill the reader would reject.
@@ -630,7 +708,7 @@ fn create_skill_in_root(
     let template = format!(
         "---\nname: {name}\ndescription: {description}\nversion: 0.1.0\n---\n\n# {name}\n\n{body}\n"
     );
-    std::fs::write(&skill_md, template).map_err(|error| error.to_string())?;
+    write_skill_file(&skill_md, &template).map_err(|error| error.to_string())?;
     Ok(skill_dir)
 }
 
@@ -738,7 +816,10 @@ fn render_skill_md(
 ///   truncates there, so saving the form would destroy the tail,
 /// * an empty `body` keeps the stored one rather than blanking the procedure,
 /// * metadata the editor does not own (`license`/`model`/`effort`) is written back
-///   from what the caller round-tripped, so a save never drops it.
+///   from what the caller round-tripped, so a save never drops it,
+/// * `expected_updated_at` is the mtime `read_ai_skill` reported when the editor
+///   opened the file: a mismatch means the file changed underneath the editor
+///   and the save is refused instead of silently clobbering the newer content.
 #[allow(clippy::too_many_arguments)]
 fn update_skill_in_root(
     skills_root: &Path,
@@ -750,6 +831,7 @@ fn update_skill_in_root(
     license: Option<String>,
     model: Option<String>,
     effort: Option<String>,
+    expected_updated_at: Option<i64>,
 ) -> Result<PathBuf, String> {
     let name = validate_skill_name(name)?;
     let skill_dir = skills_root.join(&name);
@@ -764,6 +846,16 @@ fn update_skill_in_root(
         return Err(format!("Skill '{name}' was not found."));
     }
     let skill_md = skill_md_path(&skill_dir);
+    // Optimistic concurrency: the editor echoes back the mtime it read. A
+    // mismatch means an external edit landed in between — refuse rather than
+    // overwrite work the user never saw.
+    if let Some(expected) = expected_updated_at {
+        if skill_md_updated_at(&skill_md) != Some(expected) {
+            return Err(format!(
+                "Skill '{name}' changed on disk since it was opened; reload it before saving."
+            ));
+        }
+    }
     let Ok(raw) = std::fs::read_to_string(&skill_md) else {
         return Err(format!("Skill '{name}' was not found."));
     };
@@ -811,15 +903,14 @@ fn update_skill_in_root(
             extra.push((key.to_string(), value));
         }
     }
-    let rendered = render_skill_md(
-        &name,
-        &description,
-        &version,
-        &extra,
-        &sanitize_tool_list(allowed_tools),
-        &body,
-    );
-    std::fs::write(&skill_md, rendered).map_err(|error| error.to_string())?;
+    // `None` means the caller did not supply the field — keep the stored list
+    // like every other metadata field, instead of silently clearing it.
+    let tools = match allowed_tools {
+        Some(tools) => sanitize_tool_list(Some(tools)),
+        None => meta.allowed_tools.clone(),
+    };
+    let rendered = render_skill_md(&name, &description, &version, &extra, &tools, &body);
+    write_skill_file(&skill_md, &rendered).map_err(|error| error.to_string())?;
     Ok(skill_dir)
 }
 
@@ -840,6 +931,7 @@ pub fn update_ai_skill(
     license: Option<String>,
     model: Option<String>,
     effort: Option<String>,
+    expected_updated_at: Option<i64>,
 ) -> Result<String, String> {
     let data_dir = resolve_data_dir().map_err(|error| error.to_string())?;
     let skill_dir = update_skill_in_root(
@@ -852,6 +944,7 @@ pub fn update_ai_skill(
         license,
         model,
         effort,
+        expected_updated_at,
     )?;
     Ok(skill_dir.to_string_lossy().to_string())
 }
@@ -1012,10 +1105,10 @@ mod tests {
         )
         .unwrap();
 
-        let skills = discover_ai_skills_in_roots(&[(base.clone(), "test".to_string())]);
-        assert_eq!(skills.len(), 1);
-        assert_eq!(skills[0].name, "db-audit");
-        assert_eq!(skills[0].source, "test");
+        let report = discover_ai_skills_in_roots(&[(base.clone(), "test".to_string())]);
+        assert_eq!(report.skills.len(), 1);
+        assert_eq!(report.skills[0].name, "db-audit");
+        assert_eq!(report.skills[0].source, "test");
 
         let content = read_ai_skill_by_name(None, "db-audit").unwrap_or_else(|_| {
             // Workspace root does not apply here; read through the test root.
@@ -1030,6 +1123,7 @@ mod tests {
                 effort: None,
                 allowed_tools: Vec::new(),
                 resources: Vec::new(),
+                updated_at: None,
             }
         });
         assert_eq!(content.name, "db-audit");
@@ -1138,6 +1232,7 @@ mod tests {
             Some("MIT".into()),
             None,
             None,
+            None,
         )
         .unwrap();
 
@@ -1154,8 +1249,8 @@ mod tests {
         // The rewritten file still satisfies discovery, so it cannot vanish from
         // the roster after an edit.
         let catalog = discover_ai_skills_in_roots(&[(base.clone(), "test".to_string())]);
-        assert_eq!(catalog.len(), 1);
-        assert_eq!(catalog[0].description, "Second");
+        assert_eq!(catalog.skills.len(), 1);
+        assert_eq!(catalog.skills[0].description, "Second");
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -1172,14 +1267,24 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         assert!(result.is_err());
         assert!(!base.join("ghost").exists());
         // An invalid name is rejected by the same validator the reader uses.
-        assert!(
-            update_skill_in_root(&base, "../escape", None, None, None, None, None, None, None)
-                .is_err()
-        );
+        assert!(update_skill_in_root(
+            &base,
+            "../escape",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None
+        )
+        .is_err());
         let _ = std::fs::remove_dir_all(&base);
     }
 
@@ -1198,6 +1303,7 @@ mod tests {
             &base,
             "keep-body",
             Some("Retitled".into()),
+            None,
             None,
             None,
             None,
@@ -1240,6 +1346,7 @@ mod tests {
             None,
             None,
             None,
+            None,
         );
         // Refused, and the file is untouched: a truncated read must never be
         // written back over content the app cannot see.
@@ -1270,6 +1377,7 @@ mod tests {
             None,
             None,
             None,
+            None,
             None
         )
         .is_err());
@@ -1281,6 +1389,7 @@ mod tests {
             &base,
             "squashed",
             Some("line one\nline \"two\"".into()),
+            None,
             None,
             None,
             None,

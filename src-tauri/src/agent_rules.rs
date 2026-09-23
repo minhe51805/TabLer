@@ -327,7 +327,9 @@ pub struct RuleLoadReport {
 /// comment only when it is the first non-space character, so a `pattern`
 /// containing `#` (T-SQL temp tables) survives intact.
 fn parse_frontmatter(contents: &str) -> Result<HashMap<String, String>, String> {
-    let normalized = contents.replace("\r\n", "\n");
+    let normalized = contents
+        .trim_start_matches('\u{feff}')
+        .replace("\r\n", "\n");
     let mut lines = normalized.lines();
 
     let first = lines.next().unwrap_or_default();
@@ -597,50 +599,47 @@ pub fn classify_sql_event(statement: &str) -> SqlEvent {
         let keyword = leading_keyword(piece);
         match keyword.as_str() {
             "explain" => {
-                // EXPLAIN ANALYZE executes the wrapped statement; a plain
-                // EXPLAIN only plans it. Re-classify the wrapped verb.
+                // Mirror canonical_statement_kind: EXPLAIN of a write is a
+                // write whether or not ANALYZE is present — a read-only
+                // surface must not plan mutations either. Re-classify the
+                // wrapped verb past the EXPLAIN option noise.
                 let tokens: Vec<String> = piece
                     .split(|c: char| !(c.is_alphanumeric() || c == '_'))
                     .filter(|w| !w.is_empty())
                     .map(|w| w.to_ascii_lowercase())
                     .collect();
-                let analyzes = tokens.iter().any(|t| t == "analyze" || t == "analyse");
-                if analyzes {
-                    match tokens
-                        .iter()
-                        .find(|t| {
-                            !matches!(
-                                t.as_str(),
-                                "explain"
-                                    | "analyze"
-                                    | "analyse"
-                                    | "verbose"
-                                    | "format"
-                                    | "buffers"
-                                    | "wal"
-                                    | "timing"
-                                    | "summary"
-                                    | "memory"
-                                    | "serialize"
-                                    | "settings"
-                                    | "generic_plan"
-                                    | "true"
-                                    | "false"
-                                    | "on"
-                                    | "off"
-                                    | "text"
-                                    | "xml"
-                                    | "json"
-                                    | "yaml"
-                            )
-                        })
-                        .map(String::as_str)
-                    {
-                        Some(inner) if is_write_keyword(inner) => return SqlEvent::Write,
-                        _ => saw_read = true,
-                    }
-                } else {
-                    saw_read = true;
+                match tokens
+                    .iter()
+                    .find(|t| {
+                        !matches!(
+                            t.as_str(),
+                            "explain"
+                                | "analyze"
+                                | "analyse"
+                                | "verbose"
+                                | "format"
+                                | "buffers"
+                                | "wal"
+                                | "timing"
+                                | "summary"
+                                | "memory"
+                                | "serialize"
+                                | "settings"
+                                | "generic_plan"
+                                | "true"
+                                | "false"
+                                | "on"
+                                | "off"
+                                | "text"
+                                | "xml"
+                                | "json"
+                                | "yaml"
+                        )
+                    })
+                    .map(String::as_str)
+                {
+                    Some(inner) if is_write_keyword(inner) => return SqlEvent::Write,
+                    _ => saw_read = true,
                 }
             }
             "select" | "with" | "values" => {

@@ -29,14 +29,20 @@ export function invalidateAgentMemoryIndex(connectionId?: string) {
 /**
  * Frontmatter-only memory index for THIS (connection, database) scope — same
  * progressive-disclosure contract as skills. Bodies load through read_memory;
- * new durable facts are saved via save_memory. Returns undefined when the
- * caller should not inject anything (workspace tools off).
+ * new durable facts are saved via save_memory.
+ *
+ * Three distinct results, because the prompt must not confuse them:
+ *  - `undefined`: workspace tools are off — inject nothing at all.
+ *  - `null`: the backend read FAILED — the store may hold memories the agent
+ *    cannot see, so the prompt must say "unavailable", never "no memories
+ *    exist" (which would invite save_memory over an unread store).
+ *  - an array (possibly empty): the real index for this scope.
  */
 export async function getAgentMemoryIndex(params: {
   workspaceToolsEnabled: boolean;
   connectionId: string | null;
   database: string | null;
-}): Promise<AgentMemoryIndexEntry[] | undefined> {
+}): Promise<AgentMemoryIndexEntry[] | null | undefined> {
   if (!params.workspaceToolsEnabled) return undefined;
   const scopeKey = `${params.connectionId ?? "global"}::${params.database ?? "default"}`;
   if (
@@ -47,17 +53,16 @@ export async function getAgentMemoryIndex(params: {
     return memoryIndexCache.entries;
   }
   try {
-    const entries = await invokeMutation<AgentMemoryIndexEntry[]>(
-      "list_agent_memory",
-      {
-        connectionId: params.connectionId,
-        database: params.database,
-      },
-    );
+    const entries = await invokeMutation<AgentMemoryIndexEntry[]>("list_agent_memory", {
+      connectionId: params.connectionId,
+      database: params.database,
+    });
     memoryIndexCache = { at: Date.now(), key: scopeKey, entries };
     return entries;
   } catch (error) {
     console.warn("[AIWorkspace] memory index unavailable:", error);
-    return [];
+    // Not cached: the next run retries the backend instead of pinning the
+    // failure for the whole TTL window.
+    return null;
   }
 }

@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { docHref } from "@/lib/docs";
 import type { DocGroup } from "@/lib/docs";
+import { DocsSearch, type DocsSearchItem } from "./DocsSearch";
 
 const iconMap: Record<string, LucideIcon> = {
   BookOpen,
@@ -47,27 +48,29 @@ export type DocsSubLink = {
   href: string;
   label: string;
 };
-
 export function DocsSidebar({
   items,
   groups,
   label,
   menuLabel,
   connectSubnav = [],
+  searchItems = [],
+  searchPlaceholder = "Search docs",
 }: {
   items: DocsNavItem[];
   groups: DocGroup[];
   label: string;
   menuLabel: string;
   connectSubnav?: DocsSubLink[];
+  searchItems?: DocsSearchItem[];
+  searchPlaceholder?: string;
 }) {
   const pathname = usePathname();
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const connectionsHref = docHref("connections");
   const inConnectionsSection =
-    pathname === connectionsHref ||
-    connectSubnav.some((link) => link.href === pathname);
+    pathname === connectionsHref || connectSubnav.some((link) => link.href === pathname);
   // null = follow the route (auto-open in the connections section); a boolean
   // is an explicit user toggle that overrides the route-based default.
   const [manualOpen, setManualOpen] = useState<boolean | null>(null);
@@ -87,6 +90,10 @@ export function DocsSidebar({
         {label}
       </button>
 
+      {searchItems.length > 0 ? (
+        <DocsSearch items={searchItems} placeholder={searchPlaceholder} />
+      ) : null}
+
       <nav className={`docs-nav${open ? " is-open" : ""}`}>
         {groups.map((group) => (
           <div className="docs-nav-group" key={group.label}>
@@ -98,17 +105,14 @@ export function DocsSidebar({
                 const href = docHref(item.slug);
                 const isActive = pathname === href;
                 const Icon = iconMap[item.icon] ?? BookOpen;
-                const hasSub =
-                  item.slug === "connections" && connectSubnav.length > 0;
+                const hasSub = item.slug === "connections" && connectSubnav.length > 0;
 
                 if (hasSub) {
                   return (
                     <li key={href} className="docs-nav-item">
                       <button
                         type="button"
-                        className={`docs-nav-link docs-nav-parent${
-                          isActive ? " is-active" : ""
-                        }`}
+                        className={`docs-nav-link docs-nav-parent${isActive ? " is-active" : ""}`}
                         aria-current={isActive ? "page" : undefined}
                         aria-expanded={openConnections}
                         onClick={() => {
@@ -121,9 +125,7 @@ export function DocsSidebar({
                         <Icon size={16} aria-hidden="true" />
                         <span>{item.title}</span>
                         <ChevronDown
-                          className={`docs-nav-chevron${
-                            openConnections ? " is-open" : ""
-                          }`}
+                          className={`docs-nav-chevron${openConnections ? " is-open" : ""}`}
                           size={15}
                           aria-hidden="true"
                         />
@@ -136,9 +138,7 @@ export function DocsSidebar({
                               <li key={link.href}>
                                 <Link
                                   href={link.href}
-                                  className={`docs-subnav-link${
-                                    isSubActive ? " is-active" : ""
-                                  }`}
+                                  className={`docs-subnav-link${isSubActive ? " is-active" : ""}`}
                                   aria-current={isSubActive ? "page" : undefined}
                                   onClick={() => setOpen(false)}
                                 >
@@ -163,11 +163,7 @@ export function DocsSidebar({
                     >
                       <Icon size={16} aria-hidden="true" />
                       <span>{item.title}</span>
-                      <ChevronRight
-                        className="docs-nav-caret"
-                        size={14}
-                        aria-hidden="true"
-                      />
+                      <ChevronRight className="docs-nav-caret" size={14} aria-hidden="true" />
                     </Link>
                   </li>
                 );

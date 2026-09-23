@@ -133,6 +133,7 @@ export function MetricsBoard({
     submenu: "type" | "refresh" | null;
   } | null>(null);
   const [undoDelete, setUndoDelete] = useState<{
+    boardId: string;
     widget: MetricsWidgetDefinition;
     expiresAt: number;
   } | null>(null);
@@ -253,17 +254,69 @@ export function MetricsBoard({
     return [...names];
   }, [activeBoard]);
 
+  // Param inputs echo into a local draft immediately; the board (and therefore
+  // every widget query) only re-fires once typing pauses.
+  const [paramDrafts, setParamDrafts] = useState<{
+    boardId: string;
+    values: Record<string, string>;
+  } | null>(null);
+  const pendingParamsRef = useRef<{ boardId: string; values: Record<string, string> } | null>(null);
+  const paramPersistTimerRef = useRef<number | null>(null);
+
   const updateBoardParam = useCallback(
     (name: string, value: string) => {
       if (!activeBoard) return;
-      persistBoards(
-        boards.map((b) =>
-          b.id === activeBoard.id ? { ...b, params: { ...(b.params ?? {}), [name]: value } } : b,
-        ),
-      );
+      const boardId = activeBoard.id;
+      const pendingValues =
+        pendingParamsRef.current?.boardId === boardId ? pendingParamsRef.current.values : {};
+      pendingValues[name] = value;
+      pendingParamsRef.current = { boardId, values: pendingValues };
+      setParamDrafts({ boardId, values: { ...pendingValues } });
+
+      if (paramPersistTimerRef.current !== null) {
+        window.clearTimeout(paramPersistTimerRef.current);
+      }
+      paramPersistTimerRef.current = window.setTimeout(() => {
+        paramPersistTimerRef.current = null;
+        const pendingWrite = pendingParamsRef.current;
+        pendingParamsRef.current = null;
+        setParamDrafts((current) => (current?.boardId === boardId ? null : current));
+        if (!pendingWrite) return;
+        setBoards((currentBoards) => {
+          let changed = false;
+          const nextBoards = currentBoards.map((board) => {
+            if (board.id !== pendingWrite.boardId) return board;
+            const merged = { ...(board.params ?? {}), ...pendingWrite.values };
+            const previous = board.params ?? {};
+            const keys = new Set([...Object.keys(previous), ...Object.keys(merged)]);
+            const identical = [...keys].every((key) => previous[key] === merged[key]);
+            if (identical) return board;
+            changed = true;
+            return { ...board, params: merged };
+          });
+          if (!changed) return currentBoards;
+          const allBoards = readStoredBoards();
+          const otherBoards = allBoards.filter((board) => board.connection_id !== connectionId);
+          writeStoredBoards([...otherBoards, ...nextBoards]);
+          window.dispatchEvent(
+            new CustomEvent("metrics-boards-updated", {
+              detail: { connectionId },
+            }),
+          );
+          return nextBoards;
+        });
+      }, 400);
     },
-    [activeBoard, boards, persistBoards],
+    [activeBoard, connectionId],
   );
+
+  useEffect(() => {
+    return () => {
+      if (paramPersistTimerRef.current !== null) {
+        window.clearTimeout(paramPersistTimerRef.current);
+      }
+    };
+  }, []);
   const widgetLibrary = useMemo(() => _getWidgetLibrary(), []);
 
   const editingWidget = useMemo(
@@ -431,8 +484,8 @@ export function MetricsBoard({
 
     const scrollToWidget = () => {
       const rowUnit = METRICS_GRID_ROW_HEIGHT + METRICS_GRID_GAP;
-      const top = activeWidget.grid_y * rowUnit;
-      const height = rowSpanToHeightPx(activeWidget.row_span);
+      const top = activeWidget.grid_y * rowUnit * boardZoom;
+      const height = rowSpanToHeightPx(activeWidget.row_span) * boardZoom;
       const padding = 20;
 
       const maxTop = Math.max(0, top - padding);
@@ -483,7 +536,7 @@ export function MetricsBoard({
       window.cancelAnimationFrame(rafId);
       window.clearTimeout(timeoutId);
     };
-  }, [activeBoard, activeWidgetId]);
+  }, [activeBoard, activeWidgetId, boardZoom]);
 
   const surfaceWidth = useMemo(() => Math.max(canvasWidth, METRICS_GRID_MIN_WIDTH), [canvasWidth]);
   const columnWidth = useMemo(
@@ -691,8 +744,10 @@ export function MetricsBoard({
       const canvasElement = canvasRef.current;
       if (!canvasElement) return;
       const canvasRect = canvasElement.getBoundingClientRect();
-      const localX = canvasElement.scrollLeft + clientX - canvasRect.left;
-      const localY = canvasElement.scrollTop + clientY - canvasRect.top;
+      // The surface is CSS-scaled by boardZoom: client px must be unscaled
+      // back into surface coordinates.
+      const localX = canvasElement.scrollLeft + (clientX - canvasRect.left) / boardZoom;
+      const localY = canvasElement.scrollTop + (clientY - canvasRect.top) / boardZoom;
       setWidgetContextMenu({
         widgetId,
         left: Math.max(8, Math.min(localX, surfaceWidth - 200)),
@@ -701,15 +756,16 @@ export function MetricsBoard({
       });
       setCanvasContextMenu(null);
     },
-    [surfaceHeight, surfaceWidth],
+    [boardZoom, surfaceHeight, surfaceWidth],
   );
 
   const deleteWidgetWithUndo = useCallback(
     (widgetId: string) => {
-      const widget = activeBoard?.widgets.find((w) => w.id === widgetId);
+      if (!activeBoard) return;
+      const widget = activeBoard.widgets.find((w) => w.id === widgetId);
       if (!widget) return;
       deleteWidgetById(widgetId);
-      setUndoDelete({ widget, expiresAt: Date.now() + 6000 });
+      setUndoDelete({ boardId: activeBoard.id, widget, expiresAt: Date.now() + 6000 });
     },
     [activeBoard, deleteWidgetById],
   );
@@ -751,7 +807,7 @@ export function MetricsBoard({
       }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z" && undoDelete) {
         event.preventDefault();
-        if (undoDelete) restoreWidget(undoDelete.widget);
+        if (undoDelete) restoreWidget(undoDelete.widget, undoDelete.boardId);
       }
     };
     window.addEventListener("keydown", handleKeyDown);
@@ -802,11 +858,33 @@ export function MetricsBoard({
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [activeWidgetId, activeBoard, updateWidgetLayout]);
 
+  const updateWidgetByIdRef = useRef(updateWidgetById);
   useEffect(() => {
+    updateWidgetByIdRef.current = updateWidgetById;
+  }, [updateWidgetById]);
+
+  // Flush a pending query draft when the editor closes (deselect/OK/unmount)
+  // so the last keystrokes inside the 160ms debounce are not lost.
+  const pendingQueryDraftRef = useRef<{ widgetId: string; draft: string } | null>(null);
+  const editingWidgetKey = editingWidget?.id ?? null;
+  useEffect(() => {
+    return () => {
+      const pending = pendingQueryDraftRef.current;
+      pendingQueryDraftRef.current = null;
+      if (pending) updateWidgetByIdRef.current(pending.widgetId, { query: pending.draft });
+    };
+  }, [editingWidgetKey]);
+
+  useEffect(() => {
+    pendingQueryDraftRef.current = null;
     if (!editingWidget) return;
     if (widgetQueryDraft === editingWidget.query) return;
 
+    // Arm the flush ref inside the effect (not during render) so a widget
+    // switch can't misattribute the draft to the incoming widget.
+    pendingQueryDraftRef.current = { widgetId: editingWidget.id, draft: widgetQueryDraft };
     const timer = window.setTimeout(() => {
+      pendingQueryDraftRef.current = null;
       updateSelectedWidget({ query: widgetQueryDraft });
     }, 160);
 
@@ -905,8 +983,8 @@ export function MetricsBoard({
       if (!canvasElement) return;
 
       const canvasRect = canvasElement.getBoundingClientRect();
-      const localX = canvasElement.scrollLeft + event.clientX - canvasRect.left;
-      const localY = canvasElement.scrollTop + event.clientY - canvasRect.top;
+      const localX = canvasElement.scrollLeft + (event.clientX - canvasRect.left) / boardZoom;
+      const localY = canvasElement.scrollTop + (event.clientY - canvasRect.top) / boardZoom;
       const triggerWidth = 96;
       const menuWidth = 176;
       const totalWidth = triggerWidth + 8 + menuWidth;
@@ -926,6 +1004,7 @@ export function MetricsBoard({
     },
     [
       activeBoard,
+      boardZoom,
       clearWidgetSelection,
       colUnit,
       dragState,
@@ -990,8 +1069,10 @@ export function MetricsBoard({
     if (!activeWidget) return;
 
     const handlePointerMove = (event: PointerEvent) => {
-      const deltaColumns = Math.round((event.clientX - dragState.startClientX) / colUnit);
-      const deltaRows = Math.round((event.clientY - dragState.startClientY) / rowUnit);
+      const deltaColumns = Math.round(
+        (event.clientX - dragState.startClientX) / boardZoom / colUnit,
+      );
+      const deltaRows = Math.round((event.clientY - dragState.startClientY) / boardZoom / rowUnit);
       const nextGridX = clampGridX(dragState.originGridX + deltaColumns, activeWidget.col_span);
       const nextGridY = clampGridY(dragState.originGridY + deltaRows);
 
@@ -1040,7 +1121,7 @@ export function MetricsBoard({
       window.removeEventListener("pointerup", finishDrag);
       window.removeEventListener("pointercancel", finishDrag);
     };
-  }, [activeBoard, colUnit, dragState, rowUnit, updateWidgetLayout]);
+  }, [activeBoard, boardZoom, colUnit, dragState, rowUnit, updateWidgetLayout]);
 
   useEffect(() => {
     if (!resizeState || !activeBoard) return;
@@ -1060,14 +1141,14 @@ export function MetricsBoard({
         maxWidthPx,
         Math.max(
           minWidthPx,
-          resizeState.originWidthPx + (event.clientX - resizeState.startClientX),
+          resizeState.originWidthPx + (event.clientX - resizeState.startClientX) / boardZoom,
         ),
       );
       const nextHeightPx = Math.min(
         maxHeightPx,
         Math.max(
           minHeightPx,
-          resizeState.originHeightPx + (event.clientY - resizeState.startClientY),
+          resizeState.originHeightPx + (event.clientY - resizeState.startClientY) / boardZoom,
         ),
       );
       const nextColSpan = widthPxToColSpan(nextWidthPx, columnWidth);
@@ -1128,7 +1209,7 @@ export function MetricsBoard({
       window.removeEventListener("pointerup", finishResize);
       window.removeEventListener("pointercancel", finishResize);
     };
-  }, [activeBoard, columnWidth, resizeState, updateWidgetLayout]);
+  }, [activeBoard, boardZoom, columnWidth, resizeState, updateWidgetLayout]);
 
   return (
     <div
@@ -1216,7 +1297,11 @@ export function MetricsBoard({
                     <span className="metrics-board-param-name">{name}</span>
                     <input
                       className="metrics-board-param-input"
-                      value={activeBoard?.params?.[name] ?? ""}
+                      value={
+                        paramDrafts && paramDrafts.boardId === activeBoard?.id
+                          ? (paramDrafts.values[name] ?? "")
+                          : (activeBoard?.params?.[name] ?? "")
+                      }
                       placeholder={`{{${name}}}`}
                       onChange={(e) => updateBoardParam(name, e.target.value)}
                     />
@@ -1499,6 +1584,7 @@ export function MetricsBoard({
 
         <MetricsBoardCanvas
           connectionId={connectionId}
+          database={database || activeBoard?.database}
           onOpenResult={openWidgetResult}
           onOpenQuery={openWidgetQuery}
           onFullscreen={(widget) => setFullscreenWidgetId(widget.id)}
@@ -1538,7 +1624,7 @@ export function MetricsBoard({
           deleteWidgetWithUndo={deleteWidgetWithUndo}
           undoDelete={undoDelete}
           onUndoDelete={() => {
-            if (undoDelete) restoreWidget(undoDelete.widget);
+            if (undoDelete) restoreWidget(undoDelete.widget, undoDelete.boardId);
             setUndoDelete(null);
           }}
           onDismissUndo={() => setUndoDelete(null)}
@@ -1578,6 +1664,7 @@ export function MetricsBoard({
                   onWidgetRefreshed={handleWidgetRefreshed}
                   refreshToken={refreshToken}
                   params={activeBoard?.params}
+                  autoQuery={false}
                 />
               );
             })()}

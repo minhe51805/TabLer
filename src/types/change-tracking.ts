@@ -11,6 +11,9 @@ export interface StagedChange {
   /** Unique ID for this change (nanoid or similar) */
   id: string;
   type: ChangeType;
+  /** Owning connection — scopes the change so same-named tables on different
+   *  connections never resolve through each other's column layout. */
+  connectionId?: string;
   tableName: string;
   database?: string;
   rowIndex: number;

@@ -554,7 +554,18 @@ impl DatabaseDriver for ClickHouseDriver {
         }
 
         sql.push_str(&format!(" LIMIT {limit} OFFSET {offset}"));
-        self.execute_query(&sql).await
+        // Page directly through query_json: execute_query caps results at
+        // MAX_QUERY_RESULT_ROWS, which would silently truncate paged fetches
+        // beyond 500 rows. The caller's LIMIT bounds the page instead.
+        let result = self.query_json(&sql, Some(&db)).await?;
+        Ok(Self::build_result_from_json(
+            result,
+            0,
+            sql,
+            0,
+            false,
+            usize::MAX,
+        ))
     }
 
     fn export_table_rows<'a>(

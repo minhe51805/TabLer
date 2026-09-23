@@ -35,6 +35,12 @@ describe("AI agent tool contract", () => {
       "read_skill_resource",
       "delegate",
       "read_page",
+      "manage_metrics_widget",
+      "manage_schedule",
+      "open_table_tab",
+      "manage_skill",
+      "manage_rule",
+      "switch_database",
       "batch",
       "finish",
     ]);

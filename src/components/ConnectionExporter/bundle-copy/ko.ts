@@ -1,9 +1,33 @@
 import type { BundleCopy } from "./types";
 
 export const KO_BUNDLE_COPY: BundleCopy = {
+  common: {
+    done: "완료",
+    cancel: "취소",
+  },
   modes: {
     connections: "연결만",
     bundle: "전체 워크스페이스 번들",
+  },
+  connectionsExport: {
+    title: "연결보내기",
+    subtitle: "연결을 암호화된 버전 관리 파일로 저장",
+    selectLabel: (selected, total) => `선택 (${selected}/${total})`,
+    selectAll: "모두 선택",
+    deselectAll: "모두 선택 해제",
+    empty: "보낼 저장된 연결이 없습니다.",
+    encryptionNote:
+      "연결은 AES-256-GCM으로 암호화됩니다. 비밀번호는보내지 않으며 가져올 때 다시 입력해야 합니다.",
+    passwordLabel: "암호화 비밀번호",
+    passwordPlaceholder: "최소 10자",
+    confirmLabel: "비밀번호 확인",
+    confirmPlaceholder: "비밀번호 다시 입력",
+    errorPasswordShort: "비밀번호는 10자 이상이어야 합니다.",
+    errorPasswordMismatch: "비밀번호가 일치하지 않습니다.",
+    errorNoSelection: "연결을 하나 이상 선택하세요.",
+    button: (count) => `연결 ${count}개보내기`,
+    working: "보내는 중...",
+    done: (count, path) => `연결 ${count}개를 ${path}(으)로보냈습니다`,
   },
   export: {
     title: "워크스페이스 번들보내기",
@@ -45,5 +69,23 @@ export const KO_BUNDLE_COPY: BundleCopy = {
         "비밀번호는 가져오지 않습니다 — DBeaver와 DataGrip은 암호화하여 저장합니다. 가져올 각 연결의 데이터베이스 비밀번호를 입력하세요.",
       skipped: "{count}개 항목 건너뜀 (지원하지 않는 엔진 또는 형식 오류)",
     },
+    connectionsTitle: "연결 가져오기",
+    connectionsSubtitle: "암호화된 TableR 파일에서 연결 불러오기",
+    sourceFile: "원본 파일",
+    dropzonePick: ".tabler-connections 또는 .tabler-bundle 파일을 선택하려면 클릭",
+    externalWorking: "파일 읽는 중...",
+    decryptLabel: "복호화 비밀번호",
+    decryptPlaceholder: "보내기 비밀번호 입력",
+    decryptButton: "파일 열기",
+    decryptWorking: "복호화 중...",
+    importButton: (count) => `연결 ${count}개 가져오기`,
+    importWorking: "가져오는 중...",
+    importedMessage: (count) => `연결 ${count}개를 가져왔습니다`,
+    passwordNote:
+      "비밀번호는보내지 않았습니다. 가져올 각 연결의 데이터베이스 비밀번호를 입력하세요.",
+    passwordPlaceholder: "데이터베이스 비밀번호 (선택 사항)",
+    errorIncorrectPassword: "비밀번호가 올바르지 않습니다. 다시 시도하세요.",
+    errorOpenDialog: (detail) => `파일 대화 상자를 열 수 없습니다: ${detail}`,
+    errorImportFailed: (detail) => `가져오기 실패: ${detail}`,
   },
 };

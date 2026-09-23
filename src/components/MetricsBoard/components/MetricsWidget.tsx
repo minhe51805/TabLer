@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Code2, Copy, FileDown, ImageDown, Maximize2, RefreshCcw, Table2 } from "lucide-react";
 import { exportToCSV } from "../../../utils/export-utils";
 import { exportSvgAsPng } from "../../../utils/svg-png-export";
-import { applyQueryParams, formatRelativeTime, pushBoardActivity } from "../utils/metrics-board-io";
+import { applyQueryParams, formatRelativeTime } from "../utils/metrics-board-io";
 import { useI18n } from "../../../i18n";
 import type { MetricsWidgetDefinition, QueryResult } from "../../../types";
 import { ChartStackedBars, ChartFunnel, ChartDelta } from "../utils/chart-renderer";
@@ -30,6 +30,29 @@ interface WidgetRunState {
   lastRunAt: number | null;
 }
 
+// Widget cards mounted twice (grid + fullscreen clone) share run state through
+// this per-widget cache so the clone never fires a duplicate query.
+const widgetRunStateCache = new Map<string, WidgetRunState>();
+const widgetRunStateListeners = new Map<string, Set<(state: WidgetRunState) => void>>();
+
+function publishWidgetRunState(widgetId: string, state: WidgetRunState) {
+  widgetRunStateCache.set(widgetId, state);
+  widgetRunStateListeners.get(widgetId)?.forEach((listener) => listener(state));
+}
+
+function subscribeWidgetRunState(widgetId: string, listener: (state: WidgetRunState) => void) {
+  let listeners = widgetRunStateListeners.get(widgetId);
+  if (!listeners) {
+    listeners = new Set();
+    widgetRunStateListeners.set(widgetId, listeners);
+  }
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size === 0) widgetRunStateListeners.delete(widgetId);
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -52,6 +75,10 @@ interface MetricsWidgetCardProps {
   onDrillDown: (widget: MetricsWidgetDefinition, label: string, result: QueryResult) => void;
   onWidgetRefreshed: () => void;
   params?: Record<string, string>;
+  /** When false the card never runs queries on its own (no mount run, no
+   * interval, no refresh-token reaction); it mirrors the shared run state of
+   * the primary card for the same widget. Used by the fullscreen clone. */
+  autoQuery?: boolean;
 }
 
 export function MetricsWidgetCard({
@@ -71,15 +98,19 @@ export function MetricsWidgetCard({
   onFullscreen,
   onDrillDown,
   params,
+  autoQuery = true,
   onWidgetRefreshed,
 }: MetricsWidgetCardProps) {
   const { t } = useI18n();
-  const [state, setState] = useState<WidgetRunState>({
-    result: null,
-    loading: false,
-    error: null,
-    lastRunAt: null,
-  });
+  const [state, setState] = useState<WidgetRunState>(
+    () =>
+      widgetRunStateCache.get(widget.id) ?? {
+        result: null,
+        loading: false,
+        error: null,
+        lastRunAt: null,
+      },
+  );
   const requestIdRef = useRef(0);
   const cardRef = useRef<HTMLDivElement | null>(null);
   const isRunningRef = useRef(false);
@@ -135,29 +166,39 @@ export function MetricsWidgetCard({
     } finally {
       if (requestIdRef.current === requestId) {
         isRunningRef.current = false;
-        pushBoardActivity({
-          boardId: widget.id.split("-")[0] || "",
-          widgetId: widget.id,
-          widgetTitle: widget.title,
-          action: runError ? "error" : "run",
-          detail: runError ?? undefined,
-        });
       }
       if (rerunRequestedRef.current) {
         rerunRequestedRef.current = false;
         window.setTimeout(() => {
-          void runWidgetQuery();
+          // Call the latest closure: query/params may have changed mid-run.
+          void runWidgetQueryRef.current();
         }, 0);
       }
     }
-  }, [connectionId, widget.query, widget.id, widget.title, widget.type, onWidgetRefreshed, params]);
+  }, [connectionId, widget.query, widget.type, onWidgetRefreshed, params]);
 
+  const runWidgetQueryRef = useRef(runWidgetQuery);
   useEffect(() => {
-    void runWidgetQuery();
+    runWidgetQueryRef.current = runWidgetQuery;
   }, [runWidgetQuery]);
 
+  // Share run state with other mounted cards for the same widget (fullscreen
+  // clone) and mirror it when this card is not the one issuing queries.
   useEffect(() => {
-    if (widget.refresh_seconds <= 0) return;
+    publishWidgetRunState(widget.id, state);
+  }, [state, widget.id]);
+
+  useEffect(() => {
+    return subscribeWidgetRunState(widget.id, setState);
+  }, [widget.id]);
+
+  useEffect(() => {
+    if (!autoQuery) return;
+    void runWidgetQuery();
+  }, [autoQuery, runWidgetQuery]);
+
+  useEffect(() => {
+    if (!autoQuery || widget.refresh_seconds <= 0) return;
 
     const timer = window.setInterval(() => {
       void runWidgetQuery();
@@ -166,7 +207,7 @@ export function MetricsWidgetCard({
     return () => {
       window.clearInterval(timer);
     };
-  }, [runWidgetQuery, widget.refresh_seconds]);
+  }, [autoQuery, runWidgetQuery, widget.refresh_seconds]);
 
   // Countdown to next auto-refresh.
   const [secondsUntilRefresh, setSecondsUntilRefresh] = useState<number | null>(null);
@@ -188,10 +229,10 @@ export function MetricsWidgetCard({
   // Board-level "refresh all" — re-run when the token bumps.
   const prevRefreshTokenRef = useRef(refreshToken);
   useEffect(() => {
-    if (refreshToken === prevRefreshTokenRef.current) return;
+    if (!autoQuery || refreshToken === prevRefreshTokenRef.current) return;
     prevRefreshTokenRef.current = refreshToken;
     void runWidgetQuery();
-  }, [refreshToken, runWidgetQuery]);
+  }, [autoQuery, refreshToken, runWidgetQuery]);
 
   const handleChartSelect = useCallback(
     (label: string) => {
@@ -213,6 +254,12 @@ export function MetricsWidgetCard({
   }, [state.lastRunAt, widget.refresh_seconds]);
 
   const content = (() => {
+    // Markdown widgets have no query — render before the validation gate,
+    // which would otherwise reject their empty query permanently.
+    if (widget.type === "markdown") {
+      return <MarkdownCard content={widget.note ?? widget.title} />;
+    }
+
     if (state.loading && !state.result) {
       return (
         <div className="metrics-widget-skeleton">
@@ -291,7 +338,6 @@ export function MetricsWidgetCard({
     if (series.length === 0) {
       return <div className="metrics-widget-empty">{t("metrics.widget.queryNeedsSeries")}</div>;
     }
-
     if (widget.type === "bar") {
       return <ChartBars series={series} onSelect={handleChartSelect} />;
     }
@@ -338,10 +384,6 @@ export function MetricsWidgetCard({
       const previous = Number(row?.[1]) || 0;
       const label = String(row?.[2] ?? widget.title);
       return <ChartDelta current={current} previous={previous} label={label} />;
-    }
-
-    if (widget.type === "markdown") {
-      return <MarkdownCard content={widget.note ?? widget.title} />;
     }
 
     if (widget.type === "radial") {
@@ -514,7 +556,9 @@ export function MetricsWidgetCard({
               onPointerDown={(event) => event.stopPropagation()}
               onClick={(event) => {
                 event.stopPropagation();
-                const svg = cardRef.current?.querySelector("svg");
+                const svg = cardRef.current?.querySelector<SVGSVGElement>(
+                  ".metrics-widget-card-body svg",
+                );
                 if (svg) void exportSvgAsPng(svg, `${widget.title || "chart"}.png`);
               }}
               title={t("metrics.widget.exportPng")}

@@ -1,9 +1,11 @@
 use rfd::FileDialog;
 use std::fs;
-use std::io::Read;
 use std::path::PathBuf;
 
-const CSV_PREVIEW_RECORD_LIMIT: usize = 200;
+/// Preview rows shipped to the import dialog. 1 000 records is still a small
+/// bounded read (the csv crate streams, so memory stays flat) but gives the
+/// mapping UI enough rows to spot type/format problems a 200-row sample hid.
+const CSV_PREVIEW_RECORD_LIMIT: usize = 1_000;
 
 /// Saves exported content through a native save dialog. Anchor downloads
 /// (`<a download>` over `blob:` URLs) are silent no-ops inside the Tauri
@@ -119,13 +121,17 @@ pub async fn read_csv_file() -> Result<CsvFileContent, String> {
 
 fn read_csv_file_from_path(file_path: PathBuf) -> Result<CsvFileContent, String> {
     let metadata = fs::metadata(&file_path).map_err(|e| format!("Failed to inspect file: {e}"))?;
-    let delimiter = detect_csv_delimiter(&file_path)?;
+    // Read the raw bytes once so a UTF-8 BOM can be stripped (it would
+    // otherwise land inside the first header cell) and UTF-16/32 files fail
+    // with a clear message instead of mojibake.
+    let raw = fs::read(&file_path).map_err(|e| format!("Failed to open delimited file: {e}"))?;
+    let text_bytes = crate::commands::data_import::strip_text_bom(&raw)?;
+    let delimiter = detect_csv_delimiter(text_bytes)?;
     let mut reader = csv::ReaderBuilder::new()
         .delimiter(delimiter)
         .has_headers(false)
         .flexible(true)
-        .from_path(&file_path)
-        .map_err(|e| format!("Failed to open delimited file: {e}"))?;
+        .from_reader(text_bytes);
     let mut writer = csv::WriterBuilder::new()
         .delimiter(delimiter)
         .from_writer(Vec::new());
@@ -158,29 +164,17 @@ fn read_csv_file_from_path(file_path: PathBuf) -> Result<CsvFileContent, String>
         content,
         byte_size: metadata.len(),
         file_path: file_path.to_string_lossy().to_string(),
-        is_truncated: reader.position().byte() < metadata.len(),
+        is_truncated: preview_records >= CSV_PREVIEW_RECORD_LIMIT
+            && reader.position().byte() < text_bytes.len() as u64,
         delimiter: if delimiter == b'\t' { "tsv" } else { "csv" }.to_string(),
     })
 }
 
-fn detect_csv_delimiter(file_path: &PathBuf) -> Result<u8, String> {
-    let mut file = fs::File::open(file_path).map_err(|e| format!("Failed to open file: {e}"))?;
-    let mut sample = vec![0_u8; 8192];
-    let read = file
-        .read(&mut sample)
-        .map_err(|e| format!("Failed to sample file: {e}"))?;
-    sample.truncate(read);
-    let first_line = sample
-        .split(|byte| *byte == b'\n')
-        .next()
-        .unwrap_or(&sample);
-    let tabs = first_line.iter().filter(|byte| **byte == b'\t').count();
-    let commas = first_line.iter().filter(|byte| **byte == b',').count();
-    Ok(if tabs > 0 && tabs >= commas {
-        b'\t'
-    } else {
-        b','
-    })
+/// Shares the import pipeline's multi-line, quote-aware sniffer so the
+/// preview and the real import agree on `,` `;` `\t` `|`.
+fn detect_csv_delimiter(sample: &[u8]) -> Result<u8, String> {
+    let text = String::from_utf8_lossy(sample);
+    Ok(crate::commands::data_import::detect_delimiter(&text))
 }
 
 #[tauri::command]

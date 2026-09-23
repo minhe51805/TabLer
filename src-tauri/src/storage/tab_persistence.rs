@@ -1,4 +1,7 @@
-use crate::storage::file_storage::{read_json_map_with_backup, write_json_atomically};
+use crate::storage::file_storage::{
+    file_parse_fails, read_json_map_with_backup, write_json_atomically,
+};
+use crate::storage_notices::{push_storage_notice, StorageNotice};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -116,9 +119,37 @@ impl TabPersistence {
             return Ok(Vec::new());
         }
 
-        let all_data: HashMap<String, Vec<PersistedTab>> =
-            read_json_map_with_backup(&self.storage_path, "Failed to parse tab persistence file")
-                .unwrap_or_default();
+        let all_data: HashMap<String, Vec<PersistedTab>> = match read_json_map_with_backup(
+            &self.storage_path,
+            "Failed to parse tab persistence file",
+        ) {
+            Ok(data) => data,
+            Err(error) => {
+                // Only a genuinely corrupt file is a "session restore failed"
+                // event; transient lock/IO errors propagate to the caller.
+                if !file_parse_fails::<HashMap<String, Vec<PersistedTab>>>(&self.storage_path) {
+                    return Err(error);
+                }
+                // Session restore is best-effort: never fail the connection
+                // over a corrupt tabs file, but never drop it silently either.
+                log::error!(
+                    "Tab persistence file '{}' is unreadable; saved tabs were skipped: {}",
+                    self.storage_path.display(),
+                    error
+                );
+                push_storage_notice(StorageNotice {
+                    id: "corrupt:tab_persistence.json".to_string(),
+                    kind: "corrupt".to_string(),
+                    title: "Session restore failed".to_string(),
+                    message: format!(
+                        "Saved editor tabs could not be restored ({error}). The corrupt file is \
+                         kept at '{}' for manual recovery; new tab state will be saved normally.",
+                        self.storage_path.display()
+                    ),
+                });
+                HashMap::new()
+            }
+        };
 
         let tabs = all_data.get(connection_id).cloned().unwrap_or_default();
 

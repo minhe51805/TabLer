@@ -39,6 +39,7 @@ import { useConnectionCapabilities } from "../../../hooks/useConnectionCapabilit
 import { isCapabilitySupported } from "../../../types/capabilities";
 import { extractParams, type SqlParam } from "../../../utils/sql-params";
 import { stripMarkdownFence } from "../../../utils/markdown-fence";
+import { SafeModeCancelledError } from "../../../utils/safe-mode-query-guard";
 
 export interface QueryChromeState {
   isRunning: boolean;
@@ -370,17 +371,24 @@ export function useSQLEditor({
             useConnectionStore.getState().currentDatabase || undefined,
           );
         } catch (error) {
-          const errorMessage = formatExecutionError(error);
-          setError(errorMessage);
-          setResult(null);
-          void saveQueryEntry(
-            commandText,
-            connectionId,
-            0,
-            undefined,
-            errorMessage,
-            useConnectionStore.getState().currentDatabase || undefined,
-          );
+          // A declined Safe Mode confirmation is a user choice, not a failure:
+          // show a neutral notice and keep it out of the error pane/history.
+          if (error instanceof SafeModeCancelledError) {
+            setError(null);
+            setNotice("Query cancelled.");
+          } else {
+            const errorMessage = formatExecutionError(error);
+            setError(errorMessage);
+            setResult(null);
+            void saveQueryEntry(
+              commandText,
+              connectionId,
+              0,
+              undefined,
+              errorMessage,
+              useConnectionStore.getState().currentDatabase || undefined,
+            );
+          }
         } finally {
           setIsExecutingCurrent(false);
           setIsBatchExecuting(false);
@@ -416,19 +424,24 @@ export function useSQLEditor({
             useConnectionStore.getState().currentDatabase || undefined,
           );
         } catch (e) {
-          const errorMessage = formatExecutionError(e);
-          setError(errorMessage);
-          setResult(null);
-          setNotice(null);
+          if (e instanceof SafeModeCancelledError) {
+            setError(null);
+            setNotice("Query cancelled.");
+          } else {
+            const errorMessage = formatExecutionError(e);
+            setError(errorMessage);
+            setResult(null);
+            setNotice(null);
 
-          void saveQueryEntry(
-            commandText,
-            connectionId,
-            0,
-            undefined,
-            errorMessage,
-            useConnectionStore.getState().currentDatabase || undefined,
-          );
+            void saveQueryEntry(
+              commandText,
+              connectionId,
+              0,
+              undefined,
+              errorMessage,
+              useConnectionStore.getState().currentDatabase || undefined,
+            );
+          }
         } finally {
           setIsExecutingCurrent(false);
           setIsBatchExecuting(false);
@@ -540,20 +553,25 @@ export function useSQLEditor({
           );
         }
       } catch (e) {
-        const errorMessage = formatExecutionError(e);
-        setError(errorMessage);
-        setResult(null);
-        setNotice(null);
+        if (e instanceof SafeModeCancelledError) {
+          setError(null);
+          setNotice("Query cancelled.");
+        } else {
+          const errorMessage = formatExecutionError(e);
+          setError(errorMessage);
+          setResult(null);
+          setNotice(null);
 
-        // Auto-save failed query to history
-        void saveQueryEntry(
-          sqlToExecute,
-          connectionId,
-          0,
-          undefined,
-          errorMessage,
-          useConnectionStore.getState().currentDatabase || undefined,
-        );
+          // Auto-save failed query to history
+          void saveQueryEntry(
+            sqlToExecute,
+            connectionId,
+            0,
+            undefined,
+            errorMessage,
+            useConnectionStore.getState().currentDatabase || undefined,
+          );
+        }
       } finally {
         setIsExecutingCurrent(false);
         setIsBatchExecuting(false);
@@ -664,7 +682,12 @@ export function useSQLEditor({
         setExplainPlan(plan);
         setExplainSourceSql(sql.trim());
       } catch (e) {
-        setError(`EXPLAIN failed: ${e instanceof Error ? e.message : String(e)}`);
+        if (e instanceof SafeModeCancelledError) {
+          setError(null);
+          setNotice("EXPLAIN cancelled.");
+        } else {
+          setError(`EXPLAIN failed: ${e instanceof Error ? e.message : String(e)}`);
+        }
       } finally {
         setIsRunningExplain(false);
       }

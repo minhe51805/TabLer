@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::storage::file_storage::{read_json_vec_with_backup, write_json_atomically};
+use crate::storage::file_storage::{
+    file_parse_fails, quarantine_corrupt_file, read_json_vec_with_backup, write_json_atomically,
+};
+use crate::storage_notices::{push_storage_notice, StorageNotice};
 
 /// Backend-run schedule: the scheduler executes the statement itself.
 pub const SCHEDULE_KIND_SQL: &str = "sql";
@@ -68,6 +71,11 @@ pub struct QuerySchedule {
     /// Natural-language task for `kind == "agent"`; absent for SQL schedules.
     #[serde(default)]
     pub prompt: Option<String>,
+    /// Explicit per-schedule consent for `kind == "agent"` tasks to read data
+    /// and send it to the AI provider. Defaults false: an unattended agent
+    /// task must never read data unless the owner opted in.
+    #[serde(default)]
+    pub allow_data_read: bool,
     #[serde(default)]
     pub connection_id: Option<String>,
     #[serde(default)]
@@ -124,7 +132,13 @@ impl QuerySchedule {
     }
 
     pub fn is_due(&self, now_millis: i64) -> bool {
-        self.enabled && now_millis >= self.due_at()
+        // A row still `dispatched` is waiting on its run's report — firing it
+        // again would re-dispatch the same task every interval (toast churn)
+        // and could run the prompt twice. The boot-time reaper clears rows
+        // whose dispatch outlived the app.
+        self.enabled
+            && self.last_status.as_deref() != Some(SCHEDULE_STATUS_DISPATCHED)
+            && now_millis >= self.due_at()
     }
 
     /// True when this schedule is a frontend-run read-only agent task.
@@ -215,10 +229,13 @@ pub fn mark_schedule_missed(schedule: &mut QuerySchedule, missed: u64) {
 
 /// Records that an agent task was handed to the frontend. Stale report/error
 /// fields are cleared so a previous run's outcome can never be read as this
-/// dispatch's result, and any `next_due_at` override is dropped — a dispatch
-/// is a run, so cadence resumes from it.
-pub fn mark_agent_task_dispatched(schedule: &mut QuerySchedule, now_millis: i64) {
-    schedule.last_ran_at = Some(now_millis);
+/// dispatch's result, and any `next_due_at` override is dropped.
+///
+/// `last_ran_at` deliberately stays untouched — it means "last actual run",
+/// and a dispatch is not one. Setting it here made an unrunnable queued task
+/// re-dispatch every interval (each dispatch reset the cadence clock) and let
+/// a failed report look like a completed run.
+pub fn mark_agent_task_dispatched(schedule: &mut QuerySchedule) {
     schedule.last_status = Some(SCHEDULE_STATUS_DISPATCHED.to_string());
     schedule.last_rows = None;
     schedule.last_error = None;
@@ -301,7 +318,37 @@ impl ScheduleStorage {
             fs::write(&file_path, "[]")
                 .map_err(|e| format!("Failed to create schedules file: {e}"))?;
         }
-        let cache = Self::load_from_file(&file_path)?;
+        let cache = Self::load_from_file(&file_path).or_else(|error| {
+            // Only quarantine on real corruption — a transient lock/IO error
+            // must not move the user's schedules aside.
+            if !file_parse_fails::<Vec<QuerySchedule>>(&file_path) {
+                return Err(error);
+            }
+            // quarantine it, notify, and start with an empty schedule set.
+            let quarantined = quarantine_corrupt_file(&file_path)
+                .map_err(|quarantine_error| {
+                    format!(
+                        "query_schedules.json is corrupt ({error}) and could not be quarantined: {quarantine_error}"
+                    )
+                })?;
+            log::error!("query_schedules.json was corrupt and has been quarantined: {error}");
+            let quarantined_list = quarantined
+                .iter()
+                .map(|path| path.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ");
+            push_storage_notice(StorageNotice {
+                id: "corrupt:query_schedules.json".to_string(),
+                kind: "corrupt".to_string(),
+                title: "Saved schedules file was corrupt".to_string(),
+                message: format!(
+                    "query_schedules.json could not be read ({error}) and was moved aside \
+                     ({quarantined_list}). Schedules were reset to empty; the quarantined file \
+                     keeps the original data for manual recovery."
+                ),
+            });
+            Ok::<HashMap<String, QuerySchedule>, String>(HashMap::new())
+        })?;
         Ok(Self { file_path, cache })
     }
 
@@ -380,6 +427,7 @@ mod tests {
             sql: "SELECT 1".into(),
             kind: SCHEDULE_KIND_SQL.into(),
             prompt: None,
+            allow_data_read: false,
             connection_id: None,
             database: None,
             interval_seconds,
@@ -471,12 +519,15 @@ mod tests {
         );
         assert_eq!(s.last_status.as_deref(), Some(SCHEDULE_STATUS_OK));
 
-        mark_agent_task_dispatched(&mut s, 2_000);
-        assert_eq!(s.last_ran_at, Some(2_000));
+        mark_agent_task_dispatched(&mut s);
+        // A dispatch is not a run: the cadence clock keeps pointing at the last
+        // real outcome, and `is_due` refuses to fire while a report is pending.
+        assert_eq!(s.last_ran_at, Some(1_000));
         assert_eq!(s.last_status.as_deref(), Some(SCHEDULE_STATUS_DISPATCHED));
         assert!(s.last_summary.is_none());
         assert!(s.last_rows.is_none());
         assert!(s.last_error.is_none());
+        assert!(!s.is_due(i64::MAX));
     }
 
     #[test]
@@ -575,10 +626,11 @@ mod tests {
         assert_eq!(s.missed_count, 2);
         assert!(s.next_due_at.is_none());
         // Still due at the original boundary → the scheduler fires one
-        // catch-up run, after which the run clears the override state.
+        // catch-up run, after which the dispatch clears the override state.
         assert!(s.is_due(150_000));
-        mark_agent_task_dispatched(&mut s, 160_000);
+        mark_agent_task_dispatched(&mut s);
         assert!(s.next_due_at.is_none());
+        // While the dispatch awaits its report the row is not due again.
         assert!(!s.is_due(160_000));
     }
 

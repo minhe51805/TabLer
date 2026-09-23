@@ -82,10 +82,12 @@ export function useAgentScheduleRunner({
       try {
         const result = await generateAssist(task.prompt, [], {
           interactionMode: "agent",
-          // Nobody is present to answer a dialog, so reads stand approved by the
-          // act of creating the task. The destructive confirmation is never
-          // wired here: an unattended run cannot reach a write at all.
-          requestDataReadConsent: async () => true,
+          // Nobody is present to answer a dialog, so data reads are gated by
+          // the per-schedule opt-in the user set at creation time — a task
+          // without it stays schema-only and never ships rows to the provider.
+          // The destructive confirmation is never wired here: an unattended
+          // run cannot reach a write at all.
+          requestDataReadConsent: async () => task.allowDataRead,
           userPrompt: task.prompt,
           unattendedReadOnly: true,
         });

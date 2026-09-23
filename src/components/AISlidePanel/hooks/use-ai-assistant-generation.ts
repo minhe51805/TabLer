@@ -12,6 +12,7 @@ import { supportsAIMetricsBoardTemplate } from "../../../utils/metrics-board-tem
 import type { AIMetricsWidgetSpec } from "../../../utils/metrics-board-templates";
 import { normalizeAIRequestError } from "../../../utils/ai-request-errors";
 import { invokeMutation } from "../../../utils/tauri-utils";
+import { emitAppToast } from "../../../utils/app-toast";
 import type { AIAttachmentDraft } from "../../../utils/ai-attachments";
 import { splitSqlStatements } from "../../../utils/sqlStatements";
 import { shouldAgentAutoRunSql, isSqlBlockedBySafeMode } from "../ai-execution-policy";
@@ -177,8 +178,16 @@ export function buildAIRequestFailureBubble(
   aiCopy: AIWorkspaceCopy,
 ): AIWorkspaceBubbleData {
   const message = wasCancelled ? "AI request cancelled." : requestError.message;
+  // A provider that died mid-stream already sent part of the answer — keep it
+  // next to the error instead of discarding what the user watched arrive.
+  const partialText =
+    "partialText" in requestError && typeof requestError.partialText === "string"
+      ? requestError.partialText.trim() || undefined
+      : undefined;
   const hasPartialEvidence =
-    bubble.agentSteps?.some((step) => step.action !== "plan" && step.status !== "running") ?? false;
+    Boolean(partialText) ||
+    (bubble.agentSteps?.some((step) => step.action !== "plan" && step.status !== "running") ??
+      false);
 
   if (hasPartialEvidence) {
     return {
@@ -188,8 +197,8 @@ export function buildAIRequestFailureBubble(
       settledAt: Date.now(),
       title: aiCopy.bubbleStates.partialTitle,
       subtitle: aiCopy.bubbleStates.partialSubtitle,
-      preview: message,
-      detail: message,
+      preview: partialText ?? message,
+      detail: partialText ? `${partialText}\n\n---\n\n${message}` : message,
       sql: undefined,
       risk: undefined,
       requestErrorCode: wasCancelled ? "cancelled" : requestError.code,
@@ -327,6 +336,9 @@ export function useAIAssistantGeneration({
         interactionMode?: AIWorkspaceInteractionMode;
         /** Files/images attached by the user for this turn (composer pipeline). */
         attachments?: AIAttachmentDraft[];
+        /** A file command's `allowed-tools:` narrowing for this run only —
+         *  forwarded to the executor as the initial tool restriction. */
+        commandToolRestriction?: string[];
         /** Regenerate mode: re-run this bubble's prompt and swap the result
          *  into the SAME chat slot instead of appending a new turn. On any
          *  failure the original bubble is restored untouched. */
@@ -389,9 +401,15 @@ export function useAIAssistantGeneration({
                   : (draft.textContent ?? ""),
               createdAt: draft.createdAt,
             })),
-        }).catch((error: unknown) =>
-          console.error("[AIWorkspace] Failed to save attachments:", error),
-        );
+        }).catch((error: unknown) => {
+          console.error("[AIWorkspace] Failed to save attachments:", error);
+          emitAppToast({
+            tone: "error",
+            title: "Attachments not saved",
+            description: "The answer was generated, but its attachments could not be persisted.",
+            durationMs: 6000,
+          });
+        });
       }
       activeGenerationBubbleIdRef.current = loadingBubble.id;
       setBubbles((current) =>
@@ -604,6 +622,7 @@ export function useAIAssistantGeneration({
         const result = await generateAssist(normalizedPrompt, options?.history, {
           interactionMode,
           requestDataReadConsent: () => requestVisualizationReadConsent(requestPrompt),
+          commandToolRestriction: options?.commandToolRestriction,
           requestDataDestructiveConsent: (detail) => requestDestructiveConsent(detail),
           userPrompt: requestPrompt,
           attachments: attachmentDrafts.length > 0 ? attachmentDrafts : undefined,

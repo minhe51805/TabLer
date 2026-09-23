@@ -174,16 +174,23 @@ export function nativeToolPayloadForProvider(
 ): NativeToolPayload {
   const specs = listEnabledAgentToolSpecs(options ?? true);
   switch (providerType) {
-    case "anthropic":
+    case "anthropic": {
       // Append Anthropic's NATIVE memory tool (opaque type block, no
       // input_schema) so Claude can persist notes across turns in the
       // /memories sandbox, backed by the `run_agent_memory_tool` command.
       // Anthropic-only: no other provider understands this type block, and it
       // is absent from AI_AGENT_TOOL_NAMES so it is never offered elsewhere.
+      // Unattended read-only runs never get it: memory writes are outside the
+      // P10 surface, and advertising a tool the executor then refuses would
+      // misreport the run as needs_human.
+      const tools = options?.unattendedReadOnly
+        ? toAnthropicTools(specs)
+        : [...toAnthropicTools(specs), NATIVE_ANTHROPIC_MEMORY_TOOL];
       return {
-        tools: [...toAnthropicTools(specs), NATIVE_ANTHROPIC_MEMORY_TOOL],
+        tools,
         tool_choice: { type: "auto" },
       };
+    }
     case "gemini":
     case "vertex":
       // Vertex AI speaks the same generateContent wire format as Gemini:

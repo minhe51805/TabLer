@@ -217,12 +217,9 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
     } else {
       set({ isConnecting: false });
     }
-    const details = parseConnectionError(error);
-    useGlobalErrorStore
-      .getState()
-      .setError(
-        `Connection to target failed: ${details.message}${details.hint ? ` ${details.hint}` : ""}`,
-      );
+    // The error is surfaced by the caller's own channel (the connection
+    // form's in-place test result, or the file-open toast) — publishing to
+    // the global error store here would double-report the same failure.
     throw error;
   };
 

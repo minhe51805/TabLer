@@ -30,11 +30,21 @@ export async function runAgentEvidenceLoop(params: {
   sharedAgentInstruction: string;
   initialAction: AIAgentFinishAction;
   initialSteps: AgentTraceStep[];
-  requestAgentAction: (prompt: string, includeHistory: boolean) => Promise<AIAgentToolAction | AIAgentFinishAction>;
-  buildControllerPrompt: (forceFinish: boolean, extraInstruction?: string, steps?: AgentTraceStep[]) => string;
+  requestAgentAction: (
+    prompt: string,
+    includeHistory: boolean,
+  ) => Promise<AIAgentToolAction | AIAgentFinishAction>;
+  buildControllerPrompt: (
+    forceFinish: boolean,
+    extraInstruction?: string,
+    steps?: AgentTraceStep[],
+  ) => string;
   isSupersededAIRequestError: (errorValue: unknown) => boolean;
   runAgentTool: (action: AIAgentToolAction) => Promise<string>;
-  publishAgentProgress: (pending?: { action: import("./ai-workspace-types").AIWorkspaceAgentActionName; message: string }) => void;
+  publishAgentProgress: (pending?: {
+    action: import("./ai-workspace-types").AIWorkspaceAgentActionName;
+    message: string;
+  }) => void;
   recoverAgentFinishAction: (reason: string) => Promise<AIAgentFinishAction>;
 }): Promise<{ finalAction: AIAgentFinishAction; finalSteps: AgentTraceStep[] }> {
   const {
@@ -48,8 +58,8 @@ export async function runAgentEvidenceLoop(params: {
     initialAction,
     initialSteps,
     requestAgentAction,
-  buildControllerPrompt,
-  isSupersededAIRequestError,
+    buildControllerPrompt,
+    isSupersededAIRequestError,
     runAgentTool,
     publishAgentProgress,
     recoverAgentFinishAction,
@@ -59,20 +69,26 @@ export async function runAgentEvidenceLoop(params: {
   let finalSteps = initialSteps;
 
   const needsMoreEvidence = () =>
-    evaluateEvidenceGate({ finalAction, steps: finalSteps, wantsReportTable, knownIdentifiers }).needsMoreEvidence;
+    evaluateEvidenceGate({ finalAction, steps: finalSteps, wantsReportTable, knownIdentifiers })
+      .needsMoreEvidence;
 
   let evidenceRoundsLeft = maxRounds ?? MAX_EVIDENCE_ROUNDS;
 
   while (
-    workspaceToolsEnabled
-    && !endedWithAskUser
-    && evidenceRoundsLeft > 0
-    && needsMoreEvidence()
-    && isWorkspaceScopedIntent(assistIntent)
+    workspaceToolsEnabled &&
+    !endedWithAskUser &&
+    evidenceRoundsLeft > 0 &&
+    needsMoreEvidence() &&
+    isWorkspaceScopedIntent(assistIntent)
   ) {
     evidenceRoundsLeft -= 1;
     const lastChance = evidenceRoundsLeft === 0;
-    const gateNow = evaluateEvidenceGate({ finalAction, steps: finalSteps, wantsReportTable, knownIdentifiers });
+    const gateNow = evaluateEvidenceGate({
+      finalAction,
+      steps: finalSteps,
+      wantsReportTable,
+      knownIdentifiers,
+    });
     const composeOnly = gateNow.composeOnly;
     try {
       const recoveryInstruction = buildAgentRecoveryInstruction({
@@ -123,12 +139,27 @@ export async function runAgentEvidenceLoop(params: {
         ),
         false,
       );
-      finalAction = closingAction.action === "finish"
-        ? closingAction
-        : await recoverAgentFinishAction("The agent could not conclude after its final data step.");
+      finalAction =
+        closingAction.action === "finish"
+          ? closingAction
+          : await recoverAgentFinishAction(
+              "The agent could not conclude after its final data step.",
+            );
     } catch (errorValue) {
       if (isSupersededAIRequestError(errorValue)) throw errorValue;
-      // The gate is best-effort; fall back to the current finish.
+      // The gate is best-effort; fall back to the current finish — but never
+      // silently: a provider outage must be visible in the trace instead of
+      // reading as a normal, evidence-complete finish.
+      const detail = errorValue instanceof Error ? errorValue.message : String(errorValue);
+      finalSteps = [
+        ...finalSteps,
+        {
+          step: finalSteps.length + 1,
+          action: "think",
+          message: "Evidence check stopped early — finishing with the data already gathered.",
+          observation: `Evidence loop aborted: ${detail}`,
+        },
+      ];
       break;
     }
   }

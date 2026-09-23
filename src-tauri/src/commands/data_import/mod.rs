@@ -11,6 +11,7 @@
 //! `csv-import-progress` events and honouring the shared
 //! `CsvImportCancellationState` so a running import can be cancelled.
 
+use crate::commands::safe_mode::SafeModeState;
 use crate::commands::table::CsvImportCancellationState;
 use crate::database::manager::DatabaseManager;
 use std::collections::HashSet;
@@ -36,6 +37,10 @@ const MAX_JSON_ARRAY_FILE_BYTES: u64 = 512 * 1024 * 1024;
 /// calamine decompresses a spreadsheet fully into memory, so Excel/ODS files
 /// get their own cap (a small .xlsx can expand to a very large sheet).
 const MAX_XLSX_FILE_BYTES: u64 = 256 * 1024 * 1024;
+/// NDJSON previews union keys across this many leading lines so late-appearing
+/// fields are still offered as import columns (bounded so a huge file does
+/// not stall the dialog).
+const NDJSON_KEY_SCAN_ROWS: usize = 10_000;
 
 mod csv;
 mod insert;
@@ -45,11 +50,17 @@ mod tests;
 mod xlsx;
 
 pub use csv::CsvPreview;
+// Shared with commands::file so the lightweight CSV preview dialog sniffs
+// delimiters and strips BOMs exactly like the real import path.
+pub(crate) use csv::{detect_delimiter, strip_text_bom};
 pub use insert::{ImportColumnMapping, ImportSummary};
 pub use json::JsonPreview;
 pub use xlsx::XlsxPreview;
 
-use csv::{header_columns_from_path, sample_and_count, sniff_delimiter_from_file};
+use csv::{
+    decode_csv_cell, looks_like_header, positional_columns, sample_and_count, sample_prefix_rows,
+    sniff_delimiter_from_file,
+};
 use insert::execute_import;
 use json::{
     align_object, collect_keys, detect_json_shape, parse_json_object_line, read_json_array_objects,
@@ -82,11 +93,39 @@ pub async fn preview_import_csv(
     }
 
     let delimiter = sniff_delimiter_from_file(&path)?;
-    let header_row = header_columns_from_path(&path, delimiter)?;
+
+    // Peek at the first two records to decide whether row 1 is a header or
+    // data. A headerless file keeps its first row in the preview instead of
+    // silently losing it to the column list.
+    let sample_cap = sample_rows.unwrap_or(DEFAULT_SAMPLE_ROWS).max(1);
+    let peek_reader = ::csv::ReaderBuilder::new()
+        .delimiter(delimiter)
+        .has_headers(false)
+        .flexible(true)
+        .from_path(&path)
+        .map_err(|error| format!("Failed to open CSV file: {error}"))?;
+    let prefix_rows = sample_prefix_rows(peek_reader, 2)?;
+    let first = prefix_rows
+        .first()
+        .ok_or_else(|| "The selected CSV file is empty.".to_string())?;
+    if first.is_empty() {
+        return Err("The selected CSV file is empty.".to_string());
+    }
+    let has_header = looks_like_header(first, prefix_rows.get(1).map(Vec::as_slice));
+    let header_row = if has_header {
+        let mut header_row = first.clone();
+        for (index, cell) in header_row.iter_mut().enumerate() {
+            if cell.trim().is_empty() {
+                *cell = format!("column_{}", index + 1);
+            }
+        }
+        header_row
+    } else {
+        positional_columns(first.len())
+    };
 
     // The sample and the row count come from ONE bounded-memory streaming
     // pass — no read-to-end, no Vec of every record.
-    let sample_cap = sample_rows.unwrap_or(DEFAULT_SAMPLE_ROWS).max(1);
     let reader = ::csv::ReaderBuilder::new()
         .delimiter(delimiter)
         .has_headers(false)
@@ -94,7 +133,7 @@ pub async fn preview_import_csv(
         .from_path(&path)
         .map_err(|error| format!("Failed to open CSV file: {error}"))?;
     let (data_rows, total_rows, total_rows_truncated) =
-        sample_and_count(reader, true, sample_cap, MAX_PREVIEW_COUNT_ROWS)?;
+        sample_and_count(reader, has_header, sample_cap, MAX_PREVIEW_COUNT_ROWS)?;
 
     Ok(CsvPreview {
         file_name: path
@@ -108,6 +147,7 @@ pub async fn preview_import_csv(
         total_rows,
         total_rows_truncated,
         delimiter: delimiter as char,
+        has_header,
     })
 }
 
@@ -127,8 +167,23 @@ pub async fn import_csv(
     app: AppHandle,
     cancellation_state: State<'_, CsvImportCancellationState>,
     db_manager: State<'_, DatabaseManager>,
+    safe_mode: State<'_, SafeModeState>,
 ) -> Result<ImportSummary, String> {
     db_manager.assert_write_allowed(&connection_id).await?;
+    // Imports bypass the SQL editor, so Safe Mode never saw them; probe the
+    // statement kinds this import will run so 'Read Only' blocks UI writes.
+    let probe = if create_table {
+        "CREATE TABLE t (c INT); INSERT INTO t (c) VALUES (NULL)"
+    } else {
+        "INSERT INTO t (c) VALUES (NULL)"
+    };
+    let database_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .ok();
+    safe_mode
+        .ensure_mutation_allowed(&connection_id, probe, database_type)
+        .await?;
     let file_path = std::path::PathBuf::from(&path);
     if !file_path.exists() {
         return Err(format!("File not found: {path}"));
@@ -144,7 +199,8 @@ pub async fn import_csv(
     let total_bytes = metadata.len();
 
     // Owning record iterator so memory holds one batch at a time regardless of
-    // file size. Each item is (positional string cells, byte offset).
+    // file size. Each item is (positional cells, byte offset); `\N` decodes
+    // to SQL NULL and `\\N` back to the literal text.
     let reader = ::csv::ReaderBuilder::new()
         .delimiter(delimiter)
         .has_headers(has_header)
@@ -159,7 +215,7 @@ pub async fn import_csv(
                     .position()
                     .map(|position| position.byte())
                     .unwrap_or(0);
-                let cells: Vec<String> = record.iter().map(str::to_string).collect();
+                let cells: Vec<Option<String>> = record.iter().map(decode_csv_cell).collect();
                 (cells, byte)
             })
     });
@@ -175,6 +231,7 @@ pub async fn import_csv(
         cancellation_state.inner(),
         db_manager.inner(),
         total_bytes,
+        Some(&file_path.with_extension("tabler-rejected.csv")),
         rows,
     )
     .await
@@ -224,6 +281,10 @@ pub async fn preview_import_json(sample_rows: Option<usize>) -> Result<JsonPrevi
         JsonShape::Ndjson => {
             let file = std::fs::File::open(&path)
                 .map_err(|error| format!("Failed to open JSON file: {error}"))?;
+            // Keys are collected across a bounded prefix of the file — not
+            // just the displayed sample — so fields that first appear deep
+            // into the data still show up as importable columns.
+            let mut scanned = 0usize;
             for line in BufReader::new(file).lines() {
                 let line = line.map_err(|error| error.to_string())?;
                 if line.trim().is_empty() {
@@ -234,10 +295,13 @@ pub async fn preview_import_json(sample_rows: Option<usize>) -> Result<JsonPrevi
                 } else {
                     total_rows_truncated = true;
                 }
-                if sample.len() < sample_cap {
+                if scanned < NDJSON_KEY_SCAN_ROWS {
+                    scanned += 1;
                     let object = parse_json_object_line(&line)?;
                     collect_keys(&object, &mut seen, &mut columns);
-                    sample.push(object);
+                    if sample.len() < sample_cap {
+                        sample.push(object);
+                    }
                 }
             }
         }
@@ -284,7 +348,23 @@ pub async fn import_json(
     app: AppHandle,
     cancellation_state: State<'_, CsvImportCancellationState>,
     db_manager: State<'_, DatabaseManager>,
+    safe_mode: State<'_, SafeModeState>,
 ) -> Result<ImportSummary, String> {
+    db_manager.assert_write_allowed(&connection_id).await?;
+    // Same Safe Mode gate as import_csv: UI imports must not bypass
+    // 'Read Only' just because they never pass through the SQL editor.
+    let probe = if create_table {
+        "CREATE TABLE t (c INT); INSERT INTO t (c) VALUES (NULL)"
+    } else {
+        "INSERT INTO t (c) VALUES (NULL)"
+    };
+    let database_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .ok();
+    safe_mode
+        .ensure_mutation_allowed(&connection_id, probe, database_type)
+        .await?;
     if source_columns.is_empty() {
         return Err("Import requires the previewed JSON columns.".to_string());
     }
@@ -318,9 +398,13 @@ pub async fn import_json(
                         }
                         match parse_json_object_line(&text) {
                             Err(error) => Some(Err(error)),
-                            Ok(object) => {
-                                Some(Ok((align_object(&columns, &object), processed_bytes)))
-                            }
+                            Ok(object) => Some(Ok((
+                                align_object(&columns, &object)
+                                    .into_iter()
+                                    .map(Some)
+                                    .collect(),
+                                processed_bytes,
+                            ))),
                         }
                     }
                 });
@@ -335,6 +419,7 @@ pub async fn import_json(
                 cancellation_state.inner(),
                 db_manager.inner(),
                 total_bytes,
+                Some(&file_path.with_extension("tabler-rejected.csv")),
                 rows,
             )
             .await
@@ -352,7 +437,13 @@ pub async fn import_json(
             let rows = objects.into_iter().enumerate().map(move |(index, object)| {
                 // Byte progress is approximated for the in-memory array path.
                 let processed = ((index as u64 + 1).saturating_mul(total_bytes)) / total;
-                Ok((align_object(&columns, &object), processed))
+                Ok((
+                    align_object(&columns, &object)
+                        .into_iter()
+                        .map(Some)
+                        .collect(),
+                    processed,
+                ))
             });
             execute_import(
                 &connection_id,
@@ -365,6 +456,7 @@ pub async fn import_json(
                 cancellation_state.inner(),
                 db_manager.inner(),
                 total_bytes,
+                Some(&file_path.with_extension("tabler-rejected.csv")),
                 rows,
             )
             .await
@@ -454,7 +546,23 @@ pub async fn import_xlsx(
     app: AppHandle,
     cancellation_state: State<'_, CsvImportCancellationState>,
     db_manager: State<'_, DatabaseManager>,
+    safe_mode: State<'_, SafeModeState>,
 ) -> Result<ImportSummary, String> {
+    db_manager.assert_write_allowed(&connection_id).await?;
+    // Same Safe Mode gate as import_csv: UI imports must not bypass
+    // 'Read Only' just because they never pass through the SQL editor.
+    let probe = if create_table {
+        "CREATE TABLE t (c INT); INSERT INTO t (c) VALUES (NULL)"
+    } else {
+        "INSERT INTO t (c) VALUES (NULL)"
+    };
+    let database_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .ok();
+    safe_mode
+        .ensure_mutation_allowed(&connection_id, probe, database_type)
+        .await?;
     let file_path = std::path::PathBuf::from(&path);
     if !file_path.exists() {
         return Err(format!("File not found: {path}"));
@@ -475,10 +583,15 @@ pub async fn import_xlsx(
     }
     // Materialise data rows (calamine already holds the sheet in memory), then
     // hand an owned iterator to the shared sink.
-    let data_rows: Vec<Vec<String>> = range
+    let data_rows: Vec<Vec<Option<String>>> = range
         .rows()
         .skip(1)
-        .map(|row| align_row_to_len(row, column_count))
+        .map(|row| {
+            align_row_to_len(row, column_count)
+                .into_iter()
+                .map(Some)
+                .collect()
+        })
         .collect();
     let total = (data_rows.len() as u64).max(1);
     let rows = data_rows
@@ -501,6 +614,7 @@ pub async fn import_xlsx(
         cancellation_state.inner(),
         db_manager.inner(),
         total_bytes,
+        Some(&file_path.with_extension("tabler-rejected.csv")),
         rows,
     )
     .await

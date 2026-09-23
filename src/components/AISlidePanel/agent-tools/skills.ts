@@ -66,8 +66,14 @@ export const tools: AgentToolModule[] = [
             typeof entry === "string" && (AI_AGENT_TOOL_NAMES as readonly string[]).includes(entry),
         );
         if (allowedTools.length > 0) {
-          if (!ctx.skillToolRestriction) ctx.skillToolRestriction = new Set<AIAgentToolName>();
-          for (const toolName of allowedTools) ctx.skillToolRestriction.add(toolName);
+          // Narrowing only, same contract as command `allowed-tools`: each
+          // loaded skill may take tools away, never grant them back. A
+          // permissive skill loaded after a restrictive one must not re-enable
+          // what the first removed, so restrictions INTERSECT.
+          const declared = new Set<AIAgentToolName>(allowedTools);
+          ctx.skillToolRestriction = ctx.skillToolRestriction
+            ? new Set([...ctx.skillToolRestriction].filter((tool) => declared.has(tool)))
+            : declared;
         }
         // Soft cost ceiling: a huge skill file would otherwise be re-injected
         // into the prompt on every remaining run step.
@@ -85,8 +91,8 @@ export const tools: AgentToolModule[] = [
               ].join("\n")
             : "";
         const restrictionNote =
-          allowedTools.length > 0
-            ? `\n\n[This skill restricts tools to: ${allowedTools.join(", ")} (plus finish, ask_user, update_plan, read_page, skill, read_skill_resource). Other tools are disabled for the rest of the run.]`
+          allowedTools.length > 0 && ctx.skillToolRestriction
+            ? `\n\n[This skill restricts tools to: ${[...ctx.skillToolRestriction].sort().join(", ")} (plus finish, ask_user, update_plan, read_page, skill, read_skill_resource). Other tools are disabled for the rest of the run.]`
             : "";
         return [
           `Skill "${content.name}" loaded. Follow these instructions for the remainder of the run:`,

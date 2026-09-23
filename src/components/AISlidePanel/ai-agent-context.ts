@@ -475,8 +475,9 @@ export function buildAgentControllerPrompt(params: {
   cachedTableSummaries?: string[];
   glossaryLines?: string[];
   availableSkills?: { name: string; description: string }[];
-  /** Frontmatter-only memory index for this connection/database scope. */
-  agentMemoryIndex?: { name: string; description: string; updatedAt: string }[];
+  /** Frontmatter-only memory index for this connection/database scope.
+   *  `null` = the backend read failed — NOT an empty store. */
+  agentMemoryIndex?: { name: string; description: string; updatedAt: string }[] | null;
   /** Open query tabs on this connection — enables edit_query_sql proposals. */
   queryTabs?: { tabId: string; title: string; sql: string }[];
   knownDatabaseNames?: string[];
@@ -631,34 +632,36 @@ export function buildAgentControllerPrompt(params: {
           "When the user's task matches one of these skill descriptions, call the skill tool with that name FIRST and follow the returned instructions.",
         ].join("\n")
       : "",
-    (agentMemoryIndex ?? []).length > 0
-      ? (() => {
-          // Recall: rank the saved memories by relevance to THIS request so the
-          // one that answers it is surfaced first and explicitly flagged,
-          // instead of relying on the model to notice it in storage order.
-          const ranked = rankAgentMemoriesByRelevance(agentMemoryIndex ?? [], userPrompt)
-            // Relevant matches first, THEN cap — so the bound trims only the
-            // least-relevant tail and can never drop a memory that matches this
-            // request. Keeps the standing recall index cost bounded per step.
-            .slice()
-            .sort((left, right) => Number(right.relevant) - Number(left.relevant))
-            .slice(0, MAX_AGENT_MEMORY_INDEX_ENTRIES);
-          const anyRelevant = ranked.some((item) => item.relevant);
-          return [
-            "<agent_memory>",
-            ...ranked.map(
-              ({ entry, relevant }) =>
-                `<memory relevant="${relevant}"><name>${entry.name}</name><updated>${entry.updatedAt}</updated><description>${entry.description}</description></memory>`,
-            ),
-            "</agent_memory>",
-            anyRelevant
-              ? `These are saved observations for THIS connection/database (freshness = <updated>), ordered by relevance to the current request. Entries with relevant="true" closely match what the user is asking — load them with read_memory FIRST, before other tools, and use them to answer. ${AGENT_MEMORY_SAVE_HINT}`
-              : `These are saved observations for THIS connection/database (freshness = <updated>). Load one of them with read_memory when it looks relevant. ${AGENT_MEMORY_SAVE_HINT}`,
-          ].join("\n");
-        })()
-      : workspaceToolsEnabled
-        ? `No saved memories exist yet for this connection/database. ${AGENT_MEMORY_SAVE_HINT}`
-        : "",
+    agentMemoryIndex === null
+      ? "The saved-memory index could not be loaded (backend read failed). Do not assume the store is empty; avoid save_memory until read_memory works, and say so in your report."
+      : (agentMemoryIndex ?? []).length > 0
+        ? (() => {
+            // Recall: rank the saved memories by relevance to THIS request so the
+            // one that answers it is surfaced first and explicitly flagged,
+            // instead of relying on the model to notice it in storage order.
+            const ranked = rankAgentMemoriesByRelevance(agentMemoryIndex ?? [], userPrompt)
+              // Relevant matches first, THEN cap — so the bound trims only the
+              // least-relevant tail and can never drop a memory that matches this
+              // request. Keeps the standing recall index cost bounded per step.
+              .slice()
+              .sort((left, right) => Number(right.relevant) - Number(left.relevant))
+              .slice(0, MAX_AGENT_MEMORY_INDEX_ENTRIES);
+            const anyRelevant = ranked.some((item) => item.relevant);
+            return [
+              "<agent_memory>",
+              ...ranked.map(
+                ({ entry, relevant }) =>
+                  `<memory relevant="${relevant}"><name>${entry.name}</name><updated>${entry.updatedAt}</updated><description>${entry.description}</description></memory>`,
+              ),
+              "</agent_memory>",
+              anyRelevant
+                ? `These are saved observations for THIS connection/database (freshness = <updated>), ordered by relevance to the current request. Entries with relevant="true" closely match what the user is asking — load them with read_memory FIRST, before other tools, and use them to answer. ${AGENT_MEMORY_SAVE_HINT}`
+                : `These are saved observations for THIS connection/database (freshness = <updated>). Load one of them with read_memory when it looks relevant. ${AGENT_MEMORY_SAVE_HINT}`,
+            ].join("\n");
+          })()
+        : workspaceToolsEnabled
+          ? `No saved memories exist yet for this connection/database. ${AGENT_MEMORY_SAVE_HINT}`
+          : "",
     (queryTabs ?? []).length > 0
       ? [
           "Query tabs open for this connection (tabId is required by edit_query_sql; sql is the current content to fix):",
@@ -697,11 +700,10 @@ export function buildAgentControllerPrompt(params: {
     workspaceToolsEnabled
       ? '- Tables can be EMPTY. Before building any report, overview, or dashboard, prefer tables whose rowCount is greater than zero in list_tables output (or pass args {"minRows":1}), confirm with sample_table_data when unsure, and skip zero-row tables instead of presenting them as content.'
       : "",
-    workspaceToolsEnabled && sqlWritePreview
+    workspaceToolsEnabled && (toolAvailability?.previewWrite ?? sqlWritePreview)
       ? "- To propose data or schema changes, run preview_write with the mutating statements: it executes them inside one transaction and always rolls back, showing real affected rows. NEVER claim a change was persisted; the human applies the final SQL through the approval flow."
       : "",
-    workspaceToolsEnabled &&
-    (toolAvailability?.documentPropose || toolAvailability?.sqlWritePreview)
+    workspaceToolsEnabled && toolAvailability?.seedPropose
       ? "- To fill an empty or sparse table or collection with sample data: verify its fields with describe_table or sample_table_data first, then call propose_seed_data with realistic rows matching those fields. It opens the INSERT (or MongoDB insertMany) script in a NEW query tab that the user reviews and runs — you cannot insert data directly and must never claim data was written."
       : "",
     workspaceToolsEnabled

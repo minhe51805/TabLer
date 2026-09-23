@@ -64,7 +64,16 @@ pub struct TableDataExportRequest {
     order_by: Option<String>,
     order_dir: Option<String>,
     filter: Option<String>,
+    /// When true, an existing destination file is replaced. When false/absent
+    /// and the picked path exists, the command fails with
+    /// `TABLER_EXPORT_FILE_EXISTS` so the UI can show an overwrite-confirm
+    /// dialog and retry with this flag set.
+    #[serde(default)]
+    overwrite: bool,
 }
+
+/// Error prefix the frontend matches to trigger its overwrite-confirm flow.
+pub const EXPORT_FILE_EXISTS_CODE: &str = "TABLER_EXPORT_FILE_EXISTS";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -155,6 +164,8 @@ pub async fn export_tables_to_directory(
             order_by: None,
             order_dir: None,
             filter: None,
+            // unique_export_path already picked a non-clobbering name.
+            overwrite: true,
         };
         let result = stream_table_export(
             &*driver,
@@ -261,10 +272,11 @@ pub async fn export_table_data(
         )
         .save_file()
         .ok_or_else(|| "No export destination selected.".to_string())?;
-    if target_path.exists() {
-        return Err(
-            "Choose a new export filename so TableR can publish it atomically.".to_string(),
-        );
+    if target_path.exists() && !request.overwrite {
+        return Err(format!(
+            "{EXPORT_FILE_EXISTS_CODE}: '{}' already exists. Confirm overwrite to replace it.",
+            target_path.display()
+        ));
     }
     let temporary_path = temporary_export_path(&target_path);
     let cancelled = cancellation_state.start(&operation_id)?;
@@ -321,11 +333,21 @@ async fn stream_table_export(
     let mut wrote_header = false;
     let mut exported_rows = 0_u64;
     let mut batch_index = 0_u64;
+    // Unordered offset paging can skip or duplicate rows under concurrent
+    // writes, so exports always page over a stable ORDER BY: the caller's
+    // sort column, else the primary key, else the first column — for drivers
+    // whose paging honours ORDER BY (SQL engines + MongoDB's sort). Drivers
+    // with their own deterministic paging (Cassandra page state, OpenSearch
+    // scroll, Redis keyspace scans) keep their native order.
+    let order_by = match request.order_by.as_deref() {
+        Some(order_by) => Some(order_by.to_string()),
+        None => stable_export_order_column(driver, request).await,
+    };
     let mut batches = driver.export_table_rows(
         &request.table,
         request.database.as_deref(),
         EXPORT_BATCH_SIZE,
-        request.order_by.as_deref(),
+        order_by.as_deref(),
         request.order_dir.as_deref(),
         request.filter.as_deref(),
     );
@@ -370,21 +392,62 @@ async fn stream_table_export(
     Ok(exported_rows)
 }
 
+/// Picks the column an unordered export should page over: the primary key
+/// when the table has one, else the first column. Only drivers whose paging
+/// honours an ORDER BY/sort get one — Cassandra (page-state paging),
+/// OpenSearch (scroll), and Redis (keyspace scans) keep their native order.
+/// Structure lookup failures degrade to unordered paging rather than
+/// failing the export.
+async fn stable_export_order_column(
+    driver: &dyn crate::database::driver::DatabaseDriver,
+    request: &TableDataExportRequest,
+) -> Option<String> {
+    let column = match driver.driver_name() {
+        "MongoDB" => "_id".to_string(),
+        "MySQL" | "MariaDB" | "PostgreSQL" | "CockroachDB" | "Greenplum" | "Redshift"
+        | "SQLite" | "LibSQL" | "DuckDB" | "SQL Server" | "Snowflake" | "BigQuery"
+        | "ClickHouse" | "Vertica" | "Cloudflare D1" => {
+            let structure = driver
+                .get_table_structure(&request.table, request.database.as_deref())
+                .await
+                .ok()?;
+            structure
+                .columns
+                .iter()
+                .find(|column| column.is_primary_key)
+                .or_else(|| structure.columns.first())
+                .map(|column| column.name.clone())?
+        }
+        _ => return None,
+    };
+    Some(column)
+}
+
+/// Serializes one batch of rows as CSV text. NULL cells are written as the
+/// unquoted `\N` marker (Postgres COPY convention) so they round-trip
+/// through the CSV importer, which decodes `\N` back to NULL; a literal `\N`
+/// string is escaped to `\\N`. Empty strings stay empty strings.
 fn serialize_csv_batch(result: &QueryResult, include_header: bool) -> Result<Vec<u8>, String> {
-    let mut writer = csv::Writer::from_writer(Vec::new());
+    let mut output = String::new();
     if include_header {
-        writer
-            .write_record(result.columns.iter().map(|column| column.name.as_str()))
-            .map_err(|e| format!("Failed to serialize CSV header: {e}"))?;
+        for (index, column) in result.columns.iter().enumerate() {
+            if index > 0 {
+                output.push(',');
+            }
+            output.push_str(&csv_escape(&column.name));
+        }
+        output.push('\n');
     }
     for row in &result.rows {
-        writer
-            .write_record(row.iter().map(csv_cell))
-            .map_err(|e| format!("Failed to serialize CSV row: {e}"))?;
+        for (index, value) in row.iter().enumerate() {
+            if index > 0 {
+                output.push(',');
+            }
+            output.push_str(&csv_cell(value));
+        }
+        output.push('\n');
     }
-    writer
-        .into_inner()
-        .map_err(|e| format!("Failed to finish CSV batch: {e}"))
+    Ok(output.into_bytes())
 }
 
 fn serialize_jsonl_batch(result: &QueryResult) -> Result<Vec<u8>, String> {
@@ -404,11 +467,34 @@ fn serialize_jsonl_batch(result: &QueryResult) -> Result<Vec<u8>, String> {
     Ok(output)
 }
 
+/// Renders one cell for CSV export. `JsonValue::Null` becomes the `\N`
+/// marker so NULL and "" stay distinguishable; strings that already look
+/// like the marker (`\N`, `\\N`, …) gain one more leading backslash, which
+/// the importer's `decode_csv_cell` strips again.
 fn csv_cell(value: &JsonValue) -> String {
     match value {
-        JsonValue::Null => String::new(),
-        JsonValue::String(value) => value.clone(),
-        _ => value.to_string(),
+        JsonValue::Null => "\\N".to_string(),
+        JsonValue::String(value) => {
+            if value.len() >= 2
+                && value.ends_with('N')
+                && value[..value.len() - 1].chars().all(|ch| ch == '\\')
+            {
+                csv_escape(&format!("\\{value}"))
+            } else {
+                csv_escape(value)
+            }
+        }
+        _ => csv_escape(&value.to_string()),
+    }
+}
+
+/// RFC 4180 quoting: quote only when the value contains a comma, quote, or
+/// line break; embedded quotes double.
+fn csv_escape(value: &str) -> String {
+    if value.contains([',', '"', '\n', '\r']) {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
     }
 }
 

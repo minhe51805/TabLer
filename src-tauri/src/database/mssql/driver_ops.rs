@@ -440,11 +440,29 @@ impl DatabaseDriver for MssqlDriver {
             "(SELECT NULL)".to_string()
         };
 
+        let fetch_limit = limit.clamp(1, crate::database::query_common::MAX_TABLE_PAGE_ROWS);
+
         sql.push_str(&format!(
-            " ORDER BY {order_expr} OFFSET {offset} ROWS FETCH NEXT {limit} ROWS ONLY"
+            " ORDER BY {order_expr} OFFSET {offset} ROWS FETCH NEXT {fetch_limit} ROWS ONLY"
         ));
 
-        self.execute_query(&sql).await
+        // Page through query_rows_with_limit: execute_query caps results at
+        // MAX_QUERY_RESULT_ROWS, which silently truncated paged fetches
+        // beyond 500 rows (exports batch in 1000s).
+        let start = Instant::now();
+        let (rows, truncated) = self
+            .query_rows_with_limit(&sql, fetch_limit as usize)
+            .await?;
+        let mut result = Self::build_result_from_rows(
+            &rows,
+            start.elapsed().as_millis(),
+            sql,
+            0,
+            false,
+            truncated || limit > fetch_limit,
+        );
+        result.execution_time_ms = start.elapsed().as_millis();
+        Ok(result)
     }
 
     async fn count_rows(&self, table: &str, _database: Option<&str>) -> Result<i64> {

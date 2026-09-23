@@ -1,5 +1,9 @@
 use crate::database::models::ConnectionConfig;
-use crate::storage::file_storage::{read_json_vec_with_backup, write_json_atomically};
+use crate::storage::file_storage::{
+    file_parse_fails, quarantine_corrupt_file, read_json_vec_with_backup, securely_remove_file,
+    write_json_atomically, write_json_atomically_without_backup,
+};
+use crate::storage_notices::{push_storage_notice, StorageNotice};
 use anyhow::{Context, Result};
 use keyring::Error as KeyringError;
 use serde::{Deserialize, Serialize};
@@ -77,6 +81,48 @@ fn redact_connection_secrets(config: &ConnectionConfig) -> ConnectionConfig {
     safe
 }
 
+/// `additional_fields` marker recording that this connection's secrets live in
+/// the OS keyring. It travels with synced `connections.json` data (the keyring
+/// does not), so a load that finds the marker but no keyring entry can warn
+/// the user that the saved password must be re-entered.
+const SECRETS_STORED_FIELD: &str = "secretsStored";
+
+fn mark_secrets_stored(config: &mut ConnectionConfig, stored: bool) {
+    if stored {
+        config
+            .additional_fields
+            .insert(SECRETS_STORED_FIELD.to_string(), "true".to_string());
+    } else {
+        config.additional_fields.remove(SECRETS_STORED_FIELD);
+    }
+}
+
+fn had_stored_secrets(config: &ConnectionConfig) -> bool {
+    config
+        .additional_fields
+        .get(SECRETS_STORED_FIELD)
+        .map(|value| value == "true")
+        .unwrap_or(false)
+}
+
+fn notify_corrupt_connections(error: &dyn std::fmt::Display, quarantined: &[PathBuf]) {
+    let quarantined_list = quarantined
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    push_storage_notice(StorageNotice {
+        id: "corrupt:connections.json".to_string(),
+        kind: "corrupt".to_string(),
+        title: "Saved connections file was corrupt".to_string(),
+        message: format!(
+            "connections.json could not be read ({error}) and was moved aside ({quarantined_list}). \
+             TableR started with an empty connection list; re-save or re-import your connections. \
+             The quarantined file keeps the original data for manual recovery."
+        ),
+    });
+}
+
 impl ConnectionStorage {
     pub fn new() -> Result<Self> {
         let data_dir = crate::utils::paths::resolve_data_dir()?;
@@ -134,14 +180,40 @@ impl ConnectionStorage {
         Ok(())
     }
 
+    /// Read `connections.json`, tolerating a corrupt file: quarantine it to
+    /// `<name>.corrupt-<timestamp>`, notify the user, and start fresh instead
+    /// of failing every load/save with an unrecoverable parse error.
+    /// Non-corruption failures (lock contention, IO) still propagate.
+    fn read_connections_or_quarantine(&self) -> Result<Vec<ConnectionConfig>> {
+        match self.read_connections_file() {
+            Ok(connections) => Ok(connections),
+            Err(error) => {
+                if !file_parse_fails::<Vec<ConnectionConfig>>(&self.storage_path) {
+                    return Err(error);
+                }
+                let quarantined =
+                    quarantine_corrupt_file(&self.storage_path).with_context(|| {
+                        format!(
+                            "connections.json is corrupt ({error}) and could not be quarantined"
+                        )
+                    })?;
+                log::error!("connections.json was corrupt and has been quarantined: {error}");
+                notify_corrupt_connections(&error, &quarantined);
+                Ok(Vec::new())
+            }
+        }
+    }
+
     fn read_connections_file(&self) -> Result<Vec<ConnectionConfig>> {
         read_json_vec_with_backup(&self.storage_path, "Failed to parse saved connections")
     }
 
     pub fn save_connection(&self, config: &ConnectionConfig) -> Result<()> {
         let _guard = self.write_lock()?;
-        let mut connections = self.read_connections_file()?;
-        let safe_config = redact_connection_secrets(config);
+        let mut connections = self.read_connections_or_quarantine()?;
+        let secrets = ConnectionSecrets::from_config(config);
+        let mut safe_config = redact_connection_secrets(config);
+        mark_secrets_stored(&mut safe_config, !secrets.is_empty());
 
         // Update existing or add new
         if let Some(pos) = connections.iter().position(|c| c.id == config.id) {
@@ -150,7 +222,6 @@ impl ConnectionStorage {
             connections.push(safe_config.clone());
         }
 
-        let secrets = ConnectionSecrets::from_config(config);
         if !secrets.is_empty() {
             let entry = keyring::Entry::new("TableR", &config.id)
                 .context("Failed to open secure storage for the connection secrets")?;
@@ -188,7 +259,7 @@ impl ConnectionStorage {
             return Ok(empty);
         }
 
-        let connections = self.read_connections_file()?;
+        let connections = self.read_connections_or_quarantine()?;
         let mut safe_connections = Vec::with_capacity(connections.len());
         let mut loaded_secrets = HashMap::new();
         let mut migrated_plaintext = false;
@@ -214,12 +285,22 @@ impl ConnectionStorage {
             if let Some(secrets) = secrets {
                 loaded_secrets.insert(connection.id.clone(), secrets);
             }
-            safe_connections.push(redact_connection_secrets(connection));
+            let mut safe = redact_connection_secrets(connection);
+            // Record whether credentials exist in the keyring so a synced
+            // `connections.json` on another machine can flag missing secrets.
+            mark_secrets_stored(&mut safe, loaded_secrets.contains_key(&connection.id));
+            safe_connections.push(safe);
         }
 
         if migrated_plaintext {
             let json = serde_json::to_string_pretty(&safe_connections)?;
-            write_json_atomically(&self.storage_path, &json)?;
+            // The pre-migration file held plaintext secrets; rotating it into
+            // `.bak` would keep them on disk, so this rewrite keeps no backup
+            // and scrubs any existing one.
+            write_json_atomically_without_backup(&self.storage_path, &json)?;
+            securely_remove_file(&crate::storage::file_storage::backup_path_for(
+                &self.storage_path,
+            ))?;
         }
 
         let mut cache = self.cache_write()?;
@@ -257,6 +338,21 @@ impl ConnectionStorage {
                 }
                 Err(KeyringError::NoEntry) => {
                     connection.password = None;
+                    if had_stored_secrets(&connection) {
+                        // The marker survived sync/copy but the OS keyring did
+                        // not — the user must re-enter the credentials.
+                        push_storage_notice(StorageNotice {
+                            id: format!("missing-secrets:{connection_id}"),
+                            kind: "warning".to_string(),
+                            title: "Saved password missing".to_string(),
+                            message: format!(
+                                "The saved credentials for '{}' are not in this device's secure \
+                                 storage (they do not sync between machines). Re-enter the \
+                                 password/SSH secrets for this connection.",
+                                connection.name
+                            ),
+                        });
+                    }
                 }
                 Err(error) => {
                     return Err(anyhow::Error::new(error).context(
@@ -271,7 +367,7 @@ impl ConnectionStorage {
 
     pub fn delete_connection(&self, connection_id: &str) -> Result<()> {
         let _guard = self.write_lock()?;
-        let mut connections = self.read_connections_file()?;
+        let mut connections = self.read_connections_or_quarantine()?;
         connections.retain(|c| c.id != connection_id);
 
         // Remove password from keyring
@@ -294,6 +390,15 @@ impl ConnectionStorage {
                     connection_id,
                     error
                 );
+                push_storage_notice(StorageNotice {
+                    id: format!("keyring-delete-failed:{connection_id}"),
+                    kind: "warning".to_string(),
+                    title: "Credential cleanup incomplete".to_string(),
+                    message: format!(
+                        "The connection was deleted, but its credential could not be removed from \
+                         the OS secure store ({error}). You may need to remove it manually."
+                    ),
+                });
             }
         }
 
@@ -374,6 +479,20 @@ mod tests {
         ] {
             assert!(!persisted.contains(secret));
         }
+        // The migration rewrite must not leave plaintext secrets in the
+        // rotated `.bak` either.
+        let bak_path = root.join("connections.json.bak");
+        if bak_path.exists() {
+            let bak = fs::read_to_string(&bak_path).unwrap();
+            for secret in [
+                "database-secret",
+                "ssh-secret",
+                "private-key-material",
+                "key-passphrase",
+            ] {
+                assert!(!bak.contains(secret), "secret leaked into .bak");
+            }
+        }
 
         let restored = storage.load_connection_by_id(&connection_id).unwrap();
         assert_eq!(restored.password.as_deref(), Some("database-secret"));
@@ -386,6 +505,43 @@ mod tests {
         assert_eq!(restored_ssh.passphrase.as_deref(), Some("key-passphrase"));
 
         let _ = keyring::Entry::new("TableR", &connection_id)
+            .and_then(|entry| entry.delete_credential());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn save_connection_tolerates_corrupt_connections_file() {
+        use_mock_keyring();
+        let root = std::env::temp_dir().join(format!("tabler-corrupt-save-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("connections.json"), "{ not valid json !!!").unwrap();
+
+        let storage = ConnectionStorage::from_data_dir(root.clone()).unwrap();
+        let connection = ConnectionConfig {
+            id: format!("conn-{}", Uuid::new_v4()),
+            name: "Recovered".to_string(),
+            db_type: DatabaseType::PostgreSQL,
+            password: Some("pw".to_string()),
+            ..ConnectionConfig::default()
+        };
+
+        // A corrupt existing file must not make new saves fail.
+        storage.save_connection(&connection).unwrap();
+
+        // The corrupt file was quarantined, not deleted.
+        let quarantined: Vec<_> = fs::read_dir(&root)
+            .unwrap()
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.file_name().to_string_lossy().contains(".corrupt-"))
+            .collect();
+        assert_eq!(quarantined.len(), 1);
+
+        // The new connection round-trips.
+        let listed = storage.load_connections().unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].name, "Recovered");
+
+        let _ = keyring::Entry::new("TableR", &connection.id)
             .and_then(|entry| entry.delete_credential());
         let _ = fs::remove_dir_all(root);
     }

@@ -440,17 +440,31 @@ impl DatabaseDriver for MongoDbDriver {
         let started_at = Instant::now();
         let collection = self.collection_handle(table, database).await?;
         let filter_document = Self::parse_filter_document(filter)?;
-        let mut action = collection.find(filter_document).skip(offset);
-        if limit > 0 {
-            action = action.limit(limit.min(MAX_QUERY_RESULT_ROWS as u64) as i64);
+        // Honour the caller's page size: clamping to the interactive row cap
+        // here silently truncated paged fetches (exports page in 1000-row
+        // batches). limit=0 keeps the interactive default.
+        let page_limit = if limit > 0 {
+            limit.min(i64::MAX as u64)
         } else {
-            action = action.limit(MAX_QUERY_RESULT_ROWS as i64);
-        }
+            MAX_QUERY_RESULT_ROWS as u64
+        };
+        let mut action = collection
+            .find(filter_document)
+            .skip(offset)
+            .limit(page_limit as i64);
         if let Some(sort_document) = Self::build_sort_document(order_by, order_dir) {
             action = action.sort(sort_document);
         }
-        let cursor = action.await?;
-        let (documents, truncated) = Self::collect_cursor_limited(cursor).await?;
+        let mut cursor = action.await?;
+        let mut documents = Vec::new();
+        let mut truncated = false;
+        while let Some(document) = cursor.try_next().await? {
+            if documents.len() as u64 == page_limit {
+                truncated = true;
+                break;
+            }
+            documents.push(document);
+        }
         Ok(Self::documents_to_result(
             documents,
             started_at.elapsed().as_millis(),

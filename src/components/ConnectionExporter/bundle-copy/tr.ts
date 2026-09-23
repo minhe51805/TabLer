@@ -1,9 +1,33 @@
 import type { BundleCopy } from "./types";
 
 export const TR_BUNDLE_COPY: BundleCopy = {
+  common: {
+    done: "Bitti",
+    cancel: "İptal",
+  },
   modes: {
     connections: "Yalnızca bağlantılar",
     bundle: "Tam çalışma alanı paketi",
+  },
+  connectionsExport: {
+    title: "Bağlantıları Dışa Aktar",
+    subtitle: "Bağlantıları şifreli, sürümlü bir dışa aktarım olarak kaydet",
+    selectLabel: (selected, total) => `Seç (${selected}/${total})`,
+    selectAll: "Tümünü Seç",
+    deselectAll: "Tümünü Kaldır",
+    empty: "Dışa aktarılacak kayıtlı bağlantı yok.",
+    encryptionNote:
+      "Bağlantılar AES-256-GCM ile şifrelenecek. Parolalar dışa aktarılmaz — içe aktarırken yeniden girmeniz gerekir.",
+    passwordLabel: "Şifreleme Parolası",
+    passwordPlaceholder: "En az 10 karakter",
+    confirmLabel: "Parolayı Onayla",
+    confirmPlaceholder: "Parolayı tekrar girin",
+    errorPasswordShort: "Parola en az 10 karakter olmalıdır.",
+    errorPasswordMismatch: "Parolalar eşleşmiyor.",
+    errorNoSelection: "Lütfen en az bir bağlantı seçin.",
+    button: (count) => `${count} Bağlantıyı Dışa Aktar`,
+    working: "Dışa aktarılıyor...",
+    done: (count, path) => `${count} bağlantı ${path} konumuna aktarıldı`,
   },
   export: {
     title: "Çalışma Alanı Paketini Dışa Aktar",
@@ -45,5 +69,23 @@ export const TR_BUNDLE_COPY: BundleCopy = {
         "Parolalar asla içe aktarılmaz — DBeaver ve DataGrip bunları şifreli saklar. İçe aktarmak istediğiniz her bağlantı için veritabanı parolasını girin.",
       skipped: "{count} öğe atlandı (desteklenmeyen motor veya hatalı biçim)",
     },
+    connectionsTitle: "Bağlantıları İçe Aktar",
+    connectionsSubtitle: "Şifreli bir TableR dosyasından bağlantı yükle",
+    sourceFile: "Kaynak dosya",
+    dropzonePick: ".tabler-connections veya .tabler-bundle dosyası seçmek için tıklayın",
+    externalWorking: "Dosya okunuyor...",
+    decryptLabel: "Şifre Çözme Parolası",
+    decryptPlaceholder: "Dışa aktarım parolasını girin",
+    decryptButton: "Dosyayı Aç",
+    decryptWorking: "Şifre çözülüyor...",
+    importButton: (count) => `${count} Bağlantıyı İçe Aktar`,
+    importWorking: "İçe aktarılıyor...",
+    importedMessage: (count) => `${count} bağlantı başarıyla içe aktarıldı`,
+    passwordNote:
+      "Parolalar dışa aktarılmadı. İçe aktarmak istediğiniz her bağlantı için veritabanı parolasını girin.",
+    passwordPlaceholder: "Veritabanı parolası (isteğe bağlı)",
+    errorIncorrectPassword: "Parola yanlış. Lütfen tekrar deneyin.",
+    errorOpenDialog: (detail) => `Dosya iletişim kutusu açılamadı: ${detail}`,
+    errorImportFailed: (detail) => `İçe aktarma başarısız: ${detail}`,
   },
 };

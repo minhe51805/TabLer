@@ -1,4 +1,5 @@
 import {
+  Brain,
   Coins,
   History,
   Layers,
@@ -20,6 +21,7 @@ import {
   useAIPanelResize,
 } from "../../hooks/useAIPanelResize";
 import { useAppLayoutStore } from "../../stores/appLayoutStore";
+import { useSafeModeStore } from "../../stores/safeModeStore";
 import { buildInsightScope } from "../../stores/agent-insights-store";
 import type { AIProviderConfig } from "../../types";
 import { ConfirmDialog } from "../ConfirmDialog";
@@ -33,6 +35,8 @@ import { AIComposerDock } from "./AIComposerDock";
 import { AIConversationView } from "./AIConversationView";
 import { AIWorkspaceSwitcher } from "./AIWorkspaceSwitcher";
 import { AIWorkspaceChatActionModal } from "./AIWorkspaceChatActionModal";
+import { AIMemoryManagerModal } from "./AIMemoryManagerModal";
+import { getAIMemoryCopy } from "./ai-memory-copy";
 import { AISkillsManagerModal } from "./AISkillsManagerModal";
 import { AIRulesManagerModal } from "./AIRulesManagerModal";
 import type { AIAgentRecordLink } from "./ai-agent-record-links";
@@ -334,9 +338,12 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
   // instead of starting a thread immediately.
   const [isChatActionModalOpen, setChatActionModalOpen] = useState(false);
   const [isSkillsModalOpen, setSkillsModalOpen] = useState(false);
+  const [isMemoryModalOpen, setMemoryModalOpen] = useState(false);
   const [isRulesModalOpen, setRulesModalOpen] = useState(false);
-  // Escalating to "full" run access is a risky switch, so it asks first.
+  // Escalating to "full" run access is a risky switch, so it asks first —
+  // twice when Safe Mode is on, since the grant suspends it.
   const [isFullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
+  const [isFullAccessSafeModeConfirmOpen, setFullAccessSafeModeConfirmOpen] = useState(false);
   const handleSelectAgentAutonomy = useCallback(
     (autonomy: AIWorkspaceAgentAutonomy) => {
       if (autonomy === "full" && m.activeAgentAutonomy !== "full") {
@@ -347,6 +354,22 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
     },
     [m],
   );
+  // Step 1 of the full-access grant: the plain "runs everything" consent.
+  // When Safe Mode is on, a second explicit confirm gates its suspension —
+  // the grant must never turn protection off silently.
+  const handleFullAccessConfirmed = useCallback(() => {
+    setFullAccessConfirmOpen(false);
+    if (useSafeModeStore.getState().settings.globalLevel >= 1) {
+      setFullAccessSafeModeConfirmOpen(true);
+      return;
+    }
+    m.selectAgentAutonomy("full");
+  }, [m]);
+  const handleFullAccessSafeModeConfirmed = useCallback(() => {
+    setFullAccessSafeModeConfirmOpen(false);
+    useSafeModeStore.getState().suspendSafeModeForFullAccess();
+    m.selectAgentAutonomy("full");
+  }, [m]);
   // Stable callbacks so the memoized AIConversationView skips re-renders
   // triggered by unrelated panel state (composer keystrokes, health ticks...).
   const handleUseSuggestion = useCallback((prompt: string) => m.setPromptDraft(prompt), [m]);
@@ -420,6 +443,14 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
                     title={m.language === "vi" ? "Quản lý Agent Skills" : "Agent Skills"}
                   >
                     <Wand2 className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    className="toolbar-btn icon-only"
+                    onClick={() => setMemoryModalOpen(true)}
+                    title={getAIMemoryCopy(m.language).openButton}
+                  >
+                    <Brain className="w-3.5 h-3.5" />
                   </button>
                   <button
                     type="button"
@@ -699,11 +730,17 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
         message={m.aiCopy.composer.autonomyFullConfirmBody}
         confirmText={m.aiCopy.composer.autonomyFullConfirmAllow}
         cancelText={m.aiCopy.composer.sqlConfirmCancelLabel}
-        onConfirm={() => {
-          setFullAccessConfirmOpen(false);
-          m.selectAgentAutonomy("full");
-        }}
+        onConfirm={handleFullAccessConfirmed}
         onCancel={() => setFullAccessConfirmOpen(false)}
+      />
+      <ConfirmDialog
+        isOpen={isFullAccessSafeModeConfirmOpen}
+        title={m.aiCopy.composer.autonomyFullSafeModeTitle}
+        message={m.aiCopy.composer.autonomyFullSafeModeBody}
+        confirmText={m.aiCopy.composer.autonomyFullSafeModeAllow}
+        cancelText={m.aiCopy.composer.sqlConfirmCancelLabel}
+        onConfirm={handleFullAccessSafeModeConfirmed}
+        onCancel={() => setFullAccessSafeModeConfirmOpen(false)}
       />
       <AIAttachmentManager
         open={m.isAttachmentManagerOpen}
@@ -731,6 +768,13 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
         open={isSkillsModalOpen}
         language={m.language}
         onClose={() => setSkillsModalOpen(false)}
+      />
+      <AIMemoryManagerModal
+        open={isMemoryModalOpen}
+        language={m.language}
+        connectionId={m.connectionId}
+        database={m.currentDatabase}
+        onClose={() => setMemoryModalOpen(false)}
       />
       <AIRulesManagerModal open={isRulesModalOpen} onClose={() => setRulesModalOpen(false)} />
     </div>

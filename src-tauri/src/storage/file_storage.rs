@@ -142,7 +142,83 @@ where
     serde_json::from_str(&content).with_context(|| parse_context.to_string())
 }
 
+/// True when `path` exists but cannot be parsed as `T`. Callers use this to
+/// confirm a read failure is real corruption before quarantining or warning —
+/// a transient lock/IO error must never move the user's data aside.
+pub fn file_parse_fails<T: DeserializeOwned>(path: &Path) -> bool {
+    match fs::read_to_string(path) {
+        Ok(content) => serde_json::from_str::<T>(&content).is_err(),
+        Err(_) => false,
+    }
+}
+
+/// Move an unreadable storage file (and its `.bak` sibling) aside to
+/// `<name>.corrupt-<timestamp>` so the caller can start fresh without losing
+/// the original bytes. Returns the quarantined paths for logging/notices.
+pub fn quarantine_corrupt_file(path: &Path) -> Result<Vec<PathBuf>> {
+    let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+    let mut moved = Vec::new();
+    for candidate in [path.to_path_buf(), backup_path_for(path)] {
+        if !candidate.exists() {
+            continue;
+        }
+        let file_name = candidate
+            .file_name()
+            .and_then(|value| value.to_str())
+            .unwrap_or("storage.json");
+        let target = candidate.with_file_name(format!("{file_name}.corrupt-{timestamp}"));
+        fs::rename(&candidate, &target).with_context(|| {
+            format!(
+                "Failed to quarantine corrupt storage file '{}'",
+                candidate.display()
+            )
+        })?;
+        moved.push(target);
+    }
+    Ok(moved)
+}
+
+/// Overwrite a file's contents with zeros before deleting it. Used when a
+/// rewrite drops plaintext secrets (keyring migration) so the rotated `.bak`
+/// copy cannot keep them on disk.
+pub fn securely_remove_file(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    if let Ok(metadata) = fs::metadata(path) {
+        let len = metadata.len();
+        if len > 0 {
+            if let Ok(file) = OpenOptions::new().write(true).open(path) {
+                let mut writer = BufWriter::new(file);
+                let chunk = vec![0_u8; len.min(64 * 1024) as usize];
+                let mut remaining = len;
+                while remaining > 0 {
+                    let take = remaining.min(chunk.len() as u64) as usize;
+                    if writer.write_all(&chunk[..take]).is_err() {
+                        break;
+                    }
+                    remaining -= take as u64;
+                }
+                let _ = writer.flush();
+                let _ = writer.get_ref().sync_all();
+            }
+        }
+    }
+    fs::remove_file(path).with_context(|| format!("Failed to remove file '{}'", path.display()))
+}
+
+/// Like [`write_json_atomically`], but the previous contents are NOT kept as
+/// a `.bak` sibling — any existing `.bak` is securely removed instead. Use
+/// for rewrites that strip secrets, where a plaintext backup would leak them.
+pub fn write_json_atomically_without_backup(path: &Path, json: &str) -> Result<()> {
+    write_json_atomically_inner(path, json, false)
+}
+
 pub fn write_json_atomically(path: &Path, json: &str) -> Result<()> {
+    write_json_atomically_inner(path, json, true)
+}
+
+fn write_json_atomically_inner(path: &Path, json: &str, rotate_backup: bool) -> Result<()> {
     let _lock = StorageFileLock::acquire(path, true)?;
     let parent = path
         .parent()
@@ -192,7 +268,7 @@ pub fn write_json_atomically(path: &Path, json: &str) -> Result<()> {
     }
 
     let had_primary = path.exists();
-    if had_primary {
+    if had_primary && rotate_backup {
         if backup_path.exists() {
             fs::remove_file(&backup_path).with_context(|| {
                 format!(
@@ -209,11 +285,15 @@ pub fn write_json_atomically(path: &Path, json: &str) -> Result<()> {
                 backup_path.display()
             )
         })?;
+    } else if backup_path.exists() {
+        // No-backup writes must not leave a stale (possibly secret-bearing)
+        // `.bak` behind.
+        securely_remove_file(&backup_path)?;
     }
 
     if let Err(error) = fs::rename(&temp_path, path) {
         let _ = fs::remove_file(&temp_path);
-        if had_primary && backup_path.exists() && !path.exists() {
+        if had_primary && rotate_backup && backup_path.exists() && !path.exists() {
             let _ = fs::rename(&backup_path, path);
         }
 

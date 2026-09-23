@@ -36,7 +36,8 @@ mod tests;
 pub use cancellation::QueryCancellationState;
 use errors::{format_query_connection_error, format_query_runtime_error};
 use sandbox::{
-    cap_sandbox_result, log_sandbox_denial, timeout_for_statements, validate_sandbox_batch,
+    cap_sandbox_result, log_sandbox_denial, reject_dangerous_capability, timeout_for_statements,
+    validate_sandbox_batch,
 };
 /// Per-connection read-only pin for SQL-executing commands: when the live
 /// session was opened with `ConnectionConfig::read_only`, any batch that does
@@ -91,13 +92,23 @@ pub async fn execute_query(
     safe_mode: State<'_, SafeModeState>,
 ) -> Result<QueryResult, AppError> {
     assert_connection_writable_sql(db_manager.inner(), &connection_id, &sql).await?;
+    // The connection's real dialect drives both Safe Mode classification and
+    // the capability gate — a MySQL `SHOW` must not read as unparseable.
+    let db_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .ok();
     safe_mode
         .assert_sql_allowed_with_approval(
             &connection_id,
             &sql,
+            db_type,
             safe_mode_approved_by_user.unwrap_or(false),
         )
         .await?;
+    // Human-typed SQL gets the same filesystem/network/OS capability gate as
+    // the sandbox path — pg_read_file is just as dangerous from the editor.
+    reject_dangerous_capability(&sql, db_type)?;
     let operation_id = Uuid::new_v4();
     db_manager
         .require_capability(&connection_id, DriverCapability::Query)
@@ -119,10 +130,6 @@ pub async fn execute_query(
         formatted
     })?;
     let statements = split_sql_statements(&sql);
-    let db_type = db_manager
-        .connection_database_type(&connection_id)
-        .await
-        .ok();
     // Per-connection `query_timeout_seconds` replaces the classified default
     // window; an explicit per-query `timeout_ms` still wins over both.
     let connection_timeout = db_manager.connection_query_timeout(&connection_id).await;
@@ -201,19 +208,26 @@ pub async fn cancel_query(
         return Err("Request ID cannot be empty.".to_string().into());
     }
     let token_cancelled = cancellation_state.cancel(request_id).await;
-    let mut server_cancelled = false;
-    if let Some(connection_id) = connection_id
+    let Some(connection_id) = connection_id
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-    {
-        if let Ok(driver) = db_manager.get_driver(connection_id).await {
-            server_cancelled = driver
-                .cancel_query_request(request_id)
-                .await
-                .unwrap_or(false);
-        }
-    }
+    else {
+        // No connection context: only the local token could be signalled.
+        return Ok(token_cancelled);
+    };
+    // The caller asked for a server-side cancel: report whether it was
+    // actually DELIVERED. A driver lookup or KILL failure is surfaced as an
+    // error — folding it into `false` would claim "nothing to cancel" while
+    // the server keeps running the statement.
+    let driver = db_manager
+        .get_driver(connection_id)
+        .await
+        .map_err(|error| format!("Cancel could not reach the connection's driver: {error}"))?;
+    let server_cancelled = driver
+        .cancel_query_request(request_id)
+        .await
+        .map_err(|error| format!("Server-side cancel failed: {error}"))?;
     Ok(token_cancelled || server_cancelled)
 }
 
@@ -237,17 +251,18 @@ pub async fn execute_query_progressive(
     cancellation_state: State<'_, QueryCancellationState>,
     safe_mode: State<'_, SafeModeState>,
 ) -> Result<QueryResult, AppError> {
-    safe_mode
-        .assert_sql_allowed_with_approval(
-            &connection_id,
-            &sql,
-            safe_mode_approved_by_user.unwrap_or(false),
-        )
-        .await?;
     let database_type = db_manager
         .connection_database_type(&connection_id)
         .await
         .map_err(|error| error.to_string())?;
+    safe_mode
+        .assert_sql_allowed_with_approval(
+            &connection_id,
+            &sql,
+            Some(database_type),
+            safe_mode_approved_by_user.unwrap_or(false),
+        )
+        .await?;
     if let Some(message) = agent_sql_read_unsupported_error(database_type) {
         return Err(AppError::Query(message));
     }
@@ -263,30 +278,39 @@ pub async fn execute_query_progressive(
         .filter(|value| !value.is_empty())
         .map(str::to_string);
     let cancellation_token = CancellationToken::new();
-    if let Some(ref id) = request_id {
+    if let Some(id) = &request_id {
         cancellation_state
             .register(id, cancellation_token.clone())
             .await;
     }
     let exec = async {
-        if let Some(ref id) = request_id {
+        if let Some(id) = &request_id {
             driver.execute_query_for_request(id, &sql).await
         } else {
             driver.execute_query(&sql).await
         }
     };
-    let result = timeout(
-        crate::config::resolve_connection_query_timeout(
-            db_manager.connection_query_timeout(&connection_id).await,
-            crate::config::read_only_query_timeout(),
-        ),
-        exec,
-    )
-    .await;
+    // The cancel token must win during the FETCH phase too — a cancelled
+    // progressive query cannot wait for the full result before noticing.
+    let result = tokio::select! {
+        _ = cancellation_token.cancelled() => {
+            if let Some(id) = &request_id {
+                cancellation_state.finish(id).await;
+            }
+            return Err(AppError::Query("Query cancelled.".to_string()));
+        }
+        result = timeout(
+            crate::config::resolve_connection_query_timeout(
+                db_manager.connection_query_timeout(&connection_id).await,
+                crate::config::read_only_query_timeout(),
+            ),
+            exec,
+        ) => result,
+    };
     let mut result = match result {
         Ok(inner) => inner.map_err(format_query_runtime_error)?,
         Err(_) => {
-            if let Some(ref id) = request_id {
+            if let Some(id) = &request_id {
                 cancellation_state.finish(id).await;
             }
             return Err(AppError::Query("Progressive query timed out.".to_string()));
@@ -343,10 +367,15 @@ pub async fn execute_parameterized_query(
     safe_mode: State<'_, SafeModeState>,
 ) -> Result<QueryResult, AppError> {
     assert_connection_writable_sql(db_manager.inner(), &connection_id, &sql).await?;
+    let database_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .map_err(format_query_connection_error)?;
     safe_mode
         .assert_sql_allowed_with_approval(
             &connection_id,
             &sql,
+            Some(database_type),
             safe_mode_approved_by_user.unwrap_or(false),
         )
         .await?;
@@ -355,10 +384,8 @@ pub async fn execute_parameterized_query(
         .require_capability(&connection_id, DriverCapability::PreparedParameters)
         .await
         .map_err(|error| error.to_string())?;
-    let database_type = db_manager
-        .connection_database_type(&connection_id)
-        .await
-        .map_err(format_query_connection_error)?;
+    // Same filesystem/network/OS capability gate as the sandbox path.
+    reject_dangerous_capability(&sql, Some(database_type))?;
     let driver = db_manager
         .get_driver(&connection_id)
         .await
@@ -455,15 +482,15 @@ pub async fn preview_write_transaction(
         .assert_write_allowed(&connection_id)
         .await
         .map_err(AppError::from)?;
+    let database_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .map_err(|error| error.to_string())?;
     safe_mode
-        .assert_sql_allowed(&connection_id, &statements.join(";\n"))
+        .assert_sql_allowed(&connection_id, &statements.join(";\n"), Some(database_type))
         .await?;
     db_manager
         .require_capability(&connection_id, DriverCapability::Query)
-        .await
-        .map_err(|error| error.to_string())?;
-    let database_type = db_manager
-        .connection_database_type(&connection_id)
         .await
         .map_err(|error| error.to_string())?;
     if let Some(message) = agent_sql_write_preview_unsupported_error(database_type) {
@@ -475,10 +502,7 @@ pub async fn preview_write_transaction(
             "Write preview accepts between 1 and {MAX_PREVIEW_STATEMENTS} statements."
         )));
     }
-    let db_type = db_manager
-        .connection_database_type(&connection_id)
-        .await
-        .ok();
+    let db_type = Some(database_type);
     validate_sandbox_batch(&statements, false, db_type)?;
     let has_mutating = statements
         .iter()
@@ -545,10 +569,15 @@ pub async fn execute_sandboxed_query(
 ) -> Result<QueryResult, AppError> {
     assert_connection_writable_sql(db_manager.inner(), &connection_id, &statements.join(";\n"))
         .await?;
+    let db_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .ok();
     safe_mode
         .assert_sql_allowed_with_approval(
             &connection_id,
             &statements.join(";\n"),
+            db_type,
             safe_mode_approved_by_user.unwrap_or(false),
         )
         .await?;
@@ -563,10 +592,6 @@ pub async fn execute_sandboxed_query(
         connection_id,
         statements.len()
     );
-    let db_type = db_manager
-        .connection_database_type(&connection_id)
-        .await
-        .ok();
     if let Err(error) =
         validate_sandbox_batch(&statements, require_read_only.unwrap_or(false), db_type)
     {

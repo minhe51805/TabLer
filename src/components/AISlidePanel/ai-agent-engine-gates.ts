@@ -54,12 +54,183 @@ export interface AgentToolAvailability {
   queryModel: QueryModel;
   engineKey: string | null;
   engineLabel: string;
+  /** SELECT-shaped reads work: SQL engines, CQL SELECT, and MongoDB's
+   *  translated SELECT subset (mirrors agent_allows_sql_read). */
   sqlRead: boolean;
+  /** Backend PreparedParameters capability — run_parameterized_sql and
+   *  find_value compile :name bindings through it (capabilities.rs). */
+  parameterizedRead: boolean;
+  /** The driver overrides preview_write_transaction — every other engine
+   *  hits the default "not supported" error (driver.rs). */
+  previewWrite: boolean;
+  /** The driver returns real schema objects; mongodb/redis/opensearch
+   *  return an empty list, so the tool would always report zero objects. */
+  schemaObjects: boolean;
+  /** At least one admin preset exists AND the sandboxed transport can run
+   *  it. mongodb/redis presets are shell/command syntax the SQL sandbox
+   *  rejects, so they stay gated. */
+  presets: boolean;
+  /** propose_seed_data may emit a reviewable INSERT/insertMany script. */
+  seedPropose: boolean;
+  /** Checkpoint restore re-executes a SQL INSERT dump — impossible on
+   *  mongodb/redis, hard-blocked on opensearch (restore.rs). */
+  checkpointRestore: boolean;
+  /** SQL dialect write previews exist (kept for prompt hints; the tool
+   *  itself gates on previewWrite). */
   sqlWritePreview: boolean;
   /** Document engines (MongoDB): the agent may propose insertMany seed data
    *  through a query tab proposal — never executes writes itself. */
   documentPropose: boolean;
 }
+
+/**
+ * Per-engine tool capability flags, mirrored from `driver_capabilities()`
+ * in capabilities.rs (prepared_parameters) plus the actual driver impls
+ * (preview_write_transaction, list_schema_objects, restore path). Keep in
+ * lockstep with the backend matrix — a tool advertised where the driver
+ * cannot run it is a guaranteed error.
+ */
+const AGENT_ENGINE_TOOL_FLAGS: Record<
+  DatabaseType,
+  Pick<
+    AgentToolAvailability,
+    "parameterizedRead" | "previewWrite" | "schemaObjects" | "presets" | "checkpointRestore"
+  >
+> = {
+  mysql: {
+    parameterizedRead: true,
+    previewWrite: true,
+    schemaObjects: true,
+    presets: true,
+    checkpointRestore: true,
+  },
+  mariadb: {
+    parameterizedRead: true,
+    previewWrite: true,
+    schemaObjects: true,
+    presets: true,
+    checkpointRestore: true,
+  },
+  postgresql: {
+    parameterizedRead: true,
+    previewWrite: true,
+    schemaObjects: true,
+    presets: true,
+    checkpointRestore: true,
+  },
+  cockroachdb: {
+    parameterizedRead: true,
+    previewWrite: true,
+    schemaObjects: true,
+    presets: true,
+    checkpointRestore: true,
+  },
+  greenplum: {
+    parameterizedRead: true,
+    previewWrite: true,
+    schemaObjects: true,
+    presets: true,
+    checkpointRestore: true,
+  },
+  redshift: {
+    parameterizedRead: true,
+    previewWrite: true,
+    schemaObjects: true,
+    presets: true,
+    checkpointRestore: true,
+  },
+  vertica: {
+    parameterizedRead: true,
+    previewWrite: true,
+    schemaObjects: true,
+    presets: true,
+    checkpointRestore: true,
+  },
+  mssql: {
+    parameterizedRead: true,
+    previewWrite: true,
+    schemaObjects: true,
+    presets: true,
+    checkpointRestore: true,
+  },
+  sqlite: {
+    parameterizedRead: true,
+    previewWrite: true,
+    schemaObjects: true,
+    presets: false,
+    checkpointRestore: true,
+  },
+  duckdb: {
+    parameterizedRead: true,
+    previewWrite: false,
+    schemaObjects: true,
+    presets: false,
+    checkpointRestore: true,
+  },
+  cassandra: {
+    parameterizedRead: false,
+    previewWrite: false,
+    schemaObjects: true,
+    presets: true,
+    checkpointRestore: true,
+  },
+  snowflake: {
+    parameterizedRead: false,
+    previewWrite: false,
+    schemaObjects: true,
+    presets: true,
+    checkpointRestore: true,
+  },
+  clickhouse: {
+    parameterizedRead: false,
+    previewWrite: false,
+    schemaObjects: true,
+    presets: true,
+    checkpointRestore: true,
+  },
+  bigquery: {
+    parameterizedRead: false,
+    previewWrite: false,
+    schemaObjects: true,
+    presets: false,
+    checkpointRestore: true,
+  },
+  libsql: {
+    parameterizedRead: false,
+    previewWrite: false,
+    schemaObjects: true,
+    presets: false,
+    checkpointRestore: true,
+  },
+  cloudflare_d1: {
+    parameterizedRead: false,
+    previewWrite: false,
+    schemaObjects: true,
+    presets: false,
+    checkpointRestore: true,
+  },
+  redis: {
+    parameterizedRead: false,
+    previewWrite: false,
+    schemaObjects: false,
+    presets: false,
+    checkpointRestore: false,
+  },
+  mongodb: {
+    parameterizedRead: false,
+    previewWrite: false,
+    schemaObjects: false,
+    presets: false,
+    checkpointRestore: false,
+  },
+  opensearch: {
+    parameterizedRead: false,
+    previewWrite: false,
+    schemaObjects: false,
+    presets: false,
+    checkpointRestore: false,
+  },
+};
 
 export function agentQueryModelForEngine(engineKey: string | null | undefined): QueryModel {
   if (engineKey && engineKey in AGENT_QUERY_MODEL_BY_ENGINE) {
@@ -73,14 +244,27 @@ export function agentToolAvailability(
   queryModelFromProfile?: QueryModel | null,
 ): AgentToolAvailability {
   const queryModel = queryModelFromProfile ?? agentQueryModelForEngine(engineKey);
-  const known = engineKey && engineKey in ENGINE_LABEL
-    ? ENGINE_LABEL[engineKey as DatabaseType]
-    : engineKey || "this engine";
+  const known =
+    engineKey && engineKey in ENGINE_LABEL
+      ? ENGINE_LABEL[engineKey as DatabaseType]
+      : engineKey || "this engine";
+  const flags =
+    engineKey && engineKey in AGENT_ENGINE_TOOL_FLAGS
+      ? AGENT_ENGINE_TOOL_FLAGS[engineKey as DatabaseType]
+      : null;
   return {
     queryModel,
     engineKey: engineKey ?? null,
     engineLabel: known,
-    sqlRead: queryModel === "sql" || queryModel === "cql",
+    sqlRead: queryModel === "sql" || queryModel === "cql" || queryModel === "document",
+    // Unknown engines keep the permissive default (previous behavior); the
+    // backend capability gate still refuses what the driver cannot do.
+    parameterizedRead: flags?.parameterizedRead ?? true,
+    previewWrite: flags?.previewWrite ?? true,
+    schemaObjects: flags?.schemaObjects ?? true,
+    presets: flags?.presets ?? true,
+    seedPropose: queryModel !== "kv" && queryModel !== "search",
+    checkpointRestore: flags?.checkpointRestore ?? true,
     sqlWritePreview: queryModel === "sql",
     documentPropose: queryModel === "document",
   };
@@ -88,30 +272,76 @@ export function agentToolAvailability(
 
 export function isAgentToolEnabled(
   name: AIAgentToolName,
-  availability: Pick<
-    AgentToolAvailability,
-    "sqlRead" | "sqlWritePreview" | "documentPropose"
-  >,
+  availability: Pick<AgentToolAvailability, "sqlRead" | "sqlWritePreview" | "documentPropose"> &
+    Partial<
+      Pick<
+        AgentToolAvailability,
+        | "parameterizedRead"
+        | "previewWrite"
+        | "schemaObjects"
+        | "presets"
+        | "seedPropose"
+        | "checkpointRestore"
+      >
+    >,
 ): boolean {
-  if (name === "run_readonly_sql" || name === "run_parameterized_sql") return availability.sqlRead;
-  if (name === "find_value" || name === "check_sql") return availability.sqlRead;
-  if (name === "list_schema_objects" || name === "run_preset") return availability.sqlRead;
-  if (name === "preview_write") return availability.sqlWritePreview;
-  if (name === "propose_seed_data") return availability.sqlWritePreview || availability.documentPropose;
+  // Missing capability flags fall back to the pre-flag semantics so narrow
+  // callers (e.g. the catalog defaults) keep the old behavior exactly.
+  if (name === "run_readonly_sql" || name === "check_sql") return availability.sqlRead;
+  if (name === "run_parameterized_sql" || name === "find_value") {
+    return availability.parameterizedRead ?? availability.sqlRead;
+  }
+  if (name === "list_schema_objects") {
+    return availability.schemaObjects ?? availability.sqlRead;
+  }
+  if (name === "run_preset") return availability.presets ?? availability.sqlRead;
+  if (name === "preview_write") {
+    return availability.previewWrite ?? availability.sqlWritePreview;
+  }
+  if (name === "propose_seed_data") {
+    return (
+      availability.seedPropose ?? (availability.sqlWritePreview || availability.documentPropose)
+    );
+  }
+  if (name === "restore_checkpoint") return availability.checkpointRestore ?? true;
   return true;
 }
 
 export function agentSqlToolBlockedMessage(
-  name: "run_readonly_sql" | "run_parameterized_sql" | "find_value" | "check_sql" | "preview_write",
+  name:
+    | "run_readonly_sql"
+    | "run_parameterized_sql"
+    | "find_value"
+    | "check_sql"
+    | "preview_write"
+    | "list_schema_objects"
+    | "run_preset"
+    | "propose_seed_data"
+    | "restore_checkpoint",
   availability: AgentToolAvailability,
 ): string {
   if (name === "run_readonly_sql") {
     return `Tool blocked: run_readonly_sql is not available on ${availability.engineLabel}. This engine does not speak SQL. Use list_tables, describe_table, search_schema, or sample_table_data instead.`;
   }
+  if (name === "check_sql") {
+    return `Tool blocked: check_sql is not available on ${availability.engineLabel}. This engine does not speak SQL, so there is no SQL to pre-flight.`;
+  }
   if (name === "run_parameterized_sql" || name === "find_value") {
     return `Tool blocked: ${name} is not available on ${availability.engineLabel}. This engine does not support parameterized SQL reads. Use list_tables, describe_table, search_schema, or sample_table_data instead.`;
   }
-  return `Tool blocked: preview_write is not available on ${availability.engineLabel}. SQL write previews are only offered on SQL engines.`;
+  if (name === "preview_write") {
+    return `Tool blocked: preview_write is not available on ${availability.engineLabel}. This driver cannot run statements inside a rollback-only transaction.`;
+  }
+  if (name === "list_schema_objects") {
+    return `Tool blocked: list_schema_objects is not available on ${availability.engineLabel}. This engine has no SQL schema objects (views, triggers, routines). Use list_tables and describe_table instead.`;
+  }
+  if (name === "run_preset") {
+    return `Tool blocked: run_preset is not available on ${availability.engineLabel}. No admin preset can run through this engine's sandboxed transport.`;
+  }
+  if (name === "propose_seed_data") {
+    return `Tool blocked: propose_seed_data is not available on ${availability.engineLabel}. It fills a table or collection with sample data on SQL engines, Cassandra, and MongoDB only.`;
+  }
+  return `Tool blocked: restore_checkpoint is not available on ${availability.engineLabel}. Checkpoints are SQL dumps this engine cannot re-execute.`;
 }
 
 /** Catalog options used by native function-calling and the controller listing. */

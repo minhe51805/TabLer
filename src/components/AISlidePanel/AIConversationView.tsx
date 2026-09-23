@@ -551,25 +551,41 @@ export const AIConversationView = memo(function AIConversationView({
               // Keep the agent step log available after the answer lands: it
               // collapses automatically once every step settles, so users can
               // re-open the reasoning without the toggle.
+              // While the opening plan turn streams, its text lands in
+              // bubble.detail — feed it into the running plan step so the
+              // acknowledgement grows inside the steps card instead of
+              // appearing below it and then jumping inside on completion.
+              const planStreamingInCard =
+                bubble.status === "loading" &&
+                Boolean(bubble.detail?.trim()) &&
+                bubble.agentSteps?.[bubble.agentSteps.length - 1]?.action === "plan" &&
+                bubble.agentSteps[bubble.agentSteps.length - 1].status === "running";
+              const liveSteps = planStreamingInCard
+                ? bubble.agentSteps?.map((step, index, arr) =>
+                    index === arr.length - 1 ? { ...step, message: bubble.detail ?? "" } : step,
+                  )
+                : bubble.agentSteps;
               const hasVisibleAgentProgress =
-                bubble.interactionMode === "agent" && (bubble.agentSteps?.length ?? 0) > 0;
-              const recordLinks = extractAgentRecordLinks(bubble.agentSteps);
+                bubble.interactionMode === "agent" && (liveSteps?.length ?? 0) > 0;
+              const recordLinks = extractAgentRecordLinks(liveSteps);
               const agentReadLiveData =
                 bubble.interactionMode === "agent" &&
-                bubble.agentSteps?.some(
+                liveSteps?.some(
                   (step) =>
                     (step.action === "run_readonly_sql" || step.action === "sample_table_data") &&
                     step.status === "done",
                 ) === true;
-              const canInsert =
-                !agentReadLiveData &&
-                Boolean(bubble.sql) &&
-                aiModeAllowsInsert(bubble.interactionMode);
-              const canRun =
+              const hasRunnableSql =
                 Boolean(bubble.sql) &&
                 bubble.kind !== "result" &&
-                !agentReadLiveData &&
                 aiModeAllowsRun(bubble.interactionMode);
+              const hasInsertableSql =
+                Boolean(bubble.sql) && aiModeAllowsInsert(bubble.interactionMode);
+              // After the agent already read live data, Run/Insert stay
+              // visible but disabled — hiding them made the answer look like
+              // it had no SQL at all.
+              const canInsert = hasInsertableSql && !agentReadLiveData;
+              const canRun = hasRunnableSql && !agentReadLiveData;
               const canRetry =
                 bubble.retryable !== false &&
                 (bubble.status === "error" ||
@@ -709,7 +725,7 @@ export const AIConversationView = memo(function AIConversationView({
                     )}
                     {hasVisibleAgentProgress && (
                       <AIAgentSteps
-                        steps={bubble.agentSteps ?? []}
+                        steps={liveSteps ?? []}
                         compact
                         durationMs={
                           bubble.settledAt
@@ -725,23 +741,26 @@ export const AIConversationView = memo(function AIConversationView({
                         copy={copy}
                       />
                     )}
-                    {bubble.status === "loading" && bubble.detail?.trim() && conversationText && (
-                      // Streamed answer text renders as live markdown while the
-                      // turn is still loading — the reply fills in token by
-                      // token instead of appearing all at once when the run
-                      // settles. Agent turns stream a JSON tool action, so the
-                      // finish answer is pulled from the partial JSON (aiStore)
-                      // and rendered here under the step log. Gate on the
-                      // streamed `detail` (not the preview fallback) so the
-                      // body stays empty between phases: the opening
-                      // acknowledgement already shows as the "plan" step, so
-                      // it must not also duplicate here once the tool loop
-                      // starts.
-                      <AIWorkspaceMarkdown
-                        className="ai-workspace-chat-text"
-                        text={displayConversationText}
-                      />
-                    )}
+                    {bubble.status === "loading" &&
+                      bubble.detail?.trim() &&
+                      conversationText &&
+                      !planStreamingInCard && (
+                        // Streamed answer text renders as live markdown while the
+                        // turn is still loading — the reply fills in token by
+                        // token instead of appearing all at once when the run
+                        // settles. Agent turns stream a JSON tool action, so the
+                        // finish answer is pulled from the partial JSON (aiStore)
+                        // and rendered here under the step log. Gate on the
+                        // streamed `detail` (not the preview fallback) so the
+                        // body stays empty between phases: the opening
+                        // acknowledgement already shows as the "plan" step, so
+                        // it must not also duplicate here once the tool loop
+                        // starts.
+                        <AIWorkspaceMarkdown
+                          className="ai-workspace-chat-text"
+                          text={displayConversationText}
+                        />
+                      )}
                     {bubble.status === "loading" && !hasVisibleAgentProgress ? (
                       // The live thinking trace above already carries the "model
                       // is working" feedback while it streams reasoning, and once
@@ -823,11 +842,17 @@ export const AIConversationView = memo(function AIConversationView({
                             <span>{copy.bubbleActions.retry}</span>
                           </button>
                         )}
-                        {canRun && (
+                        {hasRunnableSql && (
                           <button
                             type="button"
                             className="ai-workspace-mode-action-btn primary"
                             onClick={() => onRun(bubble)}
+                            disabled={!canRun}
+                            title={
+                              canRun
+                                ? copy.bubbleActions.approveRun
+                                : copy.bubbleActions.liveDataDisabledHint
+                            }
                           >
                             <Play className="w-3.5 h-3.5" />
                             <span>{copy.bubbleActions.approveRun}</span>
@@ -848,12 +873,17 @@ export const AIConversationView = memo(function AIConversationView({
                             )}
                           </button>
                         )}
-                        {canInsert && (
+                        {(canInsert || hasInsertableSql) && (
                           <button
                             type="button"
                             className="ai-workspace-chat-action-icon"
                             onClick={() => onInsert(bubble)}
-                            title={copy.bubbleActions.insert}
+                            disabled={!canInsert}
+                            title={
+                              canInsert
+                                ? copy.bubbleActions.insert
+                                : copy.bubbleActions.liveDataDisabledHint
+                            }
                             aria-label={copy.bubbleActions.insert}
                           >
                             <CornerDownLeft className="w-3.5 h-3.5" />
@@ -942,6 +972,15 @@ export const AIConversationView = memo(function AIConversationView({
                             budget: DEFAULT_AGENT_TOKEN_BUDGET.toLocaleString(),
                           })}
                           {bubble.modelUsed ? ` · ${bubble.modelUsed}` : ""}
+                          {bubble.tokenBudgetExhausted && (
+                            <span
+                              className="ai-workspace-chat-run-cost-warning"
+                              title={panelCopy.tokenBudgetReached}
+                            >
+                              {" "}
+                              · ⚠ {panelCopy.tokenBudgetReached}
+                            </span>
+                          )}
                           {(() => {
                             const runCost = estimateUsageCostUsd(bubble.modelUsed, {
                               promptTokens: 0,

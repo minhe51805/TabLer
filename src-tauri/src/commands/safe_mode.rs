@@ -1,3 +1,4 @@
+use crate::database::models::DatabaseType;
 use crate::utils::safe_mode::{assert_sql_allowed_at_level_with_approval, clamp_safe_mode_level};
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
@@ -70,8 +71,17 @@ impl SafeModeState {
         policy.global_level
     }
 
-    pub async fn assert_sql_allowed(&self, connection_id: &str, sql: &str) -> Result<(), String> {
-        self.assert_sql_allowed_with_approval(connection_id, sql, false)
+    /// Asserts the whole batch is allowed under the connection's effective
+    /// Safe Mode level. `database_type` must be the connection's real engine
+    /// so dialect-specific statements classify the way the server will read
+    /// them (unknown types fall back to the generic dialect, fail-closed).
+    pub async fn assert_sql_allowed(
+        &self,
+        connection_id: &str,
+        sql: &str,
+        database_type: Option<DatabaseType>,
+    ) -> Result<(), String> {
+        self.assert_sql_allowed_with_approval(connection_id, sql, database_type, false)
             .await
     }
 
@@ -83,10 +93,34 @@ impl SafeModeState {
         &self,
         connection_id: &str,
         sql: &str,
+        database_type: Option<DatabaseType>,
         user_approved: bool,
     ) -> Result<(), String> {
         let level = self.effective_level(connection_id).await;
-        assert_sql_allowed_at_level_with_approval(level, sql, user_approved)
+        assert_sql_allowed_at_level_with_approval(level, sql, database_type, user_approved)
+    }
+
+    /// Gate for commands that mutate data WITHOUT going through the SQL
+    /// editor (grid edits, file imports, maintenance, user/role changes) —
+    /// Safe Mode never saw their SQL, so they assert a representative
+    /// statement (`sql_or_probe`: the real statement when one exists,
+    /// otherwise a probe of the same kind). Level 1 (Read Only) refuses every
+    /// mutation with a clear reason; confirm tiers still enforce their
+    /// blocked kinds backend-side.
+    pub async fn ensure_mutation_allowed(
+        &self,
+        connection_id: &str,
+        sql_or_probe: &str,
+        database_type: Option<DatabaseType>,
+    ) -> Result<(), String> {
+        if self.effective_level(connection_id).await == 1 {
+            return Err(
+                "Blocked by Safe Mode level 1 (Read Only): this connection does not allow writes."
+                    .to_string(),
+            );
+        }
+        self.assert_sql_allowed(connection_id, sql_or_probe, database_type)
+            .await
     }
 }
 

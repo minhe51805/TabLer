@@ -39,6 +39,12 @@ export interface AgentTaskRun {
   database: string | null;
   /** `waiting` = dispatched, not started yet. `running` = the agent is on it. */
   status: "waiting" | "running";
+  /**
+   * Per-schedule opt-in: the task may read live data and send it to the AI
+   * provider. Without it the unattended run stays schema-only — a scheduled
+   * task must never ship rows nobody granted it.
+   */
+  allowDataRead: boolean;
   dispatchedAt: number;
 }
 
@@ -66,6 +72,7 @@ interface AgentScheduleState {
     prompt: string;
     connectionId?: string | null;
     database?: string | null;
+    allowDataRead?: boolean;
   }) => void;
   /**
    * Takes the next task that may run right now and marks it `running`.
@@ -90,8 +97,13 @@ interface AgentScheduleState {
 
 /**
  * Whether a queued task matches the scope the panel is currently on. A task
- * with no pinned connection/database accepts the active one; a task pinned to
- * something else waits instead (never a silent cross-database run).
+ * pinned to a different connection or database waits instead (never a silent
+ * cross-database run).
+ *
+ * A task with NO pinned database is a wildcard — but only over real databases:
+ * it still requires an active database to run against, because "no database
+ * selected" would silently execute the task on the connection's implicit
+ * default, which is not a scope the task ever named.
  */
 export function describeTaskWait(
   task: AgentTaskRun,
@@ -99,6 +111,7 @@ export function describeTaskWait(
 ): AgentTaskWaitReason | null {
   if (task.connectionId && task.connectionId !== context.connectionId) return "connection";
   if (task.database && task.database !== context.database) return "database";
+  if (!task.database && !context.database) return "database";
   if (context.isBusy) return "busy";
   return null;
 }
@@ -106,7 +119,7 @@ export function describeTaskWait(
 export const useAgentScheduleStore = create<AgentScheduleState>()((set, get) => ({
   runs: [],
 
-  enqueueAgentTask: ({ scheduleId, name, prompt, connectionId, database }) =>
+  enqueueAgentTask: ({ scheduleId, name, prompt, connectionId, database, allowDataRead }) =>
     set((state) => {
       const existing = state.runs.find((run) => run.scheduleId === scheduleId);
       // A dispatch for a task that is already running is a repeat of the same
@@ -119,6 +132,7 @@ export const useAgentScheduleStore = create<AgentScheduleState>()((set, get) => 
         prompt,
         connectionId: connectionId ?? null,
         database: database ?? null,
+        allowDataRead: allowDataRead === true,
         status: "waiting",
         dispatchedAt: Date.now(),
       };
@@ -140,12 +154,19 @@ export const useAgentScheduleStore = create<AgentScheduleState>()((set, get) => 
     );
     if (!runnable) return null;
     const claimed: AgentTaskRun = { ...runnable, status: "running" };
+    if (!claimed.database) {
+      // Wildcard scope: the task runs on whatever database is active. Loud in
+      // the console so a task that lands on the wrong database is diagnosable
+      // instead of a silent surprise.
+      console.warn(
+        `[AgentSchedule] Task "${claimed.name}" has no pinned database; running it on the active database "${context.database}".`,
+      );
+    }
     set({
       runs: get().runs.map((run) => (run.scheduleId === claimed.scheduleId ? claimed : run)),
     });
     return claimed;
   },
-
   finishAgentTask: async (scheduleId, outcome) => {
     // Drop the task first: the queue must not keep a finished run alive if the
     // report fails, or the runner would try to claim it a second time.

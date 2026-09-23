@@ -3,6 +3,10 @@ import { KeyRound, LoaderCircle, RefreshCw, ShieldCheck, UserCog, X } from "luci
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ConnectionConfig } from "../types/database";
 import { assertStatementsAllowed } from "../utils/safe-mode-query-guard";
+import { isBlockedAtLevel } from "../types/safe-mode";
+import { useSafeModeStore } from "../stores/safeModeStore";
+import { requestAppConfirmation } from "../stores/confirmStore";
+import { getUserRolesCopy } from "./user-roles-copy";
 import { emitAppToast } from "../utils/app-toast";
 import { useConnectionCapabilities } from "../hooks/useConnectionCapabilities";
 import { isCapabilitySupported } from "../types";
@@ -26,6 +30,9 @@ interface Principal {
 interface Snapshot {
   engine: string;
   principals: Principal[];
+  /** True when the privilege/membership queries failed — the lists below are
+   *  incomplete, not empty. */
+  privilegesUnavailable?: boolean;
 }
 
 interface Review {
@@ -58,7 +65,8 @@ const ACTIONS: Array<{ value: ChangeAction; labelKey: TranslationKey }> = [
 ];
 
 export function AppUserRolesModal({ connection, onClose }: Props) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
+  const rolesCopy = getUserRolesCopy(language);
   const capabilityProfile = useConnectionCapabilities(connection?.id);
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -164,6 +172,29 @@ export function AppUserRolesModal({ connection, onClose }: Props) {
     }
     setIsApplying(true);
     try {
+      // A hard block (levels 1-2 for GRANT/REVOKE/CREATE) used to dead-end on
+      // a raw error. Offer the remedy instead: a per-connection override that
+      // permits the reviewed statements — Standard when it suffices, Disabled
+      // otherwise — so the user can proceed without leaving the modal.
+      const safeLevel = useSafeModeStore.getState().getEffectiveLevel(connection.id);
+      const blockedStatement = review.statements.find((statement) =>
+        isBlockedAtLevel(safeLevel, statement),
+      );
+      if (blockedStatement) {
+        const canUseStandard = review.statements.every(
+          (statement) => !isBlockedAtLevel(3, statement),
+        );
+        const approved = await requestAppConfirmation({
+          title: rolesCopy.safeModeBlockedTitle,
+          message: canUseStandard
+            ? rolesCopy.safeModeBlockedStandard(safeLevel, blockedStatement)
+            : rolesCopy.safeModeBlockedDisable(safeLevel, blockedStatement),
+          confirmText: canUseStandard ? rolesCopy.safeModeUseStandard : rolesCopy.safeModeDisable,
+        });
+        if (!approved) return;
+        useSafeModeStore.getState().setConnectionOverride(connection.id, canUseStandard ? 3 : 0);
+        emitAppToast({ tone: "info", title: rolesCopy.safeModeOverrideApplied });
+      }
       await assertStatementsAllowed(review.statements, connection.id);
       const nextSnapshot = await invoke<Snapshot>("apply_user_role_change", {
         connectionId: connection.id,
@@ -181,15 +212,19 @@ export function AppUserRolesModal({ connection, onClose }: Props) {
         description: t("userRoles.appliedHint"),
       });
     } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      // A denied Safe Mode confirmation is a user choice, not a failure.
       emitAppToast({
         tone: "error",
-        title: t("userRoles.applyFailed"),
-        description: String(error),
+        title: message.includes("Safe Mode")
+          ? rolesCopy.safeModeCancelled
+          : t("userRoles.applyFailed"),
+        description: message.includes("Safe Mode") ? undefined : message,
       });
     } finally {
       setIsApplying(false);
     }
-  }, [confirmation, connection, request, review, t]);
+  }, [confirmation, connection, request, review, rolesCopy, t]);
 
   return (
     <div className="app-help-modal-backdrop" onClick={onClose}>
@@ -246,6 +281,8 @@ export function AppUserRolesModal({ connection, onClose }: Props) {
                   <LoaderCircle className="w-4 h-4 animate-spin" />{" "}
                   {t("userRoles.loadingPrincipals")}
                 </div>
+              ) : snapshot?.privilegesUnavailable ? (
+                <div className="app-plugin-manager-empty">{rolesCopy.privilegesUnavailable}</div>
               ) : snapshot?.principals.length ? (
                 <div className="user-role-principal-list">
                   {snapshot.principals.map((principal) => (

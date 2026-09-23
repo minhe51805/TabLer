@@ -33,7 +33,7 @@ export interface CellEditorParams {
   connectionId?: string;
   editingSeedValue: string;
   editingDraftRef: { current: string };
-  commitEditingCell: () => Promise<void>;
+  commitEditingCell: (committed?: GridCellValue) => Promise<void>;
   cancelEditingCell: () => void;
   dateFormat?: string;
 }
@@ -62,9 +62,11 @@ export function renderCellEditor({
   const lookupCacheKey = fkInfo ? `${fkInfo.referenced_table}|${fkInfo.referenced_column}` : "";
   const cachedLookupValues = lookupCacheKey ? (lookupValuesCache?.get(lookupCacheKey) ?? []) : [];
 
+  // The editor's resolved value goes straight to the commit — `null` is the
+  // explicit NULL gesture and must never round-trip through the text draft
+  // (where it would become the literal string "NULL").
   const handleCommit = (resolvedValue: GridCellValue) => {
-    editingDraftRef.current = String(resolvedValue ?? "NULL");
-    void commitEditingCell();
+    void commitEditingCell(resolvedValue);
   };
 
   const editorProps: ICellEditorProps = {
@@ -76,7 +78,9 @@ export function renderCellEditor({
     onChange: (draft) => {
       editingDraftRef.current = draft;
     },
-    inputRef: { current: null } as React.MutableRefObject<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null>,
+    inputRef: { current: null } as React.MutableRefObject<
+      HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null
+    >,
     isNullable: col.is_nullable ?? false,
     referencedTable: fkInfo?.referenced_table,
     referencedColumn: fkInfo?.referenced_column,
@@ -87,13 +91,7 @@ export function renderCellEditor({
 
   if (editorType === "date" || editorType === "datetime" || editorType === "time") {
     const dtType = editorType;
-    return (
-      <DateTimeCellEditor
-        {...editorProps}
-        editorType={dtType}
-        dateFormat={dateFormat}
-      />
-    );
+    return <DateTimeCellEditor {...editorProps} editorType={dtType} dateFormat={dateFormat} />;
   }
 
   if (editorType === "foreign_key") {
@@ -117,12 +115,60 @@ export function renderCellEditor({
     );
   }
 
-  if (editorType === "boolean") return <BooleanCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLSelectElement | null>} />;
-  if (editorType === "numeric") return <NumericCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLInputElement | null>} />;
-  if (editorType === "enum") return <EnumCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLSelectElement | null>} />;
-  if (editorType === "set") return <SetCellEditor {...editorProps} setValues={setValues} inputRef={{ current: null } as React.MutableRefObject<HTMLInputElement | null>} />;
-  if (editorType === "json") return <JSONCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLTextAreaElement | null>} />;
-  if (editorType === "hex") return <HexCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLTextAreaElement | null>} />;
-  if (editorType === "geometry") return <GeometryCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLTextAreaElement | null>} />;
-  return <TextCellEditor {...editorProps} inputRef={{ current: null } as React.MutableRefObject<HTMLInputElement | null>} />;
+  if (editorType === "boolean")
+    return (
+      <BooleanCellEditor
+        {...editorProps}
+        inputRef={{ current: null } as React.MutableRefObject<HTMLSelectElement | null>}
+      />
+    );
+  if (editorType === "numeric")
+    return (
+      <NumericCellEditor
+        {...editorProps}
+        inputRef={{ current: null } as React.MutableRefObject<HTMLInputElement | null>}
+      />
+    );
+  if (editorType === "enum")
+    return (
+      <EnumCellEditor
+        {...editorProps}
+        inputRef={{ current: null } as React.MutableRefObject<HTMLSelectElement | null>}
+      />
+    );
+  if (editorType === "set")
+    return (
+      <SetCellEditor
+        {...editorProps}
+        setValues={setValues}
+        inputRef={{ current: null } as React.MutableRefObject<HTMLInputElement | null>}
+      />
+    );
+  if (editorType === "json")
+    return (
+      <JSONCellEditor
+        {...editorProps}
+        inputRef={{ current: null } as React.MutableRefObject<HTMLTextAreaElement | null>}
+      />
+    );
+  if (editorType === "hex")
+    return (
+      <HexCellEditor
+        {...editorProps}
+        inputRef={{ current: null } as React.MutableRefObject<HTMLTextAreaElement | null>}
+      />
+    );
+  if (editorType === "geometry")
+    return (
+      <GeometryCellEditor
+        {...editorProps}
+        inputRef={{ current: null } as React.MutableRefObject<HTMLTextAreaElement | null>}
+      />
+    );
+  return (
+    <TextCellEditor
+      {...editorProps}
+      inputRef={{ current: null } as React.MutableRefObject<HTMLInputElement | null>}
+    />
+  );
 }

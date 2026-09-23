@@ -277,7 +277,8 @@ export function planPasteUpdates(
     (rowIndex, colIndex, column) => {
       const raw = matrix[rowIndex - anchor.row]?.[colIndex - anchor.col] ?? "";
       // Empty pasted cells stage NULL (spreadsheet convention, mirroring the
-      // insert-oriented clipboard parser); literal "NULL" also parses to null.
+      // insert-oriented clipboard parser). A literal "NULL" stays the string
+      // "NULL" — only empty cells mean NULL.
       if (raw.trim() === "") return null;
       return context.parseValue(raw, column);
     },

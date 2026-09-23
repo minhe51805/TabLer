@@ -44,10 +44,13 @@ describe("AI agent tool schema", () => {
     expect(AI_AGENT_TOOL_SPECS.sample_table_data.parameters.required).toEqual(["table"]);
     expect(AI_AGENT_TOOL_SPECS.run_readonly_sql.parameters.required).toEqual(["sql"]);
     expect(AI_AGENT_TOOL_SPECS.preview_write.parameters.required).toEqual(["statements"]);
-    expect(AI_AGENT_TOOL_SPECS.propose_seed_data.parameters.required).toEqual(["collection", "documents"]);
-    expect(
-      AI_AGENT_TOOL_SPECS.propose_seed_data.parameters.properties?.documents?.maxItems,
-    ).toBe(AI_AGENT_SEED_DOCUMENT_LIMIT);
+    expect(AI_AGENT_TOOL_SPECS.propose_seed_data.parameters.required).toEqual([
+      "collection",
+      "documents",
+    ]);
+    expect(AI_AGENT_TOOL_SPECS.propose_seed_data.parameters.properties?.documents?.maxItems).toBe(
+      AI_AGENT_SEED_DOCUMENT_LIMIT,
+    );
     expect(AI_AGENT_TOOL_SPECS.remember_term.parameters.required).toEqual(["term", "definition"]);
 
     expect(AI_AGENT_TOOL_SPECS.list_tables.parameters.properties?.limit?.maximum).toBe(200);
@@ -130,7 +133,7 @@ describe("AI agent tool schema", () => {
     // One hidden catalog tool (describe_tables) is dropped, and Anthropic's
     // native memory tool block is appended — netting back to the registry size.
     expect(anthropic.tools).toHaveLength(AI_AGENT_TOOL_NAMES.length);
-    expect((anthropic.tools[0] as Record<string, unknown>)).toHaveProperty("input_schema");
+    expect(anthropic.tools[0] as Record<string, unknown>).toHaveProperty("input_schema");
     // The native memory tool is the trailing entry: an opaque type block with
     // no input_schema (memory_20250818).
     const nativeMemory = anthropic.tools[anthropic.tools.length - 1] as Record<string, unknown>;
@@ -148,9 +151,7 @@ describe("AI agent tool schema", () => {
 
   it("offers the native memory tool (memory_20250818) only to Anthropic", () => {
     const hasNativeMemory = (payload: { tools: unknown[] }) =>
-      payload.tools.some(
-        (tool) => (tool as { type?: string }).type === "memory_20250818",
-      );
+      payload.tools.some((tool) => (tool as { type?: string }).type === "memory_20250818");
     expect(hasNativeMemory(nativeToolPayloadForProvider("anthropic"))).toBe(true);
     for (const provider of [
       "openai",
@@ -196,16 +197,26 @@ describe("AI agent tool schema", () => {
       "read_skill_resource",
       "delegate",
       "read_page",
+      "manage_skill",
+      "manage_rule",
       "finish",
     ]);
     expect(disabled.join("\n")).not.toContain("metricsWidgets");
   });
 
-  it("drops SQL tools from the native payload when the engine cannot speak SQL", () => {
-    const payload = nativeToolPayloadForProvider("openai", nativeCatalogOptionsForEngine("mongodb"));
-    const names = (payload.tools as Array<{ function: { name: string } }>).map((tool) => tool.function.name);
-    expect(names).not.toContain("run_readonly_sql");
+  it("drops write-only SQL tools from the native payload on document engines", () => {
+    const payload = nativeToolPayloadForProvider(
+      "openai",
+      nativeCatalogOptionsForEngine("mongodb"),
+    );
+    const names = (payload.tools as Array<{ function: { name: string } }>).map(
+      (tool) => tool.function.name,
+    );
+    // MongoDB keeps the translated-SELECT read tool; write/schema/checkpoint
+    // tools are gated by the capability matrix.
+    expect(names).toContain("run_readonly_sql");
     expect(names).not.toContain("preview_write");
+    expect(names).not.toContain("restore_checkpoint");
     expect(names).toContain("sample_table_data");
   });
 });
@@ -217,10 +228,18 @@ describe("parseAgentToolArgs", () => {
     ["search_schema", { query: "  email " }, { query: "email" }],
     ["describe_table", { table: " users " }, { table: "users" }],
     ["describe_tables", { tables: ["a", "a", 2] }, { tables: ["a", "2"] }],
-    ["sample_table_data", { table: "users", limit: 500 }, { table: "users", limit: AI_AGENT_SAMPLE_MAX_ROWS }],
+    [
+      "sample_table_data",
+      { table: "users", limit: 500 },
+      { table: "users", limit: AI_AGENT_SAMPLE_MAX_ROWS },
+    ],
     ["run_readonly_sql", { sql: "  SELECT 1  " }, { sql: "SELECT 1" }],
     ["preview_write", { statements: [" UPDATE x ", ""] }, { statements: ["UPDATE x"] }],
-    ["remember_term", { term: " gmv ", definition: " revenue " }, { term: "gmv", definition: "revenue" }],
+    [
+      "remember_term",
+      { term: " gmv ", definition: " revenue " },
+      { term: "gmv", definition: "revenue" },
+    ],
     ["finish", { response: "done", extra: true }, { response: "done", extra: true }],
   ] as Array<[AIAgentToolName, Record<string, unknown>, Record<string, unknown>]>)(
     "accepts valid args for %s",
@@ -272,9 +291,7 @@ describe("native tool calling wire parity", () => {
       if (typeof record.name === "string") return [record.name]; // Anthropic
       const fn = record.function as { name?: unknown } | undefined;
       if (fn && typeof fn.name === "string") return [fn.name]; // OpenAI family
-      const declarations = record.function_declarations as
-        | Array<{ name?: unknown }>
-        | undefined; // Gemini
+      const declarations = record.function_declarations as Array<{ name?: unknown }> | undefined; // Gemini
       if (Array.isArray(declarations)) {
         return declarations
           .filter((declaration) => typeof declaration.name === "string")

@@ -478,7 +478,7 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
   create_checkpoint: {
     name: "create_checkpoint",
     description:
-      "Snapshot the current database (schema + data) into an app-managed checkpoint file. Read-only for the database — it only writes a local file the user can restore with the /rollback command. Use it right before proposing a chain of risky mutations, or after the user says a change went wrong.",
+      "Snapshot the current database (schema + data) into an app-managed checkpoint file — a SQL INSERT dump, so it only exists on engines that can replay SQL (not mongodb/redis/opensearch). Read-only for the database — it only writes a local file the user can restore with the /rollback command. Use it right before proposing a chain of risky mutations, or after the user says a change went wrong.",
     parameters: objectSchema(
       {
         label: {
@@ -593,6 +593,225 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
     ),
   },
 
+  manage_metrics_widget: {
+    name: "manage_metrics_widget",
+    description:
+      "Manage widgets on the open metrics board (the dashboard the user is looking at). list shows every widget with its title, type, span and query; add appends a new widget (title + read-only SELECT query required, type/span optional); update changes a widget's title, query, chart type or grid span; delete removes one; refresh re-runs a widget's query and reports the fresh row count. Target a widget by widgetId (from list) or widgetTitle." +
+      TOOL_ERROR_SHAPE_NOTE,
+    parameters: objectSchema(
+      {
+        action: {
+          type: "string",
+          enum: ["list", "add", "update", "delete", "refresh"],
+          description: "Which board operation to perform.",
+        },
+        boardId: {
+          type: "string",
+          description: "Board id; omit to use the board open in the workspace.",
+        },
+        widgetId: {
+          type: "string",
+          description: "Exact widget id from a list call (preferred over widgetTitle).",
+        },
+        widgetTitle: {
+          type: "string",
+          description: "Widget title to match when widgetId is unknown.",
+        },
+        title: { type: "string", description: "add/update: widget title (required for add)." },
+        query: {
+          type: "string",
+          description: "add/update: read-only SELECT feeding the widget (required for add).",
+        },
+        type: {
+          type: "string",
+          enum: [
+            "table",
+            "scoreboard",
+            "bar",
+            "horizontal-bar",
+            "stacked-bar",
+            "line",
+            "area",
+            "pie",
+            "donut",
+            "radial",
+            "funnel",
+            "delta",
+            "markdown",
+          ],
+          description:
+            "add/update: chart type (defaults to scoreboard for single-value queries, table otherwise).",
+        },
+        colSpan: {
+          type: "integer",
+          minimum: 3,
+          maximum: 6,
+          description: "update: grid column span (3-6).",
+        },
+        rowSpan: {
+          type: "integer",
+          minimum: 2,
+          maximum: 6,
+          description: "update: grid row span (2-6).",
+        },
+      },
+      ["action"],
+    ),
+  },
+
+  manage_schedule: {
+    name: "manage_schedule",
+    description:
+      "Create, list, or delete scheduled tasks. kind 'agent' schedules a recurring read-only agent run of `prompt`; kind 'sql' runs `sql` on the interval. database is REQUIRED on create — a schedule without one fires against whatever database happens to be active, which is a bug, so always pass the database the task is about (default to the current one)." +
+      TOOL_ERROR_SHAPE_NOTE,
+    parameters: objectSchema(
+      {
+        action: {
+          type: "string",
+          enum: ["list", "create", "delete"],
+          description: "Which schedule operation to perform.",
+        },
+        id: {
+          type: "string",
+          description: "delete: schedule id from a list call (preferred over name).",
+        },
+        name: {
+          type: "string",
+          description: "create: schedule name; delete: name to match when id is unknown.",
+        },
+        kind: {
+          type: "string",
+          enum: ["agent", "sql"],
+          description: "create: 'agent' (default) runs prompt read-only; 'sql' runs sql.",
+        },
+        prompt: {
+          type: "string",
+          description: "create (kind agent): the recurring task the agent performs each run.",
+        },
+        sql: {
+          type: "string",
+          description: "create (kind sql): the statement run on the interval.",
+        },
+        database: {
+          type: "string",
+          description: "create: REQUIRED database the schedule runs against.",
+        },
+        intervalSeconds: {
+          type: "integer",
+          minimum: 60,
+          description: "create: seconds between runs (minimum 60).",
+        },
+        disabled: {
+          type: "boolean",
+          description: "create: set true to create the schedule paused (default: enabled).",
+        },
+      },
+      ["action"],
+    ),
+  },
+
+  open_table_tab: {
+    name: "open_table_tab",
+    description:
+      "Open a data/browse tab for a table in the workspace so the user can see the rows. Use when the user asks to open, show, or browse a table — the table name must come from list_tables." +
+      TOOL_ERROR_SHAPE_NOTE,
+    parameters: objectSchema(
+      {
+        table: {
+          type: "string",
+          description: "Exact table name or identifier from list_tables.",
+        },
+        database: {
+          type: "string",
+          description: "Database to open the table in; defaults to the current one.",
+        },
+      },
+      ["table"],
+    ),
+  },
+
+  manage_skill: {
+    name: "manage_skill",
+    description:
+      "Manage Agent Skills: list the catalog, update a global skill's description/body/version/allowedTools, or enable/disable a skill for future runs. Only global skills are editable — workspace skills live in the user's repository and are read-only by design. There is no delete: the backend has no delete command, so tell the user to remove the skill folder manually if they ask." +
+      TOOL_ERROR_SHAPE_NOTE,
+    parameters: objectSchema(
+      {
+        action: {
+          type: "string",
+          enum: ["list", "update", "enable", "disable"],
+          description: "Which skill operation to perform.",
+        },
+        name: {
+          type: "string",
+          description: "Skill name exactly as listed (required for update/enable/disable).",
+        },
+        description: {
+          type: "string",
+          description: "update: new one-line description.",
+        },
+        body: {
+          type: "string",
+          description: "update: new SKILL.md body (the instructions).",
+        },
+        version: {
+          type: "string",
+          description: "update: new version string.",
+        },
+        allowedTools: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "update: replacement allowed-tools list (tool names the skill may use). Omit to keep the stored list.",
+        },
+      },
+      ["action"],
+    ),
+  },
+
+  manage_rule: {
+    name: "manage_rule",
+    description:
+      "Manage guardrail rules that evaluate agent SQL before it runs. list shows the armed rules (name, action, origin) and any files that failed to load; create writes a new rule file into the linked workspace folder's rules/ directory (or the global rules root when no folder is linked). content must be a complete rule file: frontmatter (name, description, event, pattern, action) plus a markdown body. create refuses to overwrite an existing rule — there is no update or delete; the user edits rule files manually." +
+      TOOL_ERROR_SHAPE_NOTE,
+    parameters: objectSchema(
+      {
+        action: {
+          type: "string",
+          enum: ["list", "create"],
+          description: "Which rule operation to perform.",
+        },
+        name: {
+          type: "string",
+          description:
+            "create: rule file name — lowercase slug [a-z0-9_-], 1-64 chars; must match the frontmatter name.",
+        },
+        content: {
+          type: "string",
+          description:
+            "create: full rule file text (frontmatter + body). The frontmatter name is synced to args.name automatically.",
+        },
+      },
+      ["action"],
+    ),
+  },
+
+  switch_database: {
+    name: "switch_database",
+    description:
+      "Switch the active database on the current connection (same as the database picker). The schema context reloads: afterwards list_tables/describe_table/SQL tools see the new database. Use when the user's request is about a different database than the current one." +
+      TOOL_ERROR_SHAPE_NOTE,
+    parameters: objectSchema(
+      {
+        database: {
+          type: "string",
+          description: "Exact database name to switch to.",
+        },
+      },
+      ["database"],
+    ),
+  },
+
   batch: {
     name: "batch",
     description:
@@ -616,7 +835,7 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
   finish: {
     name: "finish",
     description:
-      "End the run with the final answer for the user. args.response is REQUIRED: it must contain the complete user-facing answer (a full markdown table when a report, bảng, tổng hợp, or list was requested) built from verified observations — never an empty string or a one-line placeholder. Put the single best runnable SELECT in sql, and 3-6 dashboard widgets in metricsWidgets when the request is a metrics board.",
+      "End the run with the final answer for the user. args.response is REQUIRED: it must contain the complete user-facing answer (a full markdown table when a report, bảng, tổng hợp, or list was requested) built from verified observations — never an empty string or a one-line placeholder. Put the single best runnable SELECT in sql, and the dashboard widgets in metricsWidgets when the request is a metrics board — exactly the cards the user asked for, never padded with extras.",
     parameters: {
       type: "object",
       properties: {
@@ -666,7 +885,8 @@ export const AI_AGENT_TOOL_SPECS: Record<AIAgentToolName, AIAgentToolSpec> = {
             required: ["title", "type", "query"],
             additionalProperties: false,
           },
-          description: "Optional dashboard widgets (3-6 for a metrics board).",
+          description:
+            "Optional dashboard widgets. Match the user's request exactly — same count, same cards; pick a sensible set only when the request leaves the contents open.",
         },
       },
       // finish carries a flexible payload consumed by the finalizer, so extra

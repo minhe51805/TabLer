@@ -90,6 +90,7 @@ describe('picking a command from the "/" menu', () => {
         description: "Profile a table.",
         argumentHint: "[table to profile]",
         argumentNames: ["table"],
+        allowedTools: [],
         inject: [],
         origin: "builtin",
       },
@@ -106,6 +107,7 @@ describe("file-backed command registry", () => {
     description: "Profile a table.",
     argumentHint: "[table to profile]",
     argumentNames: ["table"],
+    allowedTools: [],
     inject: ["schema_summary"],
     origin: "builtin",
     ...overrides,
@@ -180,6 +182,7 @@ describe("file-backed command registry", () => {
       command: fileCommand(),
       prompt: "Profile orders.",
       arguments: "orders",
+      allowedTools: [],
       missingContext: ["active_tab_sql"],
     };
     expect(describeMissingCommandContext(resolved)).toContain("active_tab_sql");

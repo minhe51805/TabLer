@@ -266,6 +266,14 @@ export interface AIState {
    * or `null` when no other provider is enabled.
    */
   promoteNextEnabledProvider: () => AIProviderConfig | null;
+  /**
+   * Quietly makes `providerId` primary again — the counterpart of
+   * `promoteNextEnabledProvider` for when a run ends: no failover toast, no
+   * spinner flag, just the selector and persistence moving back to the
+   * provider the user actually chose. No-op when the id is unknown or the
+   * provider is disabled (the user's newer decision wins).
+   */
+  restoreProvider: (providerId: string) => void;
 }
 
 /**
@@ -377,6 +385,25 @@ export const useAIStore = create<AIState>((set, get) => ({
     return next;
   },
 
+  restoreProvider: (providerId) => {
+    const configs = get().aiConfigs;
+    const target = configs.find((config) => config.id === providerId);
+    if (!target || !target.is_enabled || target.is_primary) return;
+    const normalized = normalizeAIProviderConfigs(
+      configs.map((config) => ({ ...config, is_primary: config.id === providerId })),
+    );
+    set({ aiConfigs: normalized });
+    void enqueueConfigSave(() =>
+      invokeMutation<[AIProviderConfig[], Record<string, boolean>]>("save_ai_configs", {
+        providers: normalized,
+        apiKeyUpdates: {},
+        clearedProviderIds: [],
+      }),
+    )
+      .then(([aiConfigs]) => set({ aiConfigs }))
+      .catch((error) => console.warn("[AI] Failed to persist provider restore:", error));
+  },
+
   getLocalOllamaStatus: async () => {
     try {
       return await invokeWithTimeout<LocalOllamaStatus>(
@@ -453,6 +480,9 @@ export const useAIStore = create<AIState>((set, get) => ({
     }
 
     let lastError: unknown;
+    // Newest non-empty partial stream across attempts; attached to the error
+    // the caller ultimately sees so a mid-stream failure keeps its text.
+    let lastPartialText: string | undefined;
     for (const [index, attempt] of chain.entries()) {
       const config = attempt.config;
       const timeoutMs = getAIRequestTimeout(config, mode, intent);
@@ -479,9 +509,12 @@ export const useAIStore = create<AIState>((set, get) => ({
       });
 
       let unlisten: UnlistenFn | undefined;
+      // Hoisted so the catch can attach whatever the provider already
+      // streamed to the thrown error — a mid-stream failure must not discard
+      // the partial answer the user watched arrive.
+      let streamedText = "";
       try {
         if (mode === "panel" && !nativeToolPayload) {
-          let streamedText = "";
           let streamedReasoning = "";
           unlisten = await listen<{
             requestId: string;
@@ -593,7 +626,10 @@ export const useAIStore = create<AIState>((set, get) => ({
       } catch (errorValue) {
         lastError = errorValue;
         const requestError = normalizeAIRequestError(errorValue);
-        if (requestError.code === "cancelled") throw requestError;
+        if (streamedText.trim()) {
+          lastPartialText = streamedText;
+          (requestError as AIRequestError & { partialText?: string }).partialText = streamedText;
+        }
         // A timed-out provider hung for the full window — deprioritize (or
         // briefly skip) it on subsequent calls so it cannot eat them too.
         if (requestError.code === "timeout") markProviderTimeout(config.id);
@@ -636,7 +672,11 @@ export const useAIStore = create<AIState>((set, get) => ({
         }
       }
     }
-    throw normalizeAIRequestError(lastError);
+    const finalError = normalizeAIRequestError(lastError);
+    if (lastPartialText) {
+      (finalError as AIRequestError & { partialText?: string }).partialText = lastPartialText;
+    }
+    throw finalError;
   },
 
   askAI: async (

@@ -35,6 +35,8 @@ export const KO_COPY: AIWorkspaceCopy = {
     insert: "삽입",
     approveRun: "실행 승인",
     retry: "다시 시도",
+    liveDataDisabledHint:
+      "에이전트가 이 답변을 위해 이미 실시간 데이터를 읽었습니다 — 이 SQL을 다시 실행하면 중복됩니다.",
   },
   modal: {
     kicker: "버블 상세",
@@ -129,8 +131,7 @@ export const KO_COPY: AIWorkspaceCopy = {
     agentAutonomySmart: "스마트",
     agentAutonomySmartHint: "안전한 읽기 쿼리는 자동 실행하고 쓰기 전에 물어봅니다.",
     agentAutonomyFull: "전체 권한",
-    agentAutonomyFullHint:
-      "안전한 읽기 쿼리는 자동 실행하고, 쓰기 및 스키마 변경은 계속 확인합니다.",
+    agentAutonomyFullHint: "모든 작업을 묻지 않고 실행하며 Safe Mode를 끕니다.",
     thinkingToggleLabel: "추론",
     thinkingToggleHint: "에이전트의 실시간 추론 표시/숨기기",
     thinkingOn: "켜짐",
@@ -170,8 +171,12 @@ export const KO_COPY: AIWorkspaceCopy = {
     sqlConfirmBatchLabel: "이 실행에는 {count}개의 문이 있습니다.",
     autonomyFullConfirmTitle: "전체 권한을 활성화할까요?",
     autonomyFullConfirmBody:
-      "에이전트가 읽기와 도구 호출을 묻지 않고 자동 실행합니다. 쓰기 및 스키마 작업은 실행 전에 확인이 필요합니다.",
+      "에이전트가 읽기, 쓰기, 스키마 변경을 묻지 않고 실행합니다 — 문장이 제안되는 즉시 실행됩니다. 완전히 신뢰하는 작업에만 활성화하세요.",
     autonomyFullConfirmAllow: "전체 권한 사용",
+    autonomyFullSafeModeTitle: "Safe Mode를 끌까요?",
+    autonomyFullSafeModeBody:
+      "전체 권한은 활성화되는 동안 Safe Mode도 끕니다 — 에이전트의 쓰기가 전혀 확인되지 않습니다. 스마트 또는 항상 검토로 돌아가면 Safe Mode가 자동으로 복원됩니다.",
+    autonomyFullSafeModeAllow: "Safe Mode 끄고 활성화",
     promptIdeas: [
       {
         title: "테이블 생성",

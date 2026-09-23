@@ -4,9 +4,8 @@ import Link from "next/link";
 import { Download } from "lucide-react";
 import { getSiteLanguage } from "@/lib/language";
 import { getDictionary } from "@/lib/i18n";
-import { engineHref, engineOrder, getDocs } from "@/lib/docs";
+import { engineHref, engineOrder, getDocs, docBodyText } from "@/lib/docs";
 import { LanguageToggle } from "../LanguageToggle";
-import { SiteFooter } from "../SiteFooter";
 import { DocsSidebar } from "./DocsSidebar";
 
 export default async function DocsLayout({ children }: { children: ReactNode }) {
@@ -62,11 +61,16 @@ export default async function DocsLayout({ children }: { children: ReactNode }) 
           label={docs.label}
           menuLabel={docs.menu}
           connectSubnav={connectSubnav}
+          searchItems={docs.pages.map((page) => ({
+            slug: page.slug,
+            title: page.title,
+            description: page.description,
+            body: docBodyText(page),
+          }))}
+          searchPlaceholder={docs.searchPlaceholder}
         />
         <div className="docs-main">{children}</div>
       </div>
-
-      <SiteFooter t={t} />
     </main>
   );
 }

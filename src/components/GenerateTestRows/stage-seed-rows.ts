@@ -4,38 +4,42 @@
  * Tauri/React imports) so it stays unit-testable.
  */
 
-import { useChangeTrackingStore } from "../../stores/change-tracking-store";
+import { changeScopeKey, useChangeTrackingStore } from "../../stores/change-tracking-store";
 import type { ColumnDetail } from "../../types";
 import type { DatabaseType } from "../../types/database";
 import type { StagedChange } from "../../types/change-tracking";
 import type { GeneratedRow } from "../../utils/test-row-generator";
 
 /**
- * The store resolves index-keyed columns through `_columnNameMap[tableName]` —
- * registered by the grid's structure fetch — so we invert that map by name.
- * When no grid has registered one yet we register a map built from the given
- * column order (the same order the grid's fetcher would use), then stage every
- * row as an insert and open the review modal. Returns the staged row count.
+/**
+ * The store resolves index-keyed columns through `_columnNameMap[scope]` —
+ * registered by the grid's structure fetch under `connectionId|database|table`
+ * — so we invert that map by name. When no grid has registered one yet we
+ * register a map built from the given column order (the same order the grid's
+ * fetcher would use), then stage every row as an insert and open the review
+ * modal. Returns the staged row count.
  */
 export function stageGeneratedRows(options: {
+  connectionId?: string;
   tableName: string;
   database?: string;
   dbType?: DatabaseType;
   columns: readonly ColumnDetail[];
   rows: readonly GeneratedRow[];
 }): number {
-  const { tableName, database, dbType, columns, rows } = options;
+  const { connectionId, tableName, database, dbType, columns, rows } = options;
   const store = useChangeTrackingStore.getState();
+  const scopeKey = changeScopeKey(connectionId ?? "", database, tableName);
 
-  let nameMap = store._columnNameMap[tableName];
+  let nameMap = store._columnNameMap[scopeKey];
   if (!nameMap || Object.keys(nameMap).length === 0) {
     nameMap = {};
     columns.forEach((column, index) => {
       nameMap![index] = column.name;
     });
-    store.setColumnNameMap(tableName, nameMap);
+    store.setColumnNameMap(scopeKey, nameMap);
   }
-  if (dbType) store.setDbType(tableName, dbType);
+  if (dbType) store.setDbType(scopeKey, dbType);
 
   const indexByName = new Map<string, number>();
   for (const [index, name] of Object.entries(nameMap)) {
@@ -56,6 +60,7 @@ export function stageGeneratedRows(options: {
     if (Object.keys(changeColumns).length === 0) continue;
     changes.push({
       type: "insert",
+      connectionId,
       tableName,
       database,
       // No source row exists — inserts have no grid row to highlight.

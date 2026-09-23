@@ -40,6 +40,9 @@ export interface AIWorkspaceCopy {
     insert: string;
     approveRun: string;
     retry: string;
+    /** Tooltip on the disabled Run/Insert buttons after the agent already
+     *  read live data for this answer (a second run would duplicate it). */
+    liveDataDisabledHint: string;
   };
   modal: {
     kicker: string;
@@ -170,6 +173,10 @@ export interface AIWorkspaceCopy {
     autonomyFullConfirmTitle: string;
     autonomyFullConfirmBody: string;
     autonomyFullConfirmAllow: string;
+    /** Second confirm shown when Safe Mode is on: full access suspends it. */
+    autonomyFullSafeModeTitle: string;
+    autonomyFullSafeModeBody: string;
+    autonomyFullSafeModeAllow: string;
     promptIdeas: PromptIdeaCopy[];
   };
   bubbleStates: {

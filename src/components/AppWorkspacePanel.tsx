@@ -1193,6 +1193,8 @@ export function AppWorkspacePanel({
                 pane="primary"
                 queryChrome={activeQueryChrome}
                 onRunActiveQuery={onRunActiveQuery}
+                // cancelQuery surfaces its own failure inside queryStore —
+                // the void only marks the fire-and-forget intent.
                 onCancelActiveQuery={() => void cancelQuery()}
                 onClearVisibleTabs={onClearVisibleTabs}
               />

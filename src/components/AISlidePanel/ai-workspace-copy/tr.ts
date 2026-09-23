@@ -35,6 +35,8 @@ export const TR_COPY: AIWorkspaceCopy = {
     insert: "Ekle",
     approveRun: "Çalıştırmayı onayla",
     retry: "Yeniden dene",
+    liveDataDisabledHint:
+      "Ajan bu yanıt için canlı verileri zaten okudu — bu SQL'i yeniden çalıştırmak tekrar olur.",
   },
   modal: {
     kicker: "Balon Detayı",
@@ -131,8 +133,7 @@ export const TR_COPY: AIWorkspaceCopy = {
     agentAutonomySmart: "Akıllı",
     agentAutonomySmartHint: "Güvenli okuma sorgularını otomatik çalıştır, yazmadan önce sor.",
     agentAutonomyFull: "Tam erişim",
-    agentAutonomyFullHint:
-      "Güvenli okumaları otomatik çalıştırır; yazma ve şema değişiklikleri yine onay ister.",
+    agentAutonomyFullHint: "Her şeyi sormadan çalıştırır; Safe Mode'u kapatır.",
     thinkingToggleLabel: "Düşünme",
     thinkingToggleHint: "Ajanın canlı muhakemesini göster veya gizle",
     thinkingOn: "Açık",
@@ -173,8 +174,12 @@ export const TR_COPY: AIWorkspaceCopy = {
     sqlConfirmBatchLabel: "Bu çalıştırmada {count} ifade var.",
     autonomyFullConfirmTitle: "Tam erişim etkinleştirilsin mi?",
     autonomyFullConfirmBody:
-      "Ajan okuma işlemlerini ve araç çağrılarını sormadan otomatik çalıştırır. Yazma ve şema işlemleri çalıştırılmadan önce yine onay ister.",
+      "Ajan okuma, yazma ve şema değişikliklerini SORMADAN çalıştırır — ifadeler önerilir önerilmez yürütülür. Yalnızca tamamen güvendiğiniz işler için etkinleştirin.",
     autonomyFullConfirmAllow: "Tam erişimi etkinleştir",
+    autonomyFullSafeModeTitle: "Safe Mode kapatılsın mı?",
+    autonomyFullSafeModeBody:
+      "Tam erişim etkinken Safe Mode'u da KAPATIR — ajanın yazma işlemleri hiç kontrol edilmez veya onaylanmaz. Akıllı veya Her zaman incele moduna döndüğünüzde Safe Mode otomatik olarak geri yüklenir.",
+    autonomyFullSafeModeAllow: "Safe Mode'u kapat ve etkinleştir",
     promptIdeas: [
       {
         title: "Tablo oluştur",

@@ -36,6 +36,9 @@ export const TR_PANEL_COPY: AIPanelCopy = {
     queuedCount: "{count} sırada",
     queuedClear: "Tümünü at",
   },
+  sqlValidationWarning:
+    "Önerilen SQL sandbox doğrulamasını geçemedi ({error}); çalıştırmadan önce gözden geçirin veya düzeltin.",
+  tokenBudgetReached: "Token bütçesine ulaşıldı — yanıt kesilmiş olabilir.",
   rules: {
     title: "Koruma kuralları",
     subtitle:

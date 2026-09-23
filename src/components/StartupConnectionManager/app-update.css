@@ -1,0 +1,12 @@
+/* Update pill additions: quiet retry state shown when the background update
+   check fails. Base .app-update-* styles live in app-components.css. */
+
+.app-update-btn.is-retry {
+  border-color: color-mix(in srgb, var(--warning) 38%, transparent);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
+  color: var(--warning);
+}
+
+.app-update-btn.is-retry:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--warning) 22%, transparent);
+}

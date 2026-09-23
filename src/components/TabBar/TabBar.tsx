@@ -369,14 +369,14 @@ export function TabBar({
               type="button"
               onClick={queryChrome?.isRunning ? onCancelActiveQuery : onRunActiveQuery}
               className="tabbar-run-btn"
-              title={queryChrome?.isRunning ? "Stop query" : t("tabs.runTitle")}
+              title={queryChrome?.isRunning ? copy.stopQuery : t("tabs.runTitle")}
             >
               {queryChrome?.isRunning ? (
                 <Square className="w-3.5 h-3.5" />
               ) : (
                 <Play className="w-3.5 h-3.5" />
               )}
-              <span>{queryChrome?.isRunning ? "Stop" : t("tabs.run")}</span>
+              <span>{queryChrome?.isRunning ? copy.stop : t("tabs.run")}</span>
             </button>
           )}
         </div>

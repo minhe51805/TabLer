@@ -9,6 +9,7 @@ import type { DatabaseType, QueryParameterType } from "../../types";
 import { findSystemCatalogReferences, getAgentSqlSchemaRequirements } from "./ai-agent-grounding";
 import { normalizeIntentText } from "./ai-assist-intent";
 import { AI_AGENT_COLUMN_STATS_MAX_TABLE_ROWS, validateAIAgentReadonlySql } from "./ai-agent-tools";
+import { classifySqlSafety } from "../../utils/sql-safety";
 
 /**
  * Appended to SQL tool errors when the database itself gave up on the
@@ -206,6 +207,38 @@ export function analyzeAgentSqlForAgent(
     };
   }
   return { ok: true };
+}
+
+/**
+ * Backend-authoritative read-only check for the agent SQL tools. The static
+ * `validateAIAgentReadonlySql` prefix guard cannot see through
+ * `EXPLAIN ANALYZE <write>` or dialect-specific mutating constructs, so the
+ * `classify_sql_safety` command gets the last word: anything it does not
+ * classify as read-only is rejected. A classifier failure is fail-open — the
+ * dedicated `execute_agent_readonly_query` command still pins read-only
+ * server-side, so this layer is UX, not the security boundary.
+ */
+export async function classifyAgentSqlReadonly(
+  sql: string,
+  dbType?: DatabaseType,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  try {
+    const decision = await classifySqlSafety(sql, dbType ?? null);
+    if (!decision.readOnly) {
+      const kinds = decision.statements
+        .map((statement) => statement.kind)
+        .filter((kind) => kind !== "read");
+      return {
+        ok: false,
+        error: `The backend classifier rejected this as non-read-only${
+          kinds.length > 0 ? ` (${kinds.join(", ")})` : ""
+        }. EXPLAIN ANALYZE and EXPLAIN of a write execute the statement — propose it through edit_query_sql so the user can review it first.`,
+      };
+    }
+    return { ok: true };
+  } catch {
+    return { ok: true };
+  }
 }
 
 /**

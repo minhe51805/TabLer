@@ -95,9 +95,10 @@ impl Drop for PendingTunnel {
 /// Returns the resolved plugin id for provenance.
 async fn require_installed_http_plugin(
     plugin_storage: &PluginStorage,
-    config: &ConnectionConfig,
+    config: &mut ConnectionConfig,
     protocol: &str,
 ) -> Result<String> {
+    backfill_plugin_driver_fields(plugin_storage, config, protocol, "declarative-http-v1").await;
     let plugin_id = config
         .additional_fields
         .get("plugin_id")
@@ -133,6 +134,66 @@ async fn require_installed_http_plugin(
     Ok(active.plugin_id)
 }
 
+/// Backfill `plugin_id` / `plugin_driver_id` for plugin-gated engines whose
+/// saved config predates the binding (imported profiles, connections saved
+/// before the picker started injecting it). When exactly ONE installed plugin
+/// contributes a `runtime` driver for `protocol`, the binding is unambiguous
+/// and filled in; zero or several matches leave the config untouched so the
+/// gate still reports a clear "requires an installed driver plugin" error.
+/// The resolved driver is re-verified by the caller, so a disabled or
+/// unverified plugin still fails with the precise reason.
+async fn backfill_plugin_driver_fields(
+    plugin_storage: &PluginStorage,
+    config: &mut ConnectionConfig,
+    protocol: &str,
+    runtime: &str,
+) {
+    let has_binding = ["plugin_id", "plugin_driver_id"].iter().all(|key| {
+        config
+            .additional_fields
+            .get(*key)
+            .is_some_and(|value| !value.trim().is_empty())
+    });
+    if has_binding {
+        return;
+    }
+    let storage = plugin_storage.clone();
+    let runtime_owned = runtime.to_string();
+    let protocol_owned = protocol.to_string();
+    let matches = tokio::task::spawn_blocking(move || {
+        storage.load_plugins().map(|records| {
+            records
+                .into_iter()
+                .filter(|record| {
+                    record.manifest.contributes.drivers.iter().any(|driver| {
+                        driver.protocol == protocol_owned && driver.runtime == runtime_owned
+                    })
+                })
+                .map(|record| (record.manifest.id, record.manifest.contributes.drivers))
+                .collect::<Vec<_>>()
+        })
+    })
+    .await
+    .ok()
+    .and_then(|result| result.ok())
+    .unwrap_or_default();
+    let [(plugin_id, drivers)] = matches.as_slice() else {
+        return;
+    };
+    let Some(driver) = drivers
+        .iter()
+        .find(|driver| driver.protocol == protocol && driver.runtime == runtime)
+    else {
+        return;
+    };
+    config
+        .additional_fields
+        .insert("plugin_id".to_string(), plugin_id.clone());
+    config
+        .additional_fields
+        .insert("plugin_driver_id".to_string(), driver.id.clone());
+}
+
 /// Native-engine (`plugin_native`) sidecar gate, mirroring
 /// `require_installed_http_plugin`: when the wire-protocol crate was not built
 /// in, the engine only connects via a verified `driver-sidecar-v1` plugin that
@@ -146,9 +207,10 @@ async fn require_installed_http_plugin(
 ))]
 async fn connect_native_sidecar(
     plugin_storage: &PluginStorage,
-    config: &ConnectionConfig,
+    config: &mut ConnectionConfig,
     protocol: &str,
 ) -> Result<Arc<dyn DatabaseDriver>> {
+    backfill_plugin_driver_fields(plugin_storage, config, protocol, "driver-sidecar-v1").await;
     let plugin_id = config
         .additional_fields
         .get("plugin_id")
@@ -286,17 +348,22 @@ impl DatabaseManager {
             DatabaseType::DuckDB => Arc::new(DuckDbDriver::connect(&actual_config).await?),
             #[cfg(not(feature = "duckdb-driver"))]
             DatabaseType::DuckDB => {
-                connect_native_sidecar(&self.plugin_storage, &actual_config, "duckdb").await?
+                connect_native_sidecar(&self.plugin_storage, &mut actual_config, "duckdb").await?
             }
             #[cfg(feature = "cassandra-driver")]
             DatabaseType::Cassandra => Arc::new(CassandraDriver::connect(&actual_config).await?),
             #[cfg(not(feature = "cassandra-driver"))]
             DatabaseType::Cassandra => {
-                connect_native_sidecar(&self.plugin_storage, &actual_config, "cassandra").await?
+                connect_native_sidecar(&self.plugin_storage, &mut actual_config, "cassandra")
+                    .await?
             }
             DatabaseType::Snowflake => {
-                require_installed_http_plugin(&self.plugin_storage, &actual_config, "snowflake")
-                    .await?;
+                require_installed_http_plugin(
+                    &self.plugin_storage,
+                    &mut actual_config,
+                    "snowflake",
+                )
+                .await?;
                 Arc::new(SnowflakeDriver::connect(&actual_config).await?)
             }
             DatabaseType::MSSQL => Arc::new(MssqlDriver::connect(&actual_config).await?),
@@ -304,22 +371,26 @@ impl DatabaseManager {
             DatabaseType::LibSQL => Arc::new(LibSqlDriver::connect(&actual_config).await?),
             #[cfg(not(feature = "libsql-driver"))]
             DatabaseType::LibSQL => {
-                connect_native_sidecar(&self.plugin_storage, &actual_config, "libsql").await?
+                connect_native_sidecar(&self.plugin_storage, &mut actual_config, "libsql").await?
             }
             DatabaseType::ClickHouse => {
-                require_installed_http_plugin(&self.plugin_storage, &actual_config, "clickhouse")
-                    .await?;
+                require_installed_http_plugin(
+                    &self.plugin_storage,
+                    &mut actual_config,
+                    "clickhouse",
+                )
+                .await?;
                 Arc::new(ClickHouseDriver::connect(&actual_config).await?)
             }
             DatabaseType::BigQuery => {
-                require_installed_http_plugin(&self.plugin_storage, &actual_config, "bigquery")
+                require_installed_http_plugin(&self.plugin_storage, &mut actual_config, "bigquery")
                     .await?;
                 Arc::new(BigQueryDriver::connect(&actual_config).await?)
             }
             DatabaseType::CloudflareD1 => {
                 require_installed_http_plugin(
                     &self.plugin_storage,
-                    &actual_config,
+                    &mut actual_config,
                     "cloudflare_d1",
                 )
                 .await?;
@@ -329,13 +400,13 @@ impl DatabaseManager {
             DatabaseType::Redis => Arc::new(RedisDriver::connect(&actual_config).await?),
             #[cfg(not(feature = "redis-driver"))]
             DatabaseType::Redis => {
-                connect_native_sidecar(&self.plugin_storage, &actual_config, "redis").await?
+                connect_native_sidecar(&self.plugin_storage, &mut actual_config, "redis").await?
             }
             DatabaseType::MongoDB => Arc::new(MongoDbDriver::connect(&actual_config).await?),
             DatabaseType::OpenSearch => {
                 let plugin_id = require_installed_http_plugin(
                     &self.plugin_storage,
-                    &actual_config,
+                    &mut actual_config,
                     "opensearch",
                 )
                 .await?;

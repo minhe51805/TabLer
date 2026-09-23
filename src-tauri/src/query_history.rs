@@ -1,8 +1,27 @@
+use crate::storage::file_storage::write_json_atomically;
 use serde::{Deserialize, Serialize};
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
+
+/// Password-carrying clauses whose string literal must never be persisted in
+/// plaintext history: `IDENTIFIED BY 'x'`, `IDENTIFIED WITH ... BY 'x'`,
+/// `PASSWORD 'x'` / `PASSWORD = 'x'`, `PASSWD = 'x'`. Other literals stay
+/// intact so history remains usable.
+static PASSWORD_LITERAL_PATTERN: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(
+        r"(?i)(\bidentified\s+with\s+\S+\s+by|\bidentified\s+by|\bpassword|\bpasswd)(\s*=\s*|\s+|\(\s*)'(?:''|[^'])*'",
+    )
+    .expect("password literal redaction pattern must compile")
+});
+
+/// Replace the string literal in password-carrying clauses with `'***'`.
+pub(crate) fn redact_password_literals(query_text: &str) -> String {
+    PASSWORD_LITERAL_PATTERN
+        .replace_all(query_text, "$1$2'***'")
+        .into_owned()
+}
 
 /// Query history entry stored in the local JSON Lines file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +87,10 @@ impl QueryHistoryStorage {
         };
 
         entry.id = Some(id);
+        // Never persist credentials: redact the literal in password-carrying
+        // statements (CREATE USER ... IDENTIFIED BY '...', ALTER ... PASSWORD
+        // '...', ...) before the entry hits disk.
+        entry.query_text = redact_password_literals(&entry.query_text);
 
         let json =
             serde_json::to_string(entry).map_err(|e| format!("Failed to serialize entry: {e}"))?;
@@ -195,16 +218,18 @@ impl QueryHistoryStorage {
     }
 
     fn rewrite_entries(&self, entries: &[QueryHistoryEntry]) -> Result<(), String> {
-        let mut file = File::create(&self.file_path)
-            .map_err(|e| format!("Failed to rewrite query history file: {e}"))?;
-
+        // Rewrite through the shared atomic-write helper (temp file + fsync +
+        // rename, previous contents rotated to `.bak`) instead of truncating
+        // the file in place — a crash mid-rewrite must not lose all history.
+        let mut json = String::new();
         for entry in entries {
-            let json = serde_json::to_string(entry)
+            let line = serde_json::to_string(entry)
                 .map_err(|e| format!("Failed to serialize query history entry: {e}"))?;
-            writeln!(file, "{json}")
-                .map_err(|e| format!("Failed to persist query history entry: {e}"))?;
+            json.push_str(&line);
+            json.push('\n');
         }
-
+        write_json_atomically(&self.file_path, &json)
+            .map_err(|e| format!("Failed to rewrite query history file: {e}"))?;
         let next_id = entries
             .iter()
             .filter_map(|entry| entry.id)
@@ -297,7 +322,7 @@ pub async fn clear_query_history(connection_id: Option<String>) -> Result<usize,
 
 #[cfg(test)]
 mod tests {
-    use super::{QueryHistoryEntry, QueryHistoryStorage};
+    use super::{redact_password_literals, QueryHistoryEntry, QueryHistoryStorage};
     use std::path::PathBuf;
     use uuid::Uuid;
 
@@ -404,6 +429,42 @@ mod tests {
         assert_eq!(conn_b_entries[0].query_text, "select 2");
 
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn save_entry_redacts_password_literals() {
+        let path = temp_history_path();
+        let storage =
+            QueryHistoryStorage::new_with_file(path.clone()).expect("storage should initialize");
+
+        let mut entry = sample_entry(
+            "conn-a",
+            "CREATE USER 'app'@'%' IDENTIFIED BY 'sup3r-secret'; ALTER USER 'app'@'%' IDENTIFIED WITH mysql_native_password BY 'an0ther-secret'",
+            "2026-04-02T00:00:00Z",
+        );
+        storage.save_entry(&mut entry).expect("save should succeed");
+
+        let on_disk = std::fs::read_to_string(&path).expect("history file should read");
+        assert!(!on_disk.contains("sup3r-secret"));
+        assert!(!on_disk.contains("an0ther-secret"));
+        assert!(on_disk.contains("IDENTIFIED BY '***'"));
+        assert!(on_disk.contains("BY '***'"));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn redact_password_literals_keeps_other_literals() {
+        let redacted = redact_password_literals(
+            "SELECT * FROM users WHERE name = 'password' AND note = 'keep me'",
+        );
+        assert_eq!(
+            redacted,
+            "SELECT * FROM users WHERE name = 'password' AND note = 'keep me'"
+        );
+
+        let redacted = redact_password_literals("SET PASSWORD = 'p@ss'; SELECT 'x'");
+        assert_eq!(redacted, "SET PASSWORD = '***'; SELECT 'x'");
     }
 
     #[test]

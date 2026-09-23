@@ -1,4 +1,5 @@
 import { invokeMutation } from "../utils/tauri-utils";
+import { emitAppToast } from "../utils/app-toast";
 import type { QueryResult, ConnectionConfig } from "../types";
 import { resolveEnvVars } from "../utils/env-resolve";
 import type { ConnectionState } from "./connectionStore";
@@ -137,12 +138,22 @@ export async function executeStartupCommands(
     .map((statement) => statement.trim())
     .filter(Boolean);
 
+  const failures: string[] = [];
   for (const sql of statements) {
     try {
       await invokeMutation<QueryResult>("execute_query", { connectionId, sql });
     } catch (error) {
-      console.warn("[StartupCommands] Failed to execute:", sql, error);
+      const message = error instanceof Error ? error.message : String(error);
+      failures.push(`${sql.slice(0, 80)}${sql.length > 80 ? "…" : ""} — ${message}`);
     }
+  }
+
+  if (failures.length > 0) {
+    emitAppToast({
+      tone: "error",
+      title: `${failures.length} startup statement${failures.length === 1 ? "" : "s"} failed`,
+      description: failures.slice(0, 3).join("\n"),
+    });
   }
 }
 

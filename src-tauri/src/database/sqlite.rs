@@ -382,10 +382,16 @@ impl DatabaseDriver for SqliteDriver {
         }
         .await;
 
-        if let Err(error) = tx.rollback().await {
-            log::warn!("write-preview rollback failed: {error}");
-        }
+        let rollback = tx.rollback().await;
         execution?;
+        if let Err(error) = rollback {
+            // A failed rollback can leave the preview's writes committed —
+            // never report a clean rollback that did not happen.
+            log::error!("write-preview rollback failed: {error}");
+            return Err(anyhow::anyhow!(
+                "Write preview rollback failed; the previewed statements may have been committed: {error}"
+            ));
+        }
         Ok(results)
     }
     async fn execute_parameterized_query(
@@ -761,36 +767,43 @@ impl DatabaseDriver for SqliteDriver {
         search: Option<&str>,
         limit: u32,
     ) -> Result<Vec<LookupValue>> {
+        // Identifiers are quoted (never interpolated raw) so a name like
+        // `weird"table` cannot break out of the query; only the LIKE pattern
+        // and LIMIT travel as bound values.
+        let column_sql = quote_sqlite_identifier(referenced_column)?;
+        let table_sql = referenced_table
+            .split('.')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .map(quote_sqlite_identifier)
+            .collect::<Result<Vec<_>>>()?
+            .join(".");
         let label_expr = if !display_columns.is_empty() {
             let cols = display_columns
                 .iter()
-                .map(|c| format!("\"{}\"", c))
-                .collect::<Vec<_>>()
+                .map(|c| quote_sqlite_identifier(c))
+                .collect::<Result<Vec<_>>>()?
                 .join(", ");
-            format!("COALESCE({})", cols)
+            format!("COALESCE({cols})")
         } else {
-            format!("\"{}\"", referenced_column)
+            column_sql.clone()
         };
 
         let pool = &self.pool;
+        let limit = i64::from(limit.min(10_000));
 
         if let Some(search_term) = search {
             let like_pattern = format!("%{}%", search_term);
             let sql = format!(
-                "SELECT \"{}\" AS value, {} AS label \
-                 FROM \"{}\" \
-                 WHERE CAST(\"{}\" AS TEXT) LIKE ?1 \
-                 ORDER BY \"{}\" \
-                 LIMIT {}",
-                referenced_column,
-                label_expr,
-                referenced_table,
-                referenced_column,
-                referenced_column,
-                limit
+                "SELECT {column_sql} AS value, {label_expr} AS label \
+                 FROM {table_sql} \
+                 WHERE CAST({column_sql} AS TEXT) LIKE ?1 \
+                 ORDER BY {column_sql} \
+                 LIMIT ?2"
             );
             let rows: Vec<(serde_json::Value, String)> = sqlx::query_as(&sql)
                 .bind(&like_pattern)
+                .bind(limit)
                 .fetch_all(pool)
                 .await?;
             return Ok(rows
@@ -800,13 +813,13 @@ impl DatabaseDriver for SqliteDriver {
         }
 
         let sql = format!(
-            "SELECT \"{}\" AS value, {} AS label \
-             FROM \"{}\" \
-             ORDER BY \"{}\" \
-             LIMIT {}",
-            referenced_column, label_expr, referenced_table, referenced_column, limit
+            "SELECT {column_sql} AS value, {label_expr} AS label \
+             FROM {table_sql} \
+             ORDER BY {column_sql} \
+             LIMIT ?1"
         );
-        let rows: Vec<(serde_json::Value, String)> = sqlx::query_as(&sql).fetch_all(pool).await?;
+        let rows: Vec<(serde_json::Value, String)> =
+            sqlx::query_as(&sql).bind(limit).fetch_all(pool).await?;
         Ok(rows
             .into_iter()
             .map(|(value, label)| LookupValue { value, label })

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { emitAppToast } from "../utils/app-toast";
 
 export interface FileEventPayload {
   path: string;
@@ -33,7 +34,11 @@ export function useLinkedFolders() {
       const result = await invoke<string[]>("get_linked_folders");
       setFolders(result);
     } catch (e) {
-      console.error("Failed to get linked folders:", e);
+      emitAppToast({
+        tone: "error",
+        title: "Could not load linked folders",
+        description: e instanceof Error ? e.message : String(e),
+      });
     }
   }, []);
 
@@ -43,8 +48,11 @@ export function useLinkedFolders() {
         await invoke("add_linked_folder", { path });
         await fetchFolders();
       } catch (e) {
-        console.error("Failed to add linked folder:", e);
-        throw e;
+        emitAppToast({
+          tone: "error",
+          title: "Could not link the folder",
+          description: e instanceof Error ? e.message : String(e),
+        });
       }
     },
     [fetchFolders],
@@ -56,8 +64,11 @@ export function useLinkedFolders() {
         await invoke("remove_linked_folder", { path });
         await fetchFolders();
       } catch (e) {
-        console.error("Failed to remove linked folder:", e);
-        throw e;
+        emitAppToast({
+          tone: "error",
+          title: "Could not unlink the folder",
+          description: e instanceof Error ? e.message : String(e),
+        });
       }
     },
     [fetchFolders],

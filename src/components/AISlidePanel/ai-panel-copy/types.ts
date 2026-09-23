@@ -66,6 +66,12 @@ export interface AIPanelCopy {
     /** Chip button that drops every queued message. */
     queuedClear: string;
   };
+  /** Warning appended to an answer whose proposed SQL failed sandbox
+   *  validation; `{error}` carries the validator's message. */
+  sqlValidationWarning: string;
+  /** Notice on a finished run that hit the token budget: the answer may be
+   *  truncated because the loop was forced to finish. */
+  tokenBudgetReached: string;
   /** Guardrail rules manager modal. */
   rules: {
     title: string;

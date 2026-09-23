@@ -1,3 +1,4 @@
+use crate::commands::safe_mode::SafeModeState;
 use crate::database::capabilities::DriverCapability;
 use crate::database::manager::DatabaseManager;
 use crate::database::models::QueryResult;
@@ -24,6 +25,10 @@ pub struct UserRolePrincipal {
 pub struct UserRoleSnapshot {
     pub engine: String,
     pub principals: Vec<UserRolePrincipal>,
+    /// True when the privilege/membership catalog queries FAILED (as opposed
+    /// to returning zero rows): the UI must not render "no privileges" for a
+    /// principal whose grants simply could not be read.
+    pub privileges_unavailable: bool,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -80,10 +85,21 @@ pub async fn get_user_role_snapshot(
                 .execute_query(POSTGRES_PRINCIPALS_SQL)
                 .await
                 .map_err(|error| error.to_string())?;
-            let privileges = driver.execute_query(POSTGRES_PRIVILEGES_SQL).await.ok();
+            // A failed privilege read is NOT "no privileges": surface the
+            // failure so the UI can say the grant list is unavailable
+            // instead of showing every principal as privilege-less.
+            let privileges = driver
+                .execute_query(POSTGRES_PRIVILEGES_SQL)
+                .await
+                .map_err(|error| {
+                    log::warn!("user/role privilege query failed: {error}");
+                    error.to_string()
+                })
+                .ok();
             Ok(UserRoleSnapshot {
                 engine,
-                principals: postgres_principals(result, privileges),
+                principals: postgres_principals(result, privileges.clone()),
+                privileges_unavailable: privileges.is_none(),
             })
         }
         "mysql" | "mariadb" => {
@@ -91,7 +107,14 @@ pub async fn get_user_role_snapshot(
                 .execute_query(MYSQL_PRINCIPALS_SQL)
                 .await
                 .map_err(|error| error.to_string())?;
-            let privileges = driver.execute_query(MYSQL_PRIVILEGES_SQL).await.ok();
+            let privileges = driver
+                .execute_query(MYSQL_PRIVILEGES_SQL)
+                .await
+                .map_err(|error| {
+                    log::warn!("user/role privilege query failed: {error}");
+                    error.to_string()
+                })
+                .ok();
             let role_memberships = driver
                 .execute_query(if engine == "mariadb" {
                     MARIADB_ROLE_MEMBERSHIPS_SQL
@@ -99,10 +122,15 @@ pub async fn get_user_role_snapshot(
                     MYSQL_ROLE_MEMBERSHIPS_SQL
                 })
                 .await
+                .map_err(|error| {
+                    log::warn!("user/role membership query failed: {error}");
+                    error.to_string()
+                })
                 .ok();
             Ok(UserRoleSnapshot {
                 engine,
-                principals: mysql_principals(users, privileges, role_memberships),
+                principals: mysql_principals(users, privileges.clone(), role_memberships.clone()),
+                privileges_unavailable: privileges.is_none() || role_memberships.is_none(),
             })
         }
         _ => Err(
@@ -134,6 +162,7 @@ pub async fn apply_user_role_change(
     request: UserRoleChangeRequest,
     confirmation_phrase: String,
     db_manager: State<'_, DatabaseManager>,
+    safe_mode: State<'_, SafeModeState>,
 ) -> Result<UserRoleSnapshot, String> {
     db_manager.assert_write_allowed(&connection_id).await?;
     if confirmation_phrase.trim() != APPLY_CONFIRMATION {
@@ -143,12 +172,21 @@ pub async fn apply_user_role_change(
         .require_capability(&connection_id, DriverCapability::Administration)
         .await
         .map_err(|e| e.to_string())?;
+    let database_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .ok();
     let driver = db_manager
         .get_driver(&connection_id)
         .await
         .map_err(|error| error.to_string())?;
     let statements = build_executable_statements(driver.driver_name(), &request)
         .map_err(|error| error.to_string())?;
+    // GRANT/REVOKE/CREATE USER bypass the SQL editor, so Safe Mode never saw
+    // them — gate the real statements like every other mutation path.
+    safe_mode
+        .ensure_mutation_allowed(&connection_id, &statements.join(";\n"), database_type)
+        .await?;
     for statement in statements {
         driver
             .execute_query(&statement)

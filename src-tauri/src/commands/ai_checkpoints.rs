@@ -573,17 +573,50 @@ pub async fn restore_database_checkpoint(
                     format!("[{schema}].[{}]", t.name)
                 })
                 .collect();
-            // Two passes: first try all drops, then retry failures (FK order).
+            // Two passes: first try all drops, then retry only the failures
+            // (FK order). A table that still refuses to drop after both
+            // passes is reported in the restore warnings — silently
+            // discarding the error would let the replay hit a leftover table
+            // with no hint why.
+            let mut pending: Vec<&String> = table_refs.iter().collect();
             for pass in 0..2 {
-                for table_ref in &table_refs {
-                    let _ = driver
+                let mut still_pending = Vec::new();
+                for table_ref in &pending {
+                    if let Err(error) = driver
                         .execute_query(&format!("DROP TABLE IF EXISTS {table_ref};"))
-                        .await;
+                        .await
+                    {
+                        log::warn!(
+                            "pre-drop of {table_ref} failed (pass {}): {error}",
+                            pass + 1
+                        );
+                        still_pending.push(*table_ref);
+                    }
+                }
+                pending = still_pending;
+                if pending.is_empty() {
+                    break;
                 }
                 if pass == 0 {
                     // Small delay to let deferred constraint checks settle.
                     tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
+            }
+            if !pending.is_empty() {
+                let warning = format!(
+                    "Pre-drop could not remove {} table(s) ({}); the replay may fail on leftover objects.",
+                    pending.len(),
+                    pending
+                        .iter()
+                        .map(|name| name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+                log::warn!("{warning}");
+                pre_restore_warning = Some(match pre_restore_warning {
+                    Some(existing) => format!("{existing} {warning}"),
+                    None => warning,
+                });
             }
         }
         drop(driver);

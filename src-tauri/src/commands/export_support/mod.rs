@@ -3,9 +3,8 @@
 //! rendering in `rows`; both are re-exported so callers keep one flat surface.
 
 use super::export::{
-    DatabaseExportFormat, DatabaseExportSnapshot, DatabaseExportSnapshotMeta,
-    DatabaseExportSnapshotTable, ExportTableBundle, SqlExportPayload, EXPORT_BATCH_SIZE,
-    EXPORT_BATCH_TIMEOUT, EXPORT_METADATA_TIMEOUT,
+    DatabaseExportFormat, DatabaseExportSnapshotMeta, ExportTableBundle, SqlExportPayload,
+    EXPORT_BATCH_SIZE, EXPORT_BATCH_TIMEOUT, EXPORT_METADATA_TIMEOUT,
 };
 use crate::database::driver::DatabaseDriver;
 use crate::database::models::{DatabaseType, ForeignKeyInfo, TableInfo};
@@ -14,7 +13,8 @@ use chrono::Utc;
 use futures_util::TryStreamExt;
 use rfd::FileDialog;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use tokio::io::AsyncWriteExt;
 use tokio::time::timeout;
 
 mod rows;
@@ -170,15 +170,19 @@ pub(super) async fn build_sql_export(
             // table up front keeps the ONs from shadowing each other.
             output.push_str(&format!("SET IDENTITY_INSERT {table_ref} ON;\n"));
         }
+        // Page over a stable ORDER BY (PK, else first column) so offset
+        // paging cannot skip or duplicate rows under concurrent writes.
+        // Drivers with native deterministic paging (Cassandra page state,
+        // OpenSearch scroll, Redis scans) get None and keep their order.
+        let order_by = stable_export_order_column(db_type, bundle);
         let mut batches = driver.export_table_rows(
             &bundle.identifier,
             database,
             EXPORT_BATCH_SIZE,
-            None,
+            order_by.as_deref(),
             None,
             None,
         );
-
         while let Some(batch) = timeout(EXPORT_BATCH_TIMEOUT, batches.try_next())
             .await
             .with_context(|| format!("Exporting rows from '{}' timed out", bundle.identifier))?
@@ -249,10 +253,15 @@ pub(super) async fn build_sql_export(
     })
 }
 
-pub(super) async fn build_json_snapshot(
+/// Streams a JSON snapshot straight to `target`: each table's rows are
+/// serialized batch-by-batch so the whole database is never materialized in
+/// one Vec. Returns `(table_count, row_count)`.
+pub(super) async fn stream_json_snapshot(
     driver: &dyn DatabaseDriver,
     database: Option<&str>,
-) -> Result<DatabaseExportSnapshot> {
+    db_type: DatabaseType,
+    target: &Path,
+) -> Result<(usize, u64)> {
     let table_bundles = collect_export_tables(driver, database).await?;
     let schema_objects = timeout(
         EXPORT_METADATA_TIMEOUT,
@@ -260,52 +269,112 @@ pub(super) async fn build_json_snapshot(
     )
     .await
     .context("Listing schema objects timed out during export")??;
-    let engine = driver.driver_name().to_string();
+    let meta = DatabaseExportSnapshotMeta {
+        exported_at: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        engine: driver.driver_name().to_string(),
+        database: database.map(str::to_string),
+        format: "json-snapshot".to_string(),
+    };
 
-    let mut snapshot_tables = Vec::with_capacity(table_bundles.len());
-    for bundle in table_bundles {
-        let mut rows = Vec::new();
+    let mut file = tokio::fs::File::create(target)
+        .await
+        .context("Failed to create the export file")?;
+
+    let mut chunk = Vec::new();
+    serde_json::to_writer(
+        &mut chunk,
+        &serde_json::json!({ "meta": meta, "schemaObjects": schema_objects }),
+    )
+    .context("Failed to serialize the export snapshot")?;
+    // `json!` produces a complete object; strip the closing brace so the
+    // tables array can be appended incrementally.
+    chunk.pop();
+    chunk.extend_from_slice(b",\"tables\":[");
+    file.write_all(&chunk)
+        .await
+        .context("Failed to write the export file")?;
+
+    let mut row_count = 0_u64;
+    for (table_index, bundle) in table_bundles.iter().enumerate() {
+        chunk.clear();
+        if table_index > 0 {
+            chunk.push(b',');
+        }
+        serde_json::to_writer(
+            &mut chunk,
+            &serde_json::json!({
+                "name": &bundle.info.name,
+                "schema": &bundle.info.schema,
+                "tableType": &bundle.info.table_type,
+                "structure": &bundle.structure,
+            }),
+        )
+        .context("Failed to serialize the export snapshot")?;
+        chunk.pop();
+        chunk.extend_from_slice(b",\"rows\":[");
+        file.write_all(&chunk)
+            .await
+            .context("Failed to write the export file")?;
+
+        let order_by = stable_export_order_column(db_type, bundle);
         let mut batches = driver.export_table_rows(
             &bundle.identifier,
             database,
             EXPORT_BATCH_SIZE,
-            None,
+            order_by.as_deref(),
             None,
             None,
         );
-
+        let mut first_row = true;
         while let Some(batch) = timeout(EXPORT_BATCH_TIMEOUT, batches.try_next())
             .await
             .with_context(|| format!("Exporting rows from '{}' timed out", bundle.identifier))?
             .with_context(|| format!("Exporting rows from '{}' failed", bundle.identifier))?
         {
-            rows.extend(
-                batch
-                    .rows
-                    .iter()
-                    .map(|row| row_to_object(&batch.columns, row)),
-            );
+            chunk.clear();
+            for row in &batch.rows {
+                if !first_row {
+                    chunk.push(b',');
+                }
+                first_row = false;
+                serde_json::to_writer(&mut chunk, &row_to_object(&batch.columns, row))
+                    .context("Failed to serialize the export snapshot")?;
+            }
+            row_count += batch.rows.len() as u64;
+            file.write_all(&chunk)
+                .await
+                .context("Failed to write the export file")?;
         }
-
-        snapshot_tables.push(DatabaseExportSnapshotTable {
-            name: bundle.info.name,
-            schema: bundle.info.schema,
-            table_type: bundle.info.table_type,
-            structure: bundle.structure,
-            rows,
-        });
+        file.write_all(b"]}")
+            .await
+            .context("Failed to write the export file")?;
     }
 
-    Ok(DatabaseExportSnapshot {
-        meta: DatabaseExportSnapshotMeta {
-            exported_at: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
-            engine,
-            database: database.map(str::to_string),
-            format: "json-snapshot".to_string(),
-        },
-        schema_objects,
-        tables: snapshot_tables,
-    })
+    file.write_all(b"]}")
+        .await
+        .context("Failed to write the export file")?;
+    file.flush()
+        .await
+        .context("Failed to finish the export file")?;
+    Ok((table_bundles.len(), row_count))
+}
+
+/// Column an unordered export should page over: the primary key when the
+/// table has one, else the first column. Engines whose export stream is
+/// already deterministic (Cassandra page state, OpenSearch scroll, Redis
+/// keyspace scans) return None and keep their native order.
+fn stable_export_order_column(db_type: DatabaseType, bundle: &ExportTableBundle) -> Option<String> {
+    match db_type {
+        DatabaseType::MongoDB => Some("_id".to_string()),
+        DatabaseType::Cassandra | DatabaseType::OpenSearch | DatabaseType::Redis => None,
+        _ => bundle
+            .structure
+            .columns
+            .iter()
+            .find(|column| column.is_primary_key)
+            .or_else(|| bundle.structure.columns.first())
+            .map(|column| column.name.clone()),
+    }
 }
 
 pub(super) async fn collect_export_tables(

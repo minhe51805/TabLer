@@ -110,7 +110,7 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
         }
       }
     } catch (e) {
-      setError(`Failed to open file dialog: ${e}`);
+      setError(bundleCopy.import.errorOpenDialog(String(e)));
     }
   };
 
@@ -138,7 +138,7 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
       const uiPrefsWritten = res.uiPrefs ? applyUiPrefs(res.uiPrefs) : 0;
       setResult({ success: true, count: total, counts, uiPrefsWritten });
     } catch (e) {
-      setError(`Import failed: ${e}`);
+      setError(bundleCopy.import.errorImportFailed(String(e)));
     } finally {
       setIsLoading(false);
     }
@@ -181,7 +181,7 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
         }
       }
     } catch (e) {
-      setError(`Failed to open file dialog: ${e}`);
+      setError(bundleCopy.import.errorOpenDialog(String(e)));
     }
   };
 
@@ -206,7 +206,7 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg.includes("Decryption failed") || msg.includes("Incorrect password")) {
-        setError("Incorrect password. Please try again.");
+        setError(bundleCopy.import.errorIncorrectPassword);
       } else {
         setError(msg);
       }
@@ -236,7 +236,7 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
       onImport();
       setResult({ success: true, count: selectedForImport.size });
     } catch (e) {
-      setError(`Import failed: ${e}`);
+      setError(bundleCopy.import.errorImportFailed(String(e)));
     } finally {
       setIsLoading(false);
     }
@@ -253,26 +253,32 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
     if (result?.success) onClose();
   };
 
+  // Backdrop dismiss mirrors the other modals; it stays inert while a
+  // decrypt/import is in flight so a stray click cannot abandon the write.
+  const handleBackdropClick = () => {
+    if (isLoading || isDecrypting) return;
+    if (result && !result.success) return;
+    onClose();
+  };
+
   return (
-    <div className="cex-backdrop">
-      <div className="cex-modal">
+    <div className="cex-backdrop" onClick={handleBackdropClick}>
+      <div className="cex-modal" onClick={(event) => event.stopPropagation()}>
         {/* Header */}
         <div className="cex-header">
           <div className="cex-header-copy">
             <h2 className="cex-title">
-              {bundlePreview ? bundleCopy.import.title : "Import Connections"}
+              {bundlePreview ? bundleCopy.import.title : bundleCopy.import.connectionsTitle}
             </h2>
             <p className="cex-subtitle">
-              {bundlePreview
-                ? bundleCopy.import.subtitle
-                : "Load connections from an encrypted TableR file"}
+              {bundlePreview ? bundleCopy.import.subtitle : bundleCopy.import.connectionsSubtitle}
             </p>
           </div>
           <div className="cex-header-actions">
             {result ? (
               <button type="button" onClick={handleClose} className="cex-btn-primary">
                 <Check className="w-4 h-4" />
-                Done
+                {bundleCopy.common.done}
               </button>
             ) : (
               <>
@@ -282,7 +288,7 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
                   className="cex-btn-cancel"
                   disabled={isLoading || isDecrypting}
                 >
-                  Cancel
+                  {bundleCopy.common.cancel}
                 </button>
                 {bundlePreview ? (
                   <button
@@ -308,12 +314,11 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
                     className="cex-btn-primary"
                   >
                     {isLoading ? (
-                      "Importing..."
+                      bundleCopy.import.importWorking
                     ) : (
                       <>
                         <Check className="w-4 h-4" />
-                        Import {selectedForImport.size} Connection
-                        {selectedForImport.size !== 1 ? "s" : ""}
+                        {bundleCopy.import.importButton(selectedForImport.size)}
                       </>
                     )}
                   </button>
@@ -324,7 +329,9 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
                     disabled={!filePath || isBundleFile || !password || isDecrypting}
                     className="cex-btn-primary"
                   >
-                    {isDecrypting ? "Decrypting..." : "Open File"}
+                    {isDecrypting
+                      ? bundleCopy.import.decryptWorking
+                      : bundleCopy.import.decryptButton}
                   </button>
                 )}
               </>
@@ -340,10 +347,10 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
               <p>
                 {result.counts
                   ? `${bundleCopy.import.done}: ${result.counts.connections} ${bundleCopy.import.sections.connections}, ${result.counts.sqlFavorites} ${bundleCopy.import.sections.sqlFavorites}, ${result.counts.schedules} ${bundleCopy.import.sections.schedules}, ${result.counts.aiProviders} ${bundleCopy.import.sections.aiProviders}${result.uiPrefsWritten ? `, ${result.uiPrefsWritten} ${bundleCopy.import.uiPrefsWritten} — ${bundleCopy.import.uiPrefsRestart}` : ""}`
-                  : `Successfully imported ${result.count} connection${result.count !== 1 ? "s" : ""}`}
+                  : bundleCopy.import.importedMessage(result.count)}
               </p>
               <button onClick={handleClose} className="btn btn-primary">
-                Done
+                {bundleCopy.common.done}
               </button>
             </div>
           </div>
@@ -447,7 +454,7 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
               <p>
                 {externalFilePath
                   ? bundleCopy.import.external.passwordNote
-                  : "Passwords were not exported. Enter the database password for each connection you want to import."}
+                  : bundleCopy.import.passwordNote}
               </p>
             </div>
 
@@ -490,7 +497,7 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
                       type={showPassword ? "text" : "password"}
                       value={passwords[i] || ""}
                       onChange={(e) => setPasswords((p) => ({ ...p, [i]: e.target.value }))}
-                      placeholder="Database password (optional)"
+                      placeholder={bundleCopy.import.passwordPlaceholder}
                       className="input flex-1"
                     />
                     <button
@@ -520,13 +527,11 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
           <div className="cex-body cex-body-stacked">
             <>
               {/* File picker */}
-              <span className="cex-section-label">Source file</span>
+              <span className="cex-section-label">{bundleCopy.import.sourceFile}</span>
               <div className="cex-dropzone" onClick={handlePickFile}>
                 <FileUp />
                 <p className="cex-dropzone-title">
-                  {filePath
-                    ? filePath.split(/[/\\]/).pop()
-                    : "Click to select a .tabler-connections or .tabler-bundle file"}
+                  {filePath ? filePath.split(/[/\\]/).pop() : bundleCopy.import.dropzonePick}
                 </p>
                 <p className="cex-dropzone-hint">{bundleCopy.import.dropzoneHint}</p>
               </div>
@@ -540,14 +545,16 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
                 style={{ alignSelf: "flex-start" }}
               >
                 <FileUp className="w-4 h-4" />
-                {isDecrypting ? "Reading file..." : bundleCopy.import.external.button}
+                {isDecrypting
+                  ? bundleCopy.import.externalWorking
+                  : bundleCopy.import.external.button}
               </button>
 
               {filePath && !isBundleFile && (
                 <div className="cex-fieldset">
                   <div className="connection-form-field">
                     <label className="form-label uppercase tracking-wide">
-                      Decryption Password <span className="text-red-400">*</span>
+                      {bundleCopy.import.decryptLabel} <span className="text-red-400">*</span>
                     </label>
                     <div className="connection-form-password">
                       <input
@@ -557,7 +564,7 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
                         onKeyDown={(e) => {
                           if (e.key === "Enter") void handleDecrypt();
                         }}
-                        placeholder="Enter the export password"
+                        placeholder={bundleCopy.import.decryptPlaceholder}
                         className="input h-11 pr-11"
                         autoFocus
                       />

@@ -114,8 +114,6 @@ fn ast_statement_kind(statement: &sqlparser::ast::Statement) -> SqlStatementKind
         | S::AlterRole { .. }
         | S::AlterPolicy { .. }
         | S::AlterConnector { .. }
-        | S::AttachDatabase { .. }
-        | S::AttachDuckDBDatabase { .. }
         | S::DetachDuckDBDatabase { .. }
         | S::Drop { .. }
         | S::DropFunction { .. }
@@ -140,6 +138,11 @@ fn ast_statement_kind(statement: &sqlparser::ast::Statement) -> SqlStatementKind
         | S::RenameTable(_)
         | S::Comment { .. } => SqlStatementKind::Schema,
         S::Set(_)
+        // ATTACH mounts an external database file/URI into the session — a
+        // file/network read that must not pass the read-only boundary, so it
+        // is Session (blocked by the sandbox), not Schema.
+        | S::AttachDatabase { .. }
+        | S::AttachDuckDBDatabase { .. }
         | S::Use(_)
         | S::Grant { .. }
         | S::Deny(_)
@@ -357,15 +360,34 @@ pub fn detect_dangerous_capability(
     sql: &str,
     _database_type: Option<DatabaseType>,
 ) -> Option<String> {
-    let normalized = sql
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_ascii_uppercase();
-    if normalized.is_empty() {
-        return None;
+    // Comments are stripped BEFORE matching because `pg_/**/read_file`,
+    // `INTO/**/OUTFILE`, `xp_/**/cmdshell`, and `LOAD#x\nDATA INFILE` all
+    // evade a scan of the raw text. Two views are needed: deleting comments
+    // outright joins tokens split by a comment (`pg_/**/read_file` →
+    // `pg_read_file`), while substituting a space keeps clause phrases intact
+    // (`INTO/**/OUTFILE` → `INTO OUTFILE`). Checking both catches either
+    // evasion shape.
+    let joined = strip_sql_comments(sql, "");
+    let spaced = strip_sql_comments(sql, " ");
+    for source in [joined.as_str(), spaced.as_str()] {
+        let normalized = source
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .to_ascii_uppercase();
+        if normalized.is_empty() {
+            continue;
+        }
+        if let Some(reason) = detect_dangerous_capability_normalized(&normalized) {
+            return Some(reason);
+        }
     }
+    None
+}
 
+/// Capability matchers over whitespace-collapsed, uppercased SQL. The caller
+/// must strip comments first (see [`detect_dangerous_capability`]).
+fn detect_dangerous_capability_normalized(normalized: &str) -> Option<String> {
     // Clause-style capabilities.
     if normalized.contains("INTO OUTFILE") || normalized.contains("INTO DUMPFILE") {
         return Some("writes to a server-side file via INTO OUTFILE/DUMPFILE".to_string());
@@ -389,7 +411,7 @@ pub fn detect_dangerous_capability(
 
     // Function-call-style capabilities.
     for name in DANGEROUS_SQL_FUNCTIONS {
-        if contains_function_call(&normalized, name) {
+        if contains_function_call(normalized, name) {
             return Some(format!(
                 "calls the file/network/OS function {}()",
                 name.to_ascii_lowercase()
@@ -399,7 +421,7 @@ pub fn detect_dangerous_capability(
 
     // Bare-token capabilities (extended procedures / ad-hoc remote sources).
     for keyword in DANGEROUS_SQL_KEYWORDS {
-        if contains_bare_token(&normalized, keyword) {
+        if contains_bare_token(normalized, keyword) {
             return Some(format!(
                 "invokes the extended procedure / remote source {}",
                 keyword.to_ascii_lowercase()
@@ -581,6 +603,136 @@ fn strip_leading_comments(statement: &str) -> &str {
         }
         return remaining;
     }
+}
+
+/// Removes `--`, `#`, and `/* */` comments, substituting `replacement` for
+/// each comment body. String literals (`'…'`, `"…"`, `` `…` ``) and
+/// dollar-quoted bodies keep only their delimiters — the contents are dropped,
+/// so a literal that merely mentions a dangerous name ('xp_cmdshell …') can
+/// never false-positive, and a comment inside a literal is never mistaken for
+/// a real comment. Mirrors the tokenizer in [`split_sql_statements`].
+pub(crate) fn strip_sql_comments(sql: &str, replacement: &str) -> String {
+    let mut out = String::with_capacity(sql.len());
+    let mut in_string = false;
+    let mut string_char = '\0';
+    let mut in_line_comment = false;
+    let mut in_block_comment = false;
+    let mut dollar_quote_tag: Option<String> = None;
+    let len = sql.len();
+    let mut index = 0usize;
+
+    while index < len {
+        let rest = match sql.get(index..) {
+            Some(value) => value,
+            None => break,
+        };
+        let mut chars = rest.chars();
+        let Some(ch) = chars.next() else {
+            break;
+        };
+        let ch_len = ch.len_utf8();
+        let next = chars.next();
+        let next_len = next.map(char::len_utf8).unwrap_or(0);
+
+        if in_line_comment {
+            if ch == '\n' {
+                in_line_comment = false;
+                out.push(ch);
+            }
+            index += ch_len;
+            continue;
+        }
+
+        if in_block_comment {
+            if ch == '*' && next == Some('/') {
+                in_block_comment = false;
+                index += ch_len + next_len;
+            } else {
+                index += ch_len;
+            }
+            continue;
+        }
+        if let Some(tag) = dollar_quote_tag.as_ref() {
+            if sql[index..].starts_with(tag) {
+                out.push_str(tag);
+                index += tag.len();
+                dollar_quote_tag = None;
+            } else {
+                // Dollar-quoted body contents are masked like string literals.
+                index += ch_len;
+            }
+            continue;
+        }
+
+        if !in_string && ch == '-' && next == Some('-') {
+            in_line_comment = true;
+            out.push_str(replacement);
+            index += ch_len + next_len;
+            continue;
+        }
+
+        // `#` opens a line comment in the MySQL family; elsewhere it cannot
+        // appear in valid SQL anyway, so stripping it cannot hide a real call.
+        if !in_string && ch == '#' {
+            in_line_comment = true;
+            out.push_str(replacement);
+            index += ch_len;
+            continue;
+        }
+
+        if !in_string && ch == '/' && next == Some('*') {
+            in_block_comment = true;
+            out.push_str(replacement);
+            index += ch_len + next_len;
+            continue;
+        }
+
+        if !in_string && ch == '$' {
+            if let Some(tag) = match_dollar_quote_tag(sql, index) {
+                dollar_quote_tag = Some(tag.clone());
+                out.push_str(&tag);
+                index += tag.len();
+                continue;
+            }
+        }
+
+        if in_string {
+            if ch == '\\' && next.is_some() {
+                // Escaped pair inside a literal: consume both, emit none.
+                index += ch_len + next_len;
+                continue;
+            }
+            if ch == string_char {
+                if next == Some(string_char) {
+                    // Doubled quote inside a literal: consume both, emit none.
+                    index += ch_len + next_len;
+                    continue;
+                }
+                in_string = false;
+                string_char = '\0';
+                out.push(ch);
+                index += ch_len;
+                continue;
+            }
+            // Literal contents are masked — a dangerous name inside a string
+            // is data, not a call site.
+            index += ch_len;
+            continue;
+        }
+
+        if matches!(ch, '\'' | '"' | '`') {
+            in_string = true;
+            string_char = ch;
+            out.push(ch);
+            index += ch_len;
+            continue;
+        }
+
+        out.push(ch);
+        index += ch_len;
+    }
+
+    out
 }
 
 fn match_dollar_quote_tag(sql: &str, start: usize) -> Option<String> {
@@ -980,5 +1132,68 @@ mod tests {
         assert!(
             detect_dangerous_capability("UNLOAD (SELECT * FROM t) TO 's3://b/'", None).is_some()
         );
+    }
+
+    #[test]
+    fn dangerous_capability_sees_through_comment_evasion() {
+        // Comments must not hide a capability: `/**/` splitting a name or a
+        // clause, `--`/`#` line comments doing the same.
+        let cases = [
+            "SELECT pg_/**/read_file('/etc/passwd')",
+            "SELECT * FROM users INTO/**/OUTFILE '/tmp/u.csv'",
+            "SELECT * FROM users INTO OUT/**/FILE '/tmp/u.csv'",
+            "EXEC xp_/**/cmdshell 'whoami'",
+            "LOAD# evade\nDATA INFILE '/etc/passwd' INTO TABLE t",
+            "SELECT * FROM read_/**/csv('/home/u/.ssh/id_rsa')",
+            "SELECT * FROM open/**/rowset(BULK '/etc/passwd', SINGLE_CLOB) AS x",
+        ];
+        for sql in cases {
+            assert!(
+                detect_dangerous_capability(sql, None).is_some(),
+                "comment evasion bypassed detection: {sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn dangerous_capability_ignores_comments_and_literals() {
+        // A dangerous name inside a comment or a string literal is not a call.
+        let clean = [
+            "SELECT id FROM users -- pg_read_file('/etc/passwd')",
+            "SELECT id FROM users /* INTO OUTFILE '/tmp/x' */",
+            "SELECT 'xp_cmdshell runs commands' AS note",
+            "SELECT $$ read_csv $$ AS body",
+        ];
+        for sql in clean {
+            assert!(
+                detect_dangerous_capability(sql, None).is_none(),
+                "false positive on comment/literal: {sql}"
+            );
+        }
+    }
+
+    #[test]
+    fn attach_classifies_as_session_not_schema() {
+        // ATTACH mounts an external file/URI — it must fail the read-only
+        // boundary (Session) instead of passing as a schema statement.
+        let sqlite = classify_sql("ATTACH DATABASE ':memory:' AS aux");
+        assert_eq!(
+            sqlite.statements[0].kind,
+            SqlStatementKind::Session,
+            "SQLite ATTACH should be Session"
+        );
+        assert!(!sqlite.read_only);
+        assert!(!sqlite.has_schema_mutation);
+
+        let duckdb = classify_sql_with_dialect(
+            "ATTACH 's3://bucket/db.duckdb' AS remote",
+            Some(DatabaseType::DuckDB),
+        );
+        assert_eq!(
+            duckdb.statements[0].kind,
+            SqlStatementKind::Session,
+            "DuckDB ATTACH should be Session"
+        );
+        assert!(!duckdb.read_only);
     }
 }

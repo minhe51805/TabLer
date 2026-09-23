@@ -13,6 +13,11 @@ import { tool as findValue } from "./find-value";
 import { tool as listSchemaObjects } from "./list-schema-objects";
 import { tool as listTables } from "./list-tables";
 import { tools as memory } from "./memory";
+import { tool as manageMetricsWidget } from "./manage-metrics-widget";
+import { tool as manageRule } from "./manage-rule";
+import { tool as manageSchedule } from "./manage-schedule";
+import { tool as manageSkill } from "./manage-skill";
+import { tool as openTableTab } from "./open-table-tab";
 import { tool as previewWrite } from "./preview-write";
 import { tool as proposeSeedData } from "./propose-seed-data";
 import { tool as readPage } from "./read-page";
@@ -23,6 +28,7 @@ import { tool as runReadonlySql } from "./run-readonly-sql";
 import { tool as sampleTableData } from "./sample-table-data";
 import { tool as searchSchema } from "./search-schema";
 import { tools as skills } from "./skills";
+import { tool as switchDatabase } from "./switch-database";
 import { tool as updatePlan } from "./update-plan";
 import type { AgentToolHandler, AgentToolModule } from "./shared";
 
@@ -47,6 +53,12 @@ const AGENT_TOOL_MODULES: AgentToolModule[] = [
   proposeSeedData,
   editQuerySql,
   ...memory,
+  manageMetricsWidget,
+  manageSchedule,
+  openTableTab,
+  manageSkill,
+  manageRule,
+  switchDatabase,
 ];
 
 export const AGENT_TOOL_HANDLERS: Record<string, AgentToolHandler> = Object.fromEntries(

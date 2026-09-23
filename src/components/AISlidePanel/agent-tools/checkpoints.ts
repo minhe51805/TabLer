@@ -1,4 +1,5 @@
 import { requestAICheckpointPick } from "../ai-checkpoint-picker";
+import { agentSqlToolBlockedMessage } from "../ai-agent-engine-gates";
 import { agentToolError, isRetryableAgentToolError } from "../agent-tool-executor-helpers";
 import type { AgentToolModule } from "./shared";
 
@@ -30,6 +31,12 @@ export const tools: AgentToolModule[] = [
   {
     name: "restore_checkpoint",
     handler: async (ctx, args) => {
+      // In-handler availability re-check: the catalog gate hides the tool, but a
+      // hallucinated call must still fail closed on engines whose checkpoints
+      // are SQL dumps they cannot replay (mongodb/redis/opensearch).
+      if (ctx.toolAvailability && !ctx.toolAvailability.checkpointRestore) {
+        return agentSqlToolBlockedMessage("restore_checkpoint", ctx.toolAvailability);
+      }
       if (ctx.restoreCallsUsed >= 1) {
         return agentToolError(
           "restore_checkpoint budget exhausted for this run (1 rollback max). The user can always run /rollback manually.",

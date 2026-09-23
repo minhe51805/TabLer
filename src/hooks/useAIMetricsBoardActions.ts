@@ -6,7 +6,7 @@ import { useConnectionStore } from "../stores/connectionStore";
 import { useGlobalErrorStore } from "../stores/globalErrorStore";
 import { useQueryStore } from "../stores/queryStore";
 import { useUIStore } from "../stores/uiStore";
-import type { TableInfo } from "../types";
+import type { MetricsBoardDefinition, MetricsWidgetDefinition, TableInfo } from "../types";
 import type {
   AIMetricsSchemaTableHint,
   OpenAIMetricsBoardCompletionDetail,
@@ -171,6 +171,57 @@ function normalizeWidgetTitle(value: string): string {
     .trim();
 }
 
+/**
+ * Merge the AI-computed board delta onto freshly-read stored boards.
+ *
+ * `staleTarget` is the board as it looked when the action started; `computed`
+ * is the board the action produced from it. Widgets the user changed or added
+ * since the snapshot are preserved: a widget is only overwritten when the
+ * computed version differs from the stale one (i.e. the AI touched it), and
+ * widgets present in the fresh board but absent from the stale snapshot are
+ * appended. A board the user deleted in the meantime is not resurrected.
+ */
+function mergeBoardDelta(
+  freshBoards: MetricsBoardDefinition[],
+  staleTarget: MetricsBoardDefinition | null,
+  computed: MetricsBoardDefinition,
+  created: boolean,
+): MetricsBoardDefinition[] {
+  if (created || !staleTarget) {
+    return freshBoards.some((board) => board.id === computed.id)
+      ? freshBoards.map((board) => (board.id === computed.id ? computed : board))
+      : [...freshBoards, computed];
+  }
+
+  const freshTarget = freshBoards.find((board) => board.id === staleTarget.id);
+  if (!freshTarget) return freshBoards;
+
+  const staleWidgets = new Map(staleTarget.widgets.map((widget) => [widget.id, widget]));
+  const mergedWidgets: MetricsWidgetDefinition[] = computed.widgets.map((computedWidget) => {
+    const staleWidget = staleWidgets.get(computedWidget.id);
+    const freshWidget = freshTarget.widgets.find((widget) => widget.id === computedWidget.id);
+    if (!staleWidget || !freshWidget) return computedWidget;
+    // Keep the user's concurrent edit unless the AI also changed the widget.
+    return JSON.stringify(computedWidget) !== JSON.stringify(staleWidget)
+      ? computedWidget
+      : freshWidget;
+  });
+  const seen = new Set(mergedWidgets.map((widget) => widget.id));
+  for (const freshWidget of freshTarget.widgets) {
+    if (!seen.has(freshWidget.id) && !staleWidgets.has(freshWidget.id)) {
+      mergedWidgets.push(freshWidget);
+    }
+  }
+
+  const mergedBoard: MetricsBoardDefinition = {
+    ...freshTarget,
+    name: computed.name !== staleTarget.name ? computed.name : freshTarget.name,
+    widgets: mergedWidgets,
+    updated_at: Date.now(),
+  };
+  return freshBoards.map((board) => (board.id === mergedBoard.id ? mergedBoard : board));
+}
+
 export function useAIMetricsBoardActions(language: string) {
   const { activeConnectionId, connections, currentDatabase } = useConnectionStore(
     useShallow((state) => ({
@@ -239,7 +290,6 @@ export function useAIMetricsBoardActions(language: string) {
           (targetBoardId && connectionBoards.find((board) => board.id === targetBoardId)) || null;
 
         let nextBoard: typeof targetBoard = null;
-        let nextAllBoards = allBoards;
         let didChange = false;
         let created = false;
         let addedCount = 0;
@@ -262,7 +312,7 @@ export function useAIMetricsBoardActions(language: string) {
           if (targetWidget) {
             const nextType = detail.editTargetType || targetWidget.type;
             const libraryItem = storage.getWidgetLibraryItem(nextType);
-            const nextWidget = {
+            const grownWidget = {
               ...targetWidget,
               type: nextType,
               title: detail.editTitle?.trim() || targetWidget.title,
@@ -276,12 +326,24 @@ export function useAIMetricsBoardActions(language: string) {
                   ? targetWidget.row_span
                   : Math.max(targetWidget.row_span, libraryItem.rowSpan),
             };
+            // Growing the span can push the widget off-grid or onto a
+            // neighbour — normalize and re-place when it no longer fits.
+            const normalized = storage.normalizeWidgetLayout(grownWidget);
+            const others = targetBoard.widgets.filter((widget) => widget.id !== targetWidget.id);
+            const nextWidget = storage.canPlaceWidget(others, normalized, targetWidget.id)
+              ? normalized
+              : {
+                  ...normalized,
+                  ...storage.findFirstAvailablePosition(others, normalized),
+                };
             const changed =
               nextWidget.type !== targetWidget.type ||
               nextWidget.title !== targetWidget.title ||
               nextWidget.query !== targetWidget.query ||
               nextWidget.col_span !== targetWidget.col_span ||
-              nextWidget.row_span !== targetWidget.row_span;
+              nextWidget.row_span !== targetWidget.row_span ||
+              nextWidget.grid_x !== targetWidget.grid_x ||
+              nextWidget.grid_y !== targetWidget.grid_y;
             nextBoard = changed
               ? {
                   ...targetBoard,
@@ -291,9 +353,6 @@ export function useAIMetricsBoardActions(language: string) {
                   updated_at: Date.now(),
                 }
               : targetBoard;
-            nextAllBoards = changed
-              ? allBoards.map((board) => (board.id === targetBoard.id ? nextBoard! : board))
-              : allBoards;
             didChange = changed;
             addedCount = changed ? 1 : 0;
             addedTitles = [nextWidget.title];
@@ -333,9 +392,6 @@ export function useAIMetricsBoardActions(language: string) {
               detail.mode === "rebuild" ||
               addedCount > 0 ||
               result.board.name.trim() !== targetBoard.name.trim();
-            nextAllBoards = didChange
-              ? allBoards.map((board) => (board.id === result.board.id ? result.board : board))
-              : allBoards;
             if (!didChange) nextBoard = targetBoard;
           }
         }
@@ -354,13 +410,9 @@ export function useAIMetricsBoardActions(language: string) {
             addedTitles = appended.addedTitles;
             addedWidgetIds = appended.addedWidgetIds;
             didChange = appended.addedCount > 0;
-            nextAllBoards = didChange
-              ? allBoards.map((board) => (board.id === appended.board.id ? appended.board : board))
-              : allBoards;
             if (!didChange) nextBoard = targetBoard;
           }
         }
-
         if (!nextBoard && detail.aiWidgets?.length) {
           const board = templates.createAIMetricsBoardFromWidgets({
             widgets: detail.aiWidgets,
@@ -371,7 +423,6 @@ export function useAIMetricsBoardActions(language: string) {
           });
           if (board) {
             nextBoard = board;
-            nextAllBoards = [...allBoards, board];
             didChange = true;
             created = true;
             addedCount = board.widgets.length;
@@ -389,7 +440,6 @@ export function useAIMetricsBoardActions(language: string) {
             schemaHints,
           });
           if (nextBoard) {
-            nextAllBoards = [...allBoards, nextBoard];
             didChange = true;
             created = true;
           }
@@ -415,7 +465,13 @@ export function useAIMetricsBoardActions(language: string) {
         }
 
         if (didChange) {
-          storage.writeStoredBoards(nextAllBoards);
+          // Re-read right before writing: the schema-hint collection above can
+          // take seconds, and the user may have edited boards meanwhile.
+          // Apply only the computed delta onto the fresh state so concurrent
+          // user edits survive.
+          const freshBoards = storage.readStoredBoards();
+          const mergedBoards = mergeBoardDelta(freshBoards, targetBoard, nextBoard, created);
+          storage.writeStoredBoards(mergedBoards);
           window.dispatchEvent(
             new CustomEvent("metrics-boards-updated", {
               detail: { connectionId: targetConnectionId },

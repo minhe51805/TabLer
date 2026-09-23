@@ -11,10 +11,35 @@ import {
 import { summarizeAgentExplainPlanStructured } from "../ai-agent-grounding";
 import { classifyAgentExplainableStatement } from "../ai-agent-tools";
 import { agentToolError } from "../agent-tool-executor-helpers";
+import { classifySqlSafety } from "../../../utils/sql-safety";
 import type { AiProposalExplainResult } from "../../../stores/event-center";
 import { EventCenter } from "../../../stores/event-center";
 import { useUIStore } from "../../../stores/uiStore";
 import type { AgentToolModule } from "./shared";
+
+// Non-SQL engines: mongo shell write methods and Redis write commands must
+// never auto-run — `isMutatingStatement` only understands SQL keywords.
+const DOCUMENT_WRITE_METHOD =
+  /\b(?:insertOne|insertMany|updateOne|updateMany|deleteOne|deleteMany|replaceOne|drop|createCollection|renameCollection|dropDatabase|bulkWrite|findOneAndDelete|findOneAndReplace|findOneAndUpdate)\s*\(/i;
+const KV_WRITE_COMMAND =
+  /^\s*(?:SET|DEL|UNLINK|FLUSHDB|FLUSHALL|EXPIRE|RENAME|MOVE|COPY|SWAPDB|MSET|SETRANGE|APPEND|INCR|DECR|HSET|HDEL|LPUSH|RPUSH|LPOP|RPOP|SADD|SREM|ZADD|ZREM)\b/i;
+const DOCUMENT_READ_METHOD =
+  /\b(?:find|findOne|count|countDocuments|estimatedDocumentCount|aggregate|distinct|explain|listIndexes|stats|getIndexes)\s*\(/i;
+const KV_READ_COMMAND =
+  /^\s*(?:GET|MGET|EXISTS|TYPE|TTL|PTTL|STRLEN|GETRANGE|HGET|HGETALL|HLEN|HKEYS|HVALS|HMGET|HEXISTS|LRANGE|LLEN|LINDEX|SMEMBERS|SCARD|SISMEMBER|ZRANGE|ZCARD|ZSCORE|ZRANK|KEYS|SCAN|HSCAN|SSCAN|ZSCAN|INFO|DBSIZE|PING|TIME|RANDOMKEY|OBJECT|XINFO|XRANGE|XLEN|XREAD|JSON\.GET|JSON\.OBJKEYS|JSON\.OBJLEN|JSON\.TYPE|JSON\.ARRLEN|JSON\.ARRINDEX|FT\.SEARCH|FT\.INFO|FT\.EXPLAIN)\b/i;
+
+/** Auto-run is only safe for a statement we can positively classify as a
+    read on a non-SQL engine. Anything unrecognized stays manual. */
+export function nonSqlStatementIsSafeAutoRun(sql: string, queryModel: string | undefined) {
+  if (queryModel === "document") {
+    return DOCUMENT_READ_METHOD.test(sql) && !DOCUMENT_WRITE_METHOD.test(sql);
+  }
+  if (queryModel === "kv") {
+    return KV_READ_COMMAND.test(sql) && !KV_WRITE_COMMAND.test(sql);
+  }
+  // cql/search/unknown: no reliable read classifier — never auto-run.
+  return false;
+}
 
 export const tool: AgentToolModule = {
   name: "edit_query_sql",
@@ -58,7 +83,25 @@ export const tool: AgentToolModule = {
     }
     // Smoke-test gate: a mutating proposal that was never previewed in
     // THIS run is rejected. Reads go through the sandbox naturally.
-    const mutating = isMutatingStatement(sql) || isHighRiskStatement(sql);
+    const frontendMutating = isMutatingStatement(sql) || isHighRiskStatement(sql);
+    const queryModel = ctx.toolAvailability?.queryModel;
+    // CQL shares the SQL keyword surface, so the SQL mutating guard applies.
+    const sqlKeywordEngine = !queryModel || queryModel === "sql" || queryModel === "cql";
+    // The frontend keyword guard cannot see through `EXPLAIN ANALYZE <write>`
+    // or dialect constructs — the backend classifier is authoritative:
+    // anything it does not call read-only is treated as mutating (preview
+    // gate + checkpoint + no auto-run). A classifier failure keeps the
+    // frontend verdict; the proposal still lands in a reviewable tab.
+    let mutating = frontendMutating;
+    if (sqlKeywordEngine && !frontendMutating) {
+      try {
+        const decision = await classifySqlSafety(sql, ctx.dbType ?? null);
+        if (!decision.readOnly) mutating = true;
+      } catch {
+        // Fail-open: the review card still requires a human click to run.
+      }
+    }
+    const autoRun = sqlKeywordEngine ? !mutating : nonSqlStatementIsSafeAutoRun(sql, queryModel);
     if (mutating && !ctx.previewedMutatingStatements.has(normalizeStatementForGuard(sql))) {
       return agentToolError(
         "this proposal contains mutating SQL that was not previewed in this run. Call preview_write with the exact statement first, then re-issue edit_query_sql.",
@@ -104,7 +147,7 @@ export const tool: AgentToolModule = {
         );
       }
       const title = (reason || "AI query proposal").slice(0, 60);
-      const created = ctx.openQueryTab?.({ sql, title, autoRun: !mutating });
+      const created = ctx.openQueryTab?.({ sql, title, autoRun });
       if (!created) {
         return agentToolError("could not open a new AI Query tab (no active connection?).", {
           retryable: true,
@@ -119,9 +162,9 @@ export const tool: AgentToolModule = {
       return (
         [
           `No query tab was open — created a new AI Query tab "${title}" pre-filled with the proposed SQL.`,
-          mutating
-            ? "It is NOT auto-run: review the tab and press Run (Safe Mode will confirm)."
-            : "It auto-runs the read-only statement.",
+          autoRun
+            ? "It auto-runs the read-only statement."
+            : "It is NOT auto-run: review the tab and press Run (Safe Mode will confirm).",
         ].join(" ") +
         explainNote +
         (preWriteNote ? ` ${preWriteNote}` : "")

@@ -25,6 +25,23 @@ pub fn resolve_data_dir() -> Result<PathBuf> {
             if override_path.exists() && override_path.is_dir() {
                 return Ok(override_path);
             }
+            // The configured sync folder is gone (drive unplugged, share
+            // unmounted, folder deleted). Falling back silently makes the app
+            // open with an empty workspace — warn so the user knows why their
+            // data "disappeared" and where to look.
+            crate::storage_notices::push_storage_notice(crate::storage_notices::StorageNotice {
+                id: "sync-override-unavailable".to_string(),
+                kind: "warning".to_string(),
+                title: "Sync folder unavailable".to_string(),
+                message: format!(
+                    "The sync folder '{}' configured in .sync_override is not reachable, so \
+                         TableR is using the local data directory '{}' instead. Your synced \
+                         connections and workspace data will reappear once the folder is \
+                         available again.",
+                    override_path.display(),
+                    base_dir.display()
+                ),
+            });
         }
     }
 

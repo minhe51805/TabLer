@@ -88,7 +88,7 @@ describe("agent-insights-store", () => {
     useAgentInsightsStore.getState().recordRunInsights([insight(), other], SCOPE_SHOP);
     expect(useAgentInsightsStore.getState().insights).toHaveLength(2);
 
-    useAgentInsightsStore.getState().dismissInsight(other.id);
+    useAgentInsightsStore.getState().dismissInsight(`${SCOPE_SHOP}::${other.id}`);
     expect(useAgentInsightsStore.getState().insights.map((entry) => entry.id)).toEqual([
       FINDING_ID,
     ]);

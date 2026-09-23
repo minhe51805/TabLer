@@ -48,6 +48,11 @@ export interface QuerySchedule {
   catchUpPolicy?: "skip" | "run_once";
   /** Occurrences missed while the app was closed, until acknowledged. */
   missedCount?: number;
+  /**
+   * Agent tasks only: explicit opt-in letting the task read live data and
+   * send it to the AI provider. Absent/false keeps the task metadata-only.
+   */
+  allowDataRead?: boolean;
   /** Explicit next-due override set when missed occurrences were skipped. */
   nextDueAt?: number | null;
   createdAt: string;
@@ -60,6 +65,8 @@ interface ScheduleFiredPayload {
   kind?: "sql" | "agent";
   /** Present for SQL runs; a dispatch carries only `dispatched`. */
   status?: "ok" | "error" | "needs_human" | "dispatched";
+  /** Agent dispatch only: the schedule's data-read opt-in. */
+  allowDataRead?: boolean;
   rows?: number | null;
   error?: string | null;
   /** Agent dispatch only: the run's scope, so a mismatched one is never run. */
@@ -82,6 +89,7 @@ interface QuerySchedulesState {
     database?: string | null;
     intervalSeconds: number;
     enabled: boolean;
+    allowDataRead?: boolean;
     catchUpPolicy?: "skip" | "run_once";
   }) => Promise<QuerySchedule>;
   deleteSchedule: (id: string) => Promise<void>;
@@ -118,7 +126,13 @@ export const useQuerySchedulesStore = create<QuerySchedulesState>((set) => ({
       const schedules = await invokeMutation<QuerySchedule[]>("list_query_schedules", {});
       set({ schedules, isLoading: false });
     } catch (error) {
-      console.error("Failed to load query schedules:", error);
+      // A silent list failure leaves the panel on a stale/empty view; surface
+      // it so the user knows the schedules they see may not be current.
+      emitAppToast({
+        title: getScheduleCopy(getCurrentAppLanguage()).loadFailed,
+        description: error instanceof Error ? error.message : String(error),
+        tone: "error",
+      });
       set({ isLoading: false });
     }
   },
@@ -133,6 +147,7 @@ export const useQuerySchedulesStore = create<QuerySchedulesState>((set) => ({
     database,
     intervalSeconds,
     enabled,
+    allowDataRead,
     catchUpPolicy,
   }) => {
     const saved = await invokeMutation<QuerySchedule>("save_query_schedule", {
@@ -141,6 +156,7 @@ export const useQuerySchedulesStore = create<QuerySchedulesState>((set) => ({
       // Defaulting to `sql` keeps every existing caller (favorites hand-off)
       // working unchanged.
       kind: kind ?? "sql",
+      allowDataRead: allowDataRead ?? false,
       sql: sql ?? "",
       prompt: prompt ?? null,
       connectionId: connectionId ?? null,
@@ -214,10 +230,11 @@ export const useQuerySchedulesStore = create<QuerySchedulesState>((set) => ({
                   lastStatus: "dispatched",
                   lastRows: null,
                   // The previous run's report and error must not survive into a
-                  // dispatch that has no outcome yet.
+                  // dispatch that has no outcome yet. lastRanAt is NOT set here:
+                  // it means "last actual run" and only applyAgentRunOutcome may
+                  // write it (mirrors the backend's mark_agent_task_dispatched).
                   lastError: null,
                   lastSummary: null,
-                  lastRanAt: Date.now(),
                 }
               : schedule,
           ),
@@ -238,6 +255,7 @@ export const useQuerySchedulesStore = create<QuerySchedulesState>((set) => ({
           prompt,
           connectionId: fired.connectionId ?? null,
           database: fired.database ?? null,
+          allowDataRead: fired.allowDataRead ?? false,
         });
         emitAppToast({
           title: translateLanguage(getCurrentAppLanguage(), "schedules.agentDispatched", {
@@ -262,16 +280,17 @@ export const useQuerySchedulesStore = create<QuerySchedulesState>((set) => ({
             : schedule,
         ),
       }));
+      const copy = getScheduleCopy(getCurrentAppLanguage());
       emitAppToast(
         fired.status === "ok"
           ? {
-              title: `Scheduled query ran: ${fired.name}`,
-              description: `${fired.rows ?? 0} row(s) returned.`,
+              title: copy.sqlRunOk(fired.name),
+              description: copy.sqlRunOkRows(fired.rows ?? 0),
               tone: "success",
             }
           : {
-              title: `Scheduled query failed: ${fired.name}`,
-              description: fired.error ?? "Unknown error.",
+              title: copy.sqlRunFailed(fired.name),
+              description: fired.error ?? copy.unknownError,
               tone: "error",
             },
       );

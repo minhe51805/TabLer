@@ -6,10 +6,13 @@ use super::safety::{
     normalize_order_dir, qualify_mysql_table_name, quote_mysql_identifier, quote_mysql_order_by,
     sanitize_mysql_filter_clause,
 };
-use crate::utils::sql::split_sql_statements;
+use crate::utils::sql::{classify_sql_with_dialect, split_sql_statements};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures_util::TryStreamExt;
+use sqlparser::ast::Statement as SqlStatement;
+use sqlparser::dialect::MySqlDialect;
+use sqlparser::parser::Parser as SqlParser;
 use sqlx::mysql::{MySqlConnectOptions, MySqlConnection, MySqlPool, MySqlPoolOptions, MySqlRow};
 use sqlx::{ConnectOptions, MySql, QueryBuilder, Row};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -185,6 +188,31 @@ impl MySqlDriver {
             truncated: false,
         })
     }
+}
+
+/// True only for statements a `BEGIN … ROLLBACK` preview can actually undo on
+/// MySQL: plain SELECT and row-level DML. Everything else — implicit-commit
+/// DDL (ALTER, RENAME TABLE, CREATE INDEX/VIEW, TRUNCATE, DROP), utility
+/// commands (LOCK TABLES, LOAD DATA, OPTIMIZE/ANALYZE TABLE), session or
+/// transaction control, and unparseable SQL — is refused so the preview can
+/// never persist changes it promised to roll back.
+fn is_rollback_safe_preview_statement(statement: &str) -> bool {
+    let Ok(parsed) = SqlParser::parse_sql(&MySqlDialect {}, statement) else {
+        return false;
+    };
+    parsed.len() == 1
+        && match &parsed[0] {
+            // A query is safe only when the classifier sees it as a pure
+            // read — `SELECT … INTO` and mutating CTEs are not.
+            SqlStatement::Query(_) => {
+                classify_sql_with_dialect(statement, Some(DatabaseType::MySQL)).read_only
+            }
+            SqlStatement::Insert(_)
+            | SqlStatement::Update { .. }
+            | SqlStatement::Delete(_)
+            | SqlStatement::Merge { .. } => true,
+            _ => false,
+        }
 }
 
 #[async_trait]
@@ -366,6 +394,20 @@ impl DatabaseDriver for MySqlDriver {
     }
 
     async fn preview_write_transaction(&self, statements: &[String]) -> Result<Vec<QueryResult>> {
+        // BEGIN…ROLLBACK cannot undo MySQL's implicit-commit family (ALTER,
+        // RENAME TABLE, CREATE INDEX/VIEW, TRUNCATE, DROP, LOCK TABLES,
+        // LOAD DATA, …): those statements commit the transaction the moment
+        // they run, so a "preview" would persist real changes. Only plain
+        // SELECT and row-level DML are provably rollback-safe — anything else
+        // (including unparseable SQL) is refused before execution.
+        for statement in statements {
+            if !is_rollback_safe_preview_statement(statement) {
+                return Err(anyhow!(
+                    "Write preview cannot roll back this statement on MySQL — implicit-commit DDL and utility commands persist immediately. Only SELECT/INSERT/UPDATE/DELETE/MERGE can be previewed."
+                ));
+            }
+        }
+
         let mut tx = self.pool.begin().await?;
         let mut results = Vec::new();
 
@@ -403,10 +445,16 @@ impl DatabaseDriver for MySqlDriver {
         }
         .await;
 
-        if let Err(error) = tx.rollback().await {
-            log::warn!("write-preview rollback failed: {error}");
-        }
+        let rollback = tx.rollback().await;
         execution?;
+        if let Err(error) = rollback {
+            // A failed rollback can leave the preview's writes committed —
+            // never report a clean rollback that did not happen.
+            log::error!("write-preview rollback failed: {error}");
+            return Err(anyhow!(
+                "Write preview rollback failed; the previewed statements may have been committed: {error}"
+            ));
+        }
         Ok(results)
     }
     async fn execute_parameterized_query(

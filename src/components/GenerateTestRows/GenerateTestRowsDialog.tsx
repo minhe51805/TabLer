@@ -95,7 +95,7 @@ export function GenerateTestRowsDialog({
   const handleGenerate = () => {
     if (!columns || !countValid || seedableCount === 0) return;
     const rows = generateTestRows(columns, parsedCount, hint.trim() || undefined);
-    const staged = stageGeneratedRows({ tableName, database, dbType, columns, rows });
+    const staged = stageGeneratedRows({ connectionId, tableName, database, dbType, columns, rows });
     if (staged === 0) return;
     onStaged?.();
     emitAppToast({

@@ -9,7 +9,7 @@ import {
   isSessionSwitchStatement,
   normalizeStatementForGuard,
 } from "../../SQLEditor/SQLEditorUtils";
-import { classifyAgentRun } from "../ai-execution-policy";
+import { classifyAgentRunWithBackend } from "../ai-execution-policy";
 import {
   evaluateRunAgainstRules,
   formatRuleBlockMessage,
@@ -17,6 +17,7 @@ import {
   rulesRequireApproval,
 } from "../ai-agent-rules";
 import { invokeMutation } from "../../../utils/tauri-utils";
+import { requestAppConfirmation } from "../../../stores/confirmStore";
 import { requestAISqlConfirmation } from "../ai-sql-confirm";
 import { summarizeRunResult } from "../ai-sql-response";
 import type { AIWorkspaceAgentAutonomy } from "../ai-workspace-types";
@@ -116,12 +117,18 @@ export function useAISqlRunner({
         throw new Error(message);
       }
 
+      // Backend-authoritative classification: EXPLAIN ANALYZE <write> and
+      // dialect constructs the keyword scan misses must still hit the
+      // confirmation dialog and the pre-write checkpoint.
+      const runnerDbType = useConnectionStore
+        .getState()
+        .connections.find((connection) => connection.id === connectionId)?.db_type;
       const {
         requirement: confirmationRequirement,
         needsDialog,
         willMutate: hasMutatingStatements,
         preApproved,
-      } = classifyAgentRun(statements, runOptions?.agentAutonomy);
+      } = await classifyAgentRunWithBackend(statements, runOptions?.agentAutonomy, runnerDbType);
       setIsRunning(true);
       setError(null);
 
@@ -188,7 +195,9 @@ export function useAISqlRunner({
                     : "Snapshotting the database before the agent writes.",
                 durationMs: 4000,
               });
-              // Bounded: a whole-database dump must never freeze the run silently.
+              // Bounded: a whole-database dump must never freeze the run
+              // silently. Checkpoints get the wider 120s budget — dumping a
+              // large database legitimately outlasts a read.
               await invokeWithTimeout<CheckpointResult>(
                 "create_database_checkpoint",
                 {
@@ -197,22 +206,30 @@ export function useAISqlRunner({
                   dbType,
                   label: AUTO_CHECKPOINT_LABEL,
                 },
-                60_000,
+                120_000,
                 "Safety checkpoint",
               );
               autoCheckpointReady = true;
             }
           } catch {
+            // The safety snapshot failed: writing now means NO rollback point.
+            // That is a risk decision only the user may make — ask explicitly
+            // instead of toasting and writing anyway.
             const language = runOptions?.language ?? "en";
-            emitAppToast({
-              tone: "error",
+            const proceedWithoutCheckpoint = await requestAppConfirmation({
               title: language === "vi" ? "Checkpoint tự động thất bại" : "Auto checkpoint failed",
-              description:
+              message:
                 language === "vi"
-                  ? "Tiếp tục chạy, nhưng /rollback sẽ không có mốc mới. Có thể tạo tay bằng /backup."
-                  : "Continuing, but /rollback will have no new point. Create one manually with /backup.",
-              durationMs: 8_000,
+                  ? "Không tạo được điểm khôi phục trước khi ghi — nếu tiếp tục, /rollback sẽ không có mốc mới để quay về. Vẫn chạy câu lệnh ghi?"
+                  : "The pre-write safety snapshot could not be created — if you continue, /rollback will have no new point to restore. Run the write anyway?",
+              confirmText: language === "vi" ? "Chạy không có rollback" : "Run without rollback",
+              cancelText: language === "vi" ? "Hủy" : "Cancel",
             });
+            if (!proceedWithoutCheckpoint) {
+              const message = "Execution cancelled.";
+              setError(message);
+              throw new Error(message);
+            }
           }
         }
 

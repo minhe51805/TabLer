@@ -43,15 +43,15 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
   const handleExport = async () => {
     setError(null);
     if (password.length < 10) {
-      setError("Password must be at least 10 characters.");
+      setError(bundleCopy.connectionsExport.errorPasswordShort);
       return;
     }
     if (password !== confirmPassword) {
-      setError("Passwords do not match.");
+      setError(bundleCopy.connectionsExport.errorPasswordMismatch);
       return;
     }
     if (selected.size === 0) {
-      setError("Please select at least one connection.");
+      setError(bundleCopy.connectionsExport.errorNoSelection);
       return;
     }
 
@@ -63,7 +63,7 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
     if (res.success) {
       setResult({
         success: true,
-        message: `Exported ${selected.size} connection(s) to ${res.filePath}`,
+        message: bundleCopy.connectionsExport.done(selected.size, res.filePath ?? ""),
       });
     } else if (res.error) {
       setError(res.error);
@@ -92,26 +92,34 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
     if (result?.success) onClose();
   };
 
+  // Backdrop dismiss mirrors the other modals; it stays inert while an
+  // export is in flight so a stray click cannot abandon the write.
+  const handleBackdropClick = () => {
+    if (isExporting) return;
+    if (result && !result.success) return;
+    onClose();
+  };
+
   return (
-    <div className="cex-backdrop">
-      <div className="cex-modal">
+    <div className="cex-backdrop" onClick={handleBackdropClick}>
+      <div className="cex-modal" onClick={(event) => event.stopPropagation()}>
         {/* Header */}
         <div className="cex-header">
           <div className="cex-header-copy">
             <h2 className="cex-title">
-              {mode === "bundle" ? bundleCopy.export.title : "Export Connections"}
+              {mode === "bundle" ? bundleCopy.export.title : bundleCopy.connectionsExport.title}
             </h2>
             <p className="cex-subtitle">
               {mode === "bundle"
                 ? bundleCopy.export.subtitle
-                : "Save connections as an encrypted, versioned export"}
+                : bundleCopy.connectionsExport.subtitle}
             </p>
           </div>
           <div className="cex-header-actions">
             {result ? (
               <button type="button" onClick={handleClose} className="cex-btn-primary">
                 <Check className="w-4 h-4" />
-                Done
+                {bundleCopy.common.done}
               </button>
             ) : (
               <>
@@ -121,7 +129,7 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
                   className="cex-btn-cancel"
                   disabled={isExporting}
                 >
-                  Cancel
+                  {bundleCopy.common.cancel}
                 </button>
                 <button
                   type="button"
@@ -135,7 +143,7 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
                     mode === "bundle" ? (
                       bundleCopy.export.working
                     ) : (
-                      "Exporting..."
+                      bundleCopy.connectionsExport.working
                     )
                   ) : mode === "bundle" ? (
                     <>
@@ -145,7 +153,7 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
                   ) : (
                     <>
                       <Check className="w-4 h-4" />
-                      Export {selected.size} Connection{selected.size !== 1 ? "s" : ""}
+                      {bundleCopy.connectionsExport.button(selected.size)}
                     </>
                   )}
                 </button>
@@ -182,7 +190,7 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
               <CheckCircle2 />
               <p>{result.message}</p>
               <button onClick={handleClose} className="btn btn-primary">
-                Done
+                {bundleCopy.common.done}
               </button>
             </div>
           </div>
@@ -215,15 +223,17 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
             <aside className="cex-rail">
               <div className="cex-rail-head">
                 <label className="cex-section-label">
-                  Select ({selected.size}/{connections.length})
+                  {bundleCopy.connectionsExport.selectLabel(selected.size, connections.length)}
                 </label>
                 <button onClick={toggleAll} className="cex-toggle-all">
-                  {selected.size === connections.length ? "Deselect All" : "Select All"}
+                  {selected.size === connections.length
+                    ? bundleCopy.connectionsExport.deselectAll
+                    : bundleCopy.connectionsExport.selectAll}
                 </button>
               </div>
               <div className="cex-rail-list">
                 {connections.length === 0 ? (
-                  <p className="cex-rail-empty">No saved connections to export.</p>
+                  <p className="cex-rail-empty">{bundleCopy.connectionsExport.empty}</p>
                 ) : (
                   connections.map((conn) => (
                     <label
@@ -250,23 +260,21 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
               {/* Encryption password */}
               <div className="cex-warning">
                 <Lock className="w-4 h-4" />
-                <p>
-                  Connections will be encrypted with AES-256-GCM. Passwords are not exported — you
-                  will need to re-enter them when importing.
-                </p>
+                <p>{bundleCopy.connectionsExport.encryptionNote}</p>
               </div>
 
               <div className="cex-fieldset">
                 <div className="connection-form-field">
                   <label className="form-label uppercase tracking-wide">
-                    Encryption Password <span className="text-red-400">*</span>
+                    {bundleCopy.connectionsExport.passwordLabel}{" "}
+                    <span className="text-red-400">*</span>
                   </label>
                   <div className="connection-form-password">
                     <input
                       type={showPassword ? "text" : "password"}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
-                      placeholder="Min. 10 characters"
+                      placeholder={bundleCopy.connectionsExport.passwordPlaceholder}
                       className="input h-11 pr-11"
                       minLength={10}
                     />
@@ -282,13 +290,14 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
 
                 <div className="connection-form-field">
                   <label className="form-label uppercase tracking-wide">
-                    Confirm Password <span className="text-red-400">*</span>
+                    {bundleCopy.connectionsExport.confirmLabel}{" "}
+                    <span className="text-red-400">*</span>
                   </label>
                   <input
                     type={showPassword ? "text" : "password"}
                     value={confirmPassword}
                     onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="Repeat password"
+                    placeholder={bundleCopy.connectionsExport.confirmPlaceholder}
                     className="input h-11"
                     minLength={10}
                   />

@@ -1,6 +1,7 @@
 /** Safe mode protection levels for query execution. */
 
 import { normalizedStatementIsDisguisedWrite } from "../utils/sqlStatements";
+import { explainAnalyzeInnerStatement, stripLeadingSqlNoise } from "../utils/sql-safety";
 
 export type SafeModeLevel = 0 | 1 | 2 | 3 | 4 | 5;
 export type ConnectionEnvironment = "development" | "staging" | "production" | "unknown";
@@ -67,18 +68,64 @@ export const LEVEL4_CONFIRM_PATTERNS = [
   /^\s*TRUNCATE\s+/i,
 ];
 
-/** Pattern: ALTER TABLE ... RENAME COLUMN (allowed at level 3). */
-export const RENAME_COLUMN_PATTERN = /^\s*ALTER\s+TABLE\s+\S+\s+RENAME\s+COLUMN\s+/i;
+/** Pattern: ALTER TABLE ... RENAME COLUMN only (allowed at level 3). Every
+ *  comma-separated action must be a RENAME COLUMN — a combined
+ *  `RENAME COLUMN a TO b, DROP COLUMN c` must NOT match (mirrors the backend
+ *  is_rename_column_only check which requires all AlterTableOperations to be
+ *  renames). */
+export const RENAME_COLUMN_PATTERN = /^\s*ALTER\s+TABLE\s+\S+\s+RENAME\s+COLUMN\s+[^;]+$/i;
+
+/** True when an ALTER TABLE statement consists solely of RENAME COLUMN
+ *  actions. Conservative: any action keyword other than RENAME COLUMN
+ *  (DROP/ADD/CHANGE/MODIFY/ALTER/RENAME TO) disqualifies it. */
+export function isRenameColumnOnly(statement: string): boolean {
+  const trimmed = statement.trim().replace(/;+\s*$/, "");
+  if (!RENAME_COLUMN_PATTERN.test(trimmed)) return false;
+  const actions = trimmed.replace(/^\s*ALTER\s+TABLE\s+\S+\s+/i, "");
+  // Split top-level commas (no parens expected in rename lists, but guard anyway).
+  const parts = actions.split(",");
+  return parts.every((part) => /^\s*RENAME\s+COLUMN\s+/i.test(part));
+}
+
+/** Read-only leading keywords an `EXPLAIN ANALYZE` may legitimately wrap. */
+const EXPLAIN_ANALYZE_READ_PREFIXES = [
+  "SELECT",
+  "WITH",
+  "SHOW",
+  "DESCRIBE",
+  "DESC",
+  "EXPLAIN",
+  "PRAGMA",
+  "VALUES",
+  "TABLE",
+];
+
+/** True when a normalized (uppercased, whitespace-collapsed) statement
+    mutates despite wearing a read-looking prefix: `SELECT ... INTO`,
+    data-modifying CTE bodies, `PRAGMA` writes, and `EXPLAIN ANALYZE <write>`
+    — the analyze form EXECUTES the wrapped statement, so it inherits the
+    inner statement's mutation. */
+function normalizedStatementMutates(normalized: string): boolean {
+  if (normalizedStatementIsDisguisedWrite(normalized)) return true;
+  const inner = explainAnalyzeInnerStatement(normalized);
+  if (!inner) return false;
+  if (EXPLAIN_ANALYZE_READ_PREFIXES.some((prefix) => inner.startsWith(prefix))) {
+    return normalizedStatementMutates(inner);
+  }
+  return true;
+}
 
 /** Determine the risk type of a SQL statement. */
 export function classifyStatement(sql: string): StatementRiskType {
-  const trimmed = sql.trim();
+  // Leading comments must not hide the real first keyword.
+  const trimmed = stripLeadingSqlNoise(sql).trim();
+  const normalized = trimmed.replace(/\s+/g, " ").toUpperCase();
 
   // SELECT ... INTO, EXPLAIN ANALYZE <write>, and mutating CTEs wear a read's
   // leading keyword — defer to the mutating-statement check before trusting it.
   if (
     /^\s*(SELECT|EXPLAIN|WITH|PRAGMA)\s*/i.test(trimmed) &&
-    normalizedStatementIsDisguisedWrite(trimmed.replace(/\s+/g, " ").trim().toUpperCase())
+    normalizedStatementMutates(normalized)
   ) {
     return "ddl";
   }
@@ -104,7 +151,16 @@ export function classifyStatement(sql: string): StatementRiskType {
 
 /** Check if a statement is always blocked at a given level. */
 export function isBlockedAtLevel(level: SafeModeLevel, sql: string): boolean {
-  const trimmed = sql.trim();
+  // Leading comments must not hide the real first keyword.
+  const trimmed = stripLeadingSqlNoise(sql).trim();
+  const normalized = trimmed.replace(/\s+/g, " ").toUpperCase();
+
+  // `EXPLAIN ANALYZE <stmt>` executes the wrapped statement — it inherits the
+  // block status of whatever it analyzes.
+  const explainInner = explainAnalyzeInnerStatement(normalized);
+  if (explainInner) {
+    return isBlockedAtLevel(level, explainInner);
+  }
 
   switch (level) {
     case 0: // Disabled — nothing blocked
@@ -115,10 +171,7 @@ export function isBlockedAtLevel(level: SafeModeLevel, sql: string): boolean {
       // SELECT/EXPLAIN/WITH is blocked when it actually mutates (SELECT INTO,
       // EXPLAIN ANALYZE <write>, data-modifying CTE).
       const readPattern = /^\s*(SELECT|SHOW|EXPLAIN|WITH|DESCRIBE|DESC)\s+/i;
-      return (
-        !readPattern.test(trimmed) ||
-        normalizedStatementIsDisguisedWrite(trimmed.replace(/\s+/g, " ").trim().toUpperCase())
-      );
+      return !readPattern.test(trimmed) || normalizedStatementMutates(normalized);
     }
 
     case 2: {
@@ -127,8 +180,7 @@ export function isBlockedAtLevel(level: SafeModeLevel, sql: string): boolean {
       if (!allowed.test(trimmed)) return true;
       // A disguised write is not "low risk" just because it starts with SELECT.
       return (
-        /^\s*(SELECT|EXPLAIN|WITH)\s+/i.test(trimmed) &&
-        normalizedStatementIsDisguisedWrite(trimmed.replace(/\s+/g, " ").trim().toUpperCase())
+        /^\s*(SELECT|EXPLAIN|WITH)\s+/i.test(trimmed) && normalizedStatementMutates(normalized)
       );
     }
     case 3: {
@@ -137,7 +189,7 @@ export function isBlockedAtLevel(level: SafeModeLevel, sql: string): boolean {
         if (pattern.test(trimmed)) return true;
       }
       // Block ALTER (except RENAME COLUMN) at level 3
-      if (/^\s*ALTER\s+/i.test(trimmed) && !RENAME_COLUMN_PATTERN.test(trimmed)) {
+      if (/^\s*ALTER\s+/i.test(trimmed) && !isRenameColumnOnly(trimmed)) {
         return true;
       }
       return false;
@@ -161,7 +213,13 @@ export function isBlockedAtLevel(level: SafeModeLevel, sql: string): boolean {
 /** Check if a statement requires confirmation at a given level. */
 export function requiresConfirmationAtLevel(level: SafeModeLevel, sql: string): boolean {
   if (level < 3) return false;
-  const trimmed = sql.trim();
+  // Leading comments must not hide the real first keyword.
+  const trimmed = stripLeadingSqlNoise(sql).trim();
+  const normalized = trimmed.replace(/\s+/g, " ").toUpperCase();
+
+  // A disguised write (SELECT INTO, mutating CTE, EXPLAIN ANALYZE <write>)
+  // needs the same review as the write it performs.
+  if (normalizedStatementMutates(normalized)) return true;
 
   if (level === 3) {
     for (const pattern of LEVEL3_CONFIRM_PATTERNS) {

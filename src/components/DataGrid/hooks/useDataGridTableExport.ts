@@ -1,4 +1,9 @@
 import { useCallback, type Dispatch, type RefObject, type SetStateAction } from "react";
+import { requestAppConfirmation } from "../../../stores/confirmStore";
+import type { TableFilterPlan } from "./useDataGrid";
+
+/** Error prefix the backend emits when the picked export path already exists. */
+const EXPORT_FILE_EXISTS_CODE = "TABLER_EXPORT_FILE_EXISTS";
 
 interface DataGridTableExportParams {
   tableName?: string;
@@ -6,7 +11,8 @@ interface DataGridTableExportParams {
   connectionId: string;
   sortColumn: string | null;
   sortDir: "ASC" | "DESC";
-  rowFocusFilter: string;
+  /** Resolved quick-filter plan: server clause + client-side-only flag. */
+  filterPlan: TableFilterPlan;
   isExportingFull: boolean;
   setIsExportingFull: Dispatch<SetStateAction<boolean>>;
   setExportedRowCount: Dispatch<SetStateAction<number>>;
@@ -20,6 +26,7 @@ interface DataGridTableExportParams {
       orderBy?: string;
       orderDir?: "ASC" | "DESC";
       filter?: string;
+      overwrite?: boolean;
     },
     operationId: string,
   ) => Promise<unknown>;
@@ -37,7 +44,7 @@ export function useDataGridTableExport({
   connectionId,
   sortColumn,
   sortDir,
-  rowFocusFilter,
+  filterPlan,
   isExportingFull,
   setIsExportingFull,
   setExportedRowCount,
@@ -46,29 +53,78 @@ export function useDataGridTableExport({
   cancelTableExport,
   tableExportOperationIdRef,
 }: DataGridTableExportParams) {
-  const handleFullTableExport = useCallback(async (format: "csv" | "jsonl") => {
-    if (!tableName || isExportingFull) return;
-    const operationId = `export-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
-    tableExportOperationIdRef.current = operationId;
-    setExportedRowCount(0);
-    setIsExportingFull(true);
-    try {
-      await exportTableData(connectionId, {
-        table: tableName,
-        database,
-        format,
-        orderBy: sortColumn ?? undefined,
-        orderDir: sortColumn ? sortDir : undefined,
-        filter: rowFocusFilter || undefined,
-      }, operationId);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (!/cancel/i.test(message)) setError(`Full table export failed: ${message}`);
-    } finally {
-      tableExportOperationIdRef.current = null;
-      setIsExportingFull(false);
-    }
-  }, [connectionId, database, exportTableData, isExportingFull, rowFocusFilter, setError, setExportedRowCount, setIsExportingFull, sortColumn, sortDir, tableExportOperationIdRef, tableName]);
+  const handleFullTableExport = useCallback(
+    async (format: "csv" | "jsonl") => {
+      if (!tableName || isExportingFull) return;
+      // A quick filter that can't compile to a server clause would silently
+      // export unfiltered rows — refuse instead of producing a misleading file.
+      if (filterPlan.clientSideOnly) {
+        setError(
+          "Cannot export with the current filter: it can only run over loaded rows. Clear the filter or narrow it to export matching rows.",
+        );
+        return;
+      }
+      const operationId = `export-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      tableExportOperationIdRef.current = operationId;
+      setExportedRowCount(0);
+      setIsExportingFull(true);
+      const runExport = (overwrite: boolean) =>
+        exportTableData(
+          connectionId,
+          {
+            table: tableName,
+            database,
+            format,
+            orderBy: sortColumn ?? undefined,
+            orderDir: sortColumn ? sortDir : undefined,
+            filter: filterPlan.serverFilter || undefined,
+            overwrite,
+          },
+          operationId,
+        );
+      try {
+        await runExport(false);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (message.includes(EXPORT_FILE_EXISTS_CODE)) {
+          const confirmed = await requestAppConfirmation({
+            title: "Replace existing file?",
+            message: message.replace(`${EXPORT_FILE_EXISTS_CODE}: `, ""),
+            confirmText: "Overwrite",
+          });
+          if (confirmed) {
+            try {
+              await runExport(true);
+            } catch (retryError) {
+              const retryMessage =
+                retryError instanceof Error ? retryError.message : String(retryError);
+              if (!/cancel/i.test(retryMessage))
+                setError(`Full table export failed: ${retryMessage}`);
+            }
+          }
+        } else if (!/cancel/i.test(message)) {
+          setError(`Full table export failed: ${message}`);
+        }
+      } finally {
+        tableExportOperationIdRef.current = null;
+        setIsExportingFull(false);
+      }
+    },
+    [
+      connectionId,
+      database,
+      exportTableData,
+      filterPlan,
+      isExportingFull,
+      setError,
+      setExportedRowCount,
+      setIsExportingFull,
+      sortColumn,
+      sortDir,
+      tableExportOperationIdRef,
+      tableName,
+    ],
+  );
 
   const handleCancelFullTableExport = useCallback(async () => {
     const operationId = tableExportOperationIdRef.current;
@@ -76,7 +132,9 @@ export function useDataGridTableExport({
     try {
       await cancelTableExport(operationId);
     } catch (error) {
-      setError(`Could not cancel table export: ${error instanceof Error ? error.message : String(error)}`);
+      setError(
+        `Could not cancel table export: ${error instanceof Error ? error.message : String(error)}`,
+      );
     }
   }, [cancelTableExport, setError, tableExportOperationIdRef]);
 

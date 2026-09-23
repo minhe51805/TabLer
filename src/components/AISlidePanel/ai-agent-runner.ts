@@ -1,8 +1,5 @@
 import type { AgentTraceStep } from "./ai-agent-context";
-import type {
-  AIAgentFinishAction,
-  AIAgentToolAction,
-} from "./ai-agent-tools";
+import type { AIAgentFinishAction, AIAgentToolAction } from "./ai-agent-tools";
 
 export type AIAgentRunnerPhase =
   | "idle"
@@ -42,6 +39,9 @@ export interface AIAgentRunnerResult {
   finalAction: AIAgentFinishAction;
   steps: AgentTraceStep[];
   snapshots: AIAgentRunnerSnapshot[];
+  /** True when the token ceiling — not a finish action — ended the tool
+   *  phase, so the UI can warn the answer may be truncated. */
+  tokenBudgetExhausted: boolean;
 }
 
 export interface RunAIAgentToolLoopOptions {
@@ -54,9 +54,12 @@ export interface RunAIAgentToolLoopOptions {
    */
   tokenBudget?: number;
   /**
-   * Reads the token cost of the most recent model call. Invoked once after
-   * each action request; the runner accumulates the returned values. Omit to
-   * disable token accounting (spend stays 0, matching legacy behavior).
+   * Reports tokens spent since the previous read (a delta). Invoked once
+   * after each action request; the runner accumulates the returned values.
+   * Implementations should diff a run-wide usage counter so EVERY model call
+   * of the run counts — plan/compaction/delegate calls and in-line retries
+   * included — not just the most recent controller call. Omit to disable
+   * token accounting (spend stays 0, matching legacy behavior).
    */
   getLastRequestTokens?: () => number;
   initialSteps?: AgentTraceStep[];
@@ -104,9 +107,8 @@ export async function runAIAgentToolLoop(
   options: RunAIAgentToolLoopOptions,
 ): Promise<AIAgentRunnerResult> {
   const stepBudget = Math.max(1, Math.floor(options.stepBudget));
-  const tokenBudget = options.tokenBudget && options.tokenBudget > 0
-    ? Math.floor(options.tokenBudget)
-    : 0;
+  const tokenBudget =
+    options.tokenBudget && options.tokenBudget > 0 ? Math.floor(options.tokenBudget) : 0;
   let steps = cloneSteps(options.initialSteps || []);
   const snapshots: AIAgentRunnerSnapshot[] = [];
   let iteration = 0;
@@ -122,12 +124,13 @@ export async function runAIAgentToolLoop(
   let metaFreeCalls = 0;
   const signatureHistory: string[] = [];
   /** Productive = the recent window is not the same action+args on repeat. */
-  const isRunProductive = () =>
-    new Set(signatureHistory.slice(-EXTENSION_STEPS)).size >= 2;
+  const isRunProductive = () => new Set(signatureHistory.slice(-EXTENSION_STEPS)).size >= 2;
 
   const emit = (
     phase: AIAgentRunnerPhase,
-    details: Partial<Omit<AIAgentRunnerSnapshot, "phase" | "iteration" | "stepBudget" | "tokensUsed" | "steps">> = {},
+    details: Partial<
+      Omit<AIAgentRunnerSnapshot, "phase" | "iteration" | "stepBudget" | "tokensUsed" | "steps">
+    > = {},
   ) => {
     const snapshot: AIAgentRunnerSnapshot = {
       phase,
@@ -141,10 +144,7 @@ export async function runAIAgentToolLoop(
     options.onStateChange?.(snapshot);
   };
 
-  const requestAction = async (
-    reason: AIAgentActionRequestReason,
-    forceFinish: boolean,
-  ) => {
+  const requestAction = async (reason: AIAgentActionRequestReason, forceFinish: boolean) => {
     // Conversation history + workspace digest are already bounded (the back-end
     // caps clamp them and older turns live in the compacted digest), so there
     // is no token reason to hide them mid-run. Replay them on the calls that
@@ -269,6 +269,7 @@ export async function runAIAgentToolLoop(
       finalAction,
       steps: cloneSteps(steps),
       snapshots,
+      tokenBudgetExhausted: tokenBudgetExhausted(),
     };
   } catch (errorValue) {
     emit("failed", { error: formatRunnerError(errorValue) });

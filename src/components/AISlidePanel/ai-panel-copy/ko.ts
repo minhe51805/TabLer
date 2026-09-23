@@ -36,6 +36,9 @@ export const KO_PANEL_COPY: AIPanelCopy = {
     queuedCount: "{count}개 대기 중",
     queuedClear: "모두 버리기",
   },
+  sqlValidationWarning:
+    "제안된 SQL이 샌드박스 검증을 통과하지 못했습니다({error}). 실행 전에 검토하거나 수정하세요.",
+  tokenBudgetReached: "토큰 예산에 도달했습니다 — 답변이 잘릴 수 있습니다.",
   rules: {
     title: "가드레일 규칙",
     subtitle:

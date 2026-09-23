@@ -34,6 +34,11 @@ const MAX_MEMORY_NAME_CHARS: usize = 64;
 /// Scope path components (connection id, database name) never travel raw into
 /// the filesystem: allowlist ASCII identifiers so a hostile scope string
 /// cannot traverse out of the memory root.
+///
+/// Returns `None` for values that cannot be represented safely (empty, `.`,
+/// `..`, or longer than `MAX_MEMORY_NAME_CHARS`); the caller must NOT fall back
+/// to a shared scope — see [`scope_component_or`] — or two different scopes
+/// would silently share one directory and leak memories across connections.
 pub(crate) fn sanitize_scope_component(raw: &str) -> Option<String> {
     let trimmed = raw.trim();
     if trimmed.is_empty()
@@ -59,6 +64,52 @@ pub(crate) fn sanitize_scope_component(raw: &str) -> Option<String> {
     Some(safe)
 }
 
+/// FNV-1a 64-bit hash of a scope string, rendered as 16 lowercase hex digits.
+/// Used to keep an unsanitizable scope unique instead of collapsing it onto a
+/// shared directory. FNV is enough here: the value is a directory name, not a
+/// security token — uniqueness, not secrecy, is what the scope boundary needs.
+fn scope_component_hash(raw: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in raw.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
+/// Resolve one scope component to a directory name. A value the allowlist can
+/// represent passes through unchanged; anything else (overlong, `.`, `..`)
+/// becomes `<sanitized prefix>-<hash>` so each distinct scope keeps its own
+/// bounded directory instead of collapsing into the shared `fallback` scope —
+/// the collapse was a cross-connection memory leak.
+pub(crate) fn scope_component_or(raw: Option<&str>, fallback: &str) -> String {
+    let Some(raw) = raw else {
+        return fallback.to_string();
+    };
+    if let Some(safe) = sanitize_scope_component(raw) {
+        return safe;
+    }
+    if raw.trim().is_empty() {
+        return fallback.to_string();
+    }
+    // Keep the hashed name readable and bounded: a sanitized prefix (never
+    // empty — the charset maps every char to '_' at worst) plus the hash of
+    // the FULL raw value, so two scopes sharing a prefix still differ.
+    let prefix: String = raw
+        .trim()
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .take(40)
+        .collect();
+    format!("{prefix}-{}", scope_component_hash(raw.trim()))
+}
+
 /// Memory lives per (connection, database) — exactly the glossary scope. A
 /// different connection or database resolves to a different directory, so
 /// cross-scope leakage is a directory-boundary property, not a filter.
@@ -67,12 +118,8 @@ fn memory_scope_dir(
     connection_id: Option<&str>,
     database: Option<&str>,
 ) -> PathBuf {
-    let connection = connection_id
-        .and_then(sanitize_scope_component)
-        .unwrap_or_else(|| "global".to_string());
-    let database = database
-        .and_then(sanitize_scope_component)
-        .unwrap_or_else(|| "default".to_string());
+    let connection = scope_component_or(connection_id, "global");
+    let database = scope_component_or(database, "default");
     data_dir
         .join("agent-memory")
         .join(connection)
@@ -105,7 +152,9 @@ fn sanitize_memory_name(raw: &str) -> Result<String, String> {
 
 /// Same minimal frontmatter reader as skills, plus an `updated` timestamp key.
 fn parse_memory_md(raw: &str) -> (Option<String>, Option<String>, Option<String>, String) {
-    let trimmed = raw.trim_start();
+    // A UTF-8 BOM survives `trim_start()` (it is not whitespace), so a
+    // BOM-saved MEMORY.md would fail the `---` check and be silently dropped.
+    let trimmed = raw.trim_start_matches('\u{feff}').trim_start();
     let rest = match trimmed.strip_prefix("---") {
         Some(rest) => rest,
         None => return (None, None, None, trimmed.to_string()),

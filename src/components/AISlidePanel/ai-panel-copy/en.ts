@@ -36,6 +36,9 @@ export const EN_PANEL_COPY: AIPanelCopy = {
     queuedCount: "{count} queued",
     queuedClear: "Discard",
   },
+  sqlValidationWarning:
+    "The proposed SQL did not pass sandbox validation ({error}); review or fix it before running.",
+  tokenBudgetReached: "Token budget reached — the answer may be truncated.",
   rules: {
     title: "Guardrail rules",
     subtitle:

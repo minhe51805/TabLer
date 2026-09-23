@@ -245,8 +245,18 @@ pub async fn update_table_cell(
     connection_id: String,
     request: TableCellUpdateRequest,
     db_manager: State<'_, DatabaseManager>,
+    safe_mode: State<'_, SafeModeState>,
 ) -> Result<u64, String> {
     db_manager.assert_write_allowed(&connection_id).await?;
+    let database_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .ok();
+    // Grid edits bypass the SQL editor, so Safe Mode never saw them; probe
+    // the equivalent statement kind so 'Read Only' blocks UI writes too.
+    safe_mode
+        .ensure_mutation_allowed(&connection_id, "UPDATE t SET c = NULL", database_type)
+        .await?;
     db_manager
         .require_capability(&connection_id, DriverCapability::InlineEdit)
         .await
@@ -272,8 +282,16 @@ pub async fn apply_table_updates_atomically(
     connection_id: String,
     updates: Vec<TableCellUpdateRequest>,
     db_manager: State<'_, DatabaseManager>,
+    safe_mode: State<'_, SafeModeState>,
 ) -> Result<u64, String> {
     db_manager.assert_write_allowed(&connection_id).await?;
+    let database_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .ok();
+    safe_mode
+        .ensure_mutation_allowed(&connection_id, "UPDATE t SET c = NULL", database_type)
+        .await?;
     if updates.is_empty() {
         return Ok(0);
     }
@@ -302,8 +320,16 @@ pub async fn delete_table_rows(
     connection_id: String,
     request: TableRowDeleteRequest,
     db_manager: State<'_, DatabaseManager>,
+    safe_mode: State<'_, SafeModeState>,
 ) -> Result<u64, String> {
     db_manager.assert_write_allowed(&connection_id).await?;
+    let database_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .ok();
+    safe_mode
+        .ensure_mutation_allowed(&connection_id, "DELETE FROM t", database_type)
+        .await?;
     db_manager
         .require_capability(&connection_id, DriverCapability::InlineEdit)
         .await
@@ -324,8 +350,20 @@ pub async fn insert_table_row(
     connection_id: String,
     request: TableRowInsertRequest,
     db_manager: State<'_, DatabaseManager>,
+    safe_mode: State<'_, SafeModeState>,
 ) -> Result<u64, String> {
     db_manager.assert_write_allowed(&connection_id).await?;
+    let database_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .ok();
+    safe_mode
+        .ensure_mutation_allowed(
+            &connection_id,
+            "INSERT INTO t (c) VALUES (NULL)",
+            database_type,
+        )
+        .await?;
     db_manager
         .require_capability(&connection_id, DriverCapability::InlineEdit)
         .await
@@ -354,8 +392,12 @@ pub async fn execute_structure_statements(
     safe_mode: State<'_, SafeModeState>,
 ) -> Result<u64, String> {
     db_manager.assert_write_allowed(&connection_id).await?;
+    let database_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .ok();
     safe_mode
-        .assert_sql_allowed(&connection_id, &statements.join(";\n"))
+        .assert_sql_allowed(&connection_id, &statements.join(";\n"), database_type)
         .await?;
     db_manager
         .require_capability(&connection_id, DriverCapability::SchemaEdit)
@@ -417,8 +459,20 @@ pub async fn insert_table_rows_atomically(
     operation_id: String,
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, CsvImportCancellationState>,
+    safe_mode: State<'_, SafeModeState>,
 ) -> Result<u64, String> {
     db_manager.assert_write_allowed(&connection_id).await?;
+    let database_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .ok();
+    safe_mode
+        .ensure_mutation_allowed(
+            &connection_id,
+            "INSERT INTO t (c) VALUES (NULL)",
+            database_type,
+        )
+        .await?;
     if requests.is_empty() {
         return Err("CSV import requires at least one row.".to_string());
     }
@@ -456,8 +510,20 @@ pub async fn import_csv_file_atomically(
     app: AppHandle,
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, CsvImportCancellationState>,
+    safe_mode: State<'_, SafeModeState>,
 ) -> Result<u64, String> {
     db_manager.assert_write_allowed(&connection_id).await?;
+    let database_type = db_manager
+        .connection_database_type(&connection_id)
+        .await
+        .ok();
+    safe_mode
+        .ensure_mutation_allowed(
+            &connection_id,
+            "INSERT INTO t (c) VALUES (NULL)",
+            database_type,
+        )
+        .await?;
     if request.mappings.is_empty() {
         return Err("CSV import requires at least one mapped column.".to_string());
     }

@@ -1,4 +1,6 @@
-use super::csv::{detect_delimiter, sample_and_count};
+use super::csv::{
+    decode_csv_cell, detect_delimiter, looks_like_header, sample_and_count, strip_text_bom,
+};
 use super::insert::{build_insert_batch, ImportColumnMapping};
 use super::json::{
     align_object, collect_keys, json_shape_from_prefix, json_value_to_cell, parse_json_object_line,
@@ -16,11 +18,58 @@ fn detects_common_delimiters() {
     assert_eq!(detect_delimiter("a;b;c\n1;2;3"), b';');
     assert_eq!(detect_delimiter("a\tb\tc\n1\t2\t3"), b'\t');
     assert_eq!(detect_delimiter("\"a,b\"\tc\n"), b'\t');
+    assert_eq!(detect_delimiter("a|b|c\n1|2|3"), b'|');
+}
+
+#[test]
+fn delimiter_sniffing_uses_every_line_not_just_the_first() {
+    // A stray ';' inside one quoted cell must not outvote the real delimiter.
+    let text = "a|b\n\"x;y\"|z\n1|2\n";
+    assert_eq!(detect_delimiter(text), b'|');
+    // First line has no separators at all (single-column header); the data
+    // lines still identify the delimiter.
+    let text = "title\n1,2,3\n4,5,6\n";
+    assert_eq!(detect_delimiter(text), b',');
+}
+
+#[test]
+fn strip_text_bom_skips_utf8_and_rejects_utf16() {
+    assert_eq!(strip_text_bom(b"\xEF\xBB\xBFa,b").unwrap(), b"a,b");
+    assert_eq!(strip_text_bom(b"a,b").unwrap(), b"a,b");
+    assert!(strip_text_bom(b"\xFF\xFEa\x00").is_err());
+    assert!(strip_text_bom(b"\xFE\xFF\x00a").is_err());
+}
+
+#[test]
+fn decode_csv_cell_round_trips_null_marker() {
+    assert_eq!(decode_csv_cell("\\N"), None);
+    assert_eq!(decode_csv_cell("\\\\N"), Some("\\N".to_string()));
+    assert_eq!(decode_csv_cell("\\\\\\N"), Some("\\\\N".to_string()));
+    assert_eq!(decode_csv_cell(""), Some(String::new()));
+    assert_eq!(decode_csv_cell("plain"), Some("plain".to_string()));
+    assert_eq!(
+        decode_csv_cell("C:\\new\\path"),
+        Some("C:\\new\\path".to_string())
+    );
+}
+
+#[test]
+fn header_detection_keeps_data_first_rows() {
+    // All-numeric first row is data, not a header.
+    assert!(!looks_like_header(
+        &["1".to_string(), "2".to_string(), "3".to_string()],
+        Some(&["4".to_string(), "5".to_string(), "6".to_string()])
+    ));
+    // Text first row over typed data rows is a header.
+    assert!(looks_like_header(
+        &["id".to_string(), "name".to_string()],
+        Some(&["1".to_string(), "alice".to_string()])
+    ));
 }
 
 #[test]
 fn insert_batches_use_bound_placeholders_and_quoted_identifiers() {
-    let record = vec!["alice".to_string(), "42".to_string()];
+    let record = vec![Some("alice".to_string()), Some("42".to_string())];
     let mappings = vec![
         ImportColumnMapping {
             source_index: 0,
@@ -50,7 +99,7 @@ fn insert_batches_use_bound_placeholders_and_quoted_identifiers() {
 #[test]
 fn mappings_pick_cells_by_source_index() {
     // Column order in the mapping must follow source_index, not list order.
-    let record = vec!["42".to_string(), "alice".to_string()];
+    let record = vec![Some("42".to_string()), Some("alice".to_string())];
     let mappings = vec![
         ImportColumnMapping {
             source_index: 1,

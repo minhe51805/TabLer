@@ -101,6 +101,9 @@ import {
 import { EditableRelationEdge } from "./EditableRelationEdge";
 import { ERDZoomLabelController } from "./ERDZoomLabelController";
 import { TableNode, type ERDNodeContextPayload } from "./TableNode";
+import { useI18n } from "../../i18n";
+import { getERDiagramCopy } from "./er-diagram-copy";
+import { requestAppConfirmation } from "../../stores/confirmStore";
 import { type DiagramPoint } from "./layout";
 import { formatERRelationshipSummary, inferERRelationshipNotation } from "./relationshipNotation";
 import {
@@ -226,6 +229,8 @@ async function fetchSchema(
 }
 
 export function ERDiagram({ connectionId, database }: Props) {
+  const { language } = useI18n();
+  const erdCopy = getERDiagramCopy(language);
   const shellRef = useRef<HTMLDivElement | null>(null);
   const reactFlowInstanceRef = useRef<ReactFlowInstance | null>(null);
   const hasInitializedSelectionRef = useRef(false);
@@ -549,11 +554,14 @@ export function ERDiagram({ connectionId, database }: Props) {
 
         if (nullCount > 0) {
           const defaultValue = getDefaultValueForType(quickColumnEditor.editor.dataType);
-          const confirmed = window.confirm(
-            `Column "${quickColumnEditor.originalColumn.name}" has ${nullCount} NULL value(s).\n\n` +
-              `To set NOT NULL, TableR can update them to ${defaultValue} first.\n\n` +
-              `Click OK to continue, or Cancel to stop.`,
-          );
+          const confirmed = await requestAppConfirmation({
+            title: erdCopy.notNullBackfillTitle,
+            message: erdCopy.notNullBackfillBody
+              .replace("{column}", quickColumnEditor.originalColumn.name)
+              .replace("{count}", String(nullCount))
+              .replace("{default}", defaultValue),
+            confirmText: erdCopy.notNullBackfillConfirm,
+          });
 
           if (!confirmed) {
             throw new Error("Apply cancelled.");
@@ -597,6 +605,9 @@ export function ERDiagram({ connectionId, database }: Props) {
     connectionId,
     countTableNullValues,
     database,
+    erdCopy.notNullBackfillBody,
+    erdCopy.notNullBackfillConfirm,
+    erdCopy.notNullBackfillTitle,
     executeStructureStatements,
     loadSchema,
     quickColumnEditor,
@@ -869,7 +880,7 @@ export function ERDiagram({ connectionId, database }: Props) {
 
   const handleExportPNG = useCallback(async () => {
     if (nodes.length === 0) {
-      setExportError("Select at least one table before exporting the diagram.");
+      setExportError(erdCopy.exportNoTables);
       return;
     }
 
@@ -879,7 +890,7 @@ export function ERDiagram({ connectionId, database }: Props) {
 
       const canvas = renderERDiagramCanvas(nodes, edges);
       if (!canvas) {
-        throw new Error("Could not prepare the ER diagram export image.");
+        throw new Error(erdCopy.exportPrepareFailed);
       }
 
       const fileName = buildERDiagramExportFileName(activeDatabaseLabel, "png");
@@ -904,17 +915,15 @@ export function ERDiagram({ connectionId, database }: Props) {
         downloadLink.remove();
       }
     } catch (reason) {
-      setExportError(
-        reason instanceof Error ? reason.message : "Could not export the ER diagram PNG.",
-      );
+      setExportError(reason instanceof Error ? reason.message : erdCopy.exportPngFailed);
     } finally {
       setExportFormat(null);
     }
-  }, [activeDatabaseLabel, edges, nodes]);
+  }, [activeDatabaseLabel, edges, erdCopy, nodes]);
 
   const handleExportSVG = useCallback(async () => {
     if (nodes.length === 0) {
-      setExportError("Select at least one table before exporting the diagram.");
+      setExportError(erdCopy.exportNoTables);
       return;
     }
 
@@ -942,17 +951,15 @@ export function ERDiagram({ connectionId, database }: Props) {
       downloadLink.remove();
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
     } catch (reason) {
-      setExportError(
-        reason instanceof Error ? reason.message : "Could not export the ER diagram SVG.",
-      );
+      setExportError(reason instanceof Error ? reason.message : erdCopy.exportSvgFailed);
     } finally {
       setExportFormat(null);
     }
-  }, [activeDatabaseLabel, edges, nodes]);
+  }, [activeDatabaseLabel, edges, erdCopy, nodes]);
 
   const handleExportDrawio = useCallback(async () => {
     if (nodes.length === 0) {
-      setExportError("Select at least one table before exporting the diagram.");
+      setExportError(erdCopy.exportNoTables);
       return;
     }
 
@@ -981,13 +988,11 @@ export function ERDiagram({ connectionId, database }: Props) {
       downloadLink.remove();
       window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
     } catch (reason) {
-      setExportError(
-        reason instanceof Error ? reason.message : "Could not export the ER diagram draw.io file.",
-      );
+      setExportError(reason instanceof Error ? reason.message : erdCopy.exportDrawioFailed);
     } finally {
       setExportFormat(null);
     }
-  }, [activeDatabaseLabel, edges, nodes]);
+  }, [activeDatabaseLabel, edges, erdCopy, nodes]);
 
   const handleOpenRelationshipSql = useCallback(() => {
     const sql = buildERDiagramSqlExport(activeDbType, allRelationships, database);

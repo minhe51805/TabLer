@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invokeWithTimeout, invokeMutation } from "../utils/tauri-utils";
+import { emitAppToast } from "../utils/app-toast";
 import type {
   ColumnDetail,
   QueryParameter,
@@ -18,10 +19,7 @@ import {
 } from "../utils/query-result-cache";
 import { getOrLoadTableColumns, getOrLoadTableStructure } from "../utils/schema-cache";
 import { useConnectionStore } from "./connectionStore";
-import {
-  invokeAIWorkspaceToolMutation,
-  invokeAIWorkspaceToolWithTimeout,
-} from "../utils/ai-tool-command-client";
+import { invokeAIWorkspaceToolWithTimeout } from "../utils/ai-tool-command-client";
 
 export interface QueryState {
   isExecutingQuery: boolean;
@@ -130,6 +128,8 @@ export interface QueryState {
       orderBy?: string;
       orderDir?: "ASC" | "DESC";
       filter?: string;
+      /** Retry after the user confirmed replacing an existing file. */
+      overwrite?: boolean;
     },
     operationId: string,
   ) => Promise<{ filePath: string; format: string; rowCount: number }>;
@@ -144,6 +144,24 @@ export interface QueryState {
 }
 
 const PROGRESSIVE_DELIVERY_STORAGE_KEY = "tablerogrid.progressive-delivery";
+
+/**
+ * Errors that justify retrying a progressive run through the legacy
+ * `execute_query` path: transport failures and drivers that don't implement
+ * the progressive command. A validation/sandbox denial, timeout, or runtime
+ * error must NOT fall through — the legacy path would re-execute a statement
+ * the guarded path already refused (or double-run a slow query).
+ */
+const PROGRESSIVE_FALLBACK_DENY =
+  /not allowed|blocked|sandbox|read.only|denied|forbidden|cancel|timed? ?out|permission/i;
+const PROGRESSIVE_FALLBACK_ALLOW =
+  /unsupported|not supported|unknown command|not implemented|no such command|invalid command|ipc|transport|failed to fetch|channel|webview/i;
+
+function canFallbackToLegacyQuery(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  if (PROGRESSIVE_FALLBACK_DENY.test(message)) return false;
+  return PROGRESSIVE_FALLBACK_ALLOW.test(message);
+}
 
 /**
  * Roadmap Phase 3B: only single read-only row-returning statements go through
@@ -197,8 +215,8 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       let unlisten: UnlistenFn | null = null;
       if (get().progressiveDeliveryEnabled && isProgressiveEligible(sql)) {
         // Phase 3B: stream row batches so the UI can show live delivery
-        // progress; the command still resolves with the complete result and
-        // any failure falls back to the legacy path transparently.
+        // progress; the command still resolves with the complete result.
+        // A listener-setup failure is a transport problem — always fall back.
         try {
           unlisten = await listen<{ connectionId: string; rows: unknown[][]; totalRows: number }>(
             "query-row-batch",
@@ -207,20 +225,31 @@ export const useQueryStore = create<QueryState>((set, get) => ({
               set({ progressiveRowCount: event.payload.totalRows });
             },
           );
-          result = await invokeMutation<QueryResult>("execute_query_progressive", {
-            connectionId,
-            sql,
-            chunkSize: null,
-            requestId,
-            safeModeApprovedByUser: safety.userConfirmed === true,
-          });
-        } catch (progressiveError) {
-          // Progressive delivery is an optimization; fall back to the legacy
-          // path, but never drop the failure silently.
-          console.warn("[Query] Progressive execution failed, falling back:", progressiveError);
-          result = null;
-        } finally {
-          unlisten?.();
+        } catch (listenError) {
+          console.warn("[Query] Progressive listener unavailable, using legacy path:", listenError);
+          unlisten = null;
+        }
+        if (unlisten) {
+          try {
+            result = await invokeMutation<QueryResult>("execute_query_progressive", {
+              connectionId,
+              sql,
+              chunkSize: null,
+              requestId,
+              safeModeApprovedByUser: safety.userConfirmed === true,
+            });
+          } catch (progressiveError) {
+            // Progressive delivery is an optimization; only transport-level or
+            // "unsupported" failures may retry through the unguarded legacy
+            // path — a sandbox/validation denial must surface as-is.
+            if (!canFallbackToLegacyQuery(progressiveError)) {
+              throw progressiveError;
+            }
+            console.warn("[Query] Progressive execution failed, falling back:", progressiveError);
+            result = null;
+          } finally {
+            unlisten();
+          }
         }
       }
       if (result === null) {
@@ -272,7 +301,19 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     const requestId = get().activeQueryRequestId;
     const connectionId = get().activeQueryConnectionId;
     if (!requestId) return false;
-    return invokeMutation<boolean>("cancel_query", { requestId, connectionId });
+    try {
+      return await invokeMutation<boolean>("cancel_query", { requestId, connectionId });
+    } catch (error) {
+      // Callers `void` this promise — a failed cancel must surface or the UI
+      // keeps a spinner for a query that is still running server-side.
+      const message = error instanceof Error ? error.message : String(error);
+      emitAppToast({
+        title: "Could not cancel the running query",
+        description: message,
+        tone: "error",
+      });
+      return false;
+    }
   },
 
   executeSandboxQuery: async (
@@ -296,13 +337,20 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     });
     const startedAt = Date.now();
     try {
-      const result = await invokeAIWorkspaceToolMutation("execute_sandboxed_query", {
-        connectionId,
-        statements,
-        requireReadOnly,
-        requestId,
-        safeModeApprovedByUser: safety.userConfirmed === true,
-      });
+      // Bounded: a stuck backend call must never hang an agent run forever —
+      // Stop cannot kill an in-flight invoke, so the timeout is the bound.
+      const result = await invokeAIWorkspaceToolWithTimeout(
+        "execute_sandboxed_query",
+        {
+          connectionId,
+          statements,
+          requireReadOnly,
+          requestId,
+          safeModeApprovedByUser: safety.userConfirmed === true,
+        },
+        120_000,
+        "Sandbox query",
+      );
       if (safety.hasSchemaMutation) {
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
       }
@@ -344,11 +392,16 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       activeQueryConnectionId: connectionId,
     });
     try {
-      const result = await invokeAIWorkspaceToolMutation("execute_agent_readonly_query", {
-        connectionId,
-        statements,
-        requestId,
-      });
+      const result = await invokeAIWorkspaceToolWithTimeout(
+        "execute_agent_readonly_query",
+        {
+          connectionId,
+          statements,
+          requestId,
+        },
+        60_000,
+        "Agent read-only query",
+      );
       if (safety.hasSchemaMutation) {
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
       }
@@ -384,12 +437,17 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       activeQueryConnectionId: connectionId,
     });
     try {
-      const result = await invokeAIWorkspaceToolMutation("execute_agent_parameterized_query", {
-        connectionId,
-        sql,
-        parameters,
-        requestId,
-      });
+      const result = await invokeAIWorkspaceToolWithTimeout(
+        "execute_agent_parameterized_query",
+        {
+          connectionId,
+          sql,
+          parameters,
+          requestId,
+        },
+        60_000,
+        "Agent parameterized query",
+      );
       if (safety.hasSchemaMutation) {
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
       }
@@ -412,10 +470,15 @@ export const useQueryStore = create<QueryState>((set, get) => ({
   previewWriteTransaction: async (connectionId, statements) => {
     set({ isExecutingQuery: true });
     try {
-      return await invokeAIWorkspaceToolMutation("preview_write_transaction", {
-        connectionId,
-        statements,
-      });
+      return await invokeAIWorkspaceToolWithTimeout(
+        "preview_write_transaction",
+        {
+          connectionId,
+          statements,
+        },
+        120_000,
+        "Write preview",
+      );
     } finally {
       set({ isExecutingQuery: false });
     }
@@ -555,6 +618,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
         orderBy: request.orderBy || null,
         orderDir: request.orderDir || null,
         filter: request.filter || null,
+        overwrite: request.overwrite ?? false,
       },
     }),
 
@@ -622,9 +686,9 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     invokeWithTimeout<Array<{ value: string | number; label: string }>>(
       "get_foreign_key_lookup_values",
       {
-        connection_id: connectionId,
-        referenced_table: table,
-        referenced_column: column,
+        connectionId,
+        referencedTable: table,
+        referencedColumn: column,
         search: search || null,
         limit: 1000,
       },

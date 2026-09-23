@@ -3,6 +3,7 @@ import {
   AI_REQUEST_REPLACED_MESSAGE,
   isSupersededAIRequestError,
 } from "../ai-agent-action-requestor";
+import { agentSqlToolBlockedMessage } from "../ai-agent-engine-gates";
 import { summarizeAgentQueryObservation } from "../ai-agent-grounding";
 import {
   agentToolError,
@@ -15,8 +16,8 @@ import { stringifyAgentObservation, type AgentToolModule } from "./shared";
 export const tool: AgentToolModule = {
   name: "run_preset",
   handler: async (ctx, args, frame) => {
-    if (ctx.toolAvailability && !ctx.toolAvailability.sqlRead) {
-      return `Tool blocked: run_preset is not available on ${ctx.toolAvailability.engineLabel}. Preset SQL targets SQL engines.`;
+    if (ctx.toolAvailability && !ctx.toolAvailability.presets) {
+      return agentSqlToolBlockedMessage("run_preset", ctx.toolAvailability);
     }
     const wantsList = args?.list === true || typeof args?.presetId !== "string";
     const presetKinds: AdminQueryKind[] = ["process-list", "user-management"];
@@ -44,6 +45,12 @@ export const tool: AgentToolModule = {
         return "Tool blocked: The user did not grant permission to read live database rows for this request.";
       }
     }
+    // A superseded run must not hit the database at all — check before the
+    // backend call, not only after it.
+    if (ctx.requestId !== ctx.requestIdRef.current) {
+      throw new Error(AI_REQUEST_REPLACED_MESSAGE);
+    }
+
     try {
       frame.sql = preset.content;
       const queryResult = await ctx.executeReadonlyQuery(ctx.connectionId!, [preset.content]);

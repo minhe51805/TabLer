@@ -126,7 +126,9 @@ describe("connectionStore", () => {
       tables: [previousTable],
       isConnecting: false,
     });
-    expect(useGlobalErrorStore.getState().error).toContain("Connection to target failed");
+    // The failure surfaces through the caller's own channel (form test
+    // result / toast), not the global error store — no double reporting.
+    expect(useGlobalErrorStore.getState().error).toBeNull();
   });
 
   it("derives the connection name after resolving environment fields", async () => {
@@ -204,15 +206,17 @@ describe("connectionStore", () => {
   it("serializes rapid switches so a superseded switch cannot clobber tables", async () => {
     const slowTables = deferred<unknown>();
     invokeMutationMock.mockResolvedValue(undefined);
-    invokeWithTimeoutMock.mockImplementation((command: string, args: { database?: string | null }) => {
-      if (command === "list_tables") {
-        const database = args?.database ?? "";
-        // The first (soon superseded) switch resolves its metadata very late.
-        if (database === "slow-a") return slowTables.promise;
-        return Promise.resolve([{ name: `table_${database}`, table_type: "table" }]);
-      }
-      return Promise.resolve([]);
-    });
+    invokeWithTimeoutMock.mockImplementation(
+      (command: string, args: { database?: string | null }) => {
+        if (command === "list_tables") {
+          const database = args?.database ?? "";
+          // The first (soon superseded) switch resolves its metadata very late.
+          if (database === "slow-a") return slowTables.promise;
+          return Promise.resolve([{ name: `table_${database}`, table_type: "table" }]);
+        }
+        return Promise.resolve([]);
+      },
+    );
     useConnectionStore.setState({
       activeConnectionId: "connection-1",
       connectedIds: new Set(["connection-1"]),
@@ -229,7 +233,9 @@ describe("connectionStore", () => {
     expect(useCalls).toHaveLength(1);
     expect(useCalls[0][1]).toEqual({ connectionId: "connection-1", database: "fast-b" });
     expect(useConnectionStore.getState().currentDatabase).toBe("fast-b");
-    expect(useConnectionStore.getState().tables).toEqual([{ name: "table_fast-b", table_type: "table" }]);
+    expect(useConnectionStore.getState().tables).toEqual([
+      { name: "table_fast-b", table_type: "table" },
+    ]);
     expect(useConnectionStore.getState().isSwitchingDatabase).toBe(false);
   });
 
@@ -267,9 +273,9 @@ describe("connectionStore", () => {
       schemaObjects,
     });
 
-    await useConnectionStore.getState().connectToDatabase(
-      connection({ id: "connection-1", database: "analytics" }),
-    );
+    await useConnectionStore
+      .getState()
+      .connectToDatabase(connection({ id: "connection-1", database: "analytics" }));
 
     const state = useConnectionStore.getState();
     expect(state.isConnecting).toBe(false);
@@ -293,9 +299,9 @@ describe("connectionStore", () => {
       schemaObjects: [{ name: "v_orders", object_type: "view" }],
     });
 
-    await useConnectionStore.getState().connectToDatabase(
-      connection({ id: "connection-1", database: "other" }),
-    );
+    await useConnectionStore
+      .getState()
+      .connectToDatabase(connection({ id: "connection-1", database: "other" }));
 
     const state = useConnectionStore.getState();
     expect(state.currentDatabase).toBe("other");

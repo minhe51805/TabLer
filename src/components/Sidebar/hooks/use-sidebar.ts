@@ -733,6 +733,7 @@ export function useSidebar() {
         type: "table",
         title: table.name,
         connectionId: activeConnectionId,
+        tableName: qualifiedName,
         database: currentDatabase ?? undefined,
         isPreview: true,
       });

@@ -10,7 +10,7 @@
 
 import { useMemo } from "react";
 import "../../styles/ai-insights.css";
-import { useAgentInsightsStore } from "../../stores/agent-insights-store";
+import { insightKey, useAgentInsightsStore } from "../../stores/agent-insights-store";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 
 interface AIAgentInsightsProps {
@@ -73,7 +73,7 @@ export function AIAgentInsights({ copy, scope }: AIAgentInsightsProps) {
                       detail: { sql: insight.suggestedAction.prefill },
                     }),
                   );
-                  dismissInsight(insight.id);
+                  dismissInsight(insightKey(insight));
                 }}
               >
                 {insight.suggestedAction.label}
@@ -81,7 +81,7 @@ export function AIAgentInsights({ copy, scope }: AIAgentInsightsProps) {
               <button
                 type="button"
                 className="ai-insights-action"
-                onClick={() => dismissInsight(insight.id)}
+                onClick={() => dismissInsight(insightKey(insight))}
               >
                 {copy.insights.dismiss}
               </button>

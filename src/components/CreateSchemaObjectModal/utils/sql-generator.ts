@@ -1,5 +1,8 @@
 import type { ColumnDraft } from "../ColumnEditor";
+import type { SchemaWizardCopy } from "../schema-wizard-copy";
 import type { DatabaseType } from "../../../types";
+
+type WizardErrors = SchemaWizardCopy["errors"];
 
 export type WizardDialect = "postgres" | "mysql" | "sqlite";
 
@@ -13,15 +16,10 @@ function quoteIdentifier(dialect: WizardDialect, value: string) {
     return `\`${trimmed.replace(/`/g, "``")}\``;
   }
 
-  return `"${trimmed.replace(/"/g, "\"\"")}"`;
+  return `"${trimmed.replace(/"/g, '""')}"`;
 }
 
-function qualifyName(
-  dialect: WizardDialect,
-  name: string,
-  schema: string,
-  database?: string,
-) {
+function qualifyName(dialect: WizardDialect, name: string, schema: string, database?: string) {
   const trimmedName = name.trim();
   if (!trimmedName) {
     return "";
@@ -62,18 +60,17 @@ export function buildTableSql(
   schema: string,
   database: string | undefined,
   columns: ColumnDraft[],
+  errors: WizardErrors,
 ): SqlBuildResult {
   const trimmedName = name.trim();
   if (!trimmedName) {
-    return { sql: "", error: "Table name is required." };
+    return { sql: "", error: errors.tableNameRequired };
   }
 
-  const sanitizedColumns = columns.filter(
-    (column) => column.name.trim() && column.dataType.trim(),
-  );
+  const sanitizedColumns = columns.filter((column) => column.name.trim() && column.dataType.trim());
 
   if (sanitizedColumns.length === 0) {
-    return { sql: "", error: "Add at least one column." };
+    return { sql: "", error: errors.addColumn };
   }
 
   const duplicateNames = new Set<string>();
@@ -89,15 +86,13 @@ export function buildTableSql(
   if (duplicateNames.size > 0) {
     return {
       sql: "",
-      error: `Duplicate column names: ${Array.from(duplicateNames).join(", ")}.`,
+      error: errors.duplicateColumns(Array.from(duplicateNames).join(", ")),
     };
   }
 
   const primaryKeys = sanitizedColumns.filter((column) => column.primaryKey);
   const lines = sanitizedColumns.map((column) => {
-    const parts = [
-      `${quoteIdentifier(dialect, column.name)} ${column.dataType.trim()}`,
-    ];
+    const parts = [`${quoteIdentifier(dialect, column.name)} ${column.dataType.trim()}`];
 
     if (!column.nullable) {
       parts.push("NOT NULL");
@@ -131,15 +126,16 @@ export function buildViewSql(
   schema: string,
   database: string | undefined,
   body: string,
+  errors: WizardErrors,
 ): SqlBuildResult {
   const trimmedName = name.trim();
   if (!trimmedName) {
-    return { sql: "", error: "View name is required." };
+    return { sql: "", error: errors.viewNameRequired };
   }
 
   const trimmedBody = body.trim();
   if (!trimmedBody) {
-    return { sql: "", error: "View query is required." };
+    return { sql: "", error: errors.viewQueryRequired };
   }
 
   const viewRef = qualifyName(dialect, trimmedName, schema, database);
@@ -160,19 +156,20 @@ export function buildTriggerSql(
   timing: string,
   event: string,
   body: string,
+  errors: WizardErrors,
 ): SqlBuildResult {
   const trimmedName = name.trim();
   if (!trimmedName) {
-    return { sql: "", error: "Trigger name is required." };
+    return { sql: "", error: errors.triggerNameRequired };
   }
 
   if (!tableName.trim()) {
-    return { sql: "", error: "Choose a target table for the trigger." };
+    return { sql: "", error: errors.triggerTableRequired };
   }
 
   const trimmedBody = body.trim();
   if (!trimmedBody) {
-    return { sql: "", error: "Trigger body is required." };
+    return { sql: "", error: errors.triggerBodyRequired };
   }
 
   const targetTableRef = qualifyName(dialect, tableName, schema, database);
@@ -182,7 +179,7 @@ export function buildTriggerSql(
     if (dbType === "redshift") {
       return {
         sql: "",
-        error: "Trigger scaffolding is not enabled for Redshift in this build.",
+        error: errors.redshiftTriggers,
       };
     }
 

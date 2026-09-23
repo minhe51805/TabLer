@@ -21,23 +21,35 @@ function quote(files) {
   return files.map((file) => `"${file}"`).join(" ");
 }
 
+// Windows CreateProcess caps a command line near 32K chars — a large staged
+// set (e.g. a repo-wide audit commit) overflows it and the hook fails with
+// "The command line is too long". Chunk the file list so each spawned
+// command stays well under the limit.
+const MAX_FILES_PER_COMMAND = 40;
+
+/** Split `files` into batches and map each batch to a command string. */
+function batched(files, command) {
+  const commands = [];
+  for (let index = 0; index < files.length; index += MAX_FILES_PER_COMMAND) {
+    commands.push(command(files.slice(index, index + MAX_FILES_PER_COMMAND)));
+  }
+  return commands;
+}
+
 export default {
   "*.{ts,tsx}": (files) => {
     const websiteFiles = files.filter(isWebsiteFile);
     const rootFiles = files.filter((file) => !isWebsiteFile(file));
     const commands = [];
 
-    if (rootFiles.length > 0) {
-      commands.push(`eslint --fix --max-warnings=0 ${quote(rootFiles)}`);
-    }
-    if (websiteFiles.length > 0) {
-      commands.push(
-        `npm --prefix website run lint -- --fix --max-warnings=0 ${quote(websiteFiles)}`,
-      );
-    }
-    if (files.length > 0) {
-      commands.push(`prettier --write ${quote(files)}`);
-    }
+    commands.push(
+      ...batched(rootFiles, (batch) => `eslint --fix --max-warnings=0 ${quote(batch)}`),
+      ...batched(
+        websiteFiles,
+        (batch) => `npm --prefix website run lint -- --fix --max-warnings=0 ${quote(batch)}`,
+      ),
+      ...batched(files, (batch) => `prettier --write ${quote(batch)}`),
+    );
 
     return commands;
   },

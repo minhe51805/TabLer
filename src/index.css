@@ -1,4 +1,4 @@
-﻿@import "tailwindcss";
+﻿@import "tailwindcss" source("../src");
 
 /* Token source-of-truth (must load before component styles) */
 @import "./styles/minimax-design-system.css";

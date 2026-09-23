@@ -3,6 +3,7 @@ import {
   AI_REQUEST_REPLACED_MESSAGE,
   isSupersededAIRequestError,
 } from "../ai-agent-action-requestor";
+import { agentSqlToolBlockedMessage } from "../ai-agent-engine-gates";
 import { redactAgentSqlLiterals } from "../ai-agent-grounding";
 import {
   AI_AGENT_SCHEMA_OBJECT_DEFINITION_CHARS,
@@ -15,6 +16,10 @@ import { stringifyAgentObservation, type AgentToolModule } from "./shared";
 export const tool: AgentToolModule = {
   name: "list_schema_objects",
   handler: async (ctx, args, frame) => {
+    if (ctx.toolAvailability && !ctx.toolAvailability.schemaObjects) {
+      return agentSqlToolBlockedMessage("list_schema_objects", ctx.toolAvailability);
+    }
+
     const objectType =
       typeof args?.objectType === "string" && args.objectType !== "all"
         ? args.objectType

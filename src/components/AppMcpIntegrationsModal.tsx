@@ -17,6 +17,7 @@ import type { ConnectionConfig } from "../types/database";
 import { emitAppToast } from "../utils/app-toast";
 import { requestAppConfirmation } from "../stores/confirmStore";
 import { useI18n, type TranslationKey } from "../i18n";
+import { getMcpIntegrationsCopy } from "./mcp-integrations-copy";
 
 type ExternalAccessPolicy = "blocked" | "readOnly" | "readWrite";
 type McpPermission = "readOnly" | "readWrite" | "admin";
@@ -97,7 +98,8 @@ function formatTimestamp(value: string | null, neverLabel: string) {
 }
 
 export function AppMcpIntegrationsModal({ connections, onClose }: Props) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
+  const mcpCopy = getMcpIntegrationsCopy(language);
   const [selectedConnectionId, setSelectedConnectionId] = useState(connections[0]?.id ?? "");
   const [policy, setPolicy] = useState<ExternalAccessPolicy>("blocked");
   const [savedPolicy, setSavedPolicy] = useState<ExternalAccessPolicy>("blocked");
@@ -116,6 +118,14 @@ export function AppMcpIntegrationsModal({ connections, onClose }: Props) {
   const [issuedToken, setIssuedToken] = useState<string | null>(null);
   const [busyTokenId, setBusyTokenId] = useState<string | null>(null);
   const [isChangingServer, setIsChangingServer] = useState(false);
+  // Pending policy escalation awaiting the typed phrase (replaces the old
+  // window.prompt gate). Mirrors the typed-confirmation pattern used by the
+  // Users & Roles review step.
+  const [policyConfirm, setPolicyConfirm] = useState<{
+    policy: ExternalAccessPolicy;
+    phrase: string;
+  } | null>(null);
+  const [policyPhraseInput, setPolicyPhraseInput] = useState("");
 
   const selectedConnection = useMemo(
     () => connections.find((connection) => connection.id === selectedConnectionId) ?? null,
@@ -167,12 +177,14 @@ export function AppMcpIntegrationsModal({ connections, onClose }: Props) {
   const savePolicy = useCallback(async () => {
     if (!selectedConnectionId) return;
     if (policy !== "blocked" && policy !== savedPolicy) {
-      const phrase = t(policy === "readWrite" ? "mcp.enablePhraseWrite" : "mcp.enablePhraseRead");
-      const confirmed = window.prompt(t("mcp.enablePrompt", { phrase }));
-      if (confirmed !== phrase) {
-        emitAppToast({ tone: "info", title: t("mcp.enableCancelled") });
-        return;
-      }
+      // Escalating access needs the typed phrase — staged as an in-modal
+      // confirmation instead of a native prompt.
+      setPolicyConfirm({
+        policy,
+        phrase: t(policy === "readWrite" ? "mcp.enablePhraseWrite" : "mcp.enablePhraseRead"),
+      });
+      setPolicyPhraseInput("");
+      return;
     }
     setIsSavingPolicy(true);
     try {
@@ -189,6 +201,36 @@ export function AppMcpIntegrationsModal({ connections, onClose }: Props) {
       setIsSavingPolicy(false);
     }
   }, [policy, savedPolicy, selectedConnection?.name, selectedConnectionId, t]);
+
+  const cancelPolicyConfirm = useCallback(() => {
+    setPolicyConfirm(null);
+    setPolicyPhraseInput("");
+    emitAppToast({ tone: "info", title: t("mcp.enableCancelled") });
+  }, [t]);
+
+  const confirmPolicyEscalation = useCallback(async () => {
+    if (!policyConfirm || policyPhraseInput !== policyConfirm.phrase) return;
+    const nextPolicy = policyConfirm.policy;
+    setPolicyConfirm(null);
+    setPolicyPhraseInput("");
+    setIsSavingPolicy(true);
+    try {
+      await invoke("set_mcp_connection_policy", {
+        connectionId: selectedConnectionId,
+        policy: nextPolicy,
+      });
+      setSavedPolicy(nextPolicy);
+      emitAppToast({
+        tone: "success",
+        title: t("mcp.policyUpdated"),
+        description: selectedConnection?.name ?? selectedConnectionId,
+      });
+    } catch (error) {
+      emitAppToast({ tone: "error", title: t("mcp.policySaveFailed"), description: String(error) });
+    } finally {
+      setIsSavingPolicy(false);
+    }
+  }, [policyConfirm, policyPhraseInput, selectedConnection?.name, selectedConnectionId, t]);
 
   const createToken = useCallback(async () => {
     if (!tokenName.trim()) {
@@ -391,7 +433,13 @@ export function AppMcpIntegrationsModal({ connections, onClose }: Props) {
                         type="radio"
                         value={option.value}
                         checked={policy === option.value}
-                        onChange={() => setPolicy(option.value)}
+                        onChange={() => {
+                          setPolicy(option.value);
+                          // A different radio pick abandons the pending phrase
+                          // step — it was staged for the previous choice.
+                          setPolicyConfirm(null);
+                          setPolicyPhraseInput("");
+                        }}
                       />
                       <span>
                         <strong>{t(option.labelKey)}</strong>
@@ -400,6 +448,47 @@ export function AppMcpIntegrationsModal({ connections, onClose }: Props) {
                     </label>
                   ))}
                 </div>
+                {policyConfirm ? (
+                  <div className="mcp-token-reveal" role="alert">
+                    <div className="mcp-token-reveal-head">
+                      <ShieldAlert className="w-4 h-4" />
+                      <strong>{t("mcp.enablePrompt", { phrase: policyConfirm.phrase })}</strong>
+                    </div>
+                    <label className="mcp-field">
+                      <input
+                        value={policyPhraseInput}
+                        placeholder={policyConfirm.phrase}
+                        autoFocus
+                        onChange={(event) => setPolicyPhraseInput(event.target.value)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") void confirmPolicyEscalation();
+                        }}
+                      />
+                    </label>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                      <button
+                        type="button"
+                        className="btn btn-secondary"
+                        onClick={cancelPolicyConfirm}
+                      >
+                        {t("common.cancel")}
+                      </button>
+                      <button
+                        type="button"
+                        className="btn btn-primary"
+                        disabled={policyPhraseInput !== policyConfirm.phrase || isSavingPolicy}
+                        onClick={() => void confirmPolicyEscalation()}
+                      >
+                        {isSavingPolicy ? (
+                          <LoaderCircle className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <ShieldCheck className="w-4 h-4" />
+                        )}
+                        {mcpCopy.enableAccess}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 <button
                   type="button"
                   className="btn btn-secondary mcp-save-policy"

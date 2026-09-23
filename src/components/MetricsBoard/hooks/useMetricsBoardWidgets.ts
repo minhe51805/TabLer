@@ -215,17 +215,25 @@ export function useMetricsBoardWidgets({
     [setActiveWidgetId, setEditingWidgetId, updateActiveBoard],
   );
 
-  /** Re-insert a deleted widget (undo toast). */
+  /** Re-insert a deleted widget into the board it was deleted from (undo toast). */
   const restoreWidget = useCallback(
-    (widget: MetricsWidgetDefinition) => {
-      updateActiveBoard((board) => {
+    (widget: MetricsWidgetDefinition, boardId?: string) => {
+      const targetBoardId = boardId ?? activeBoard?.id;
+      if (!targetBoardId) return;
+      const nextBoards = boards.map((board) => {
+        if (board.id !== targetBoardId) return board;
         const positioned = canPlaceWidget(board.widgets, widget, widget.id)
           ? widget
           : { ...widget, ...findFirstAvailablePosition(board.widgets, widget) };
-        return { ...board, widgets: [...board.widgets, positioned] };
+        return {
+          ...board,
+          widgets: [...board.widgets, positioned],
+          updated_at: Date.now(),
+        };
       });
+      persistBoards(nextBoards);
     },
-    [updateActiveBoard],
+    [activeBoard?.id, boards, persistBoards],
   );
 
   return {

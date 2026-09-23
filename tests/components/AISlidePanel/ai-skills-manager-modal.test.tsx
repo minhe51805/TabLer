@@ -38,6 +38,7 @@ const alphaContent = {
   model: null,
   effort: null,
   allowedTools: ["run_readonly_sql"],
+  updatedAt: 1_700_000_000_000,
 };
 
 function renderModal(overrides: { open?: boolean; language?: string; onClose?: () => void } = {}) {
@@ -61,6 +62,11 @@ function pane(selector: string): HTMLElement {
   return element;
 }
 
+/** `list_ai_skills` returns a report: the catalog plus per-file load errors. */
+function skillReport(skills: unknown[], errors: unknown[] = []) {
+  return { skills, errors };
+}
+
 /**
  * The skills manager is the only surface that shows what each enabled skill
  * costs on every run, so the guards here are about the numbers staying honest
@@ -70,13 +76,13 @@ function pane(selector: string): HTMLElement {
 describe("AISkillsManagerModal", () => {
   beforeEach(() => {
     invokeMutationMock.mockReset();
-    invokeMutationMock.mockResolvedValue([]);
+    invokeMutationMock.mockResolvedValue(skillReport([]));
     useSkillPrefsStore.setState({ disabled: {} });
     useSkillUsageStore.setState({ usage: {} });
   });
 
   it("lists the discovered catalog and reports enabled/unused/context cost", async () => {
-    invokeMutationMock.mockResolvedValue([alpha, beta]);
+    invokeMutationMock.mockResolvedValue(skillReport([alpha, beta]));
     useSkillUsageStore.setState({
       usage: { "beta-skill": { runs: 3, lastUsedAt: 1719000000000, lastConnectionId: null } },
     });
@@ -87,7 +93,7 @@ describe("AISkillsManagerModal", () => {
     const roster = await waitFor(() => pane(".ai-skills-manager-list"));
     expect(within(roster).getByText("alpha-skill")).toBeInTheDocument();
     expect(within(roster).getByText("beta-skill")).toBeInTheDocument();
-    expect(invokeMutationMock).toHaveBeenCalledWith("list_ai_skills", {});
+    expect(invokeMutationMock).toHaveBeenCalledWith("list_ai_skills", { workspaceDir: null });
 
     // 2/2 enabled; only alpha has zero runs, and `unused` means enabled+runs 0.
     const stats = pane(".ai-skills-manager-stats");
@@ -109,7 +115,7 @@ describe("AISkillsManagerModal", () => {
   });
 
   it("marks an enabled-but-never-run skill as unused and counts no cost once disabled", async () => {
-    invokeMutationMock.mockResolvedValue([alpha]);
+    invokeMutationMock.mockResolvedValue(skillReport([alpha]));
     const user = userEvent.setup();
 
     renderModal();
@@ -128,7 +134,7 @@ describe("AISkillsManagerModal", () => {
   });
 
   it("swaps the detail pane to whichever roster row is picked", async () => {
-    invokeMutationMock.mockResolvedValue([alpha, beta]);
+    invokeMutationMock.mockResolvedValue(skillReport([alpha, beta]));
     const user = userEvent.setup();
 
     renderModal();
@@ -150,7 +156,7 @@ describe("AISkillsManagerModal", () => {
   });
 
   it("filters rows by name, description, or source and reports an empty result", async () => {
-    invokeMutationMock.mockResolvedValue([alpha, beta]);
+    invokeMutationMock.mockResolvedValue(skillReport([alpha, beta]));
     const user = userEvent.setup();
 
     renderModal();
@@ -169,7 +175,7 @@ describe("AISkillsManagerModal", () => {
 
   it("creates a skill from the editor form instead of a bare name field", async () => {
     invokeMutationMock.mockImplementation((command: string) => {
-      if (command === "list_ai_skills") return Promise.resolve([]);
+      if (command === "list_ai_skills") return Promise.resolve(skillReport([]));
       if (command === "create_ai_skill") return Promise.resolve("/data/skills/db-audit");
       return Promise.resolve(null);
     });
@@ -218,7 +224,7 @@ describe("AISkillsManagerModal", () => {
 
   it("loads a stored skill into the editor and saves the whole record", async () => {
     invokeMutationMock.mockImplementation((command: string) => {
-      if (command === "list_ai_skills") return Promise.resolve([alpha]);
+      if (command === "list_ai_skills") return Promise.resolve(skillReport([alpha]));
       if (command === "read_ai_skill") return Promise.resolve(alphaContent);
       if (command === "update_ai_skill") return Promise.resolve("/data/skills/alpha-skill");
       return Promise.resolve(null);
@@ -230,7 +236,10 @@ describe("AISkillsManagerModal", () => {
     await user.click(within(roster).getByRole("button", { name: "alpha-skill" }));
     await user.click(screen.getByRole("button", { name: "Edit" }));
 
-    expect(invokeMutationMock).toHaveBeenCalledWith("read_ai_skill", { name: "alpha-skill" });
+    expect(invokeMutationMock).toHaveBeenCalledWith("read_ai_skill", {
+      name: "alpha-skill",
+      workspaceDir: null,
+    });
     const body = await screen.findByLabelText("SKILL.md body");
     expect(body).toHaveValue(alphaContent.body);
     // The name is the directory, so it is shown but locked; the tool list is
@@ -253,12 +262,13 @@ describe("AISkillsManagerModal", () => {
         license: null,
         model: null,
         effort: null,
+        expectedUpdatedAt: alphaContent.updatedAt ?? null,
       }),
     );
   });
 
   it("keeps Edit disabled for a workspace skill the app must not rewrite", async () => {
-    invokeMutationMock.mockResolvedValue([beta]);
+    invokeMutationMock.mockResolvedValue(skillReport([beta]));
 
     renderModal();
     const detail = await waitFor(() => pane(".ai-skills-manager-detail-pane"));

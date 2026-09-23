@@ -7,7 +7,6 @@ import {
   BUILTIN_ENGINE_KEYS,
   isBuiltinEngine,
   resolveEnginePluginAvailability,
-  hasInstalledPluginDriver,
   resolveNativeSidecarDrivers,
   isPluginNativeProtocol,
   isNativeDriverAvailable,
@@ -86,14 +85,15 @@ describe("native driver build availability", () => {
     expect(isNativeDriverAvailable(availability, "libsql")).toBe(false);
   });
 
-  it("never hides non-native engines and fails open on a missing report", () => {
+  it("never hides non-native engines and fails closed on a missing report", () => {
     // Non-native engines are always available regardless of the map.
     expect(isNativeDriverAvailable({}, "postgresql")).toBe(true);
     expect(isNativeDriverAvailable(undefined, "opensearch")).toBe(true);
-    // Unknown/not-yet-loaded native availability defaults to available so a
-    // failed report never hides an engine the build actually supports.
-    expect(isNativeDriverAvailable(undefined, "redis")).toBe(true);
-    expect(isNativeDriverAvailable({}, "duckdb")).toBe(true);
+    // A missing report hides native engines: the compiled-feature surface is
+    // authoritative, so an unknown state must not offer an engine the build
+    // may not drive.
+    expect(isNativeDriverAvailable(undefined, "redis")).toBe(false);
+    expect(isNativeDriverAvailable({}, "duckdb")).toBe(false);
   });
 });
 
@@ -257,7 +257,7 @@ describe("applyEngineRuntimeAvailability (shared picker / plugin-manager truth)"
     // Dropped from the build and no sidecar -> not connectable (roadmap).
     const dropped = applyEngineRuntimeAvailability([engine("redis", true)], [], { redis: false });
     expect(dropped[0].supported).toBe(false);
-    expect(dropped[0].pluginHttpState).toBeUndefined();
+    expect(dropped[0].pluginHttpState).toBe("roadmap");
 
     // Dropped from the build but an installed sidecar restores it.
     const viaSidecar = applyEngineRuntimeAvailability(
@@ -315,17 +315,15 @@ describe("builtin-12 vs plugin-gated engine classification", () => {
     return record;
   }
 
-  it("ships exactly the twelve default engines", () => {
+  it("ships exactly the ten default engines", () => {
     expect([...BUILTIN_ENGINE_KEYS].sort()).toEqual([
       "cockroachdb",
-      "duckdb",
       "greenplum",
       "mariadb",
       "mongodb",
       "mssql",
       "mysql",
       "postgresql",
-      "redis",
       "redshift",
       "sqlite",
       "vertica",
@@ -333,7 +331,9 @@ describe("builtin-12 vs plugin-gated engine classification", () => {
     for (const key of BUILTIN_ENGINE_KEYS) expect(isBuiltinEngine(key)).toBe(true);
     for (const key of [
       "cassandra",
+      "duckdb",
       "libsql",
+      "redis",
       "clickhouse",
       "bigquery",
       "snowflake",
@@ -353,16 +353,21 @@ describe("builtin-12 vs plugin-gated engine classification", () => {
     expect(result[0].pluginHttpState).toBeUndefined();
   });
 
-  it("gates every non-builtin engine behind an installed plugin", () => {
+  it("gates every non-builtin engine behind a compiled crate or installed plugin", () => {
     // MariaDB is compiled into the backend (MySQL driver) — it is builtin now,
     // not roadmap-gated.
     const mariadb = applyEngineRuntimeAvailability([engine("mariadb", true)], []);
     expect(mariadb[0].supported).toBe(true);
 
-    // A native engine that used to be built-in is now plugin-gated: even a
-    // compiled build no longer makes it connectable without its plugin.
-    const cassandraNoPlugin = applyEngineRuntimeAvailability([engine("cassandra", true)], [], {
+    // A native engine compiled into the build connects without any plugin.
+    const cassandraCompiled = applyEngineRuntimeAvailability([engine("cassandra", true)], [], {
       cassandra: true,
+    });
+    expect(cassandraCompiled[0].supported).toBe(true);
+
+    // Not compiled and no plugin -> roadmap.
+    const cassandraNoPlugin = applyEngineRuntimeAvailability([engine("cassandra", true)], [], {
+      cassandra: false,
     });
     expect(cassandraNoPlugin[0].supported).toBe(false);
     expect(cassandraNoPlugin[0].pluginHttpState).toBe("roadmap");
@@ -382,7 +387,5 @@ describe("builtin-12 vs plugin-gated engine classification", () => {
       "installed",
     );
     expect(resolveEnginePluginAvailability([], "opensearch")).toBe("roadmap");
-    expect(hasInstalledPluginDriver([plugin({ enabled: false })], "opensearch")).toBe(true);
-    expect(hasInstalledPluginDriver([], "opensearch")).toBe(false);
   });
 });

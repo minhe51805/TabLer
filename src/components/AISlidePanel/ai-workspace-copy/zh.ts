@@ -35,6 +35,7 @@ export const ZH_COPY: AIWorkspaceCopy = {
     insert: "插入",
     approveRun: "批准运行",
     retry: "重试",
+    liveDataDisabledHint: "智能体已为此回答读取了实时数据——再次运行此 SQL 会重复。",
   },
   modal: {
     kicker: "气泡详情",
@@ -128,7 +129,7 @@ export const ZH_COPY: AIWorkspaceCopy = {
     agentAutonomySmart: "智能",
     agentAutonomySmartHint: "自动运行安全的读取查询，写入前询问。",
     agentAutonomyFull: "完全权限",
-    agentAutonomyFullHint: "自动运行安全的只读查询；写入和架构更改仍需确认。",
+    agentAutonomyFullHint: "不经询问运行所有操作；关闭 Safe Mode。",
     thinkingToggleLabel: "思考",
     thinkingToggleHint: "显示或隐藏智能体的实时推理",
     thinkingOn: "开",
@@ -165,8 +166,12 @@ export const ZH_COPY: AIWorkspaceCopy = {
     sqlConfirmBatchLabel: "本次运行包含 {count} 条语句。",
     autonomyFullConfirmTitle: "启用完全访问？",
     autonomyFullConfirmBody:
-      "AI 代理将自动运行读取操作和工具调用，不再事先询问。写入和架构操作在执行前仍需要你的确认。",
+      "AI 代理将不经询问直接运行读取、写入和架构更改——语句一经提出立即执行。仅对完全信任的工作启用。",
     autonomyFullConfirmAllow: "启用完全访问",
+    autonomyFullSafeModeTitle: "关闭 Safe Mode？",
+    autonomyFullSafeModeBody:
+      "完全访问在启用期间也会关闭 Safe Mode——代理的写入操作将完全不受检查或确认。切换回智能或总是审阅时，Safe Mode 会自动恢复。",
+    autonomyFullSafeModeAllow: "关闭 Safe Mode 并启用",
     promptIdeas: [
       {
         title: "创建表",

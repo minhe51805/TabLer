@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import type { ICellEditorProps } from "./types";
 import type { GridCellValue } from "../hooks/useDataGrid";
+import { getDataGridCopy } from "../datagrid-copy";
+import { getCurrentAppLanguage } from "../../../i18n";
 
 export interface LookupValue {
   value: unknown;
@@ -25,6 +27,7 @@ export function FKLookupCellEditor({
   connectionId: _connectionId,
   onLoadLookupValues,
 }: FKEditorProps) {
+  const copy = getDataGridCopy(getCurrentAppLanguage());
   const selectRef = useRef<HTMLSelectElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [filter, setFilter] = useState("");
@@ -42,14 +45,15 @@ export function FKLookupCellEditor({
 
   useEffect(() => {
     if (!referencedTable || !referencedColumn) {
-      setError("FK reference not available");
+      setError(copy.fkLookup.referenceUnavailable);
       setIsLoading(false);
       return;
     }
     setIsLoading(true);
     setError(null);
     const currentSeed = seedValue;
-    onLoadLookupValuesRef.current(referencedTable, referencedColumn)
+    onLoadLookupValuesRef
+      .current(referencedTable, referencedColumn)
       .then((result) => {
         setValues(result);
         const found = result.find((v) => String(v.value) === String(currentSeed));
@@ -61,8 +65,8 @@ export function FKLookupCellEditor({
       .finally(() => {
         setIsLoading(false);
       });
-  // seedValue is deliberately in deps to re-resolve the label when value changes.
-  }, [referencedTable, referencedColumn, seedValue]);
+    // seedValue is deliberately in deps to re-resolve the label when value changes.
+  }, [referencedTable, referencedColumn, seedValue, copy]);
 
   useEffect(() => {
     selectRef.current?.focus();
@@ -85,7 +89,7 @@ export function FKLookupCellEditor({
     return (
       <div className="flex items-center gap-2 px-2 py-1">
         <span className="animate-spin inline-block w-3 h-3 border border-[var(--accent)] border-t-transparent rounded-full" />
-        <span className="text-xs text-[var(--text-muted)]">Loading...</span>
+        <span className="text-xs text-[var(--text-muted)]">{copy.fkLookup.loading}</span>
       </div>
     );
   }
@@ -93,7 +97,7 @@ export function FKLookupCellEditor({
   if (error) {
     return (
       <div className="px-2 py-1">
-        <span className="text-xs text-red-500">Error: {error}</span>
+        <span className="text-xs text-red-500">{copy.fkLookup.error(error)}</span>
       </div>
     );
   }
@@ -107,9 +111,7 @@ export function FKLookupCellEditor({
         onChange={(e) => {
           setFilter(e.target.value);
           setSelectedLabel(e.target.value);
-          const found = values.find((v) =>
-            v.label.toLowerCase() === e.target.value.toLowerCase()
-          );
+          const found = values.find((v) => v.label.toLowerCase() === e.target.value.toLowerCase());
           if (found) {
             onChange(String(found.value));
           } else {
@@ -117,7 +119,7 @@ export function FKLookupCellEditor({
           }
         }}
         className="datagrid-enum-filter w-full text-xs px-2"
-        placeholder={`Search ${referencedTable}...`}
+        placeholder={copy.fkLookup.searchPlaceholder(referencedTable ?? "")}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
       />
@@ -129,11 +131,7 @@ export function FKLookupCellEditor({
           }
         }}
         className="datagrid-cell-editor datagrid-cell-select w-full"
-        value={
-          values.find((v) => String(v.value) === String(seedValue))
-            ? String(seedValue)
-            : ""
-        }
+        value={values.find((v) => String(v.value) === String(seedValue)) ? String(seedValue) : ""}
         onChange={(e) => {
           const val = e.target.value;
           setSelectedLabel(val);
@@ -173,11 +171,13 @@ export function FKLookupCellEditor({
           </option>
         ))}
         {filteredValues.length === 0 && !isNullable && (
-          <option value="" disabled>No matches</option>
+          <option value="" disabled>
+            {copy.fkLookup.noMatches}
+          </option>
         )}
       </select>
       <span className="text-xs text-[var(--text-muted)]">
-        {values.length} values
+        {copy.fkLookup.valueCount(values.length)}
       </span>
     </div>
   );

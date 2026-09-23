@@ -19,7 +19,7 @@ import { stringifyAgentObservation, type AgentToolModule } from "./shared";
 export const tool: AgentToolModule = {
   name: "find_value",
   handler: async (ctx, args, frame) => {
-    if (ctx.toolAvailability && !ctx.toolAvailability.sqlRead) {
+    if (ctx.toolAvailability && !ctx.toolAvailability.parameterizedRead) {
       return agentSqlToolBlockedMessage("find_value", ctx.toolAvailability);
     }
     const requestedTable = typeof args?.table === "string" ? args.table.trim() : "";
@@ -68,6 +68,11 @@ export const tool: AgentToolModule = {
       if (!approved) {
         return "Tool blocked: The user did not grant permission to read live database rows for this request.";
       }
+    }
+    // A superseded run must not hit the database at all — check before the
+    // backend call, not only after it.
+    if (ctx.requestId !== ctx.requestIdRef.current) {
+      throw new Error(AI_REQUEST_REPLACED_MESSAGE);
     }
 
     const requestedLimit =

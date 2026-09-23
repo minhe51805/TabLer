@@ -34,10 +34,17 @@ const PROCESS_LIST_PRESETS: Partial<Record<DatabaseType, AdminQueryPreset>> = {
     content:
       "SELECT pid, user_name, db_name, start_time, status, TRIM(query) AS query_text\nFROM stv_recents\nORDER BY start_time DESC;",
   },
-  cockroachdb: { supported: true, content: "SHOW CLUSTER SESSIONS;" },
-  mssql: { supported: true, content: "EXEC sp_who2;" },
+  cockroachdb: {
+    supported: true,
+    content: "SELECT *\nFROM crdb_internal.cluster_sessions;",
+  },
+  mssql: {
+    supported: true,
+    content:
+      "SELECT s.session_id, s.login_name, s.host_name, s.program_name, s.status, DB_NAME(r.database_id) AS database_name, r.command, r.wait_type\nFROM sys.dm_exec_sessions s\nLEFT JOIN sys.dm_exec_requests r ON r.session_id = s.session_id\nWHERE s.is_user_process = 1\nORDER BY s.session_id;",
+  },
   redis: { supported: true, content: "CLIENT LIST" },
-  mongodb: { supported: true, content: 'db.adminCommand({ currentOp: true, $all: true })' },
+  mongodb: { supported: true, content: "db.adminCommand({ currentOp: true, $all: true })" },
   cassandra: { supported: true, content: "SELECT * FROM system_views.clients;" },
   vertica: {
     supported: true,
@@ -82,7 +89,10 @@ const USER_MANAGEMENT_PRESETS: Partial<Record<DatabaseType, AdminQueryPreset>> =
     content:
       "SELECT usename AS user_name, usesuper AS is_superuser, usecreatedb AS can_create_db\nFROM pg_user\nORDER BY usename;",
   },
-  cockroachdb: { supported: true, content: "SHOW ROLES;" },
+  cockroachdb: {
+    supported: true,
+    content: "SELECT username\nFROM system.users\nORDER BY username;",
+  },
   mssql: {
     supported: true,
     content:
@@ -90,18 +100,23 @@ const USER_MANAGEMENT_PRESETS: Partial<Record<DatabaseType, AdminQueryPreset>> =
   },
   redis: { supported: true, content: "ACL LIST" },
   mongodb: { supported: true, content: 'db.getSiblingDB("admin").runCommand({ usersInfo: 1 })' },
-  cassandra: { supported: true, content: "LIST ROLES;" },
+  cassandra: {
+    supported: true,
+    content: "SELECT role, super, can_login\nFROM system_auth.roles;",
+  },
   vertica: {
     supported: true,
-    content:
-      "SELECT user_name, is_super_user, locked\nFROM users\nORDER BY user_name;",
+    content: "SELECT user_name, is_super_user, locked\nFROM users\nORDER BY user_name;",
   },
   clickhouse: {
     supported: true,
-    content:
-      "SELECT name, storage, auth_type\nFROM system.users\nORDER BY name;",
+    content: "SELECT name, storage, auth_type\nFROM system.users\nORDER BY name;",
   },
-  snowflake: { supported: true, content: "SHOW USERS;" },
+  snowflake: {
+    supported: true,
+    content:
+      "SELECT name, login_name, display_name, type, disabled, has_password, has_mfa\nFROM SNOWFLAKE.ACCOUNT_USAGE.USERS\nWHERE deleted_on IS NULL\nORDER BY name;",
+  },
 };
 
 export function getAdminQueryPreset(
@@ -113,24 +128,44 @@ export function getAdminQueryPreset(
   }
 
   if (kind === "process-list") {
-    if (dbType === "sqlite" || dbType === "duckdb" || dbType === "libsql" || dbType === "cloudflare_d1") {
+    if (
+      dbType === "sqlite" ||
+      dbType === "duckdb" ||
+      dbType === "libsql" ||
+      dbType === "cloudflare_d1"
+    ) {
       return unsupported("This engine does not expose a live server process list.");
     }
 
     if (dbType === "bigquery") {
-      return unsupported("BigQuery process inspection depends on region-scoped INFORMATION_SCHEMA views.");
+      return unsupported(
+        "BigQuery process inspection depends on region-scoped INFORMATION_SCHEMA views.",
+      );
     }
 
-    return PROCESS_LIST_PRESETS[dbType] ?? unsupported("No process list preset is available for this engine yet.");
+    return (
+      PROCESS_LIST_PRESETS[dbType] ??
+      unsupported("No process list preset is available for this engine yet.")
+    );
   }
 
-  if (dbType === "sqlite" || dbType === "duckdb" || dbType === "libsql" || dbType === "cloudflare_d1") {
-    return unsupported("This engine does not have server-managed users in the current workspace model.");
+  if (
+    dbType === "sqlite" ||
+    dbType === "duckdb" ||
+    dbType === "libsql" ||
+    dbType === "cloudflare_d1"
+  ) {
+    return unsupported(
+      "This engine does not have server-managed users in the current workspace model.",
+    );
   }
 
   if (dbType === "bigquery") {
     return unsupported("BigQuery access is governed by IAM rather than an in-database user list.");
   }
 
-  return USER_MANAGEMENT_PRESETS[dbType] ?? unsupported("No user management preset is available for this engine yet.");
+  return (
+    USER_MANAGEMENT_PRESETS[dbType] ??
+    unsupported("No user management preset is available for this engine yet.")
+  );
 }

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { FileText, Image as ImageIcon, Loader2, Trash2, X } from "lucide-react";
 import { invokeMutation } from "../../utils/tauri-utils";
+import { requestAppConfirmation } from "../../stores/confirmStore";
 import { fetchAttachmentDataUrl, formatAttachmentBytes } from "../../utils/ai-attachments";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 
@@ -113,7 +114,14 @@ export function AIAttachmentManager({ open, copy, onClose }: AIAttachmentManager
   }, [refresh, selectedIds]);
 
   const deleteAll = useCallback(async () => {
-    if (!window.confirm(copy.attachments.managerDeleteAllConfirm)) return;
+    // App ConfirmDialog, never native window.confirm (a no-op on macOS
+    // WKWebView — the delete-all button would silently do nothing there).
+    const approved = await requestAppConfirmation({
+      title: copy.attachments.managerDeleteAllConfirm,
+      message: copy.attachments.managerDeleteAllConfirm,
+      confirmText: copy.attachments.managerDeleteAllConfirm,
+    });
+    if (!approved) return;
     setIsBusy(true);
     try {
       await invokeMutation("delete_all_ai_attachments", {});
@@ -163,7 +171,8 @@ export function AIAttachmentManager({ open, copy, onClose }: AIAttachmentManager
           <div className="ai-settings-header-copy">
             <h2 className="ai-settings-title">{copy.attachments.managerTitle}</h2>
             <p className="ai-settings-subtitle">
-              {copy.attachments.managerTotalSize}: <strong>{formatAttachmentBytes(totalSize)}</strong>
+              {copy.attachments.managerTotalSize}:{" "}
+              <strong>{formatAttachmentBytes(totalSize)}</strong>
               {" · "}
               {copy.attachments.managerUsageHint}
             </p>
@@ -185,10 +194,19 @@ export function AIAttachmentManager({ open, copy, onClose }: AIAttachmentManager
               disabled={isBusy || allRows.length === 0}
               onClick={() => void deleteAll()}
             >
-              {isBusy ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+              {isBusy ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              ) : (
+                <Trash2 className="w-3.5 h-3.5" />
+              )}
               {copy.attachments.managerDeleteAll}
             </button>
-            <button type="button" className="ai-settings-btn-cancel" onClick={onClose} aria-label={copy.attachments.managerClose}>
+            <button
+              type="button"
+              className="ai-settings-btn-cancel"
+              onClick={onClose}
+              aria-label={copy.attachments.managerClose}
+            >
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -237,28 +255,43 @@ export function AIAttachmentManager({ open, copy, onClose }: AIAttachmentManager
             ) : (
               [...grouped.entries()].map(([key, group]) => (
                 <section key={key} className="ai-attachment-manager-group">
-                  <div className="ai-settings-section-label">
-                    {groupLabel(group[0].createdAt)}
-                  </div>
+                  <div className="ai-settings-section-label">{groupLabel(group[0].createdAt)}</div>
                   <div className="ai-attachment-manager-group-rows">
                     {group.map((row) => {
                       const isSelected = selectedIds.has(row.id);
                       return (
-                        <label key={row.id} className={`ai-attachment-manager-row ${isSelected ? "is-selected" : ""}`}>
+                        <label
+                          key={row.id}
+                          className={`ai-attachment-manager-row ${isSelected ? "is-selected" : ""}`}
+                        >
                           <input
                             type="checkbox"
                             checked={isSelected}
                             onChange={() => toggleSelected(row.id)}
                           />
                           {row.kind === "image" ? (
-                            thumbnailUrls[row.id]
-                              ? <img className="ai-attachment-manager-thumb" src={thumbnailUrls[row.id]} alt={row.name} />
-                              : <span className="ai-attachment-manager-thumb ai-attachment-manager-thumb--placeholder"><ImageIcon className="w-4 h-4" /></span>
+                            thumbnailUrls[row.id] ? (
+                              <img
+                                className="ai-attachment-manager-thumb"
+                                src={thumbnailUrls[row.id]}
+                                alt={row.name}
+                              />
+                            ) : (
+                              <span className="ai-attachment-manager-thumb ai-attachment-manager-thumb--placeholder">
+                                <ImageIcon className="w-4 h-4" />
+                              </span>
+                            )
                           ) : (
-                            <span className="ai-attachment-manager-thumb ai-attachment-manager-thumb--placeholder"><FileText className="w-4 h-4" /></span>
+                            <span className="ai-attachment-manager-thumb ai-attachment-manager-thumb--placeholder">
+                              <FileText className="w-4 h-4" />
+                            </span>
                           )}
-                          <span className="ai-attachment-manager-name" title={row.name}>{row.name}</span>
-                          <span className="ai-attachment-manager-size">{formatAttachmentBytes(row.size)}</span>
+                          <span className="ai-attachment-manager-name" title={row.name}>
+                            {row.name}
+                          </span>
+                          <span className="ai-attachment-manager-size">
+                            {formatAttachmentBytes(row.size)}
+                          </span>
                         </label>
                       );
                     })}

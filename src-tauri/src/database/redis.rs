@@ -2,14 +2,33 @@ use super::driver::DatabaseDriver;
 use super::models::*;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
+use futures_util::{stream, Stream, StreamExt, TryStreamExt};
 use redis::{
     cmd, Client, Connection as RedisConnection, IntoConnectionInfo,
     RedisConnectionInfo as RedisAuthInfo, Value as RedisValue,
 };
 use serde_json::Value as JsonValue;
+use std::collections::HashSet;
+use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::task;
+
+/// COUNT hint for HSCAN/SSCAN/ZSCAN pages during browse and export.
+const REDIS_SCAN_COUNT: usize = 500;
+
+/// Cursor state for one streaming export of a Redis key.
+enum RedisExportState {
+    /// HSCAN/SSCAN/ZSCAN cursor plus the dedup set — SCAN may revisit
+    /// elements during rehashing, so members are emitted once.
+    Scan { cursor: u64, seen: HashSet<String> },
+    /// LRANGE window position.
+    List { index: i64 },
+    /// Last stream entry id; the next page starts at `(<id>`.
+    Stream { last_id: String },
+    /// Single-shot value (string/unsupported) already emitted.
+    Done,
+}
 
 pub struct RedisDriver {
     connection: Arc<Mutex<RedisConnection>>,
@@ -173,6 +192,363 @@ impl RedisDriver {
 
     fn database_label(db_index: i64) -> String {
         format!("db{db_index}")
+    }
+}
+
+impl RedisDriver {
+    /// HSCAN pages until `bound` unique fields are collected (or the cursor
+    /// finishes). `u64::MAX` scans the whole hash. Dedup guards against
+    /// rehash revisits so a page never repeats a field.
+    fn scan_hash_rows(
+        connection: &mut RedisConnection,
+        table: &str,
+        bound: u64,
+    ) -> Result<Vec<Vec<JsonValue>>> {
+        if bound == 0 {
+            return Ok(Vec::new());
+        }
+        let mut cursor = 0u64;
+        let mut seen = HashSet::new();
+        let mut rows = Vec::new();
+        loop {
+            let (next, value): (u64, RedisValue) = cmd("HSCAN")
+                .arg(table)
+                .arg(cursor)
+                .arg("COUNT")
+                .arg(REDIS_SCAN_COUNT)
+                .query(connection)
+                .with_context(|| format!("Failed to scan Redis hash {table}"))?;
+            if let Some((_, pairs)) = Self::rows_from_pair_array(value, "field", "value") {
+                for row in pairs {
+                    let key = row.first().map(|cell| cell.to_string()).unwrap_or_default();
+                    if seen.insert(key) {
+                        rows.push(row);
+                    }
+                }
+            }
+            if next == 0 || rows.len() as u64 >= bound {
+                break;
+            }
+            cursor = next;
+        }
+        rows.sort_by(|left, right| {
+            Self::compare_cells(
+                left.first().unwrap_or(&JsonValue::Null),
+                right.first().unwrap_or(&JsonValue::Null),
+            )
+        });
+        Ok(rows)
+    }
+
+    /// SSCAN pages until `bound` unique members are collected (or the cursor
+    /// finishes); results are sorted like the old SMEMBERS projection.
+    fn scan_set_rows(
+        connection: &mut RedisConnection,
+        table: &str,
+        bound: u64,
+    ) -> Result<Vec<Vec<JsonValue>>> {
+        if bound == 0 {
+            return Ok(Vec::new());
+        }
+        let mut cursor = 0u64;
+        let mut seen = HashSet::new();
+        let mut rows = Vec::new();
+        loop {
+            let (next, members): (u64, Vec<Vec<u8>>) = cmd("SSCAN")
+                .arg(table)
+                .arg(cursor)
+                .arg("COUNT")
+                .arg(REDIS_SCAN_COUNT)
+                .query(connection)
+                .with_context(|| format!("Failed to scan Redis set {table}"))?;
+            for member in members {
+                let text = Self::bytes_to_string(&member);
+                if seen.insert(text.clone()) {
+                    rows.push(vec![JsonValue::String(text)]);
+                }
+            }
+            if next == 0 || rows.len() as u64 >= bound {
+                break;
+            }
+            cursor = next;
+        }
+        rows.sort_by(|left, right| {
+            Self::compare_cells(
+                left.first().unwrap_or(&JsonValue::Null),
+                right.first().unwrap_or(&JsonValue::Null),
+            )
+        });
+        Ok(rows)
+    }
+
+    /// LRANGE over the first `bound` entries — O(bound) instead of the old
+    /// full-list LRANGE 0 -1 on every page.
+    fn fetch_list_rows_bounded(
+        connection: &mut RedisConnection,
+        table: &str,
+        bound: u64,
+    ) -> Result<Vec<Vec<JsonValue>>> {
+        if bound == 0 {
+            return Ok(Vec::new());
+        }
+        let end = i64::try_from(bound.saturating_sub(1)).unwrap_or(i64::MAX);
+        let values = cmd("LRANGE")
+            .arg(table)
+            .arg(0)
+            .arg(end)
+            .query::<Vec<Vec<u8>>>(connection)
+            .with_context(|| format!("Failed to fetch Redis list rows for {table}"))?;
+        Ok(values
+            .into_iter()
+            .enumerate()
+            .map(|(index, value)| {
+                vec![
+                    JsonValue::from(index as i64),
+                    JsonValue::String(Self::bytes_to_string(&value)),
+                ]
+            })
+            .collect())
+    }
+
+    /// ZRANGE over the first `bound` entries (score order).
+    fn fetch_zset_rows_bounded(
+        connection: &mut RedisConnection,
+        table: &str,
+        bound: u64,
+    ) -> Result<Vec<Vec<JsonValue>>> {
+        if bound == 0 {
+            return Ok(Vec::new());
+        }
+        let end = i64::try_from(bound.saturating_sub(1)).unwrap_or(i64::MAX);
+        let value = cmd("ZRANGE")
+            .arg(table)
+            .arg(0)
+            .arg(end)
+            .arg("WITHSCORES")
+            .query::<RedisValue>(connection)
+            .with_context(|| format!("Failed to fetch Redis sorted-set rows for {table}"))?;
+        Ok(Self::rows_from_pair_array(value, "member", "score")
+            .map(|(_, rows)| rows)
+            .unwrap_or_default())
+    }
+
+    /// XRANGE with COUNT so a page never pulls the whole stream.
+    fn fetch_stream_rows_bounded(
+        connection: &mut RedisConnection,
+        table: &str,
+        bound: u64,
+    ) -> Result<Vec<Vec<JsonValue>>> {
+        if bound == 0 {
+            return Ok(Vec::new());
+        }
+        let mut command = cmd("XRANGE");
+        command.arg(table).arg("-").arg("+");
+        if bound != u64::MAX {
+            command.arg("COUNT").arg(bound);
+        }
+        let value = command
+            .query::<RedisValue>(connection)
+            .with_context(|| format!("Failed to fetch Redis stream rows for {table}"))?;
+        Ok(Self::stream_rows_from_value(value))
+    }
+
+    /// Decodes an XRANGE reply into (id, payload-json) rows.
+    fn stream_rows_from_value(value: RedisValue) -> Vec<Vec<JsonValue>> {
+        match value {
+            RedisValue::Array(entries) => entries
+                .into_iter()
+                .filter_map(|entry| match entry {
+                    RedisValue::Array(mut parts) if parts.len() == 2 => {
+                        let id = Self::redis_value_to_cell(parts.remove(0));
+                        let payload = JsonValue::String(
+                            Self::redis_value_to_json(parts.remove(0)).to_string(),
+                        );
+                        Some(vec![id, payload])
+                    }
+                    _ => None,
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// One export step for a key: returns the next batch of rows plus the
+    /// updated cursor state, or None when the key is exhausted. SCAN-based
+    /// types dedup by member so a rehash can never emit a member twice.
+    fn export_step(
+        connection: &mut RedisConnection,
+        table: &str,
+        key_type: &str,
+        state: RedisExportState,
+        batch_size: usize,
+    ) -> Result<Option<(Vec<Vec<JsonValue>>, RedisExportState)>> {
+        match (key_type, state) {
+            (_, RedisExportState::Done) => Ok(None),
+            ("hash", RedisExportState::Scan { cursor, mut seen }) => {
+                let (next, value): (u64, RedisValue) = cmd("HSCAN")
+                    .arg(table)
+                    .arg(cursor)
+                    .arg("COUNT")
+                    .arg(REDIS_SCAN_COUNT.max(batch_size))
+                    .query(connection)
+                    .with_context(|| format!("Failed to scan Redis hash {table}"))?;
+                let mut rows = Vec::new();
+                if let Some((_, pairs)) = Self::rows_from_pair_array(value, "field", "value") {
+                    for row in pairs {
+                        let key = row.first().map(|cell| cell.to_string()).unwrap_or_default();
+                        if seen.insert(key) {
+                            rows.push(row);
+                        }
+                    }
+                }
+                let next_state = if next == 0 {
+                    RedisExportState::Done
+                } else {
+                    RedisExportState::Scan { cursor: next, seen }
+                };
+                Ok(Some((rows, next_state)))
+            }
+            ("set", RedisExportState::Scan { cursor, mut seen }) => {
+                let (next, members): (u64, Vec<Vec<u8>>) = cmd("SSCAN")
+                    .arg(table)
+                    .arg(cursor)
+                    .arg("COUNT")
+                    .arg(REDIS_SCAN_COUNT.max(batch_size))
+                    .query(connection)
+                    .with_context(|| format!("Failed to scan Redis set {table}"))?;
+                let mut rows = Vec::new();
+                for member in members {
+                    let text = Self::bytes_to_string(&member);
+                    if seen.insert(text.clone()) {
+                        rows.push(vec![JsonValue::String(text)]);
+                    }
+                }
+                let next_state = if next == 0 {
+                    RedisExportState::Done
+                } else {
+                    RedisExportState::Scan { cursor: next, seen }
+                };
+                Ok(Some((rows, next_state)))
+            }
+            ("zset", RedisExportState::Scan { cursor, mut seen }) => {
+                let (next, value): (u64, RedisValue) = cmd("ZSCAN")
+                    .arg(table)
+                    .arg(cursor)
+                    .arg("COUNT")
+                    .arg(REDIS_SCAN_COUNT.max(batch_size))
+                    .query(connection)
+                    .with_context(|| format!("Failed to scan Redis sorted set {table}"))?;
+                let mut rows = Vec::new();
+                if let Some((_, pairs)) = Self::rows_from_pair_array(value, "member", "score") {
+                    for row in pairs {
+                        let key = row.first().map(|cell| cell.to_string()).unwrap_or_default();
+                        if seen.insert(key) {
+                            rows.push(row);
+                        }
+                    }
+                }
+                let next_state = if next == 0 {
+                    RedisExportState::Done
+                } else {
+                    RedisExportState::Scan { cursor: next, seen }
+                };
+                Ok(Some((rows, next_state)))
+            }
+            ("list", RedisExportState::List { index }) => {
+                let end = index.saturating_add(batch_size as i64).saturating_sub(1);
+                let values = cmd("LRANGE")
+                    .arg(table)
+                    .arg(index)
+                    .arg(end)
+                    .query::<Vec<Vec<u8>>>(connection)
+                    .with_context(|| format!("Failed to fetch Redis list rows for {table}"))?;
+                if values.is_empty() {
+                    return Ok(None);
+                }
+                let rows = values
+                    .into_iter()
+                    .enumerate()
+                    .map(|(offset, value)| {
+                        vec![
+                            JsonValue::from(index + offset as i64),
+                            JsonValue::String(Self::bytes_to_string(&value)),
+                        ]
+                    })
+                    .collect::<Vec<_>>();
+                let next_index = index.saturating_add(rows.len() as i64);
+                Ok(Some((rows, RedisExportState::List { index: next_index })))
+            }
+            ("stream", RedisExportState::Stream { last_id }) => {
+                let start = if last_id.is_empty() {
+                    "-".to_string()
+                } else {
+                    format!("({last_id}")
+                };
+                let value = cmd("XRANGE")
+                    .arg(table)
+                    .arg(&start)
+                    .arg("+")
+                    .arg("COUNT")
+                    .arg(batch_size)
+                    .query::<RedisValue>(connection)
+                    .with_context(|| format!("Failed to fetch Redis stream rows for {table}"))?;
+                let rows = Self::stream_rows_from_value(value);
+                if rows.is_empty() {
+                    return Ok(None);
+                }
+                let next_id = rows
+                    .last()
+                    .and_then(|row| row.first())
+                    .map(|cell| cell.to_string())
+                    .unwrap_or_default();
+                Ok(Some((rows, RedisExportState::Stream { last_id: next_id })))
+            }
+            // string / unsupported key types: emit the single projection row
+            // once, mirroring get_table_data.
+            (key_type, _) => {
+                let rows = if key_type == "string" {
+                    cmd("GET")
+                        .arg(table)
+                        .query::<Option<Vec<u8>>>(connection)
+                        .with_context(|| format!("Failed to fetch Redis string value for {table}"))?
+                        .map(|bytes| {
+                            vec![vec![
+                                JsonValue::String(table.to_string()),
+                                JsonValue::String(Self::bytes_to_string(&bytes)),
+                            ]]
+                        })
+                        .unwrap_or_default()
+                } else {
+                    vec![vec![
+                        JsonValue::String(table.to_string()),
+                        JsonValue::String(format!("Unsupported Redis key type: {key_type}")),
+                    ]]
+                };
+                Ok(Some((rows, RedisExportState::Done)))
+            }
+        }
+    }
+
+    /// Column layout for a key type, shared by browse and export.
+    fn export_columns(key_type: &str, table: &str) -> Vec<ColumnInfo> {
+        match key_type {
+            "string" => vec![Self::column("key", "TEXT"), Self::column("value", "TEXT")],
+            "hash" => vec![Self::column("field", "TEXT"), Self::column("value", "TEXT")],
+            "list" => vec![
+                Self::column("index", "INTEGER"),
+                Self::column("value", "TEXT"),
+            ],
+            "set" => vec![Self::column("member", "TEXT")],
+            "zset" => vec![
+                Self::column("member", "TEXT"),
+                Self::column("score", "DOUBLE"),
+            ],
+            "stream" => vec![Self::column("id", "TEXT"), Self::column("payload", "JSON")],
+            _ => {
+                let _ = table;
+                vec![Self::column("key", "TEXT"), Self::column("value", "TEXT")]
+            }
+        }
     }
 }
 
@@ -350,6 +726,23 @@ impl DatabaseDriver for RedisDriver {
                 return Err(anyhow!("Redis key '{}' was not found", table_name));
             }
 
+            // Filtering and client-side sorting need the whole collection;
+            // otherwise only offset+limit rows are fetched so a page never
+            // costs a full HGETALL/LRANGE/SMEMBERS/XRANGE dump.
+            let needs_full_scan = filter
+                .as_deref()
+                .map(str::trim)
+                .is_some_and(|value| !value.is_empty())
+                || order_by
+                    .as_deref()
+                    .map(str::trim)
+                    .is_some_and(|value| !value.is_empty());
+            let bound = if needs_full_scan {
+                u64::MAX
+            } else {
+                offset.saturating_add(limit)
+            };
+
             let (columns, rows) = match key_type.as_str() {
                 "string" => {
                     let value = cmd("GET")
@@ -373,29 +766,29 @@ impl DatabaseDriver for RedisDriver {
                 }
                 "hash" => (
                     vec![Self::column("field", "TEXT"), Self::column("value", "TEXT")],
-                    Self::fetch_hash_rows(connection, &table_name)?,
+                    Self::scan_hash_rows(connection, &table_name, bound)?,
                 ),
                 "list" => (
                     vec![
                         Self::column("index", "INTEGER"),
                         Self::column("value", "TEXT"),
                     ],
-                    Self::fetch_list_rows(connection, &table_name)?,
+                    Self::fetch_list_rows_bounded(connection, &table_name, bound)?,
                 ),
                 "set" => (
                     vec![Self::column("member", "TEXT")],
-                    Self::fetch_set_rows(connection, &table_name)?,
+                    Self::scan_set_rows(connection, &table_name, bound)?,
                 ),
                 "zset" => (
                     vec![
                         Self::column("member", "TEXT"),
                         Self::column("score", "DOUBLE"),
                     ],
-                    Self::fetch_zset_rows(connection, &table_name)?,
+                    Self::fetch_zset_rows_bounded(connection, &table_name, bound)?,
                 ),
                 "stream" => (
                     vec![Self::column("id", "TEXT"), Self::column("payload", "JSON")],
-                    Self::fetch_stream_rows(connection, &table_name)?,
+                    Self::fetch_stream_rows_bounded(connection, &table_name, bound)?,
                 ),
                 _ => (
                     vec![Self::column("key", "TEXT"), Self::column("value", "TEXT")],
@@ -424,6 +817,105 @@ impl DatabaseDriver for RedisDriver {
             ))
         })
         .await
+    }
+
+    /// Streams every element of a Redis key for export. Hash/set/zset use
+    /// HSCAN/SSCAN/ZSCAN cursors with dedup (O(n) total instead of the old
+    /// O(n) full dump per page); lists page with LRANGE windows and streams
+    /// with XRANGE COUNT + last-id. `order_by` is ignored — Redis has no
+    /// server-side ordering; `filter` is applied per batch.
+    fn export_table_rows<'a>(
+        &'a self,
+        table: &'a str,
+        database: Option<&'a str>,
+        batch_size: u64,
+        order_by: Option<&'a str>,
+        _order_dir: Option<&'a str>,
+        filter: Option<&'a str>,
+    ) -> Pin<Box<dyn Stream<Item = Result<QueryResult>> + Send + 'a>> {
+        let batch_size = usize::try_from(batch_size.max(1)).unwrap_or(usize::MAX);
+        let table_name = table.trim().to_string();
+        let filter = filter.map(str::to_string);
+        if order_by.is_some() {
+            log::warn!("Redis export of '{table_name}' ignores ORDER BY (no server-side ordering)");
+        }
+        let setup = async move {
+            let (key_type, columns) = self
+                .with_selected_database(database, move |connection, _| {
+                    let key_type = Self::key_type(connection, &table_name)?;
+                    if key_type == "none" {
+                        return Err(anyhow!("Redis key '{}' was not found", table_name));
+                    }
+                    Ok((key_type, Self::export_columns(&key_type, &table_name)))
+                })
+                .await?;
+            let state = match key_type.as_str() {
+                "hash" | "set" | "zset" => RedisExportState::Scan {
+                    cursor: 0,
+                    seen: HashSet::new(),
+                },
+                "list" => RedisExportState::List { index: 0 },
+                "stream" => RedisExportState::Stream {
+                    last_id: String::new(),
+                },
+                _ => RedisExportState::Scan {
+                    cursor: 0,
+                    seen: HashSet::new(),
+                },
+            };
+            Ok::<_, anyhow::Error>((key_type, columns, state))
+        };
+
+        stream::once(setup)
+            .map_ok(move |(key_type, columns, state)| {
+                stream::try_unfold(
+                    (key_type, columns, state),
+                    move |(key_type, columns, state)| {
+                        let table_name = table_name.clone();
+                        let filter = filter.clone();
+                        async move {
+                            let key_type_for_step = key_type.clone();
+                            let columns_for_step = columns.clone();
+                            let table_for_step = table_name.clone();
+                            let stepped = self
+                                .with_selected_database(database, move |connection, _| {
+                                    Self::export_step(
+                                        connection,
+                                        &table_for_step,
+                                        &key_type_for_step,
+                                        state,
+                                        batch_size,
+                                    )
+                                })
+                                .await?;
+                            let Some((rows, next_state)) = stepped else {
+                                return Ok(None);
+                            };
+                            let rows = Self::maybe_filter_rows(rows, filter.as_deref());
+                            let done = matches!(next_state, RedisExportState::Done);
+                            let result = QueryResult {
+                                columns: columns_for_step,
+                                rows,
+                                affected_rows: 0,
+                                execution_time_ms: 0,
+                                query: format!(
+                                    "REDIS {} {}",
+                                    key_type.to_ascii_uppercase(),
+                                    table_name
+                                ),
+                                sandboxed: false,
+                                truncated: false,
+                            };
+                            if result.rows.is_empty() && done {
+                                return Ok(None);
+                            }
+                            Ok(Some((result, (key_type, columns, next_state))))
+                        }
+                    },
+                )
+            })
+            .try_flatten()
+            .boxed()
     }
 
     async fn count_rows(&self, table: &str, database: Option<&str>) -> Result<i64> {

@@ -1,13 +1,4 @@
-import {
-  Menu,
-  Minus,
-  Plus,
-  Copy,
-  Square,
-  X,
-  ChevronRight,
-  Database,
-} from "lucide-react";
+import { Menu, Minus, Plus, Copy, Square, X, ChevronRight, Database } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { RefObject } from "react";
 import { useState } from "react";
@@ -16,6 +7,7 @@ import { useConnectionStore } from "../stores/connectionStore";
 import { DatabaseVisibilityModal } from "./Sidebar/components/DatabaseVisibilityModal";
 import type { ConnectionConfig } from "../types/database";
 import { AppUpdateButton } from "./StartupConnectionManager/AppUpdateButton";
+import { useStorageNotices } from "./StartupConnectionManager/use-storage-notices";
 import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "../utils/ui-scale";
 import type { WindowMenuSectionKey, WindowMenuItem } from "../types/app-types";
 
@@ -143,11 +135,17 @@ function renderWindowMenuPopover(
                           style={{
                             background: `linear-gradient(90deg, var(--accent) 0%, var(--accent) ${
                               (((item.value ?? 100) - (item.min ?? UI_FONT_SCALE_MIN)) /
-                                Math.max(1, (item.max ?? UI_FONT_SCALE_MAX) - (item.min ?? UI_FONT_SCALE_MIN))) *
+                                Math.max(
+                                  1,
+                                  (item.max ?? UI_FONT_SCALE_MAX) - (item.min ?? UI_FONT_SCALE_MIN),
+                                )) *
                               100
                             }%, rgba(255, 255, 255, 0.1) ${
                               (((item.value ?? 100) - (item.min ?? UI_FONT_SCALE_MIN)) /
-                                Math.max(1, (item.max ?? UI_FONT_SCALE_MAX) - (item.min ?? UI_FONT_SCALE_MIN))) *
+                                Math.max(
+                                  1,
+                                  (item.max ?? UI_FONT_SCALE_MAX) - (item.min ?? UI_FONT_SCALE_MIN),
+                                )) *
                               100
                             }%, rgba(255, 255, 255, 0.1) 100%)`,
                           }}
@@ -291,10 +289,11 @@ export function AppTitleBar({
     })),
   );
   const [dbVisibilityOpen, setDbVisibilityOpen] = useState(false);
-  const renderWindowControls = (
-    className?: string,
-    options?: { lockSize?: boolean },
-  ) => {
+  // Surface storage-layer notices (corrupt files quarantined, sync folder
+  // unavailable, missing keyring credentials) as toasts.
+  useStorageNotices();
+
+  const renderWindowControls = (className?: string, options?: { lockSize?: boolean }) => {
     if (!isDesktopWindow) return null;
 
     return (
@@ -383,17 +382,9 @@ export function AppTitleBar({
         })();
       }}
     >
-      <div
-        className="titlebar-drag-strip"
-        onDoubleClick={onToggleMaximizeWindow}
-      >
+      <div className="titlebar-drag-strip" onDoubleClick={onToggleMaximizeWindow}>
         <div className="titlebar-brand">
-          <img
-            className="titlebar-brand-icon"
-            src="/table-r-mark.png"
-            alt=""
-            aria-hidden="true"
-          />
+          <img className="titlebar-brand-icon" src="/table-r-mark.png" alt="" aria-hidden="true" />
           <span className="titlebar-name">TableR</span>
           <AppUpdateButton />
         </div>
@@ -411,9 +402,7 @@ export function AppTitleBar({
                 className={`titlebar-badge-dot ${!isHealthy ? "is-unhealthy" : ""}`}
                 style={{ backgroundColor: activeConn.color || "var(--success)" }}
               />
-              <span className="truncate">
-                {titlebarContextLabel}
-              </span>
+              <span className="truncate">{titlebarContextLabel}</span>
             </div>
           ) : (
             <div className="titlebar-badge muted">

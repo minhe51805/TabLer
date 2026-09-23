@@ -30,6 +30,11 @@ export const EN_PANEL_COPY: AIPanelCopy = {
       tooSlow: "Too slow",
       other: "Other",
     },
+    editPrompt: "Edit & re-run",
+    editPromptSave: "Re-run",
+    editPromptCancel: "Cancel",
+    queuedCount: "{count} queued",
+    queuedClear: "Discard",
   },
   rules: {
     title: "Guardrail rules",

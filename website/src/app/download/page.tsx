@@ -6,8 +6,8 @@ import DownloadChooser from "./DownloadChooser";
 import { getTableRReleases } from "@/lib/github-releases";
 import { getSiteLanguage } from "@/lib/language";
 import { getDictionary } from "@/lib/i18n";
-import { repositoryName, repositoryOwner } from "@/lib/site";
 import { LanguageToggle } from "../LanguageToggle";
+import { SiteFooter } from "../SiteFooter";
 
 export const metadata: Metadata = {
   title: "Download TableR",
@@ -87,18 +87,7 @@ export default async function DownloadPage() {
         </aside>
       </div>
 
-      <footer className="download-footer">
-        <div className="shell">
-          <span>{t.download.footerLicense}</span>
-          <a
-            href={`https://github.com/${repositoryOwner}/${repositoryName}/releases`}
-            target="_blank"
-            rel="noreferrer"
-          >
-            {t.download.allReleases}
-          </a>
-        </div>
-      </footer>
+      <SiteFooter t={t} />
     </main>
   );
 }

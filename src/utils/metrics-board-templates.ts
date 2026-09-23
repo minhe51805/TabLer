@@ -3,11 +3,7 @@
  * Implementation lives under ./metrics-board/*.
  */
 
-import type {
-  DatabaseType,
-  MetricsBoardDefinition,
-  MetricsWidgetDefinition,
-} from "../types";
+import type { DatabaseType, MetricsBoardDefinition, MetricsWidgetDefinition } from "../types";
 
 import {
   type AIMetricsBoardTemplate,
@@ -15,10 +11,7 @@ import {
   type MetricsTemplateDefinition,
   type OpenAIMetricsBoardDetail,
 } from "./metrics-board/shared";
-import {
-  normalizeAIWidgetType,
-  type AIMetricsWidgetSpec,
-} from "./metrics-board/shared";
+import { normalizeAIWidgetType, type AIMetricsWidgetSpec } from "./metrics-board/shared";
 import { getPostgresAdaptiveOverviewTemplate } from "./metrics-board/template-builders";
 import {
   canPlaceWidget,
@@ -109,8 +102,14 @@ export function createAIMetricsBoardFromWidgets(args: {
       type: normalizeAIWidgetType(widget.type),
       query: (widget.query || "").trim(),
       dimension: widget.dimension?.trim() || undefined,
-      measures: (widget.measures || []).map((value) => value.trim()).filter(Boolean).slice(0, 12),
-      transforms: (widget.transforms || []).map((value) => value.trim()).filter(Boolean).slice(0, 12),
+      measures: (widget.measures || [])
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .slice(0, 12),
+      transforms: (widget.transforms || [])
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .slice(0, 12),
       limit: Math.min(10_000, Math.max(1, Math.floor(widget.limit || 100))),
     }))
     .filter((widget) => widget.title.length > 0 && widget.query.length > 0)
@@ -148,9 +147,10 @@ export function createAIMetricsBoardFromWidgets(args: {
     };
   });
 
-  const requestedTitle = args.title?.trim() && args.title.trim() !== "DB Overview Dashboard"
-    ? args.title.trim()
-    : "AI Metrics Summary";
+  const requestedTitle =
+    args.title?.trim() && args.title.trim() !== "DB Overview Dashboard"
+      ? args.title.trim()
+      : "AI Metrics Summary";
 
   return {
     id: `metrics-${crypto.randomUUID()}`,
@@ -163,6 +163,100 @@ export function createAIMetricsBoardFromWidgets(args: {
   } satisfies MetricsBoardDefinition;
 }
 
+/**
+ * Appends agent-proposed widgets to an existing board, deduplicating on
+ * type+title+query so a repeated proposal never doubles a widget. New widgets
+ * land in the first free grid slot after the current layout.
+ */
+export function appendAIMetricsWidgetsToBoard(args: {
+  board: MetricsBoardDefinition;
+  widgets: AIMetricsWidgetSpec[];
+}): {
+  board: MetricsBoardDefinition;
+  addedCount: number;
+  addedTitles: string[];
+  addedWidgetIds: string[];
+} | null {
+  const cleaned = args.widgets
+    .map((widget) => ({
+      title: (widget.title || "").trim(),
+      type: normalizeAIWidgetType(widget.type),
+      query: (widget.query || "").trim(),
+      dimension: widget.dimension?.trim() || undefined,
+      measures: (widget.measures || [])
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .slice(0, 12),
+      transforms: (widget.transforms || [])
+        .map((value) => value.trim())
+        .filter(Boolean)
+        .slice(0, 12),
+      limit: Math.min(10_000, Math.max(1, Math.floor(widget.limit || 100))),
+    }))
+    .filter((widget) => widget.title.length > 0 && widget.query.length > 0)
+    .slice(0, 12);
+
+  if (cleaned.length === 0) return null;
+
+  const existingKeys = new Set(
+    args.board.widgets.map(
+      (widget) =>
+        `${widget.type}::${widget.title.trim().toLowerCase()}::${widget.query
+          .replace(/\s+/g, " ")
+          .trim()
+          .toLowerCase()}`,
+    ),
+  );
+
+  const nextWidgets = [...args.board.widgets];
+  const addedTitles: string[] = [];
+  const addedWidgetIds: string[] = [];
+
+  for (const widget of cleaned) {
+    const key = `${widget.type}::${widget.title.toLowerCase()}::${widget.query
+      .replace(/\s+/g, " ")
+      .trim()
+      .toLowerCase()}`;
+    if (existingKeys.has(key)) continue;
+
+    const candidate: MetricsWidgetDefinition = {
+      id: `widget-${crypto.randomUUID()}`,
+      type: widget.type,
+      title: widget.title,
+      query: widget.query,
+      refresh_seconds: 0,
+      col_span: 1,
+      row_span: widget.type === "table" ? 2 : 1,
+      grid_x: 0,
+      grid_y: 0,
+      chart_spec: {
+        version: 1,
+        source_query: widget.query,
+        dimension: widget.dimension,
+        measures: widget.measures,
+        transforms: widget.transforms,
+        limit: widget.limit,
+      },
+    };
+    const placed = canPlaceWidget(nextWidgets, candidate)
+      ? candidate
+      : findFirstAvailablePosition(nextWidgets, candidate);
+    nextWidgets.push(placed);
+    existingKeys.add(key);
+    addedTitles.push(widget.title);
+    addedWidgetIds.push(placed.id);
+  }
+
+  if (addedTitles.length === 0) return null;
+
+  return {
+    board: { ...args.board, widgets: nextWidgets, updated_at: Date.now() },
+    addedCount: addedTitles.length,
+    addedTitles,
+    addedWidgetIds,
+  };
+}
+
 export function createAIMetricsBoardDefinition(args: {
   detail: OpenAIMetricsBoardDetail;
   dbType?: DatabaseType;
@@ -171,7 +265,11 @@ export function createAIMetricsBoardDefinition(args: {
   schemaHints?: AIMetricsSchemaTableHint[];
 }) {
   const template = args.detail.template ?? "database-overview";
-  const builtTemplate = getAIMetricsBoardTemplateDefinition(template, args.dbType, args.schemaHints);
+  const builtTemplate = getAIMetricsBoardTemplateDefinition(
+    template,
+    args.dbType,
+    args.schemaHints,
+  );
   if (!builtTemplate) {
     return null;
   }
@@ -196,14 +294,19 @@ export function augmentAIMetricsBoardDefinition(args: {
   schemaHints?: AIMetricsSchemaTableHint[];
 }) {
   const template = args.detail.template ?? "database-overview";
-  const builtTemplate = getAIMetricsBoardTemplateDefinition(template, args.dbType, args.schemaHints);
+  const builtTemplate = getAIMetricsBoardTemplateDefinition(
+    template,
+    args.dbType,
+    args.schemaHints,
+  );
   if (!builtTemplate) {
     return null;
   }
 
   const normalizedExistingWidgetKeys = new Set(
-    args.board.widgets.map((widget) =>
-      `${widget.type}::${widget.title.trim().toLowerCase()}::${widget.query.replace(/\s+/g, " ").trim().toLowerCase()}`,
+    args.board.widgets.map(
+      (widget) =>
+        `${widget.type}::${widget.title.trim().toLowerCase()}::${widget.query.replace(/\s+/g, " ").trim().toLowerCase()}`,
     ),
   );
 
@@ -253,7 +356,11 @@ export function rebuildAIMetricsBoardDefinition(args: {
   schemaHints?: AIMetricsSchemaTableHint[];
 }) {
   const template = args.detail.template ?? "database-overview";
-  const builtTemplate = getAIMetricsBoardTemplateDefinition(template, args.dbType, args.schemaHints);
+  const builtTemplate = getAIMetricsBoardTemplateDefinition(
+    template,
+    args.dbType,
+    args.schemaHints,
+  );
   if (!builtTemplate) {
     return null;
   }

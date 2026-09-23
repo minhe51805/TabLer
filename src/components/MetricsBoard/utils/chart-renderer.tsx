@@ -73,7 +73,10 @@ function MetricsTooltip({
       )}
       {payload.map((item, index) => (
         <p key={index} className="metrics-chart-tooltip-row">
-          <span className="metrics-chart-tooltip-dot" style={{ background: item.color || "var(--accent)" }} />
+          <span
+            className="metrics-chart-tooltip-dot"
+            style={{ background: item.color || "var(--accent)" }}
+          />
           <span className="metrics-chart-tooltip-value">
             {item.value === null || item.value === undefined ? "NULL" : String(item.value)}
           </span>
@@ -83,7 +86,50 @@ function MetricsTooltip({
   );
 }
 
-export function ChartBars({ series, horizontal = false }: { series: MetricsSeriesPoint[]; horizontal?: boolean }) {
+/** Reads the clicked category label out of a recharts click state without
+ * trusting a fabricated shape — the payload differs per chart type. */
+function clickedLabel(state: unknown): string | undefined {
+  if (!state || typeof state !== "object") return undefined;
+  if ("activeLabel" in state && state.activeLabel !== undefined) {
+    return String(state.activeLabel);
+  }
+  if ("activePayload" in state && Array.isArray(state.activePayload)) {
+    const first: unknown = state.activePayload[0];
+    if (first && typeof first === "object" && "payload" in first) {
+      const payload: unknown = first.payload;
+      if (
+        payload &&
+        typeof payload === "object" &&
+        "label" in payload &&
+        payload.label !== undefined
+      ) {
+        return String(payload.label);
+      }
+    }
+  }
+  if ("payload" in state) {
+    const payload: unknown = state.payload;
+    if (
+      payload &&
+      typeof payload === "object" &&
+      "label" in payload &&
+      payload.label !== undefined
+    ) {
+      return String(payload.label);
+    }
+  }
+  return undefined;
+}
+
+export function ChartBars({
+  series,
+  horizontal = false,
+  onSelect,
+}: {
+  series: MetricsSeriesPoint[];
+  horizontal?: boolean;
+  onSelect?: (label: string) => void;
+}) {
   return (
     <ResponsiveContainer width="100%" height="100%">
       <BarChart
@@ -91,6 +137,11 @@ export function ChartBars({ series, horizontal = false }: { series: MetricsSerie
         layout={horizontal ? "vertical" : "horizontal"}
         margin={{ top: 6, right: 10, bottom: 2, left: horizontal ? 8 : 0 }}
         barCategoryGap="18%"
+        onClick={(data) => {
+          const label = clickedLabel(data);
+          if (label !== undefined) onSelect?.(label);
+        }}
+        style={onSelect ? { cursor: "pointer" } : undefined}
       >
         <defs>
           <linearGradient id="metrics-bar-grad" x1="0" y1="0" x2="0" y2="1">
@@ -98,11 +149,22 @@ export function ChartBars({ series, horizontal = false }: { series: MetricsSerie
             <stop offset="100%" stopColor="var(--accent)" stopOpacity={0.25} />
           </linearGradient>
         </defs>
-        <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={horizontal} horizontal={!horizontal} />
+        <CartesianGrid
+          strokeDasharray="3 3"
+          stroke={GRID_STROKE}
+          vertical={horizontal}
+          horizontal={!horizontal}
+        />
         {horizontal ? (
           <>
             <XAxis type="number" tick={AXIS_TICK} tickFormatter={formatCompact} />
-            <YAxis type="category" dataKey="label" tick={AXIS_TICK} tickFormatter={shortLabel} width={72} />
+            <YAxis
+              type="category"
+              dataKey="label"
+              tick={AXIS_TICK}
+              tickFormatter={shortLabel}
+              width={72}
+            />
           </>
         ) : (
           <>
@@ -113,7 +175,10 @@ export function ChartBars({ series, horizontal = false }: { series: MetricsSerie
         <Tooltip content={<MetricsTooltip />} cursor={{ fill: "var(--bg-hover)", opacity: 0.35 }} />
         <Bar dataKey="value" radius={horizontal ? [0, 5, 5, 0] : [5, 5, 0, 0]} isAnimationActive>
           {series.map((entry, index) => (
-            <Cell key={entry.label} fill={series.length > 1 ? colorAt(index) : "url(#metrics-bar-grad)"} />
+            <Cell
+              key={entry.label}
+              fill={series.length > 1 ? colorAt(index) : "url(#metrics-bar-grad)"}
+            />
           ))}
         </Bar>
       </BarChart>
@@ -121,11 +186,27 @@ export function ChartBars({ series, horizontal = false }: { series: MetricsSerie
   );
 }
 
-export function ChartLine({ series, area = false }: { series: MetricsSeriesPoint[]; area?: boolean }) {
+export function ChartLine({
+  series,
+  area = false,
+  onSelect,
+}: {
+  series: MetricsSeriesPoint[];
+  area?: boolean;
+  onSelect?: (label: string) => void;
+}) {
   if (area) {
     return (
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={series} margin={{ top: 6, right: 10, bottom: 2, left: 0 }}>
+        <AreaChart
+          data={series}
+          margin={{ top: 6, right: 10, bottom: 2, left: 0 }}
+          onClick={(data) => {
+            const label = clickedLabel(data);
+            if (label !== undefined) onSelect?.(label);
+          }}
+          style={onSelect ? { cursor: "pointer" } : undefined}
+        >
           <defs>
             <linearGradient id="metrics-area-grad" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="var(--accent)" stopOpacity={0.55} />
@@ -136,25 +217,56 @@ export function ChartLine({ series, area = false }: { series: MetricsSeriesPoint
           <XAxis dataKey="label" tick={AXIS_TICK} tickFormatter={shortLabel} interval={0} />
           <YAxis tick={AXIS_TICK} tickFormatter={formatCompact} width={34} />
           <Tooltip content={<MetricsTooltip />} />
-          <Area type="monotone" dataKey="value" stroke="var(--accent)" strokeWidth={2} fill="url(#metrics-area-grad)" isAnimationActive />
+          <Area
+            type="monotone"
+            dataKey="value"
+            stroke="var(--accent)"
+            strokeWidth={2}
+            fill="url(#metrics-area-grad)"
+            isAnimationActive
+          />
         </AreaChart>
       </ResponsiveContainer>
     );
   }
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <LineChart data={series} margin={{ top: 6, right: 10, bottom: 2, left: 0 }}>
+      <LineChart
+        data={series}
+        margin={{ top: 6, right: 10, bottom: 2, left: 0 }}
+        onClick={(data) => {
+          const label = clickedLabel(data);
+          if (label !== undefined) onSelect?.(label);
+        }}
+        style={onSelect ? { cursor: "pointer" } : undefined}
+      >
         <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} />
         <XAxis dataKey="label" tick={AXIS_TICK} tickFormatter={shortLabel} interval={0} />
         <YAxis tick={AXIS_TICK} tickFormatter={formatCompact} width={34} />
         <Tooltip content={<MetricsTooltip />} />
-        <Line type="monotone" dataKey="value" stroke="var(--accent)" strokeWidth={2.4} dot={{ r: 2.5, fill: "var(--accent)", strokeWidth: 0 }} activeDot={{ r: 4 }} isAnimationActive />
+        <Line
+          type="monotone"
+          dataKey="value"
+          stroke="var(--accent)"
+          strokeWidth={2.4}
+          dot={{ r: 2.5, fill: "var(--accent)", strokeWidth: 0 }}
+          activeDot={{ r: 4 }}
+          isAnimationActive
+        />
       </LineChart>
     </ResponsiveContainer>
   );
 }
 
-export function ChartPie({ series, donut = false }: { series: MetricsSeriesPoint[]; donut?: boolean }) {
+export function ChartPie({
+  series,
+  donut = false,
+  onSelect,
+}: {
+  series: MetricsSeriesPoint[];
+  donut?: boolean;
+  onSelect?: (label: string) => void;
+}) {
   return (
     <div className="metrics-widget-pie-shell">
       <div className="metrics-widget-pie-chart">
@@ -170,9 +282,19 @@ export function ChartPie({ series, donut = false }: { series: MetricsSeriesPoint
               outerRadius="92%"
               paddingAngle={donut ? 2 : 0}
               isAnimationActive
+              onClick={(data) => {
+                const label = clickedLabel(data);
+                if (label !== undefined) onSelect?.(label);
+              }}
+              cursor={onSelect ? "pointer" : undefined}
             >
               {series.map((entry, index) => (
-                <Cell key={entry.label} fill={colorAt(index)} stroke="var(--bg-secondary)" strokeWidth={1.5} />
+                <Cell
+                  key={entry.label}
+                  fill={colorAt(index)}
+                  stroke="var(--bg-secondary)"
+                  strokeWidth={1.5}
+                />
               ))}
             </Pie>
             <Tooltip content={<MetricsTooltip />} />
@@ -182,7 +304,10 @@ export function ChartPie({ series, donut = false }: { series: MetricsSeriesPoint
       <div className="metrics-widget-pie-legend">
         {series.map((item, index) => (
           <div key={item.label} className="metrics-widget-pie-legend-item">
-            <span className="metrics-widget-pie-swatch" style={{ backgroundColor: colorAt(index) }} />
+            <span
+              className="metrics-widget-pie-swatch"
+              style={{ backgroundColor: colorAt(index) }}
+            />
             <span className="metrics-widget-pie-legend-label">{item.label}</span>
             <span className="metrics-widget-pie-legend-value">{formatCompact(item.value)}</span>
           </div>
@@ -196,12 +321,118 @@ export function ChartRadial({ series }: { series: MetricsSeriesPoint[] }) {
   const data = series.map((item, index) => ({ ...item, fill: colorAt(index) }));
   return (
     <ResponsiveContainer width="100%" height="100%">
-      <RadialBarChart data={data} innerRadius="25%" outerRadius="100%" startAngle={90} endAngle={-270}>
-        <PolarAngleAxis type="number" domain={[0, Math.max(...series.map((s) => s.value), 1)]} tick={false} />
+      <RadialBarChart
+        data={data}
+        innerRadius="25%"
+        outerRadius="100%"
+        startAngle={90}
+        endAngle={-270}
+      >
+        <PolarAngleAxis
+          type="number"
+          domain={[0, Math.max(...series.map((s) => s.value), 1)]}
+          tick={false}
+        />
         <RadialBar dataKey="value" background cornerRadius={6} isAnimationActive />
-        <Legend iconSize={9} layout="vertical" verticalAlign="middle" align="right" wrapperStyle={{ fontSize: 10 }} />
+        <Legend
+          iconSize={9}
+          layout="vertical"
+          verticalAlign="middle"
+          align="right"
+          wrapperStyle={{ fontSize: 10 }}
+        />
         <Tooltip content={<MetricsTooltip />} />
       </RadialBarChart>
     </ResponsiveContainer>
+  );
+}
+
+export function ChartStackedBars({
+  series,
+  onSelect,
+}: {
+  series: { label: string; [key: string]: string | number }[];
+  onSelect?: (label: string) => void;
+}) {
+  const keys = series.length > 0 ? Object.keys(series[0]).filter((k) => k !== "label") : [];
+  return (
+    <ResponsiveContainer width="100%" height="100%">
+      <BarChart
+        data={series}
+        margin={{ top: 6, right: 10, bottom: 2, left: 0 }}
+        barCategoryGap="18%"
+        onClick={(data) => {
+          const label = clickedLabel(data);
+          if (label !== undefined) onSelect?.(label);
+        }}
+        style={onSelect ? { cursor: "pointer" } : undefined}
+      >
+        <CartesianGrid strokeDasharray="3 3" stroke={GRID_STROKE} vertical={false} />
+        <XAxis dataKey="label" tick={AXIS_TICK} tickFormatter={shortLabel} interval={0} />
+        <YAxis tick={AXIS_TICK} tickFormatter={formatCompact} width={34} />
+        <Tooltip content={<MetricsTooltip />} cursor={{ fill: "var(--bg-hover)", opacity: 0.35 }} />
+        <Legend iconSize={9} wrapperStyle={{ fontSize: 10 }} />
+        {keys.map((key, i) => (
+          <Bar key={key} dataKey={key} stackId="stack" fill={colorAt(i)} isAnimationActive />
+        ))}
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+export function ChartFunnel({
+  series,
+  onSelect,
+}: {
+  series: MetricsSeriesPoint[];
+  onSelect?: (label: string) => void;
+}) {
+  const max = Math.max(...series.map((s) => s.value), 1);
+  return (
+    <div className="metrics-funnel">
+      {series.map((item, i) => {
+        const pct = (item.value / max) * 100;
+        return (
+          <button
+            key={item.label}
+            type="button"
+            className="metrics-funnel-row"
+            onClick={() => onSelect?.(item.label)}
+          >
+            <span className="metrics-funnel-label">{shortLabel(item.label)}</span>
+            <div className="metrics-funnel-bar-wrap">
+              <div
+                className="metrics-funnel-bar"
+                style={{ width: `${pct}%`, backgroundColor: colorAt(i) }}
+              />
+            </div>
+            <span className="metrics-funnel-value">{formatCompact(item.value)}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+export function ChartDelta({
+  current,
+  previous,
+  label,
+}: {
+  current: number;
+  previous: number;
+  label: string;
+}) {
+  const delta = current - previous;
+  const pct = previous !== 0 ? ((delta / Math.abs(previous)) * 100).toFixed(1) : "—";
+  const isUp = delta >= 0;
+  return (
+    <div className="metrics-delta">
+      <span className="metrics-delta-value">{formatCompact(current)}</span>
+      <span className={`metrics-delta-badge ${isUp ? "up" : "down"}`}>
+        {isUp ? "▲" : "▼"} {formatCompact(Math.abs(delta))} ({pct}%)
+      </span>
+      <span className="metrics-delta-label">{label}</span>
+    </div>
   );
 }

@@ -70,11 +70,8 @@ function migrateLegacyAIMetricsWidgetQuery(widget: MetricsWidgetDefinition) {
       /COUNT\(\*\)::bigint AS value/gi,
       'COUNT(r."product_id")::bigint AS value',
     );
-    if (!/WHERE\s+p\."id"\s+IS\s+NOT\s+NULL/mi.test(nextQuery)) {
-      nextQuery = nextQuery.replace(
-        /\nGROUP BY 1/mi,
-        '\nWHERE p."id" IS NOT NULL\nGROUP BY 1',
-      );
+    if (!/WHERE\s+p\."id"\s+IS\s+NOT\s+NULL/im.test(nextQuery)) {
+      nextQuery = nextQuery.replace(/\nGROUP BY 1/im, '\nWHERE p."id" IS NOT NULL\nGROUP BY 1');
     }
   }
 
@@ -100,7 +97,11 @@ export function readStoredBoards(): MetricsBoardDefinition[] {
     const boards = parsed
       .map((board): MetricsBoardDefinition | null => {
         if (!board || typeof board !== "object") return null;
-        if (typeof board.id !== "string" || typeof board.name !== "string" || typeof board.connection_id !== "string") {
+        if (
+          typeof board.id !== "string" ||
+          typeof board.name !== "string" ||
+          typeof board.connection_id !== "string"
+        ) {
           return null;
         }
 
@@ -126,7 +127,8 @@ export function readStoredBoards(): MetricsBoardDefinition[] {
                   title: widgetRecord.title,
                   query: widgetRecord.query,
                   refresh_seconds:
-                    typeof widgetRecord.refresh_seconds === "number" && widgetRecord.refresh_seconds >= 0
+                    typeof widgetRecord.refresh_seconds === "number" &&
+                    widgetRecord.refresh_seconds >= 0
                       ? widgetRecord.refresh_seconds
                       : 15,
                   col_span:
@@ -145,9 +147,14 @@ export function readStoredBoards(): MetricsBoardDefinition[] {
                     typeof widgetRecord.grid_y === "number" && widgetRecord.grid_y >= 0
                       ? widgetRecord.grid_y
                       : 0,
+                  note: typeof widgetRecord.note === "string" ? widgetRecord.note : undefined,
+                  color: typeof widgetRecord.color === "string" ? widgetRecord.color : undefined,
                 };
               })
-              .filter((widget: MetricsWidgetDefinition | null): widget is MetricsWidgetDefinition => !!widget)
+              .filter(
+                (widget: MetricsWidgetDefinition | null): widget is MetricsWidgetDefinition =>
+                  !!widget,
+              )
           : [];
 
         const migratedWidgets = widgets.map((widget: MetricsWidgetDefinition) => {
@@ -166,9 +173,12 @@ export function readStoredBoards(): MetricsBoardDefinition[] {
           widgets: sanitizeWidgetLayouts(migratedWidgets),
           created_at: typeof board.created_at === "number" ? board.created_at : Date.now(),
           updated_at:
-            migrated || typeof board.updated_at !== "number"
-              ? Date.now()
-              : board.updated_at,
+            migrated || typeof board.updated_at !== "number" ? Date.now() : board.updated_at,
+          description: typeof board.description === "string" ? board.description : undefined,
+          params:
+            board.params && typeof board.params === "object"
+              ? (board.params as Record<string, string>)
+              : undefined,
         };
       })
       .filter((board): board is MetricsBoardDefinition => !!board);
@@ -226,17 +236,20 @@ export function createWidgetDefinition(
   type: MetricsWidgetType,
   existingWidgets: MetricsWidgetDefinition[],
   preferredPosition?: Partial<GridPosition>,
+  overrides?: { title?: string; query?: string; colSpan?: number; rowSpan?: number },
 ): MetricsWidgetDefinition {
   const item = getWidgetLibraryItem(type);
+  const colSpan = overrides?.colSpan ?? item.colSpan;
+  const rowSpan = overrides?.rowSpan ?? item.rowSpan;
   const baseWidget: MetricsWidgetDefinition = {
     id: `widget-${crypto.randomUUID()}`,
     type,
-    title: item.defaultTitle,
-    query: item.defaultQuery,
+    title: overrides?.title ?? item.defaultTitle,
+    query: overrides?.query ?? item.defaultQuery,
     refresh_seconds: 15,
-    col_span: item.colSpan,
-    row_span: item.rowSpan,
-    grid_x: clampGridX(preferredPosition?.grid_x, item.colSpan),
+    col_span: colSpan,
+    row_span: rowSpan,
+    grid_x: clampGridX(preferredPosition?.grid_x, colSpan),
     grid_y: clampGridY(preferredPosition?.grid_y),
   };
   const nextPosition = canPlaceWidget(existingWidgets, baseWidget)

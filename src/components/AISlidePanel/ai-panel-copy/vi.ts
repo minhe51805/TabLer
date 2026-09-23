@@ -30,6 +30,11 @@ export const VI_PANEL_COPY: AIPanelCopy = {
       tooSlow: "Quá chậm",
       other: "Khác",
     },
+    editPrompt: "Sửa & chạy lại",
+    editPromptSave: "Chạy lại",
+    editPromptCancel: "Hủy",
+    queuedCount: "{count} đang chờ",
+    queuedClear: "Bỏ hết",
   },
   rules: {
     title: "Quy tắc guardrail",

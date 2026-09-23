@@ -1,7 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Code2, RefreshCcw, Table2 } from "lucide-react";
+import { Code2, Copy, FileDown, ImageDown, Maximize2, RefreshCcw, Table2 } from "lucide-react";
+import { exportToCSV } from "../../../utils/export-utils";
+import { exportSvgAsPng } from "../../../utils/svg-png-export";
+import { applyQueryParams, formatRelativeTime, pushBoardActivity } from "../utils/metrics-board-io";
 import { useI18n } from "../../../i18n";
 import type { MetricsWidgetDefinition, QueryResult } from "../../../types";
+import { ChartStackedBars, ChartFunnel, ChartDelta } from "../utils/chart-renderer";
+import { MarkdownCard } from "./MarkdownCard";
 import {
   executeMetricsQuery,
   formatExecutionError,
@@ -11,12 +16,7 @@ import {
   METRICS_DRAG_HOLD_MS,
   validateMetricsQuery,
 } from "../utils/query-builder";
-import {
-  ChartBars,
-  ChartLine,
-  ChartPie,
-  ChartRadial,
-} from "../utils/chart-renderer";
+import { ChartBars, ChartLine, ChartPie, ChartRadial } from "../utils/chart-renderer";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
 
 // ---------------------------------------------------------------------------
@@ -46,6 +46,12 @@ interface MetricsWidgetCardProps {
   resizing: boolean;
   onDragStart: (clientX: number, clientY: number) => void;
   onResizeStart: (clientX: number, clientY: number) => void;
+  onContextMenu: (widgetId: string, clientX: number, clientY: number) => void;
+  refreshToken: number;
+  onFullscreen: (widget: MetricsWidgetDefinition) => void;
+  onDrillDown: (widget: MetricsWidgetDefinition, label: string, result: QueryResult) => void;
+  onWidgetRefreshed: () => void;
+  params?: Record<string, string>;
 }
 
 export function MetricsWidgetCard({
@@ -60,6 +66,12 @@ export function MetricsWidgetCard({
   resizing,
   onDragStart,
   onResizeStart,
+  onContextMenu,
+  refreshToken,
+  onFullscreen,
+  onDrillDown,
+  params,
+  onWidgetRefreshed,
 }: MetricsWidgetCardProps) {
   const { t } = useI18n();
   const [state, setState] = useState<WidgetRunState>({
@@ -69,18 +81,21 @@ export function MetricsWidgetCard({
     lastRunAt: null,
   });
   const requestIdRef = useRef(0);
+  const cardRef = useRef<HTMLDivElement | null>(null);
   const isRunningRef = useRef(false);
   const rerunRequestedRef = useRef(false);
   const holdTimerRef = useRef<number | null>(null);
   const suppressClickRef = useRef(false);
 
   const runWidgetQuery = useCallback(async () => {
+    if (widget.type === "markdown") return;
     if (isRunningRef.current) {
       rerunRequestedRef.current = true;
       return;
     }
 
-    const validation = validateMetricsQuery(widget.query);
+    const effectiveQuery = params ? applyQueryParams(widget.query, params) : widget.query;
+    const validation = validateMetricsQuery(effectiveQuery);
     if (!validation.ok) {
       setState({
         result: null,
@@ -96,11 +111,9 @@ export function MetricsWidgetCard({
     isRunningRef.current = true;
     setState((prev) => ({ ...prev, loading: true, error: null }));
 
+    let runError: string | null = null;
     try {
-      const result = await executeMetricsQuery(
-        connectionId,
-        validation.statement,
-      );
+      const result = await executeMetricsQuery(connectionId, validation.statement);
 
       if (requestIdRef.current !== requestId) return;
       setState({
@@ -109,17 +122,26 @@ export function MetricsWidgetCard({
         error: null,
         lastRunAt: Date.now(),
       });
+      onWidgetRefreshed();
     } catch (error) {
       if (requestIdRef.current !== requestId) return;
+      runError = formatExecutionError(error);
       setState({
         result: null,
         loading: false,
-        error: formatExecutionError(error),
+        error: runError,
         lastRunAt: Date.now(),
       });
     } finally {
       if (requestIdRef.current === requestId) {
         isRunningRef.current = false;
+        pushBoardActivity({
+          boardId: widget.id.split("-")[0] || "",
+          widgetId: widget.id,
+          widgetTitle: widget.title,
+          action: runError ? "error" : "run",
+          detail: runError ?? undefined,
+        });
       }
       if (rerunRequestedRef.current) {
         rerunRequestedRef.current = false;
@@ -128,7 +150,7 @@ export function MetricsWidgetCard({
         }, 0);
       }
     }
-  }, [connectionId, widget.query]);
+  }, [connectionId, widget.query, widget.id, widget.title, widget.type, onWidgetRefreshed, params]);
 
   useEffect(() => {
     void runWidgetQuery();
@@ -146,37 +168,90 @@ export function MetricsWidgetCard({
     };
   }, [runWidgetQuery, widget.refresh_seconds]);
 
+  // Countdown to next auto-refresh.
+  const [secondsUntilRefresh, setSecondsUntilRefresh] = useState<number | null>(null);
+  useEffect(() => {
+    if (widget.refresh_seconds <= 0 || !state.lastRunAt) {
+      setSecondsUntilRefresh(null);
+      return;
+    }
+    const tick = () => {
+      const elapsed = Math.floor((Date.now() - state.lastRunAt!) / 1000);
+      const remaining = Math.max(0, widget.refresh_seconds - elapsed);
+      setSecondsUntilRefresh(remaining);
+    };
+    tick();
+    const timer = window.setInterval(tick, 1000);
+    return () => window.clearInterval(timer);
+  }, [widget.refresh_seconds, state.lastRunAt]);
+
+  // Board-level "refresh all" — re-run when the token bumps.
+  const prevRefreshTokenRef = useRef(refreshToken);
+  useEffect(() => {
+    if (refreshToken === prevRefreshTokenRef.current) return;
+    prevRefreshTokenRef.current = refreshToken;
+    void runWidgetQuery();
+  }, [refreshToken, runWidgetQuery]);
+
+  const handleChartSelect = useCallback(
+    (label: string) => {
+      if (state.result) onDrillDown(widget, label, state.result);
+    },
+    [onDrillDown, state.result, widget],
+  );
+
   const series = useMemo(() => getSeries(state.result), [state.result]);
   const metric = useMemo(() => getMetricValue(state.result), [state.result]);
   const validation = useMemo(
-    () => validateMetricsQuery(widget.query),
-    [widget.query],
+    () => validateMetricsQuery(params ? applyQueryParams(widget.query, params) : widget.query),
+    [widget.query, params],
   );
   const widgetLibraryItem = getWidgetLibraryItem(widget.type);
+  const isStale = useMemo(() => {
+    if (!state.lastRunAt || widget.refresh_seconds <= 0) return false;
+    return Date.now() - state.lastRunAt > widget.refresh_seconds * 2000;
+  }, [state.lastRunAt, widget.refresh_seconds]);
 
   const content = (() => {
     if (state.loading && !state.result) {
       return (
-        <div className="metrics-widget-empty">
-          {t("metrics.widget.loading")}
+        <div className="metrics-widget-skeleton">
+          <div className="metrics-widget-skeleton-bar" style={{ width: "60%" }} />
+          <div className="metrics-widget-skeleton-bar" style={{ width: "80%" }} />
+          <div className="metrics-widget-skeleton-bar" style={{ width: "40%" }} />
+          <div className="metrics-widget-skeleton-chart" />
         </div>
       );
     }
 
     if (!validation.ok) {
-      return (
-        <div className="metrics-widget-empty error">{validation.error}</div>
-      );
+      return <div className="metrics-widget-empty error">{validation.error}</div>;
     }
 
     if (state.error) {
-      return <div className="metrics-widget-empty error">{state.error}</div>;
+      return (
+        <div className="metrics-widget-empty error">
+          <span>{state.error}</span>
+          <details className="metrics-widget-error-details">
+            <summary>{t("metrics.widget.errorDetails")}</summary>
+            <pre className="metrics-widget-error-query">{widget.query}</pre>
+          </details>
+          <button
+            type="button"
+            className="metrics-widget-retry-btn"
+            onClick={(event) => {
+              event.stopPropagation();
+              void runWidgetQuery();
+            }}
+          >
+            {t("metrics.widget.retry")}
+          </button>
+        </div>
+      );
     }
 
     if (!state.result || state.result.rows.length === 0) {
-      return (
-        <div className="metrics-widget-empty">{t("metrics.widget.noData")}</div>
-      );
+      return <div className="metrics-widget-empty">{t("metrics.widget.noData")}</div>;
     }
 
     if (widget.type === "scoreboard") {
@@ -203,9 +278,7 @@ export function MetricsWidgetCard({
               {state.result.rows.slice(0, 5).map((row, rowIndex) => (
                 <tr key={rowIndex}>
                   {row.slice(0, 4).map((cell, cellIndex) => (
-                    <td key={cellIndex}>
-                      {cell === null ? "NULL" : String(cell)}
-                    </td>
+                    <td key={cellIndex}>{cell === null ? "NULL" : String(cell)}</td>
                   ))}
                 </tr>
               ))}
@@ -216,38 +289,66 @@ export function MetricsWidgetCard({
     }
 
     if (series.length === 0) {
-      return (
-        <div className="metrics-widget-empty">
-          {t("metrics.widget.queryNeedsSeries")}
-        </div>
-      );
+      return <div className="metrics-widget-empty">{t("metrics.widget.queryNeedsSeries")}</div>;
     }
 
     if (widget.type === "bar") {
-      return <ChartBars series={series} />;
+      return <ChartBars series={series} onSelect={handleChartSelect} />;
     }
 
     if (widget.type === "horizontal-bar") {
-      return <ChartBars series={series} horizontal />;
+      return <ChartBars series={series} horizontal onSelect={handleChartSelect} />;
     }
 
     if (widget.type === "line") {
-      return <ChartLine series={series} />;
+      return <ChartLine series={series} onSelect={handleChartSelect} />;
     }
 
     if (widget.type === "area") {
-      return <ChartLine series={series} area />;
+      return <ChartLine series={series} area onSelect={handleChartSelect} />;
     }
 
     if (widget.type === "donut") {
-      return <ChartPie series={series} donut />;
+      return <ChartPie series={series} donut onSelect={handleChartSelect} />;
+    }
+
+    if (widget.type === "stacked-bar") {
+      const keys = state.result!.columns.map((c) => c.name).filter((n) => n !== "label");
+      const data = state.result!.rows.map(
+        (row): { label: string; [key: string]: string | number } => {
+          const obj: { label: string; [key: string]: string | number } = {
+            label: String(row[0] ?? ""),
+          };
+          keys.forEach((k, i) => {
+            obj[k] = Number(row[i + 1]) || 0;
+          });
+          return obj;
+        },
+      );
+      return <ChartStackedBars series={data} onSelect={handleChartSelect} />;
+    }
+
+    if (widget.type === "funnel") {
+      return <ChartFunnel series={series} onSelect={handleChartSelect} />;
+    }
+
+    if (widget.type === "delta") {
+      const row = state.result!.rows[0];
+      const current = Number(row?.[0]) || 0;
+      const previous = Number(row?.[1]) || 0;
+      const label = String(row?.[2] ?? widget.title);
+      return <ChartDelta current={current} previous={previous} label={label} />;
+    }
+
+    if (widget.type === "markdown") {
+      return <MarkdownCard content={widget.note ?? widget.title} />;
     }
 
     if (widget.type === "radial") {
       return <ChartRadial series={series} />;
     }
 
-    return <ChartPie series={series} />;
+    return <ChartPie series={series} onSelect={handleChartSelect} />;
   })();
 
   const clearPendingHold = useCallback(() => {
@@ -303,9 +404,23 @@ export function MetricsWidgetCard({
       role="button"
       tabIndex={0}
       data-metrics-widget-id={widget.id}
+      ref={cardRef}
       className={`metrics-widget-card ${selected ? "selected" : ""} ${dragging ? "dragging" : ""} ${resizing ? "resizing" : ""}`}
-      style={layoutStyle}
+      style={{
+        ...layoutStyle,
+        ...(widget.color
+          ? {
+              borderColor: `${widget.color}66`,
+              boxShadow: `0 0 0 1px ${widget.color}33, 0 6px 18px rgba(5, 10, 15, 0.14)`,
+            }
+          : {}),
+      }}
       onPointerDown={beginCardHoldDrag}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onContextMenu(widget.id, event.clientX, event.clientY);
+      }}
       onClick={() => {
         if (suppressClickRef.current) {
           suppressClickRef.current = false;
@@ -323,77 +438,157 @@ export function MetricsWidgetCard({
       <div className="metrics-widget-card-head">
         <div className="metrics-widget-card-head-main">
           <div className="metrics-widget-card-title-wrap">
-            <span className="metrics-widget-card-type">
-              {widgetLibraryItem.label}
-            </span>
-            <strong className="metrics-widget-card-title">
+            <span className="metrics-widget-card-type">{widgetLibraryItem.label}</span>
+            <strong className="metrics-widget-card-title" title={widget.query}>
               {widget.title}
             </strong>
           </div>
+          {widget.note ? (
+            <span className="metrics-widget-card-note" title={widget.note}>
+              {widget.note}
+            </span>
+          ) : null}
+          {isStale ? (
+            <span className="metrics-widget-stale" title={t("metrics.widget.stale")}>
+              {t("metrics.widget.stale")}
+            </span>
+          ) : null}
         </div>
+      </div>
+
+      <div className="metrics-widget-card-actions">
         <button
           type="button"
-          className="metrics-widget-refresh-btn"
+          className="metrics-widget-workspace-btn"
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.stopPropagation();
             void runWidgetQuery();
           }}
           title={t("metrics.widget.refresh")}
+          aria-label={t("metrics.widget.refresh")}
         >
-          <RefreshCcw
-            className={`w-3.5 h-3.5 ${state.loading ? "animate-spin" : ""}`}
-          />
+          <RefreshCcw className={`w-3.5 h-3.5 ${state.loading ? "animate-spin" : ""}`} />
         </button>
-      </div>
-
-      <div className="metrics-widget-card-body">{content}</div>
-
-      <div className="metrics-widget-card-foot">
-        <span className={`metrics-widget-status ${state.error ? "error" : ""}`}>
-          {state.error
-            ? t("metrics.widget.issue")
-            : state.loading
-              ? t("metrics.widget.refreshing")
-              : t("metrics.widget.live")}
-        </span>
-        <div className="metrics-widget-foot-actions">
-          {state.result && !state.error && (
-            <button
-              type="button"
-              className="metrics-widget-workspace-btn"
-              onPointerDown={(event) => event.stopPropagation()}
-              onClick={(event) => {
-                event.stopPropagation();
-                onOpenResult(widget, state.result as QueryResult);
-              }}
-              title={t("metrics.widget.openResult")}
-              aria-label={t("metrics.widget.openResult")}
-            >
-              <Table2 className="w-3.5 h-3.5" />
-            </button>
-          )}
+        {state.result && !state.error && (
           <button
             type="button"
             className="metrics-widget-workspace-btn"
             onPointerDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation();
-              onOpenQuery(widget);
+              onOpenResult(widget, state.result as QueryResult);
             }}
-            title={t("metrics.widget.openSourceSql")}
-            aria-label={t("metrics.widget.openSourceSql")}
+            title={t("metrics.widget.openResult")}
+            aria-label={t("metrics.widget.openResult")}
           >
-            <Code2 className="w-3.5 h-3.5" />
+            <Table2 className="w-3.5 h-3.5" />
           </button>
-          <span className="metrics-widget-foot-meta">
-            {state.result
-              ? `${state.result.execution_time_ms}ms`
-              : widget.refresh_seconds > 0
-                ? t("metrics.everySeconds", { seconds: widget.refresh_seconds })
-                : t("metrics.manual")}
-          </span>
-        </div>
+        )}
+        {state.result && !state.error && (
+          <button
+            type="button"
+            className="metrics-widget-workspace-btn"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={(event) => {
+              event.stopPropagation();
+              void exportToCSV(
+                state.result!.columns.map((c) => c.name),
+                state.result!.rows as (string | number | boolean | null)[][],
+                `${widget.title || "metric"}.csv`,
+              );
+            }}
+            title={t("metrics.widget.exportCsv")}
+            aria-label={t("metrics.widget.exportCsv")}
+          >
+            <FileDown className="w-3.5 h-3.5" />
+          </button>
+        )}
+        {state.result &&
+          !state.error &&
+          widget.type !== "table" &&
+          widget.type !== "scoreboard" && (
+            <button
+              type="button"
+              className="metrics-widget-workspace-btn"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                const svg = cardRef.current?.querySelector("svg");
+                if (svg) void exportSvgAsPng(svg, `${widget.title || "chart"}.png`);
+              }}
+              title={t("metrics.widget.exportPng")}
+              aria-label={t("metrics.widget.exportPng")}
+            >
+              <ImageDown className="w-3.5 h-3.5" />
+            </button>
+          )}
+        <button
+          type="button"
+          className="metrics-widget-workspace-btn"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            void navigator.clipboard.writeText(widget.query);
+          }}
+          title={t("metrics.widget.copyQuery")}
+          aria-label={t("metrics.widget.copyQuery")}
+        >
+          <Copy className="w-3.5 h-3.5" />
+        </button>
+        <button
+          type="button"
+          className="metrics-widget-workspace-btn"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            onFullscreen(widget);
+          }}
+          title={t("metrics.widget.fullscreen")}
+          aria-label={t("metrics.widget.fullscreen")}
+        >
+          <Maximize2 className="w-3.5 h-3.5" />
+        </button>
+        <button
+          type="button"
+          className="metrics-widget-workspace-btn"
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            onOpenQuery(widget);
+          }}
+          title={t("metrics.widget.openSourceSql")}
+          aria-label={t("metrics.widget.openSourceSql")}
+        >
+          <Code2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
+
+      <div className="metrics-widget-card-body">{content}</div>
+
+      <div className="metrics-widget-card-foot">
+        <span
+          className={`metrics-widget-status-dot ${
+            state.error ? "error" : state.loading ? "loading" : ""
+          }`}
+        />
+        <span className="metrics-widget-foot-meta">
+          {state.error
+            ? t("metrics.widget.issue")
+            : state.loading
+              ? t("metrics.widget.refreshing")
+              : t("metrics.widget.live")}
+          {" · "}
+          {state.result
+            ? `${state.result.execution_time_ms}ms`
+            : widget.refresh_seconds > 0
+              ? t("metrics.everySeconds", { seconds: widget.refresh_seconds })
+              : t("metrics.manual")}
+          {state.lastRunAt ? ` · ${formatRelativeTime(state.lastRunAt)}` : ""}
+          {secondsUntilRefresh !== null && secondsUntilRefresh > 0
+            ? ` · ${secondsUntilRefresh}s`
+            : ""}
+        </span>
       </div>
 
       <button

@@ -70,8 +70,18 @@ export function inferWidgetTypeFromPrompt(prompt: string): MetricsWidgetType | n
   if (!normalized) return null;
 
   if (normalized.includes("scoreboard") || normalized.includes("kpi")) return "scoreboard";
-  if (normalized.includes("radial") || normalized.includes("gauge") || normalized.includes("thanh tron")) return "radial";
-  if (normalized.includes("donut") || normalized.includes("doughnut") || normalized.includes("vanh khuyen")) return "donut";
+  if (
+    normalized.includes("radial") ||
+    normalized.includes("gauge") ||
+    normalized.includes("thanh tron")
+  )
+    return "radial";
+  if (
+    normalized.includes("donut") ||
+    normalized.includes("doughnut") ||
+    normalized.includes("vanh khuyen")
+  )
+    return "donut";
   if (normalized.includes("area") || normalized.includes("vung")) return "area";
   if (
     normalized.includes("horizontal") ||
@@ -107,12 +117,16 @@ export function extractDashboardWidgetTitleFromConversationContext(conversationT
     return quotedWidgetMatch[1].trim();
   }
 
-  const recommendationMatch = conversationText.match(/recommended change for widget(?:\s+\d+)?\s*:\s*([^\n]+)/i);
+  const recommendationMatch = conversationText.match(
+    /recommended change for widget(?:\s+\d+)?\s*:\s*([^\n]+)/i,
+  );
   if (recommendationMatch?.[1]?.trim()) {
     return recommendationMatch[1].trim();
   }
 
-  const vietnameseMatch = conversationText.match(/doi chart cho widget\s+["“”']([^"“”']{2,120})["“”']/i);
+  const vietnameseMatch = conversationText.match(
+    /doi chart cho widget\s+["“”']([^"“”']{2,120})["“”']/i,
+  );
   if (vietnameseMatch?.[1]?.trim()) {
     return vietnameseMatch[1].trim();
   }
@@ -198,7 +212,10 @@ export function isDashboardAttachmentReferencePrompt(prompt: string) {
   return dashboardSignals.some((signal) => normalized.includes(normalizeVisualizationText(signal)));
 }
 
-export function inferWidgetTypeFromPromptWithContext(prompt: string, conversationContext = ""): MetricsWidgetType | null {
+export function inferWidgetTypeFromPromptWithContext(
+  prompt: string,
+  conversationContext = "",
+): MetricsWidgetType | null {
   const directType = inferWidgetTypeFromPrompt(prompt);
   if (directType) {
     return directType;
@@ -218,7 +235,10 @@ export function inferWidgetTypeFromPromptWithContext(prompt: string, conversatio
     }
   }
 
-  if (/(?:goi y|suggestion|option|phuong an)\s*2/.test(normalizedPrompt) && normalizedConversation.includes("table")) {
+  if (
+    /(?:goi y|suggestion|option|phuong an)\s*2/.test(normalizedPrompt) &&
+    normalizedConversation.includes("table")
+  ) {
     return "table";
   }
 
@@ -250,13 +270,16 @@ export function buildOAuthClientsScoreboardQuery() {
 }
 
 export function summarizeAttachedDashboardSelection(selection: VisualizationSelectionContext) {
-  const boardNameMatch = selection.text.match(/^Board:\s+(.+)$/mi);
-  const widgetCountMatch = selection.text.match(/^Widget count:\s+(\d+)$/mi);
+  const boardNameMatch = selection.text.match(/^Board:\s+(.+)$/im);
+  const widgetCountMatch = selection.text.match(/^Widget count:\s+(\d+)$/im);
   const hiddenWidgetCountMatch = selection.text.match(/\.\.\.\s+(\d+)\s+more widget\(s\)/i);
   const widgets = extractDashboardSnapshotWidgets(selection.text);
 
   return {
-    boardName: boardNameMatch?.[1]?.trim() || selection.source.replace(/^dashboard:\s*/i, "").trim() || "Current dashboard",
+    boardName:
+      boardNameMatch?.[1]?.trim() ||
+      selection.source.replace(/^dashboard:\s*/i, "").trim() ||
+      "Current dashboard",
     widgetCount: Number(widgetCountMatch?.[1] || widgets.length || 0),
     hiddenWidgetCount: Number(hiddenWidgetCountMatch?.[1] || 0),
     widgetTitles: widgets.map((widget) => widget.title),
@@ -289,11 +312,10 @@ export function resolveDashboardWidgetEditInstruction(
             const normalizedWidgetTitle = normalizeVisualizationText(widget.title);
             return (
               normalizedPrompt.includes(normalizedWidgetTitle) ||
-              (!!normalizedExplicitTargetTitle && (
-                normalizedExplicitTargetTitle === normalizedWidgetTitle ||
-                normalizedExplicitTargetTitle.includes(normalizedWidgetTitle) ||
-                normalizedWidgetTitle.includes(normalizedExplicitTargetTitle)
-              ))
+              (!!normalizedExplicitTargetTitle &&
+                (normalizedExplicitTargetTitle === normalizedWidgetTitle ||
+                  normalizedExplicitTargetTitle.includes(normalizedWidgetTitle) ||
+                  normalizedWidgetTitle.includes(normalizedExplicitTargetTitle)))
             );
           });
 
@@ -395,6 +417,7 @@ export function supportsOverviewMetricsBoard(dbType?: DatabaseType) {
     case "mysql":
     case "mariadb":
     case "mssql":
+    case "mongodb":
       return true;
     default:
       return false;

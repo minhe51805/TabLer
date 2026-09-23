@@ -14,6 +14,9 @@ import { ExplainVisualizer } from "../ExplainVisualizer/ExplainVisualizer";
 import { SQLParametersPanel } from "./SQLParametersPanel";
 import { extractNamedSqlParameters, type SqlParameterDraft } from "../../utils/sql-parameters";
 import { getAiProposalCopy } from "./ai-proposal-copy";
+import { useConnectionCapabilities } from "../../hooks/useConnectionCapabilities";
+import { isCapabilitySupported } from "../../types/capabilities";
+import { ParamFillDialog } from "../SQLFavorites/ParamFillDialog";
 
 interface Props {
   connectionId: string;
@@ -58,7 +61,19 @@ export function SQLEditor({
       return {};
     }
   });
-  const parameterNames = useMemo(() => extractNamedSqlParameters(draftSql), [draftSql]);
+  const connections = useConnectionStore((state) => state.connections);
+  const dbType = connections.find((connection) => connection.id === connectionId)?.db_type;
+  const queryProfile = getQueryProfile(dbType);
+  const capabilityProfile = useConnectionCapabilities(connectionId);
+  // Engines without prepared-parameter support (MongoDB, ClickHouse, …) never
+  // scan for :name/$name/@name — Mongo operators like $gt are not parameters.
+  const supportsPreparedParams =
+    capabilityProfile === null ||
+    isCapabilitySupported(capabilityProfile.capabilities.preparedParameters);
+  const parameterNames = useMemo(
+    () => (supportsPreparedParams ? extractNamedSqlParameters(draftSql) : []),
+    [draftSql, supportsPreparedParams],
+  );
   useEffect(() => {
     window.localStorage.setItem(parameterStorageKey, JSON.stringify(parameterDrafts));
   }, [parameterDrafts, parameterStorageKey]);
@@ -91,9 +106,7 @@ export function SQLEditor({
       : toolsVisible
         ? "Hide toolbar"
         : "Show toolbar";
-  const connections = useConnectionStore((state) => state.connections);
-  const dbType = connections.find((connection) => connection.id === connectionId)?.db_type;
-  const queryProfile = getQueryProfile(dbType);
+
   const {
     result,
     error,
@@ -117,6 +130,9 @@ export function SQLEditor({
     acceptAiProposal,
     rejectAiProposal,
     notifyManualEditorChange,
+    paramFillRequest,
+    setParamFillRequest,
+    handleExecute,
   } = useSQLEditor({
     connectionId,
     tabId,
@@ -331,6 +347,18 @@ export function SQLEditor({
             plan={explainPlan}
             sourceSql={explainSourceSql}
             onClose={() => setExplainPlan(undefined)}
+          />
+        )}
+
+        {paramFillRequest && (
+          <ParamFillDialog
+            sql={paramFillRequest.sql}
+            params={paramFillRequest.params}
+            onSubmit={(resolvedSql) => {
+              setParamFillRequest(null);
+              void handleExecute(resolvedSql);
+            }}
+            onCancel={() => setParamFillRequest(null)}
           />
         )}
 

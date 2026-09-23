@@ -15,19 +15,55 @@ import type {
 import { emitAppToast } from "../utils/app-toast";
 
 const BUSINESS_TABLE_PRIORITY = [
-  "users", "sessions", "refresh_tokens", "oauth_client", "oauth_clients",
-  "oauth_authorizations", "oauth_consents", "identities", "audit_log_entries",
-  "audit_logs", "user_logs", "smart_alerts", "messages", "products", "categories",
-  "brands", "coupons", "orders", "order_items", "reviews", "workspaces", "buckets",
-  "objects", "job_post", "job_posts", "job_application", "job_applications",
-  "organization", "organizations", "organization_type", "organization_types",
-  "industry", "industries", "province", "provinces", "country", "countries",
-  "interview_schedule", "interview_schedules", "interview_feedback",
-  "interview_feedbacks", "interview_participants",
+  "users",
+  "sessions",
+  "refresh_tokens",
+  "oauth_client",
+  "oauth_clients",
+  "oauth_authorizations",
+  "oauth_consents",
+  "identities",
+  "audit_log_entries",
+  "audit_logs",
+  "user_logs",
+  "smart_alerts",
+  "messages",
+  "products",
+  "categories",
+  "brands",
+  "coupons",
+  "orders",
+  "order_items",
+  "reviews",
+  "workspaces",
+  "buckets",
+  "objects",
+  "job_post",
+  "job_posts",
+  "job_application",
+  "job_applications",
+  "organization",
+  "organizations",
+  "organization_type",
+  "organization_types",
+  "industry",
+  "industries",
+  "province",
+  "provinces",
+  "country",
+  "countries",
+  "interview_schedule",
+  "interview_schedules",
+  "interview_feedback",
+  "interview_feedbacks",
+  "interview_participants",
 ];
 
 export function normalizeMetricsTableName(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
 }
 
 export function prioritizeMetricsTables(tables: TableInfo[]): TableInfo[] {
@@ -36,8 +72,10 @@ export function prioritizeMetricsTables(tables: TableInfo[]): TableInfo[] {
       const leftPriority = BUSINESS_TABLE_PRIORITY.indexOf(normalizeMetricsTableName(left.name));
       const rightPriority = BUSINESS_TABLE_PRIORITY.indexOf(normalizeMetricsTableName(right.name));
       if (leftPriority !== rightPriority) {
-        return (leftPriority === -1 ? Number.MAX_SAFE_INTEGER : leftPriority) -
-          (rightPriority === -1 ? Number.MAX_SAFE_INTEGER : rightPriority);
+        return (
+          (leftPriority === -1 ? Number.MAX_SAFE_INTEGER : leftPriority) -
+          (rightPriority === -1 ? Number.MAX_SAFE_INTEGER : rightPriority)
+        );
       }
       const rowDifference = (right.row_count ?? -1) - (left.row_count ?? -1);
       return rowDifference || left.name.localeCompare(right.name);
@@ -45,7 +83,8 @@ export function prioritizeMetricsTables(tables: TableInfo[]): TableInfo[] {
     .filter(
       (table, index, collection) =>
         collection.findIndex(
-          (candidate) => normalizeMetricsTableName(candidate.name) === normalizeMetricsTableName(table.name),
+          (candidate) =>
+            normalizeMetricsTableName(candidate.name) === normalizeMetricsTableName(table.name),
         ) === index,
     )
     .slice(0, 18);
@@ -125,7 +164,11 @@ async function collectMetricsSchemaHints(
 }
 
 function normalizeWidgetTitle(value: string): string {
-  return value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
 }
 
 export function useAIMetricsBoardActions(language: string) {
@@ -206,9 +249,15 @@ export function useAIMetricsBoardActions(language: string) {
         if (detail.mode === "edit" && targetBoard && detail.editTargetTitle) {
           const normalizedTarget = normalizeWidgetTitle(detail.editTargetTitle);
           const targetWidget =
-            targetBoard.widgets.find((widget) => normalizeWidgetTitle(widget.title) === normalizedTarget) ||
-            targetBoard.widgets.find((widget) => normalizeWidgetTitle(widget.title).includes(normalizedTarget)) ||
-            targetBoard.widgets.find((widget) => normalizedTarget.includes(normalizeWidgetTitle(widget.title))) ||
+            targetBoard.widgets.find(
+              (widget) => normalizeWidgetTitle(widget.title) === normalizedTarget,
+            ) ||
+            targetBoard.widgets.find((widget) =>
+              normalizeWidgetTitle(widget.title).includes(normalizedTarget),
+            ) ||
+            targetBoard.widgets.find((widget) =>
+              normalizedTarget.includes(normalizeWidgetTitle(widget.title)),
+            ) ||
             null;
           if (targetWidget) {
             const nextType = detail.editTargetType || targetWidget.type;
@@ -286,6 +335,27 @@ export function useAIMetricsBoardActions(language: string) {
               result.board.name.trim() !== targetBoard.name.trim();
             nextAllBoards = didChange
               ? allBoards.map((board) => (board.id === result.board.id ? result.board : board))
+              : allBoards;
+            if (!didChange) nextBoard = targetBoard;
+          }
+        }
+
+        // Agent-proposed widgets on an existing board: append them in place
+        // instead of creating a second board. Runs before the aiWidgets
+        // create-branch below, which only fires when no target board exists.
+        if (!nextBoard && detail.mode === "augment" && targetBoard && detail.aiWidgets?.length) {
+          const appended = templates.appendAIMetricsWidgetsToBoard({
+            board: targetBoard,
+            widgets: detail.aiWidgets,
+          });
+          if (appended) {
+            nextBoard = appended.board;
+            addedCount = appended.addedCount;
+            addedTitles = appended.addedTitles;
+            addedWidgetIds = appended.addedWidgetIds;
+            didChange = appended.addedCount > 0;
+            nextAllBoards = didChange
+              ? allBoards.map((board) => (board.id === appended.board.id ? appended.board : board))
               : allBoards;
             if (!didChange) nextBoard = targetBoard;
           }

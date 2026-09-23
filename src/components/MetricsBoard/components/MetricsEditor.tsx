@@ -1,14 +1,20 @@
 import Editor, { type OnMount } from "@monaco-editor/react";
 import "../../../utils/monaco-bundle";
 import type * as Monaco from "monaco-editor";
-import { Trash2 } from "lucide-react";
-import { useEffect, useRef } from "react";
+import { History, Play, Trash2, X } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useConnectionStore } from "../../../stores/connectionStore";
+import { useQueryStore } from "../../../stores/queryStore";
 import type { MetricsWidgetDefinition, MetricsWidgetType } from "../../../types";
 import {
+  executeMetricsQuery,
+  formatExecutionError,
   getMetricsRefreshSelectOptions,
   getMetricsSizeSelectOptions,
   getWidgetLibrary,
+  pushQueryHistory,
+  readQueryHistory,
+  validateMetricsQuery,
 } from "../utils/query-builder";
 import { MetricsCompactSelect } from "./MetricsCompactSelect";
 import { useI18n } from "../../../i18n";
@@ -19,6 +25,7 @@ import { useI18n } from "../../../i18n";
 
 export interface MetricsEditorProps {
   editingWidget: MetricsWidgetDefinition;
+  connectionId: string;
   widgetEditorLayout: {
     left: number;
     top: number;
@@ -38,6 +45,7 @@ export interface MetricsEditorProps {
 
 export function MetricsEditor({
   editingWidget,
+  connectionId,
   widgetEditorLayout,
   onQueryDraftChange,
   onUpdateWidget,
@@ -49,6 +57,72 @@ export function MetricsEditor({
   const tables = useConnectionStore((state) => state.tables);
   const metricsRefreshOptions = getMetricsRefreshSelectOptions();
   const metricsSizeOptions = getMetricsSizeSelectOptions();
+  const [preview, setPreview] = useState<{
+    loading: boolean;
+    result: { columns: string[]; rows: (string | number | boolean | null)[][] } | null;
+    error: string | null;
+  }>({ loading: false, result: null, error: null });
+  const [showHistory, setShowHistory] = useState(false);
+  const [showBuilder, setShowBuilder] = useState(false);
+  const [builderTable, setBuilderTable] = useState("");
+  const [builderColumn, setBuilderColumn] = useState("");
+  const [builderAgg, setBuilderAgg] = useState<"count" | "sum" | "avg" | "min" | "max">("count");
+  const [builderGroup, setBuilderGroup] = useState("");
+  const [builderLimit, setBuilderLimit] = useState("100");
+  const [tableColumns, setTableColumns] = useState<string[]>([]);
+  const history = readQueryHistory(connectionId);
+
+  const loadTableColumns = useCallback(
+    async (tableName: string) => {
+      if (!tableName) {
+        setTableColumns([]);
+        return;
+      }
+      try {
+        const { getTableColumnsPreview } = useQueryStore.getState();
+        const cols = await getTableColumnsPreview(connectionId, tableName);
+        setTableColumns(cols.map((c) => c.name));
+      } catch {
+        setTableColumns([]);
+      }
+    },
+    [connectionId],
+  );
+
+  const buildQuery = useCallback(() => {
+    if (!builderTable) return "";
+    const aggFn =
+      builderAgg === "count" ? "COUNT(*)" : `${builderAgg.toUpperCase()}(${builderColumn || "*"})`;
+    const parts = [`SELECT ${builderGroup ? `${builderGroup} AS label, ` : ""}${aggFn} AS value`];
+    parts.push(`FROM ${builderTable}`);
+    if (builderGroup) parts.push(`GROUP BY ${builderGroup}`);
+    if (builderLimit) parts.push(`LIMIT ${builderLimit}`);
+    return parts.join("\n");
+  }, [builderTable, builderColumn, builderAgg, builderGroup, builderLimit]);
+
+  const runPreview = useCallback(async () => {
+    const query = editingWidget.query;
+    const validation = validateMetricsQuery(query);
+    if (!validation.ok) {
+      setPreview({ loading: false, result: null, error: validation.error });
+      return;
+    }
+    setPreview({ loading: true, result: null, error: null });
+    try {
+      const result = await executeMetricsQuery(connectionId, validation.statement);
+      pushQueryHistory(connectionId, query);
+      setPreview({
+        loading: false,
+        result: {
+          columns: result.columns.map((c) => c.name),
+          rows: result.rows.slice(0, 5) as (string | number | boolean | null)[][],
+        },
+        error: null,
+      });
+    } catch (error) {
+      setPreview({ loading: false, result: null, error: formatExecutionError(error) });
+    }
+  }, [connectionId, editingWidget.query]);
 
   useEffect(() => {
     onQueryDraftChange(editingWidget?.query ?? "");
@@ -76,10 +150,28 @@ export function MetricsEditor({
         }));
 
         const keywords = [
-          "SELECT", "FROM", "WHERE", "AND", "OR", "ORDER BY", "GROUP BY",
-          "LIMIT", "JOIN", "LEFT JOIN", "INNER JOIN", "ON", "AS",
-          "INSERT INTO", "VALUES", "UPDATE", "SET", "DELETE FROM",
-          "WITH", "SHOW", "DESCRIBE", "EXPLAIN",
+          "SELECT",
+          "FROM",
+          "WHERE",
+          "AND",
+          "OR",
+          "ORDER BY",
+          "GROUP BY",
+          "LIMIT",
+          "JOIN",
+          "LEFT JOIN",
+          "INNER JOIN",
+          "ON",
+          "AS",
+          "INSERT INTO",
+          "VALUES",
+          "UPDATE",
+          "SET",
+          "DELETE FROM",
+          "WITH",
+          "SHOW",
+          "DESCRIBE",
+          "EXPLAIN",
         ];
 
         const keywordSuggestions = keywords.map((keyword) => ({
@@ -152,6 +244,124 @@ export function MetricsEditor({
         />
       </label>
 
+      <label className="metrics-board-field">
+        <span>{t("metrics.editor.note")}</span>
+        <input
+          value={editingWidget.note ?? ""}
+          onChange={(event) => onUpdateWidget({ note: event.target.value || undefined })}
+          placeholder={t("metrics.editor.notePlaceholder")}
+        />
+      </label>
+
+      <div className="metrics-board-field">
+        <span>{t("metrics.editor.color")}</span>
+        <div className="metrics-widget-color-grid">
+          {["", "#22d3ee", "#34d399", "#fbbf24", "#f87171", "#a78bfa", "#f472b6", "#94a3b8"].map(
+            (c) => (
+              <button
+                key={c || "default"}
+                type="button"
+                className={`metrics-widget-color-option ${editingWidget.color === c || (!editingWidget.color && !c) ? "is-active" : ""}`}
+                style={c ? { backgroundColor: c } : undefined}
+                onClick={() => onUpdateWidget({ color: c || undefined })}
+                title={c || t("metrics.editor.colorDefault")}
+              >
+                {!c && <span>×</span>}
+              </button>
+            ),
+          )}
+        </div>
+      </div>
+
+      <div className="metrics-board-field">
+        <button
+          type="button"
+          className="metrics-builder-toggle"
+          onClick={() => setShowBuilder((v) => !v)}
+        >
+          {showBuilder ? "▾" : "▸"} {t("metrics.editor.queryBuilder")}
+        </button>
+        {showBuilder && (
+          <div className="metrics-builder">
+            <label className="metrics-builder-field">
+              <span>{t("metrics.builder.table")}</span>
+              <select
+                value={builderTable}
+                onChange={(e) => {
+                  setBuilderTable(e.target.value);
+                  void loadTableColumns(e.target.value);
+                }}
+              >
+                <option value="">{t("metrics.builder.selectTable")}</option>
+                {tables.map((tb) => (
+                  <option key={tb.name} value={tb.name}>
+                    {tb.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="metrics-builder-field">
+              <span>{t("metrics.builder.aggregate")}</span>
+              <select
+                value={builderAgg}
+                onChange={(e) => setBuilderAgg(e.target.value as typeof builderAgg)}
+              >
+                <option value="count">COUNT</option>
+                <option value="sum">SUM</option>
+                <option value="avg">AVG</option>
+                <option value="min">MIN</option>
+                <option value="max">MAX</option>
+              </select>
+            </label>
+            {builderAgg !== "count" && (
+              <label className="metrics-builder-field">
+                <span>{t("metrics.builder.column")}</span>
+                <select value={builderColumn} onChange={(e) => setBuilderColumn(e.target.value)}>
+                  <option value="">{t("metrics.builder.selectColumn")}</option>
+                  {tableColumns.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <label className="metrics-builder-field">
+              <span>{t("metrics.builder.groupBy")}</span>
+              <select value={builderGroup} onChange={(e) => setBuilderGroup(e.target.value)}>
+                <option value="">{t("metrics.builder.noGroup")}</option>
+                {tableColumns.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="metrics-builder-field">
+              <span>{t("metrics.builder.limit")}</span>
+              <input
+                type="number"
+                value={builderLimit}
+                onChange={(e) => setBuilderLimit(e.target.value)}
+                min={1}
+                max={10000}
+              />
+            </label>
+            <button
+              type="button"
+              className="metrics-builder-apply"
+              disabled={!builderTable}
+              onClick={() => {
+                const sql = buildQuery();
+                if (sql) onQueryDraftChange(sql);
+              }}
+            >
+              {t("metrics.builder.apply")}
+            </button>
+          </div>
+        )}
+      </div>
+
       <div className="metrics-board-field">
         <span>{t("metrics.editor.widgetType")}</span>
         <div className="metrics-widget-type-grid">
@@ -220,6 +430,84 @@ export function MetricsEditor({
         </div>
       </div>
 
+      <div className="metrics-editor-tools">
+        <button
+          type="button"
+          className="metrics-board-btn"
+          onClick={() => void runPreview()}
+          disabled={preview.loading}
+        >
+          <Play className="w-3.5 h-3.5" />
+          <span>
+            {preview.loading ? t("metrics.editor.previewing") : t("metrics.editor.preview")}
+          </span>
+        </button>
+        {history.length > 0 && (
+          <button
+            type="button"
+            className="metrics-board-btn"
+            onClick={() => setShowHistory((v) => !v)}
+          >
+            <History className="w-3.5 h-3.5" />
+            <span>{t("metrics.editor.history")}</span>
+          </button>
+        )}
+      </div>
+
+      {showHistory && (
+        <div className="metrics-editor-history">
+          {history.map((q, i) => (
+            <button
+              key={i}
+              type="button"
+              className="metrics-editor-history-item"
+              onClick={() => {
+                onQueryDraftChange(q);
+                setShowHistory(false);
+              }}
+              title={q}
+            >
+              {q.length > 80 ? q.slice(0, 80) + "…" : q}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {preview.error && <div className="metrics-editor-preview-error">{preview.error}</div>}
+      {preview.result && (
+        <div className="metrics-editor-preview">
+          <div className="metrics-editor-preview-head">
+            <span>{t("metrics.editor.previewResult", { rows: preview.result.rows.length })}</span>
+            <button
+              type="button"
+              onClick={() => setPreview({ loading: false, result: null, error: null })}
+            >
+              <X className="w-3 h-3" />
+            </button>
+          </div>
+          <div className="metrics-editor-preview-table">
+            <table>
+              <thead>
+                <tr>
+                  {preview.result.columns.map((c) => (
+                    <th key={c}>{c}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {preview.result.rows.map((row, i) => (
+                  <tr key={i}>
+                    {row.map((cell, j) => (
+                      <td key={j}>{cell === null ? "NULL" : String(cell)}</td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
       <div className="metrics-board-field-grid">
         <label className="metrics-board-field">
           <span>{t("metrics.editor.refreshRate")}</span>
@@ -245,24 +533,14 @@ export function MetricsEditor({
         </label>
       </div>
 
-      <div className="metrics-board-help compact">
-        {t("metrics.editor.help")}
-      </div>
+      <div className="metrics-board-help compact">{t("metrics.editor.help")}</div>
 
       <div className="metrics-widget-editor-actions">
-        <button
-          type="button"
-          className="metrics-board-btn danger"
-          onClick={onDelete}
-        >
+        <button type="button" className="metrics-board-btn danger" onClick={onDelete}>
           <Trash2 className="w-3.5 h-3.5" />
           <span>{t("common.delete")}</span>
         </button>
-        <button
-          type="button"
-          className="metrics-board-btn"
-          onClick={onClearSelection}
-        >
+        <button type="button" className="metrics-board-btn" onClick={onClearSelection}>
           <span>{t("common.ok")}</span>
         </button>
       </div>

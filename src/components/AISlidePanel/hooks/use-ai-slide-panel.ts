@@ -865,7 +865,9 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
             wantsMetricsBoard
               ? toolAvailability.sqlRead
                 ? "This is a metrics/dashboard/summary request. Inspect the relevant tables, then in finish.args.metricsWidgets return 3-6 widgets that form a useful board. Each widget needs a clear title, a type (scoreboard for single totals, bar/pie/line for grouped aggregates, table for detailed breakdowns), and a runnable read-only query grounded in the verified schema. Build the board yourself; do not ask the user which widgets they want."
-                : "This is a metrics/dashboard/summary request. Inspect the relevant tables with describe_table and sample_table_data, then summarize in finish.args.response. Omit SQL-shaped widget queries."
+                : toolAvailability.documentPropose
+                  ? "This is a metrics/dashboard/summary request. Inspect the relevant collections, then in finish.args.metricsWidgets return 3-6 widgets that form a useful board. Each widget needs a clear title, a type (scoreboard for single totals, bar/pie/line for grouped aggregates, table for detailed breakdowns), and a runnable read-only SELECT query grounded in the verified schema — the metrics board translates SELECT ... GROUP BY into a MongoDB aggregation pipeline automatically. Build the board yourself; do not ask the user which widgets they want."
+                  : "This is a metrics/dashboard/summary request. Inspect the relevant tables with describe_table and sample_table_data, then summarize in finish.args.response. Omit SQL-shaped widget queries."
               : undefined,
           );
           // Summaries already fetched while preparing schema context are injected
@@ -1445,7 +1447,7 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
               message: note,
               observation: "Model/provider failover within the request chain.",
             });
-            publishAgentProgress();
+            publishAgentProgress({ action: "think", message: note });
           };
           window.addEventListener("ai-provider-chain-failover", handleChainFailoverNote);
 
@@ -1499,6 +1501,24 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                   controllerPrompt = `${controllerPrompt}\n\n${toolErrorReflectionNudge(trailingToolErrors)}`;
                   lastReflectedToolErrorStreak = trailingToolErrors;
                 }
+                // Liveness ticker: one model call can legitimately run for
+                // minutes (timeout x failover chain x in-line retries). Without
+                // a heartbeat the pending "Thinking..." step looks frozen, so
+                // republish it with the elapsed time while the call is in flight.
+                const thinkBaseMessage =
+                  reason === "budget"
+                    ? "Wrapping up…"
+                    : reason === "direct"
+                      ? "Composing response…"
+                      : "Thinking…";
+                const thinkStartedAt = Date.now();
+                const thinkTicker = window.setInterval(() => {
+                  const elapsedSeconds = Math.round((Date.now() - thinkStartedAt) / 1000);
+                  publishAgentProgress({
+                    action: "think",
+                    message: `${thinkBaseMessage} (${elapsedSeconds}s)`,
+                  });
+                }, 5000);
                 try {
                   // Images ride every controller call of the run (the requestor
                   // attaches the run's images) so whichever step composes the final
@@ -1759,6 +1779,8 @@ export function useAISlidePanel({ isOpen }: { isOpen: boolean }) {
                       `The agent could not return a valid action: ${formatActionFailureReason(retryError)}`,
                     );
                   }
+                } finally {
+                  window.clearInterval(thinkTicker);
                 }
               },
               runTool: runAgentTool,

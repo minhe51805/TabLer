@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
-import { DM_Sans, Geist, Geist_Mono } from "next/font/google";
+import { Geist, Geist_Mono, Space_Grotesk } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
+import { getSiteLanguage } from "@/lib/language";
 import { getSiteUrl } from "@/lib/site";
 import "./globals.css";
 
@@ -14,9 +15,9 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
-const dmSans = DM_Sans({
-  variable: "--font-display-dm",
-  subsets: ["latin"],
+const displayFont = Space_Grotesk({
+  variable: "--font-display-grotesk",
+  subsets: ["latin", "vietnamese"],
   weight: ["400", "500", "600", "700"],
 });
 
@@ -70,15 +71,16 @@ export const metadata: Metadata = {
   },
 };
 
-export default function RootLayout({
+export default async function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
+  const language = await getSiteLanguage();
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang={language} suppressHydrationWarning>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} ${dmSans.variable}`}
+        className={`${geistSans.variable} ${geistMono.variable} ${displayFont.variable}`}
         suppressHydrationWarning
       >
         <a className="skip-link" href="#main">

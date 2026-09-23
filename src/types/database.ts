@@ -190,7 +190,19 @@ export interface TriggerInfo {
 }
 
 export type MetricsWidgetType =
-  "table" | "scoreboard" | "bar" | "horizontal-bar" | "line" | "area" | "pie" | "donut" | "radial";
+  | "table"
+  | "scoreboard"
+  | "bar"
+  | "horizontal-bar"
+  | "stacked-bar"
+  | "line"
+  | "area"
+  | "pie"
+  | "donut"
+  | "radial"
+  | "funnel"
+  | "delta"
+  | "markdown";
 
 export interface ChartReproductionSpec {
   version: 1;
@@ -211,6 +223,8 @@ export interface MetricsWidgetDefinition {
   row_span: number;
   grid_x: number;
   grid_y: number;
+  note?: string;
+  color?: string;
   chart_spec?: ChartReproductionSpec;
 }
 
@@ -222,6 +236,8 @@ export interface MetricsBoardDefinition {
   widgets: MetricsWidgetDefinition[];
   created_at: number;
   updated_at: number;
+  description?: string;
+  params?: Record<string, string>;
 }
 
 // ER Diagram types

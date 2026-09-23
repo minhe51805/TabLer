@@ -26,6 +26,25 @@ const en = {
     download: "Download",
     viewOnGitHub: "View on GitHub",
     note: "Windows, macOS, and Linux",
+    revealEyebrow: "18 ENGINES, ONE WORKSPACE",
+    revealHeading: "Connect to anything.",
+    phases: [
+      {
+        eyebrow: "01 · CONNECT",
+        title: "Start with a calmer connection launcher.",
+        copy: "Search saved profiles, create a connection, and jump back into recent work.",
+      },
+      {
+        eyebrow: "02 · QUERY",
+        title: "Editor, data, and tools in one workspace.",
+        copy: "Write SQL with Monaco, inspect results, switch to charts — without breaking context.",
+      },
+      {
+        eyebrow: "03 · UNDERSTAND",
+        title: "AI close to the query, not over it.",
+        copy: "The assistant shows every step it takes, and nothing persists without your approval.",
+      },
+    ],
   },
   signal: {
     items: [
@@ -140,8 +159,15 @@ const en = {
     download: "Download TableR",
   },
   footer: {
-    built: "Built by the TableR Team. Licensed under GPL-3.0.",
+    built: "Built by the TableR Team.",
+    license: "Open source under GPL-3.0.",
+    tagline: "A modern database workspace for people who live in their data.",
+    product: "Product",
+    resources: "Resources",
+    community: "Community",
     github: "GitHub",
+    issues: "Issues",
+    releases: "Releases",
     download: "Download",
     support: "Support",
     changelog: "Changelog",
@@ -266,6 +292,25 @@ const vi: typeof en = {
     download: "Tải xuống",
     viewOnGitHub: "Xem trên GitHub",
     note: "Windows, macOS và Linux",
+    revealEyebrow: "18 ENGINE, MỘT WORKSPACE",
+    revealHeading: "Kết nối với mọi thứ.",
+    phases: [
+      {
+        eyebrow: "01 · KẾT NỐI",
+        title: "Bắt đầu với trình kết nối nhẹ nhàng hơn.",
+        copy: "Tìm profile đã lưu, tạo kết nối, quay lại công việc dở.",
+      },
+      {
+        eyebrow: "02 · TRUY VẤN",
+        title: "Editor, dữ liệu và công cụ trong một workspace.",
+        copy: "Viết SQL với Monaco, xem kết quả, chuyển sang biểu đồ — không mất ngữ cảnh.",
+      },
+      {
+        eyebrow: "03 · THẤU HIỂU",
+        title: "AI cạnh câu truy vấn, không đè lên nó.",
+        copy: "Trợ lý phơi bày từng bước, và không gì được lưu nếu bạn chưa duyệt.",
+      },
+    ],
   },
   signal: {
     items: [
@@ -380,8 +425,15 @@ const vi: typeof en = {
     download: "Tải TableR",
   },
   footer: {
-    built: "Xây dựng bởi TableR Team. Giấy phép GPL-3.0.",
+    built: "Xây dựng bởi TableR Team.",
+    license: "Mã nguồn mở theo giấy phép GPL-3.0.",
+    tagline: "Workspace CSDL hiện đại cho người sống cùng dữ liệu.",
+    product: "Sản phẩm",
+    resources: "Tài nguyên",
+    community: "Cộng đồng",
     github: "GitHub",
+    issues: "Issues",
+    releases: "Bản phát hành",
     download: "Tải xuống",
     support: "Ủng hộ",
     changelog: "Lịch sử bản phát hành",

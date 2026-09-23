@@ -8,6 +8,7 @@ import {
 import { useAIStore } from "../../../stores/aiStore";
 import type { AIConversationMessage, DatabaseType, MetricsWidgetType } from "../../../types";
 import { isMutatingStatement } from "../../SQLEditor/SQLEditorUtils";
+import { supportsAIMetricsBoardTemplate } from "../../../utils/metrics-board-templates";
 import type { AIMetricsWidgetSpec } from "../../../utils/metrics-board-templates";
 import { normalizeAIRequestError } from "../../../utils/ai-request-errors";
 import { invokeMutation } from "../../../utils/tauri-utils";
@@ -450,13 +451,17 @@ export function useAIAssistantGeneration({
         !isDashboardRebuildPrompt(requestPrompt) &&
         !isDashboardAugmentPrompt(requestPrompt) &&
         isDashboardAttachmentReferencePrompt(requestPrompt);
+      const hasOverviewTemplate = supportsAIMetricsBoardTemplate(
+        "database-overview",
+        activeConnectionDbType,
+      );
       const shouldRebuildDashboardDirectly =
-        supportsOverviewMetricsBoard(activeConnectionDbType) &&
+        hasOverviewTemplate &&
         hasAttachedDashboardSelection &&
         isDashboardRebuildPrompt(requestPrompt);
       const shouldAugmentDashboardDirectly =
         !replaceBubble &&
-        supportsOverviewMetricsBoard(activeConnectionDbType) &&
+        hasOverviewTemplate &&
         !directDashboardWidgetEdit &&
         isDashboardAugmentPrompt(requestPrompt);
 
@@ -670,6 +675,10 @@ export function useAIAssistantGeneration({
           const dashboardOpened = await openMetricsBoardInWorkspace({
             title: hasAgentWidgets ? "AI Metrics Summary" : "DB Overview Dashboard",
             template: "database-overview",
+            // Agent-proposed widgets augment the currently open board when one
+            // exists (the handler falls back to creating a board when there is
+            // none); the template path keeps its original create semantics.
+            mode: hasAgentWidgets ? "augment" : "create",
             aiWidgets: hasAgentWidgets ? agentWidgets : undefined,
             focusWorkspace: true,
           });

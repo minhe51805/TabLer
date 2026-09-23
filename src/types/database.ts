@@ -212,6 +212,7 @@ export interface MetricsWidgetDefinition {
   grid_x: number;
   grid_y: number;
   note?: string;
+  color?: string;
   chart_spec?: ChartReproductionSpec;
 }
 

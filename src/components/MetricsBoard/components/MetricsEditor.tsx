@@ -218,6 +218,26 @@ export function MetricsEditor({
       </label>
 
       <div className="metrics-board-field">
+        <span>{t("metrics.editor.color")}</span>
+        <div className="metrics-widget-color-grid">
+          {["", "#22d3ee", "#34d399", "#fbbf24", "#f87171", "#a78bfa", "#f472b6", "#94a3b8"].map(
+            (c) => (
+              <button
+                key={c || "default"}
+                type="button"
+                className={`metrics-widget-color-option ${editingWidget.color === c || (!editingWidget.color && !c) ? "is-active" : ""}`}
+                style={c ? { backgroundColor: c } : undefined}
+                onClick={() => onUpdateWidget({ color: c || undefined })}
+                title={c || t("metrics.editor.colorDefault")}
+              >
+                {!c && <span>×</span>}
+              </button>
+            ),
+          )}
+        </div>
+      </div>
+
+      <div className="metrics-board-field">
         <span>{t("metrics.editor.widgetType")}</span>
         <div className="metrics-widget-type-grid">
           {getWidgetLibrary().map((item) => (

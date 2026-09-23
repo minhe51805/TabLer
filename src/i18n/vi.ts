@@ -393,6 +393,8 @@ export const vi: Record<keyof typeof en, string> = {
   "metrics.lastRefresh": "cập nhật",
   "metrics.widget.retry": "Thử lại",
   "metrics.widget.stale": "Dữ liệu cũ",
+  "metrics.editor.color": "Màu nhấn",
+  "metrics.editor.colorDefault": "Mặc định",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "ai.toast.providerFailover":

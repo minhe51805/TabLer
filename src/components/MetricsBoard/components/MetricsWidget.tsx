@@ -327,7 +327,15 @@ export function MetricsWidgetCard({
       data-metrics-widget-id={widget.id}
       ref={cardRef}
       className={`metrics-widget-card ${selected ? "selected" : ""} ${dragging ? "dragging" : ""} ${resizing ? "resizing" : ""}`}
-      style={layoutStyle}
+      style={{
+        ...layoutStyle,
+        ...(widget.color
+          ? {
+              borderColor: `${widget.color}66`,
+              boxShadow: `0 0 0 1px ${widget.color}33, 0 6px 18px rgba(5, 10, 15, 0.14)`,
+            }
+          : {}),
+      }}
       onPointerDown={beginCardHoldDrag}
       onContextMenu={(event) => {
         event.preventDefault();

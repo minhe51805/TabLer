@@ -367,6 +367,8 @@ export const en = {
   "metrics.lastRefresh": "updated",
   "metrics.widget.retry": "Retry",
   "metrics.widget.stale": "Stale",
+  "metrics.editor.color": "Accent color",
+  "metrics.editor.colorDefault": "Default",
   "workspace.bundle.export": "Export workspace bundle",
   "workspace.bundle.import": "Import workspace bundle",
   "metrics.context.add": "Add",

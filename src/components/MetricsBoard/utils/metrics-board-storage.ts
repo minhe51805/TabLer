@@ -148,6 +148,7 @@ export function readStoredBoards(): MetricsBoardDefinition[] {
                       ? widgetRecord.grid_y
                       : 0,
                   note: typeof widgetRecord.note === "string" ? widgetRecord.note : undefined,
+                  color: typeof widgetRecord.color === "string" ? widgetRecord.color : undefined,
                 };
               })
               .filter(

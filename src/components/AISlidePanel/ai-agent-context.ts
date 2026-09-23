@@ -768,6 +768,9 @@ export function buildAgentControllerPrompt(params: {
     sqlRead
       ? "- For charts, run a chart-friendly aggregate and return that exact SQL in finish.args.sql."
       : "- For charts, sample the relevant data and describe the chart in finish.args.response. Omit finish.args.sql.",
+    workspaceToolsEnabled
+      ? "- When the user asks for a dashboard, metrics board, or KPI widgets, call manage_metrics_widget to create or update the widgets on the open metrics board — do not only describe the layout. Run the aggregate queries first so each widget's query is grounded in verified data."
+      : "",
     forceFinish
       ? "- You must finish now. Return action=finish."
       : workspaceToolsEnabled

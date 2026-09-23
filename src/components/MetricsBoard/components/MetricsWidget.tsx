@@ -111,6 +111,7 @@ export function MetricsWidgetCard({
     isRunningRef.current = true;
     setState((prev) => ({ ...prev, loading: true, error: null }));
 
+    let runError: string | null = null;
     try {
       const result = await executeMetricsQuery(connectionId, validation.statement);
 
@@ -124,15 +125,23 @@ export function MetricsWidgetCard({
       onWidgetRefreshed();
     } catch (error) {
       if (requestIdRef.current !== requestId) return;
+      runError = formatExecutionError(error);
       setState({
         result: null,
         loading: false,
-        error: formatExecutionError(error),
+        error: runError,
         lastRunAt: Date.now(),
       });
     } finally {
       if (requestIdRef.current === requestId) {
         isRunningRef.current = false;
+        pushBoardActivity({
+          boardId: widget.id.split("-")[0] || "",
+          widgetId: widget.id,
+          widgetTitle: widget.title,
+          action: runError ? "error" : "run",
+          detail: runError ?? undefined,
+        });
       }
       if (rerunRequestedRef.current) {
         rerunRequestedRef.current = false;
@@ -140,24 +149,8 @@ export function MetricsWidgetCard({
           void runWidgetQuery();
         }, 0);
       }
-      pushBoardActivity({
-        boardId: widget.id.split("-")[0] || "",
-        widgetId: widget.id,
-        widgetTitle: widget.title,
-        action: state.error ? "error" : "run",
-        detail: state.error ?? undefined,
-      });
     }
-  }, [
-    connectionId,
-    widget.query,
-    widget.id,
-    widget.title,
-    widget.type,
-    onWidgetRefreshed,
-    state.error,
-    params,
-  ]);
+  }, [connectionId, widget.query, widget.id, widget.title, widget.type, onWidgetRefreshed, params]);
 
   useEffect(() => {
     void runWidgetQuery();

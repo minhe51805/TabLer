@@ -16,6 +16,7 @@ import { extractNamedSqlParameters, type SqlParameterDraft } from "../../utils/s
 import { getAiProposalCopy } from "./ai-proposal-copy";
 import { useConnectionCapabilities } from "../../hooks/useConnectionCapabilities";
 import { isCapabilitySupported } from "../../types/capabilities";
+import { ParamFillDialog } from "../SQLFavorites/ParamFillDialog";
 
 interface Props {
   connectionId: string;
@@ -129,6 +130,9 @@ export function SQLEditor({
     acceptAiProposal,
     rejectAiProposal,
     notifyManualEditorChange,
+    paramFillRequest,
+    setParamFillRequest,
+    handleExecute,
   } = useSQLEditor({
     connectionId,
     tabId,
@@ -343,6 +347,18 @@ export function SQLEditor({
             plan={explainPlan}
             sourceSql={explainSourceSql}
             onClose={() => setExplainPlan(undefined)}
+          />
+        )}
+
+        {paramFillRequest && (
+          <ParamFillDialog
+            sql={paramFillRequest.sql}
+            params={paramFillRequest.params}
+            onSubmit={(resolvedSql) => {
+              setParamFillRequest(null);
+              void handleExecute(resolvedSql);
+            }}
+            onCancel={() => setParamFillRequest(null)}
           />
         )}
 

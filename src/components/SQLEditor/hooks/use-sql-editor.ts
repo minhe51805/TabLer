@@ -37,6 +37,7 @@ import { EventCenter, type AiProposalExplainResult } from "../../../stores/event
 import { captureAgentEditedRunCheckpoint } from "../agent-edit-safety";
 import { useConnectionCapabilities } from "../../../hooks/useConnectionCapabilities";
 import { isCapabilitySupported } from "../../../types/capabilities";
+import { extractParams, type SqlParam } from "../../../utils/sql-params";
 
 export interface QueryChromeState {
   isRunning: boolean;
@@ -104,6 +105,12 @@ export function useSQLEditor({
   const supportsPreparedParams =
     capabilityProfile === null ||
     isCapabilitySupported(capabilityProfile.capabilities.preparedParameters);
+  // `{{param}}` fill request — set by handleExecute when the editor text
+  // contains favorites-style placeholders; SQLEditor renders the dialog.
+  const [paramFillRequest, setParamFillRequest] = useState<{
+    sql: string;
+    params: SqlParam[];
+  } | null>(null);
   const usesDirectExecution = queryProfile.executionPath === "direct";
 
   const editorRef = useRef<any>(null);
@@ -272,107 +279,223 @@ export function useSQLEditor({
     });
   }, [tabId]);
 
-  const handleExecute = useCallback(async () => {
-    const editor = editorRef.current;
-    if (!editor || isBatchExecuting) return;
+  const handleExecute = useCallback(
+    async (overrideSql?: string) => {
+      const editor = editorRef.current;
+      if (!editor || isBatchExecuting) return;
 
-    // AI-origin tabs honor the full-autonomy grant scoped to their own
-    // connection: the standing human approval lets Safe Mode-blocked
-    // statements (levels <= 3) run without the confirmation dialog. Regular
-    // tabs and other connections keep the confirmation.
-    const fullAutonomyPreApproved =
-      tabSource === "ai" && useAIAutonomyStore.getState().getAutonomy(connectionId) === "full";
+      // AI-origin tabs honor the full-autonomy grant scoped to their own
+      // connection: the standing human approval lets Safe Mode-blocked
+      // statements (levels <= 3) run without the confirmation dialog. Regular
+      // tabs and other connections keep the confirmation.
+      const fullAutonomyPreApproved =
+        tabSource === "ai" && useAIAutonomyStore.getState().getAutonomy(connectionId) === "full";
 
-    const selection = editor.getSelection();
-    let sql = "";
-    if (selection && !selection.isEmpty()) {
-      sql = editor.getModel()?.getValueInRange(selection) || "";
-    } else {
-      sql = editor.getValue();
-    }
-    if (!sql.trim()) {
-      setError(null);
-      setResult(null);
-      setNotice(translateCurrent("tabs.noSqlToExecute"));
-      editor.focus();
-      return;
-    }
-
-    // Agent-edited content: the first real execution of an accepted proposal
-    // gets a rollback point (best effort, loud on failure). One-shot per
-    // accepted proposal; manual typing clears the flag.
-    if (agentEditedRef.current && isMutatingStatement(sql)) {
-      const storeState = useConnectionStore.getState();
-      const checkpoint = await captureAgentEditedRunCheckpoint({
-        connectionId,
-        database: storeState.currentDatabase || null,
-        dbType: storeState.connections.find((c) => c.id === connectionId)?.db_type ?? "sqlite",
-      });
-      agentEditedRef.current = false;
-      setNotice(
-        checkpoint
-          ? "Safety checkpoint captured before running the agent-edited query."
-          : "Safety checkpoint failed — /rollback has no new point. Consider /backup first.",
-      );
-    }
-
-    const parameterNames = supportsPreparedParams ? extractNamedSqlParameters(sql) : [];
-    if (parameterNames.length > 0) {
-      const commandText = sql.trim();
-      setNotice(null);
-      setError(null);
-      setIsExecutingCurrent(true);
-      setIsBatchExecuting(true);
-      try {
-        const parameters = toQueryParameters(parameterNames, parameterDraftsRef.current);
-        const queryResult = await executeParameterizedQuery(
-          connectionId,
-          commandText,
-          parameters,
-          fullAutonomyPreApproved ? { preApproved: true } : { userInitiated: true },
-        );
-        setResult(queryResult);
-        if (queryResult.rows.length > 0) setShowResultsPane(true);
-        setQueryCount((count) => count + 1);
-        void saveQueryEntry(
-          commandText,
-          connectionId,
-          Number(queryResult.execution_time_ms),
-          queryResult.rows.length || undefined,
-          undefined,
-          useConnectionStore.getState().currentDatabase || undefined,
-        );
-      } catch (error) {
-        const errorMessage = formatExecutionError(error);
-        setError(errorMessage);
-        setResult(null);
-        void saveQueryEntry(
-          commandText,
-          connectionId,
-          0,
-          undefined,
-          errorMessage,
-          useConnectionStore.getState().currentDatabase || undefined,
-        );
-      } finally {
-        setIsExecutingCurrent(false);
-        setIsBatchExecuting(false);
+      const selection = editor.getSelection();
+      let sql = "";
+      if (overrideSql !== undefined) {
+        sql = overrideSql;
+      } else if (selection && !selection.isEmpty()) {
+        sql = editor.getModel()?.getValueInRange(selection) || "";
+      } else {
+        sql = editor.getValue();
       }
-      return;
-    }
+      if (!sql.trim()) {
+        setError(null);
+        setResult(null);
+        setNotice(translateCurrent("tabs.noSqlToExecute"));
+        editor.focus();
+        return;
+      }
 
-    if (usesDirectExecution) {
-      const commandText = sql.trim();
+      // `{{param}}` placeholders (SQL favorites grammar) must be filled before
+      // anything else sees them — a raw `{{` reaching the Mongo SQL translator
+      // or a SQL parser surfaces as a cryptic syntax error. The fill dialog
+      // resolves them, then re-enters here with the substituted text.
+      if (overrideSql === undefined) {
+        const templateParams = extractParams(sql);
+        if (templateParams.length > 0) {
+          setParamFillRequest({ sql, params: templateParams });
+          return;
+        }
+      }
+
+      // Agent-edited content: the first real execution of an accepted proposal
+      // gets a rollback point (best effort, loud on failure). One-shot per
+      // accepted proposal; manual typing clears the flag.
+      if (agentEditedRef.current && isMutatingStatement(sql)) {
+        const storeState = useConnectionStore.getState();
+        const checkpoint = await captureAgentEditedRunCheckpoint({
+          connectionId,
+          database: storeState.currentDatabase || null,
+          dbType: storeState.connections.find((c) => c.id === connectionId)?.db_type ?? "sqlite",
+        });
+        agentEditedRef.current = false;
+        setNotice(
+          checkpoint
+            ? "Safety checkpoint captured before running the agent-edited query."
+            : "Safety checkpoint failed — /rollback has no new point. Consider /backup first.",
+        );
+      }
+
+      const parameterNames = supportsPreparedParams ? extractNamedSqlParameters(sql) : [];
+      if (parameterNames.length > 0) {
+        const commandText = sql.trim();
+        setNotice(null);
+        setError(null);
+        setIsExecutingCurrent(true);
+        setIsBatchExecuting(true);
+        try {
+          const parameters = toQueryParameters(parameterNames, parameterDraftsRef.current);
+          const queryResult = await executeParameterizedQuery(
+            connectionId,
+            commandText,
+            parameters,
+            fullAutonomyPreApproved ? { preApproved: true } : { userInitiated: true },
+          );
+          setResult(queryResult);
+          if (queryResult.rows.length > 0) setShowResultsPane(true);
+          setQueryCount((count) => count + 1);
+          void saveQueryEntry(
+            commandText,
+            connectionId,
+            Number(queryResult.execution_time_ms),
+            queryResult.rows.length || undefined,
+            undefined,
+            useConnectionStore.getState().currentDatabase || undefined,
+          );
+        } catch (error) {
+          const errorMessage = formatExecutionError(error);
+          setError(errorMessage);
+          setResult(null);
+          void saveQueryEntry(
+            commandText,
+            connectionId,
+            0,
+            undefined,
+            errorMessage,
+            useConnectionStore.getState().currentDatabase || undefined,
+          );
+        } finally {
+          setIsExecutingCurrent(false);
+          setIsBatchExecuting(false);
+        }
+        return;
+      }
+
+      if (usesDirectExecution) {
+        const commandText = sql.trim();
+        setNotice(null);
+        setError(null);
+        setIsExecutingCurrent(true);
+        setIsBatchExecuting(true);
+
+        try {
+          const queryResult = await executeQuery(
+            connectionId,
+            commandText,
+            fullAutonomyPreApproved ? { preApproved: true } : undefined,
+          );
+          setResult(queryResult);
+          if (queryResult.rows.length > 0) {
+            setShowResultsPane(true);
+          }
+          setQueryCount((c) => c + 1);
+
+          void saveQueryEntry(
+            commandText,
+            connectionId,
+            Number(queryResult.execution_time_ms),
+            queryResult.rows.length || undefined,
+            undefined,
+            useConnectionStore.getState().currentDatabase || undefined,
+          );
+        } catch (e) {
+          const errorMessage = formatExecutionError(e);
+          setError(errorMessage);
+          setResult(null);
+          setNotice(null);
+
+          void saveQueryEntry(
+            commandText,
+            connectionId,
+            0,
+            undefined,
+            errorMessage,
+            useConnectionStore.getState().currentDatabase || undefined,
+          );
+        } finally {
+          setIsExecutingCurrent(false);
+          setIsBatchExecuting(false);
+        }
+
+        return;
+      }
+
+      let sqlToExecute = sql;
+      let targetDatabaseFromUse: string | null = null;
+      const leadingUseDirective = extractLeadingUseDirective(sql);
+
+      if (leadingUseDirective) {
+        if ("error" in leadingUseDirective) {
+          setNotice(null);
+          setError(leadingUseDirective.error);
+          setResult(null);
+          return;
+        }
+        targetDatabaseFromUse = leadingUseDirective.database;
+        sqlToExecute = leadingUseDirective.remainingSql;
+      }
+
+      const statements = splitSqlStatements(sqlToExecute);
+      if (statements.length === 0) {
+        if (targetDatabaseFromUse) {
+          try {
+            const activeDatabase = useConnectionStore.getState().currentDatabase;
+            if (activeDatabase !== targetDatabaseFromUse) {
+              await switchDatabase(connectionId, targetDatabaseFromUse);
+            }
+            setError(
+              `Active database is now ${targetDatabaseFromUse}. Run your SQL statement next.`,
+            );
+            setResult(null);
+          } catch (err) {
+            setError(formatExecutionError(err));
+          }
+        }
+        return;
+      }
+
+      let statementsToExecute = statements;
+
+      if (statementsToExecute.some(isSessionSwitchStatement)) {
+        setError(
+          "Sandbox gateway does not allow session-switch statements like USE, ATTACH, or SET search_path. Choose the active database from the app UI first, then run the query.",
+        );
+        setResult(null);
+        return;
+      }
+
+      const hasMutatingStatements = statementsToExecute.some(isMutatingStatement);
+
       setNotice(null);
       setError(null);
       setIsExecutingCurrent(true);
       setIsBatchExecuting(true);
-
       try {
-        const queryResult = await executeQuery(
+        const activeDatabase = useConnectionStore.getState().currentDatabase;
+        if (targetDatabaseFromUse && activeDatabase !== targetDatabaseFromUse) {
+          await switchDatabase(connectionId, targetDatabaseFromUse);
+        }
+
+        // The Run button is a human decision even on the sandbox gateway path:
+        // a Safe Mode block becomes an interactive confirmation (levels <= 3)
+        // instead of a dead end — unless full autonomy pre-approves the run.
+        const queryResult = await executeSandboxQuery(
           connectionId,
-          commandText,
-          fullAutonomyPreApproved ? { preApproved: true } : undefined,
+          statementsToExecute,
+          undefined,
+          fullAutonomyPreApproved ? { preApproved: true } : { userInitiated: true },
         );
         setResult(queryResult);
         if (queryResult.rows.length > 0) {
@@ -380,22 +503,46 @@ export function useSQLEditor({
         }
         setQueryCount((c) => c + 1);
 
+        // Auto-save to query history
         void saveQueryEntry(
-          commandText,
+          sqlToExecute,
           connectionId,
           Number(queryResult.execution_time_ms),
           queryResult.rows.length || undefined,
           undefined,
-          useConnectionStore.getState().currentDatabase || undefined,
+          activeDatabase || undefined,
         );
+
+        if (hasMutatingStatements) {
+          const invalidateStructure = statementsToExecute.some((stmt) => {
+            const normalized = normalizeStatementForGuard(stmt);
+            return (
+              normalized.startsWith("CREATE ") ||
+              normalized.startsWith("ALTER ") ||
+              normalized.startsWith("DROP ") ||
+              normalized.startsWith("TRUNCATE ") ||
+              normalized.startsWith("RENAME ")
+            );
+          });
+          window.dispatchEvent(
+            new CustomEvent("table-data-updated", {
+              detail: {
+                connectionId,
+                database: useConnectionStore.getState().currentDatabase || undefined,
+                invalidateStructure,
+              },
+            }),
+          );
+        }
       } catch (e) {
         const errorMessage = formatExecutionError(e);
         setError(errorMessage);
         setResult(null);
         setNotice(null);
 
+        // Auto-save failed query to history
         void saveQueryEntry(
-          commandText,
+          sqlToExecute,
           connectionId,
           0,
           undefined,
@@ -406,141 +553,20 @@ export function useSQLEditor({
         setIsExecutingCurrent(false);
         setIsBatchExecuting(false);
       }
-
-      return;
-    }
-
-    let sqlToExecute = sql;
-    let targetDatabaseFromUse: string | null = null;
-    const leadingUseDirective = extractLeadingUseDirective(sql);
-
-    if (leadingUseDirective) {
-      if ("error" in leadingUseDirective) {
-        setNotice(null);
-        setError(leadingUseDirective.error);
-        setResult(null);
-        return;
-      }
-      targetDatabaseFromUse = leadingUseDirective.database;
-      sqlToExecute = leadingUseDirective.remainingSql;
-    }
-
-    const statements = splitSqlStatements(sqlToExecute);
-    if (statements.length === 0) {
-      if (targetDatabaseFromUse) {
-        try {
-          const activeDatabase = useConnectionStore.getState().currentDatabase;
-          if (activeDatabase !== targetDatabaseFromUse) {
-            await switchDatabase(connectionId, targetDatabaseFromUse);
-          }
-          setError(`Active database is now ${targetDatabaseFromUse}. Run your SQL statement next.`);
-          setResult(null);
-        } catch (err) {
-          setError(formatExecutionError(err));
-        }
-      }
-      return;
-    }
-
-    let statementsToExecute = statements;
-
-    if (statementsToExecute.some(isSessionSwitchStatement)) {
-      setError(
-        "Sandbox gateway does not allow session-switch statements like USE, ATTACH, or SET search_path. Choose the active database from the app UI first, then run the query.",
-      );
-      setResult(null);
-      return;
-    }
-
-    const hasMutatingStatements = statementsToExecute.some(isMutatingStatement);
-
-    setNotice(null);
-    setError(null);
-    setIsExecutingCurrent(true);
-    setIsBatchExecuting(true);
-    try {
-      const activeDatabase = useConnectionStore.getState().currentDatabase;
-      if (targetDatabaseFromUse && activeDatabase !== targetDatabaseFromUse) {
-        await switchDatabase(connectionId, targetDatabaseFromUse);
-      }
-
-      // The Run button is a human decision even on the sandbox gateway path:
-      // a Safe Mode block becomes an interactive confirmation (levels <= 3)
-      // instead of a dead end — unless full autonomy pre-approves the run.
-      const queryResult = await executeSandboxQuery(
-        connectionId,
-        statementsToExecute,
-        undefined,
-        fullAutonomyPreApproved ? { preApproved: true } : { userInitiated: true },
-      );
-      setResult(queryResult);
-      if (queryResult.rows.length > 0) {
-        setShowResultsPane(true);
-      }
-      setQueryCount((c) => c + 1);
-
-      // Auto-save to query history
-      void saveQueryEntry(
-        sqlToExecute,
-        connectionId,
-        Number(queryResult.execution_time_ms),
-        queryResult.rows.length || undefined,
-        undefined,
-        activeDatabase || undefined,
-      );
-
-      if (hasMutatingStatements) {
-        const invalidateStructure = statementsToExecute.some((stmt) => {
-          const normalized = normalizeStatementForGuard(stmt);
-          return (
-            normalized.startsWith("CREATE ") ||
-            normalized.startsWith("ALTER ") ||
-            normalized.startsWith("DROP ") ||
-            normalized.startsWith("TRUNCATE ") ||
-            normalized.startsWith("RENAME ")
-          );
-        });
-        window.dispatchEvent(
-          new CustomEvent("table-data-updated", {
-            detail: {
-              connectionId,
-              database: useConnectionStore.getState().currentDatabase || undefined,
-              invalidateStructure,
-            },
-          }),
-        );
-      }
-    } catch (e) {
-      const errorMessage = formatExecutionError(e);
-      setError(errorMessage);
-      setResult(null);
-      setNotice(null);
-
-      // Auto-save failed query to history
-      void saveQueryEntry(
-        sqlToExecute,
-        connectionId,
-        0,
-        undefined,
-        errorMessage,
-        useConnectionStore.getState().currentDatabase || undefined,
-      );
-    } finally {
-      setIsExecutingCurrent(false);
-      setIsBatchExecuting(false);
-    }
-  }, [
-    connectionId,
-    executeParameterizedQuery,
-    executeQuery,
-    executeSandboxQuery,
-    isBatchExecuting,
-    saveQueryEntry,
-    switchDatabase,
-    tabSource,
-    supportsPreparedParams,
-    usesDirectExecution,
-  ]);
+    },
+    [
+      connectionId,
+      executeParameterizedQuery,
+      executeQuery,
+      executeSandboxQuery,
+      isBatchExecuting,
+      saveQueryEntry,
+      switchDatabase,
+      tabSource,
+      supportsPreparedParams,
+      usesDirectExecution,
+    ],
+  );
 
   /** Formats the selected text (or entire editor content) using the connection's SQL dialect. */
   const handleFormatSql = useCallback(() => {
@@ -981,6 +1007,8 @@ export function useSQLEditor({
     queryCount,
     editorHeight,
     setEditorHeight,
+    paramFillRequest,
+    setParamFillRequest,
     showResultsPane,
     setShowResultsPane,
     resultViewMode,

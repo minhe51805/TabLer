@@ -60,7 +60,6 @@ import {
   type AIWorkspaceInteractionMode,
 } from "./ai-workspace-types";
 import { getAIWorkspaceCopy } from "./ai-workspace-copy";
-import { getAIPanelCopy } from "./ai-panel-copy";
 import { isDashboardSelectionSource } from "./ai-visualization-intent";
 import {
   estimateConversationFootprint,
@@ -1106,74 +1105,28 @@ export function AISlidePanel({
     composerTextareaRef,
   });
 
-  /** Re-fetch a finished bubble's persisted attachment bytes into drafts so a
-   *  re-run sends the same files the original turn carried. */
-  const loadBubbleAttachmentDrafts = useCallback(
-    async (bubble: AIWorkspaceBubbleData): Promise<AIAttachmentDraft[] | undefined> => {
-      if (!bubble.attachments || bubble.attachments.length === 0) return undefined;
-      const rows = await invokeMutation<{ id: string; mimeType: string; data: string }[]>(
-        "get_ai_attachment_data",
-        { ids: bubble.attachments.map((attachment) => attachment.id) },
-      ).catch(() => [] as { id: string; mimeType: string; data: string }[]);
-      const dataById: Record<string, string> = Object.fromEntries(
-        rows.map((row) => [row.id, row.data]),
-      );
-      return bubble.attachments.map((attachment) => ({
-        ...attachment,
-        ...(attachment.kind === "image"
-          ? {
-              dataUrl: `data:${attachment.mimeType};base64,${dataById[attachment.id] ?? ""}`,
-            }
-          : { textContent: dataById[attachment.id] ?? "" }),
-      }));
-    },
-    [],
-  );
+  const {
+    handleBubbleFeedback,
+    handleEditRerun,
+    handleRegenerateBubble,
+    handleRetryBubble,
+    runEditedPrompt,
+  } = useAIBubbleRerun({
+    bubbles,
+    bubblesRef,
+    connectionId,
+    currentDatabase,
+    historyBudget,
+    isGenerating,
+    language,
+    pendingQueueRef,
+    workspaceContextMessages,
+    createAssistantBubble,
+    setActiveThreadId,
+    setBubbles,
+    setPendingQueue,
+  });
 
-  /** Edit & re-run: regenerate the bubble's slot with the edited prompt text.
-   *  The bubble keeps its id/position; on failure the old answer is restored
-   *  by the generation hook's replaceBubble path. */
-  const runEditedPrompt = useCallback(
-    async (bubble: AIWorkspaceBubbleData, editedPrompt: string) => {
-      const trimmed = editedPrompt.trim();
-      if (!trimmed) return;
-      const retryHistory = buildConversationHistoryMessages(
-        bubblesRef.current.filter(
-          (currentBubble) =>
-            currentBubble.threadId === bubble.threadId &&
-            currentBubble.id !== bubble.id &&
-            !currentBubble.compactedAt,
-        ),
-        historyBudget,
-      );
-      const regenAttachments = await loadBubbleAttachmentDrafts(bubble);
-      setActiveThreadId(bubble.threadId);
-      const result = await createAssistantBubble(trimmed, {
-        mode: "compose",
-        userPrompt: trimmed,
-        history: [...workspaceContextMessages, ...retryHistory],
-        threadId: bubble.threadId,
-        workspaceKey: bubble.workspaceKey,
-        interactionMode: bubble.interactionMode,
-        attachments: regenAttachments,
-        replaceBubble: bubble,
-      });
-      if (result && !result.success && !result.cancelled) {
-        emitAppToast({
-          tone: "error",
-          title: getAIPanelCopy(language).responseActions.regenerateFailed,
-          durationMs: 4000,
-        });
-      }
-    },
-    [
-      createAssistantBubble,
-      historyBudget,
-      language,
-      loadBubbleAttachmentDrafts,
-      workspaceContextMessages,
-    ],
-  );
   const handleGenerate = useCallback(
     async (item?: PendingPrompt | string) => {
       const current: PendingPrompt =
@@ -1436,24 +1389,6 @@ export function AISlidePanel({
     setPendingQueue([]);
     cancelGeneration();
   }, [cancelGeneration]);
-
-  const { handleBubbleFeedback, handleEditRerun, handleRegenerateBubble, handleRetryBubble } =
-    useAIBubbleRerun({
-      bubbles,
-      connectionId,
-      currentDatabase,
-      historyBudget,
-      isGenerating,
-      language,
-      pendingQueueRef,
-      workspaceContextMessages,
-      createAssistantBubble,
-      loadBubbleAttachmentDrafts,
-      runEditedPrompt,
-      setActiveThreadId,
-      setBubbles,
-      setPendingQueue,
-    });
 
   const handleComposerKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {

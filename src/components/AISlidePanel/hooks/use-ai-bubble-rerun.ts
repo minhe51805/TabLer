@@ -36,6 +36,7 @@ type CreateAssistantBubble = ReturnType<typeof useAIAssistantGeneration>["create
 
 interface UseAIBubbleRerunOptions {
   bubbles: AIWorkspaceBubbleData[];
+  bubblesRef: MutableRefObject<AIWorkspaceBubbleData[]>;
   connectionId: string | null;
   currentDatabase: string | null;
   historyBudget: HistoryBudget;
@@ -44,10 +45,6 @@ interface UseAIBubbleRerunOptions {
   pendingQueueRef: MutableRefObject<PendingPrompt[]>;
   workspaceContextMessages: AIConversationMessage[];
   createAssistantBubble: CreateAssistantBubble;
-  loadBubbleAttachmentDrafts: (
-    bubble: AIWorkspaceBubbleData,
-  ) => Promise<AIAttachmentDraft[] | undefined>;
-  runEditedPrompt: (bubble: AIWorkspaceBubbleData, prompt: string) => Promise<void>;
   setActiveThreadId: (id: string) => void;
   setBubbles: (updater: (current: AIWorkspaceBubbleData[]) => AIWorkspaceBubbleData[]) => void;
   setPendingQueue: (queue: PendingPrompt[]) => void;
@@ -60,6 +57,7 @@ interface UseAIBubbleRerunOptions {
  */
 export function useAIBubbleRerun({
   bubbles,
+  bubblesRef,
   connectionId,
   currentDatabase,
   historyBudget,
@@ -68,12 +66,81 @@ export function useAIBubbleRerun({
   pendingQueueRef,
   workspaceContextMessages,
   createAssistantBubble,
-  loadBubbleAttachmentDrafts,
-  runEditedPrompt,
   setActiveThreadId,
   setBubbles,
   setPendingQueue,
 }: UseAIBubbleRerunOptions) {
+  /** Re-fetch a finished bubble's persisted attachment bytes into drafts so a
+   *  re-run sends the same files the original turn carried. */
+  const loadBubbleAttachmentDrafts = useCallback(
+    async (bubble: AIWorkspaceBubbleData): Promise<AIAttachmentDraft[] | undefined> => {
+      if (!bubble.attachments || bubble.attachments.length === 0) return undefined;
+      const rows = await invokeMutation<{ id: string; mimeType: string; data: string }[]>(
+        "get_ai_attachment_data",
+        { ids: bubble.attachments.map((attachment) => attachment.id) },
+      ).catch(() => [] as { id: string; mimeType: string; data: string }[]);
+      const dataById: Record<string, string> = Object.fromEntries(
+        rows.map((row) => [row.id, row.data]),
+      );
+      return bubble.attachments.map((attachment) => ({
+        ...attachment,
+        ...(attachment.kind === "image"
+          ? {
+              dataUrl: `data:${attachment.mimeType};base64,${dataById[attachment.id] ?? ""}`,
+            }
+          : { textContent: dataById[attachment.id] ?? "" }),
+      }));
+    },
+    [],
+  );
+
+  /** Edit & re-run: regenerate the bubble's slot with the edited prompt text.
+   *  The bubble keeps its id/position; on failure the old answer is restored
+   *  by the generation hook's replaceBubble path. */
+  const runEditedPrompt = useCallback(
+    async (bubble: AIWorkspaceBubbleData, editedPrompt: string) => {
+      const trimmed = editedPrompt.trim();
+      if (!trimmed) return;
+      const retryHistory = buildConversationHistoryMessages(
+        bubblesRef.current.filter(
+          (currentBubble) =>
+            currentBubble.threadId === bubble.threadId &&
+            currentBubble.id !== bubble.id &&
+            !currentBubble.compactedAt,
+        ),
+        historyBudget,
+      );
+      const regenAttachments = await loadBubbleAttachmentDrafts(bubble);
+      setActiveThreadId(bubble.threadId);
+      const result = await createAssistantBubble(trimmed, {
+        mode: "compose",
+        userPrompt: trimmed,
+        history: [...workspaceContextMessages, ...retryHistory],
+        threadId: bubble.threadId,
+        workspaceKey: bubble.workspaceKey,
+        interactionMode: bubble.interactionMode,
+        attachments: regenAttachments,
+        replaceBubble: bubble,
+      });
+      if (result && !result.success && !result.cancelled) {
+        emitAppToast({
+          tone: "error",
+          title: getAIPanelCopy(language).responseActions.regenerateFailed,
+          durationMs: 4000,
+        });
+      }
+    },
+    [
+      bubblesRef,
+      createAssistantBubble,
+      historyBudget,
+      language,
+      loadBubbleAttachmentDrafts,
+      setActiveThreadId,
+      workspaceContextMessages,
+    ],
+  );
+
   const handleRetryBubble = useCallback(
     async (bubble: AIWorkspaceBubbleData) => {
       if (isGenerating) return;
@@ -263,5 +330,6 @@ export function useAIBubbleRerun({
     handleEditRerun,
     handleRegenerateBubble,
     handleRetryBubble,
+    runEditedPrompt,
   };
 }

@@ -399,14 +399,14 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "duckdb",
             "DuckDB",
             DriverTier::Extended,
-            S, S, S, L, S, S, S, U, S, S, S, L, N,
+            S, S, S, L, S, S, S, S, S, S, S, L, N,
             &["Atomic edit queues and CSV imports are not implemented.", "Restore is classified as transactional but is not yet pinned to one driver transaction.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.", "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied."]),
         DatabaseType::Cassandra => profile(
             database_type,
             "cassandra",
             "Apache Cassandra",
             DriverTier::Specialized,
-            S, S, S, L, S, S, U, U, S, U, U, L, L,
+            S, S, S, L, S, S, U, U, S, U, U, L, S,
             &["CQL prepared parameters, tracing plans, atomic imports, and schema actions are not integrated.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."],
         ),
         DatabaseType::Snowflake => profile(
@@ -414,7 +414,7 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "snowflake",
             "Snowflake",
             DriverTier::Specialized,
-            S, S, S, L, S, S, U, U, S, S, S, L, L,
+            S, S, S, L, S, S, U, S, S, S, S, L, S,
             &["Prepared parameters, atomic edits/imports, and reviewed schema actions are not implemented.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."],
         ),
         DatabaseType::MSSQL => profile(
@@ -430,7 +430,7 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "redis",
             "Redis",
             DriverTier::Extended,
-            S, S, N, L, S, U, N, U, S, N, N, L, L,
+            S, S, N, L, S, U, N, U, S, N, N, L, S,
             &["Redis key projections are read-only; mutations require the CLI tab.", "Backup/export uses a TableR JSON snapshot rather than a native Redis backup.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."],
         ),
         DatabaseType::MongoDB => profile(
@@ -438,7 +438,7 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "mongodb",
             "MongoDB",
             DriverTier::Extended,
-            S, S, N, L, S, S, U, U, S, U, N, L, L,
+            S, S, N, L, S, S, U, U, S, U, N, L, S,
             &["Atomic edit/import queues and explain integration are not implemented.", "Backup/export uses a TableR JSON snapshot.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."],
         ),
         DatabaseType::Vertica => profile(
@@ -453,7 +453,7 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "clickhouse",
             "ClickHouse",
             DriverTier::Extended,
-            S, S, S, L, S, S, U, U, S, S, S, L, L,
+            S, S, S, L, S, S, U, U, S, S, S, L, S,
             &["Prepared parameters, atomic mutations/imports, and reviewed schema actions are not implemented.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."],
         ),
         DatabaseType::BigQuery => profile(
@@ -461,7 +461,7 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "bigquery",
             "Google BigQuery",
             DriverTier::Specialized,
-            S, S, S, L, S, S, U, U, S, U, S, L, U,
+            S, S, S, L, S, S, U, S, S, U, S, L, U,
             &["Prepared parameters, atomic mutations/imports, explain plans, and administration are not integrated.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."],
         ),
         DatabaseType::LibSQL => profile(
@@ -469,7 +469,7 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "libsql",
             "LibSQL",
             DriverTier::Specialized,
-            S, S, S, L, S, S, S, U, S, S, S, L, N,
+            S, S, S, L, S, S, S, S, S, S, S, L, N,
             &["Prepared parameters, atomic mutations/imports, and direct schema actions are not implemented.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.", "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied."]),
         DatabaseType::CloudflareD1 => profile(
             database_type,
@@ -484,8 +484,8 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "opensearch",
             "OpenSearch",
             DriverTier::Specialized,
-            S, S, N, L, S, U, N, U, S, U, N, U, U,
-            &["The declarative OpenSearch plugin driver is read-only.", "SQL restore and server administration are unavailable.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."],
+            S, S, N, L, S, U, N, U, S, U, N, U, S,
+            &["The declarative OpenSearch plugin driver is read-only for index data; user administration runs through the security plugin REST API.", "SQL restore is unavailable.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."],
         ),
         DatabaseType::Oracle => profile(
             database_type,

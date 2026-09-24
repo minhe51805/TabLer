@@ -373,6 +373,19 @@ impl OpenSearchDriver {
     fn readonly_error() -> anyhow::Error {
         anyhow!("OpenSearch declarative driver ABI v1 is read-only")
     }
+
+    /// Call the OpenSearch security plugin REST API (`/_plugins/_security/...`)
+    /// with the connection's configured credentials. Used by the Users & Roles
+    /// administration surface, which cannot go through `execute_query` because
+    /// that path only accepts search request bodies.
+    pub async fn security_api_request(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&Value>,
+    ) -> Result<Value> {
+        self.send_json(method, path, body).await
+    }
 }
 
 #[async_trait]
@@ -825,6 +838,10 @@ impl DatabaseDriver for OpenSearchDriver {
     }
     fn driver_name(&self) -> &str {
         &self.plugin_id
+    }
+
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        Some(self)
     }
 }
 

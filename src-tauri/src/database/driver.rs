@@ -259,4 +259,11 @@ pub trait DatabaseDriver: Send + Sync {
 
     /// Get the driver/database type name
     fn driver_name(&self) -> &str;
+
+    /// Downcast hook for engine-specific APIs that cannot be expressed through
+    /// the generic trait surface (e.g. OpenSearch's security REST endpoints).
+    /// Drivers that expose such APIs override this; everything else stays `None`.
+    fn as_any(&self) -> Option<&dyn std::any::Any> {
+        None
+    }
 }

@@ -657,6 +657,18 @@ impl BigQueryDriver {
             parameter_value: BigQueryQueryParameterValue { value },
         })
     }
+    /// Infers the query-parameter type for a JSON cell value so CSV imports
+    /// can travel through `queryParameters` instead of interpolated SQL text.
+    pub(super) fn json_value_parameter_type(value: &JsonValue) -> QueryParameterType {
+        match value {
+            JsonValue::Null => QueryParameterType::Null,
+            JsonValue::Bool(_) => QueryParameterType::Boolean,
+            JsonValue::Number(number) if number.as_i64().is_some() => QueryParameterType::Integer,
+            JsonValue::Number(_) => QueryParameterType::Decimal,
+            JsonValue::String(_) => QueryParameterType::Text,
+            JsonValue::Array(_) | JsonValue::Object(_) => QueryParameterType::Json,
+        }
+    }
 
     pub(super) fn field_to_column_info(field: &BigQueryTableFieldSchema) -> ColumnInfo {
         ColumnInfo {

@@ -190,7 +190,7 @@
       "pagination": "supported",
       "inlineEdit": "supported",
       "atomicEditQueue": "supported",
-      "atomicCsvImport": "unsupported",
+      "atomicCsvImport": "supported",
       "dataExport": "supported",
       "explain": "supported",
       "schemaEdit": "supported",
@@ -223,7 +223,7 @@
       "explain": "unsupported",
       "schemaEdit": "unsupported",
       "backupRestore": "limited",
-      "administration": "limited"
+      "administration": "supported"
     },
     "limitations": [
       "CQL prepared parameters, tracing plans, atomic imports, and schema actions are not integrated.",
@@ -244,12 +244,12 @@
       "pagination": "supported",
       "inlineEdit": "supported",
       "atomicEditQueue": "unsupported",
-      "atomicCsvImport": "unsupported",
+      "atomicCsvImport": "supported",
       "dataExport": "supported",
       "explain": "supported",
       "schemaEdit": "supported",
       "backupRestore": "limited",
-      "administration": "limited"
+      "administration": "supported"
     },
     "limitations": [
       "Prepared parameters, atomic edits/imports, and reviewed schema actions are not implemented.",
@@ -303,7 +303,7 @@
       "explain": "not_applicable",
       "schemaEdit": "not_applicable",
       "backupRestore": "limited",
-      "administration": "limited"
+      "administration": "supported"
     },
     "limitations": [
       "Redis key projections are read-only; mutations require the CLI tab.",
@@ -330,7 +330,7 @@
       "explain": "unsupported",
       "schemaEdit": "not_applicable",
       "backupRestore": "limited",
-      "administration": "limited"
+      "administration": "supported"
     },
     "limitations": [
       "Atomic edit/import queues and explain integration are not implemented.",
@@ -385,7 +385,7 @@
       "explain": "supported",
       "schemaEdit": "supported",
       "backupRestore": "limited",
-      "administration": "limited"
+      "administration": "supported"
     },
     "limitations": [
       "Prepared parameters, atomic mutations/imports, and reviewed schema actions are not implemented.",
@@ -406,7 +406,7 @@
       "pagination": "supported",
       "inlineEdit": "supported",
       "atomicEditQueue": "unsupported",
-      "atomicCsvImport": "unsupported",
+      "atomicCsvImport": "supported",
       "dataExport": "supported",
       "explain": "unsupported",
       "schemaEdit": "supported",
@@ -432,7 +432,7 @@
       "pagination": "supported",
       "inlineEdit": "supported",
       "atomicEditQueue": "supported",
-      "atomicCsvImport": "unsupported",
+      "atomicCsvImport": "supported",
       "dataExport": "supported",
       "explain": "supported",
       "schemaEdit": "supported",
@@ -491,11 +491,11 @@
       "explain": "unsupported",
       "schemaEdit": "not_applicable",
       "backupRestore": "unsupported",
-      "administration": "unsupported"
+      "administration": "supported"
     },
     "limitations": [
-      "The declarative OpenSearch plugin driver is read-only.",
-      "SQL restore and server administration are unavailable.",
+      "The declarative OpenSearch plugin driver is read-only for index data; user administration runs through the security plugin REST API.",
+      "SQL restore is unavailable.",
       "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
     ]
   },

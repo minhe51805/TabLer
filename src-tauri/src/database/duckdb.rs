@@ -13,6 +13,7 @@ use duckdb::{AccessMode, Config, Connection as DuckConnection, OptionalExt, ToSq
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tokio::task;
@@ -203,6 +204,31 @@ impl DuckDbDriver {
                 "Only string, number, boolean, and null values are supported"
             )),
         }
+    }
+
+    fn build_insert_statement(request: &TableRowInsertRequest) -> Result<(String, Vec<DuckValue>)> {
+        let qualified_table = qualify_postgres_table_name(&request.table, "main")?;
+        let mut sql = format!("INSERT INTO {qualified_table} (");
+        let mut params = Vec::new();
+
+        for (index, (column, value)) in request.values.iter().enumerate() {
+            if index > 0 {
+                sql.push_str(", ");
+            }
+            sql.push_str(&quote_postgres_identifier(column)?);
+            params.push(Self::json_to_duck_value(value)?);
+        }
+
+        sql.push_str(") VALUES (");
+        for index in 0..params.len() {
+            if index > 0 {
+                sql.push_str(", ");
+            }
+            sql.push('?');
+        }
+        sql.push(')');
+
+        Ok((sql, params))
     }
 
     fn estimate_file_size(path: &str) -> Option<String> {
@@ -868,32 +894,77 @@ impl DatabaseDriver for DuckDbDriver {
 
         let request = request.clone();
         self.with_connection(move |conn| {
-            let qualified_table = qualify_postgres_table_name(&request.table, "main")?;
-            let mut sql = format!("INSERT INTO {qualified_table} (");
-            let mut params = Vec::new();
-
-            for (index, (column, value)) in request.values.iter().enumerate() {
-                if index > 0 {
-                    sql.push_str(", ");
-                }
-                sql.push_str(&quote_postgres_identifier(column)?);
-                params.push(Self::json_to_duck_value(value)?);
-            }
-
-            sql.push_str(") VALUES (");
-            for index in 0..params.len() {
-                if index > 0 {
-                    sql.push_str(", ");
-                }
-                sql.push('?');
-            }
-            sql.push(')');
-
+            let (sql, params) = Self::build_insert_statement(&request)?;
             let param_refs = params
                 .iter()
                 .map(|value| value as &dyn ToSql)
                 .collect::<Vec<_>>();
             Ok(conn.execute(&sql, param_refs.as_slice())? as u64)
+        })
+        .await
+    }
+
+    async fn insert_table_rows_atomically(
+        &self,
+        requests: &[TableRowInsertRequest],
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        if requests.is_empty() {
+            return Err(anyhow!("CSV import requires at least one row"));
+        }
+
+        let requests = requests.to_vec();
+        self.with_connection(move |conn| {
+            let tx = conn.transaction()?;
+            let mut affected_rows = 0u64;
+            for request in &requests {
+                if cancelled.load(Ordering::Relaxed) {
+                    return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+                }
+                if request.values.is_empty() {
+                    return Err(anyhow!("Each CSV row requires at least one column value"));
+                }
+                let (sql, params) = Self::build_insert_statement(request)?;
+                let param_refs = params
+                    .iter()
+                    .map(|value| value as &dyn ToSql)
+                    .collect::<Vec<_>>();
+                affected_rows += tx.execute(&sql, param_refs.as_slice())? as u64;
+            }
+            tx.commit()?;
+            Ok(affected_rows)
+        })
+        .await
+    }
+
+    async fn insert_table_row_stream_atomically(
+        &self,
+        mut rows: tokio::sync::mpsc::Receiver<crate::database::models::CsvImportRow>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        self.with_connection(move |conn| {
+            let tx = conn.transaction()?;
+            let mut affected_rows = 0u64;
+            while let Some(request) = rows.blocking_recv() {
+                if cancelled.load(Ordering::Relaxed) {
+                    return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+                }
+                let request = request.map_err(anyhow::Error::msg)?;
+                if request.values.is_empty() {
+                    return Err(anyhow!("Each CSV row requires at least one column value"));
+                }
+                let (sql, params) = Self::build_insert_statement(&request)?;
+                let param_refs = params
+                    .iter()
+                    .map(|value| value as &dyn ToSql)
+                    .collect::<Vec<_>>();
+                affected_rows += tx.execute(&sql, param_refs.as_slice())? as u64;
+            }
+            if affected_rows == 0 {
+                return Err(anyhow!("CSV import did not contain any data rows"));
+            }
+            tx.commit()?;
+            Ok(affected_rows)
         })
         .await
     }

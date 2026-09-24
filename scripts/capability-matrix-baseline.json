@@ -112,7 +112,7 @@
     "pagination": "S",
     "inline_edit": "S",
     "atomic_edit_queue": "S",
-    "atomic_csv_import": "U",
+    "atomic_csv_import": "S",
     "data_export": "S",
     "explain": "S",
     "schema_edit": "S",
@@ -132,7 +132,7 @@
     "explain": "U",
     "schema_edit": "U",
     "backup_restore": "L",
-    "administration": "L"
+    "administration": "S"
   },
   "snowflake": {
     "connect": "S",
@@ -142,12 +142,12 @@
     "pagination": "S",
     "inline_edit": "S",
     "atomic_edit_queue": "U",
-    "atomic_csv_import": "U",
+    "atomic_csv_import": "S",
     "data_export": "S",
     "explain": "S",
     "schema_edit": "S",
     "backup_restore": "L",
-    "administration": "L"
+    "administration": "S"
   },
   "mssql": {
     "connect": "S",
@@ -177,7 +177,7 @@
     "explain": "N",
     "schema_edit": "N",
     "backup_restore": "L",
-    "administration": "L"
+    "administration": "S"
   },
   "mongodb": {
     "connect": "S",
@@ -192,7 +192,7 @@
     "explain": "U",
     "schema_edit": "N",
     "backup_restore": "L",
-    "administration": "L"
+    "administration": "S"
   },
   "vertica": {
     "connect": "S",
@@ -222,7 +222,7 @@
     "explain": "S",
     "schema_edit": "S",
     "backup_restore": "L",
-    "administration": "L"
+    "administration": "S"
   },
   "bigquery": {
     "connect": "S",
@@ -232,7 +232,7 @@
     "pagination": "S",
     "inline_edit": "S",
     "atomic_edit_queue": "U",
-    "atomic_csv_import": "U",
+    "atomic_csv_import": "S",
     "data_export": "S",
     "explain": "U",
     "schema_edit": "S",
@@ -247,7 +247,7 @@
     "pagination": "S",
     "inline_edit": "S",
     "atomic_edit_queue": "S",
-    "atomic_csv_import": "U",
+    "atomic_csv_import": "S",
     "data_export": "S",
     "explain": "S",
     "schema_edit": "S",
@@ -282,7 +282,7 @@
     "explain": "U",
     "schema_edit": "N",
     "backup_restore": "U",
-    "administration": "U"
+    "administration": "S"
   },
   "oracle": {
     "connect": "S",

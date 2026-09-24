@@ -8,6 +8,7 @@ import { getDictionary } from "@/lib/i18n";
 import { LanguageToggle } from "../LanguageToggle";
 import { SiteFooter } from "../SiteFooter";
 import { ReleaseNotes } from "./ReleaseNotes";
+import { CollapsibleEntry } from "./CollapsibleEntry";
 import { ScrollProgress, ScrollReveal, CursorGlow } from "../Home3D";
 
 export const metadata: Metadata = {
@@ -86,10 +87,12 @@ export default async function ChangelogPage() {
             </nav>
             <div className="release-stack">
               {releases.map((release, index) => (
-                <article
+                <CollapsibleEntry
                   id={release.tag}
                   className={`changelog-entry${index === 0 ? " is-latest" : ""}`}
                   key={release.id}
+                  moreLabel={t.changelog.showMore}
+                  lessLabel={t.changelog.showLess}
                 >
                   <div className="changelog-entry-head">
                     <span className="release-version">
@@ -111,7 +114,7 @@ export default async function ChangelogPage() {
                   >
                     {t.download.viewNotes} {release.tag}
                   </a>
-                </article>
+                </CollapsibleEntry>
               ))}
             </div>
           </div>

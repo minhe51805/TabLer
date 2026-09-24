@@ -5775,3 +5775,59 @@ a {
   border-radius: 3px;
   padding: 0 1px;
 }
+
+/* collapsible changelog entries — long notes clip behind a fade with a
+   "Show more" button; short entries never see the control */
+.changelog-entry.is-collapsible .changelog-entry-body {
+  position: relative;
+  overflow: hidden;
+  max-height: none;
+  transition: max-height 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.changelog-entry.is-collapsed .changelog-entry-body {
+  max-height: 480px;
+}
+
+.changelog-entry.is-collapsed .changelog-entry-body::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 90px;
+  background: linear-gradient(transparent, var(--neu-bg-soft));
+  pointer-events: none;
+}
+
+.changelog-expand {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 7px 14px;
+  border: none;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--neu-muted);
+  background: var(--neu-bg);
+  box-shadow: var(--neu-shadow-out-sm);
+  cursor: pointer;
+  transition:
+    color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.changelog-expand:hover {
+  color: var(--neu-accent);
+  box-shadow: var(--neu-shadow-out);
+}
+
+.changelog-expand svg {
+  transition: transform 0.25s ease;
+}
+
+.changelog-expand svg.is-open {
+  transform: rotate(180deg);
+}

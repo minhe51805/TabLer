@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   BookOpen,
   Bot,
@@ -76,6 +76,14 @@ export function DocsSidebar({
   const [manualOpen, setManualOpen] = useState<boolean | null>(null);
   const openConnections = manualOpen ?? inConnectionsSection;
 
+  // keep the active item visible when the sidebar is taller than the
+  // viewport — scrolls it into view on route change, not on every render
+  const navRef = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const active = navRef.current?.querySelector<HTMLElement>(".is-active");
+    active?.scrollIntoView({ block: "nearest" });
+  }, [pathname]);
+
   const bySlug = new Map(items.map((item) => [item.slug, item]));
 
   return (
@@ -94,7 +102,7 @@ export function DocsSidebar({
         <DocsSearch items={searchItems} placeholder={searchPlaceholder} />
       ) : null}
 
-      <nav className={`docs-nav${open ? " is-open" : ""}`}>
+      <nav ref={navRef} className={`docs-nav${open ? " is-open" : ""}`}>
         {groups.map((group) => (
           <div className="docs-nav-group" key={group.label}>
             <p className="docs-nav-group-label">{group.label}</p>

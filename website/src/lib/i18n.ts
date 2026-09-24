@@ -272,6 +272,8 @@ const en = {
     intro:
       "Every shipped TableR release, newest first. Notes come straight from the GitHub release of each version.",
     empty: "No published releases yet. Notes will appear here as soon as a version ships.",
+    showMore: "Show more",
+    showLess: "Show less",
     viewOnGitHub: "View on GitHub",
   },
 };
@@ -539,6 +541,8 @@ const vi: typeof en = {
     intro:
       "Mọi bản TableR đã phát hành, mới nhất đứng trước. Ghi chú lấy trực tiếp từ GitHub release của từng phiên bản.",
     empty: "Chưa có bản phát hành nào. Ghi chú sẽ xuất hiện ngay khi có phiên bản mới.",
+    showMore: "Xem thêm",
+    showLess: "Thu gọn",
     viewOnGitHub: "Xem trên GitHub",
   },
 };

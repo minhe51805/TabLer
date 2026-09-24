@@ -36,7 +36,6 @@ import {
   isRollbackCommand,
   type ResolvedFileCommand,
 } from "./ai-slash-commands";
-import { formatAgentSql } from "../../utils/ai-sql-format";
 import { AIWorkspacePanelView } from "./AIWorkspacePanelView";
 import { useAIAssistantGeneration } from "./hooks/use-ai-assistant-generation";
 import { useAIDashboardBubbleUpdates } from "./hooks/use-ai-dashboard-bubble-updates";
@@ -49,10 +48,9 @@ import { useAIChatWorkspaces } from "./hooks/use-ai-chat-workspaces";
 import { useAIConsentGates } from "./hooks/use-ai-consent-gates";
 import { useAISlashMenu } from "./hooks/use-ai-slash-menu";
 import { useAIChatThreads } from "./hooks/use-ai-chat-threads";
+import { useAIBubbleActions } from "./hooks/use-ai-bubble-actions";
 import { isDataReadApproved } from "./ai-data-read-approvals";
 import {
-  aiModeAllowsInsert,
-  aiModeAllowsRun,
   getDefaultAIWorkspaceInteractionMode,
   isAIWorkspaceAgentAutonomy,
   DEFAULT_AI_WORKSPACE_AGENT_AUTONOMY,
@@ -69,15 +67,7 @@ import {
   type LearningProposal,
 } from "./ai-agent-learning";
 import { invalidateAgentMemoryIndex } from "./hooks/use-agent-memory";
-import {
-  buildWorkspaceOverviewChartSql,
-  isDashboardSelectionSource,
-  isDashboardVisualizationPrompt,
-  isOverviewVisualizationPrompt,
-  isVisualizationPrompt,
-  prefersVietnameseSystemReply,
-  supportsOverviewMetricsBoard,
-} from "./ai-visualization-intent";
+import { isDashboardSelectionSource } from "./ai-visualization-intent";
 import {
   estimateConversationFootprint,
   buildConversationHistoryMessages,
@@ -89,18 +79,12 @@ import {
   type AIChatThread,
   type PersistedAIWorkspaceState,
 } from "./ai-conversation-state";
-import {
-  buildExecutionDetail,
-  buildPromptWithSelection,
-  isSingleSqlStatement,
-  type SelectionContextState,
-} from "./ai-panel-selection";
+import { buildPromptWithSelection, type SelectionContextState } from "./ai-panel-selection";
 import {
   MAX_IMAGES_PER_TURN,
   processFilesIntoAttachmentDrafts,
   type AIAttachmentDraft,
 } from "../../utils/ai-attachments";
-import type { AIAgentRecordLink } from "./ai-agent-record-links";
 /** Work captured while a run was in flight. `prompt` items carry the composer
  *  snapshot (draft + attachments + attached selection); `rerun` items are an
  *  edited prompt re-run against an existing bubble's slot. */
@@ -1699,257 +1683,28 @@ export function AISlidePanel({
     ],
   );
 
-  const handleCopyBubble = useCallback(
-    async (bubble: AIWorkspaceBubbleData): Promise<boolean> => {
-      const text = bubble.sql || bubble.detail || bubble.preview;
-      if (!text) return false;
-      const ok = await copyText(text);
-      const vi = language === "vi";
-      if (ok) {
-        emitAppToast({
-          tone: "success",
-          title: vi ? "Đã sao chép" : "Copied",
-          description: vi ? "Nội dung đã nằm trên clipboard." : "Content is on the clipboard.",
-          durationMs: 3_000,
-        });
-      } else {
-        emitAppToast({
-          tone: "error",
-          title: vi ? "Sao chép thất bại" : "Copy failed",
-          description: vi ? "Không thể ghi vào clipboard." : "Could not write to the clipboard.",
-          durationMs: 5_000,
-        });
-      }
-      return ok;
-    },
-    [copyText, language],
-  );
-
-  const handleInsertBubble = useCallback(
-    (bubble: AIWorkspaceBubbleData) => {
-      if (!bubble.sql || !aiModeAllowsInsert(bubble.interactionMode)) return;
-      insertSql(bubble.sql, bubble.risk);
-    },
-    [insertSql],
-  );
-
-  const handleOpenAgentRecord = useCallback(
-    (link: AIAgentRecordLink) => {
-      if (!connectionId) {
-        setError("Connect to a database before opening a record.");
-        return;
-      }
-
-      useUIStore.getState().addTab({
-        id: `table-${connectionId}-${currentDatabase || ""}-${link.tableName}-${crypto.randomUUID()}`,
-        type: "table",
-        title: link.tableName,
-        connectionId,
-        tableName: link.tableName,
-        database: currentDatabase || undefined,
-        rowFocus: {
-          token: crypto.randomUUID(),
-          values: link.rowKey,
-        },
-      });
-    },
-    [connectionId, currentDatabase, setError],
-  );
-
-  const handleRunBubble = useCallback(
-    async (bubble: AIWorkspaceBubbleData) => {
-      if (!bubble.sql || !aiModeAllowsRun(bubble.interactionMode)) return;
-      const sessionId = openSessionRef.current;
-      // The workspace Query tab should receive pretty-printed SQL — the same
-      // formatting the chat bubble shows — instead of the model's one-liner.
-      const runnableSql = formatAgentSql(bubble.sql);
-      const bubbleIntentPrompt = bubble.promptSummary?.trim() || bubble.prompt;
-
-      if (isVisualizationPrompt(bubbleIntentPrompt)) {
-        const wantsMetricsDashboard =
-          isDashboardVisualizationPrompt(bubbleIntentPrompt) &&
-          supportsOverviewMetricsBoard(activeConnectionDbType);
-        const deterministicOverviewChartSql = isOverviewVisualizationPrompt(bubbleIntentPrompt)
-          ? buildWorkspaceOverviewChartSql(activeConnectionDbType)
-          : null;
-        const preferredVisualizationSql =
-          deterministicOverviewChartSql ||
-          (runnableSql && isSingleSqlStatement(runnableSql) ? runnableSql : null);
-
-        if (wantsMetricsDashboard) {
-          const visualizationReadApproved =
-            await requestVisualizationReadConsent(bubbleIntentPrompt);
-          if (!visualizationReadApproved) {
-            setError(
-              prefersVietnameseSystemReply(bubbleIntentPrompt, language)
-                ? "Bạn chưa cấp quyền đọc data trong DB cho yêu cầu visualization này."
-                : "Visualization data access was not approved for this request.",
-            );
-            return;
-          }
-
-          const dashboardOpened = await openMetricsBoardInWorkspace({
-            title: "DB Overview Dashboard",
-            template: "database-overview",
-            focusWorkspace: true,
-          });
-
-          if (dashboardOpened.success && dashboardOpened.didChange) {
-            if (dashboardOpened.created) {
-              completeWorkspaceRedirect(bubble.id, sessionId);
-            } else {
-              updateBubbleForDashboardApplied(
-                bubble.id,
-                bubbleIntentPrompt,
-                dashboardOpened.addedCount,
-                dashboardOpened.addedTitles,
-              );
-            }
-            return;
-          }
-          if (dashboardOpened.success) {
-            updateBubbleForDashboardNoChange(
-              bubble.id,
-              bubbleIntentPrompt,
-              dashboardOpened.addedCount,
-            );
-            return;
-          }
-          updateBubbleForDashboardActionFailed(
-            bubble.id,
-            bubbleIntentPrompt,
-            dashboardOpened.error,
-          );
-          return;
-        }
-
-        if (!preferredVisualizationSql) {
-          return;
-        }
-
-        const autoRunInWorkspace =
-          deterministicOverviewChartSql !== null || bubble.risk?.level === "safe";
-        if (autoRunInWorkspace) {
-          const visualizationReadApproved =
-            await requestVisualizationReadConsent(bubbleIntentPrompt);
-          if (!visualizationReadApproved) {
-            setError(
-              prefersVietnameseSystemReply(bubbleIntentPrompt, language)
-                ? "Bạn chưa cấp quyền đọc data trong DB cho yêu cầu visualization này."
-                : "Visualization data access was not approved for this request.",
-            );
-            return;
-          }
-        }
-        const workspaceOpened = openSqlInWorkspace(preferredVisualizationSql, {
-          title: deterministicOverviewChartSql ? "DB Overview Chart" : "AI Chart",
-          viewMode: "chart",
-          autoRun: autoRunInWorkspace,
-          focusWorkspace: true,
-        });
-
-        if (workspaceOpened) {
-          completeWorkspaceRedirect(bubble.id, sessionId);
-          return;
-        }
-      }
-
-      // Approved SQL should run where the user can see it: push it into a
-      // Query tab in the workspace and execute there, instead of only running
-      // inside the AI sandbox. Safe read-only SQL auto-runs; mutating or
-      // dangerous SQL opens ready-to-run so the user presses Chạy themselves.
-      // The Duyệt chạy button itself never disappears — but a bubble that was
-      // already opened in the workspace must not spawn yet another tab.
-      // Exception: "full" autonomy is a standing human approval, so the run
-      // executes immediately in the sandbox — no ready-to-run tab that would
-      // only end in another confirmation dialog.
-      if (bubble.openedInWorkspace) {
-        return;
-      }
-      const approvedRiskLevel = bubble.risk?.level;
-      const fullAutonomyRun = activeAgentAutonomy === "full";
-      const workspaceOpened = fullAutonomyRun
-        ? false
-        : openSqlInWorkspace(runnableSql, {
-            title: "AI Query",
-            autoRun: approvedRiskLevel === "safe",
-            focusWorkspace: true,
-          });
-      if (workspaceOpened) {
-        setBubbles((current) =>
-          current.map((currentBubble) =>
-            currentBubble.id === bubble.id
-              ? { ...currentBubble, openedInWorkspace: true }
-              : currentBubble,
-          ),
-        );
-        return;
-      }
-
-      try {
-        const result = await runSql(runnableSql, { agentAutonomy: activeAgentAutonomy, language });
-        setBubbles((current) =>
-          current.map((currentBubble) =>
-            currentBubble.id === bubble.id
-              ? {
-                  ...currentBubble,
-                  kind: "result",
-                  status: "ready",
-                  title: aiCopy.bubbleStates.runSuccessTitle,
-                  subtitle: result.queryResult.sandboxed
-                    ? aiCopy.bubbleStates.runSuccessSandboxSubtitle
-                    : aiCopy.bubbleStates.runSuccessDirectSubtitle,
-                  preview: result.summary,
-                  detail: buildExecutionDetail(
-                    result.summary,
-                    result.queryResult.query,
-                    currentBubble.detail,
-                  ),
-                  autoDismissAt: undefined,
-                }
-              : currentBubble,
-          ),
-        );
-      } catch (errorValue) {
-        const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
-        setBubbles((current) =>
-          current.map((currentBubble) =>
-            currentBubble.id === bubble.id
-              ? {
-                  ...currentBubble,
-                  kind: "error",
-                  status: "error",
-                  title: aiCopy.bubbleStates.runFailedTitle,
-                  subtitle: aiCopy.bubbleStates.runFailedSubtitle,
-                  preview: message,
-                  detail: message,
-                  autoDismissAt: undefined,
-                }
-              : currentBubble,
-          ),
-        );
-      }
-    },
-    [
+  const { handleCopyBubble, handleInsertBubble, handleOpenAgentRecord, handleRunBubble } =
+    useAIBubbleActions({
       activeAgentAutonomy,
       activeConnectionDbType,
-      aiCopy.bubbleStates.runFailedSubtitle,
-      aiCopy.bubbleStates.runFailedTitle,
-      aiCopy.bubbleStates.runSuccessDirectSubtitle,
-      aiCopy.bubbleStates.runSuccessSandboxSubtitle,
-      aiCopy.bubbleStates.runSuccessTitle,
-      completeWorkspaceRedirect,
+      aiCopy,
+      connectionId,
+      currentDatabase,
       language,
+      openSessionRef,
+      copyText,
+      completeWorkspaceRedirect,
+      insertSql,
       openMetricsBoardInWorkspace,
       openSqlInWorkspace,
       requestVisualizationReadConsent,
       runSql,
+      setBubbles,
       setError,
       updateBubbleForDashboardActionFailed,
       updateBubbleForDashboardApplied,
       updateBubbleForDashboardNoChange,
-    ],
-  );
+    });
 
   const {
     deleteThreadPending,

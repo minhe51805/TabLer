@@ -836,3 +836,155 @@ export function BackToTop() {
   }, []);
   return null;
 }
+
+/**
+ * Animated counters for the signal strip — each <strong> holding a number
+ * counts up from 0 when the strip reveals. Non-numeric values (e.g. "24/7")
+ * are left alone. Respects reduced-motion by skipping the count.
+ */
+export function SignalCounters() {
+  useEffect(() => {
+    const strip = document.querySelector<HTMLElement>(".signal-strip");
+    if (!strip) return;
+    const numbers = Array.from(strip.querySelectorAll<HTMLElement>("strong"));
+    if (numbers.length === 0) return;
+
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    const animate = (el: HTMLElement) => {
+      const target = el.textContent ?? "";
+      const match = target.match(/^(\d+)(.*)$/);
+      if (!match) return;
+      const end = parseInt(match[1], 10);
+      const suffix = match[2];
+      if (reduced || end === 0) return;
+      const duration = 1100;
+      const start = performance.now();
+      const tick = (now: number) => {
+        const p = Math.min((now - start) / duration, 1);
+        // ease-out cubic so the count snaps fast then settles
+        const eased = 1 - Math.pow(1 - p, 3);
+        el.textContent = `${Math.round(end * eased)}${suffix}`;
+        if (p < 1) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    };
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          numbers.forEach(animate);
+          observer.disconnect();
+        }
+      },
+      { threshold: 0.4 },
+    );
+    observer.observe(strip);
+    return () => observer.disconnect();
+  }, []);
+  return null;
+}
+
+/**
+ * Workflow progression — each .workflow-row gets .is-active while it
+ * occupies the middle band of the viewport, lighting its spine node.
+ * Desktop only: the spine (and its nodes) doesn't render under 981px.
+ */
+export function WorkflowProgress() {
+  useEffect(() => {
+    if (window.matchMedia("(max-width: 980px)").matches) return;
+    const rows = Array.from(document.querySelectorAll<HTMLElement>(".workflow-row"));
+    if (rows.length === 0) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          entry.target.classList.toggle("is-active", entry.isIntersecting);
+        }
+      },
+      // a row is "active" while any part of it sits in the middle 40% of
+      // the viewport — generous so exactly one node is lit at a time
+      { rootMargin: "-30% 0px -30% 0px", threshold: 0 },
+    );
+    rows.forEach((row) => observer.observe(row));
+    return () => observer.disconnect();
+  }, []);
+  return null;
+}
+
+/**
+ * Docs enhancements that need the DOM, not the server render:
+ * - heading anchors: every h2/h3 with an id gets a hover "#" that links
+ *   to the section (click copies the URL to the clipboard)
+ * - pager keys: ArrowLeft/ArrowRight follow the doc-pager links
+ * Runs on docs pages only — no-ops elsewhere.
+ */
+export function DocEnhancements() {
+  useEffect(() => {
+    const article = document.querySelector<HTMLElement>(".doc-article");
+    if (!article) return;
+
+    // heading anchors
+    const headings = article.querySelectorAll<HTMLElement>("h2[id], h3[id]");
+    for (const heading of headings) {
+      if (heading.querySelector(".heading-anchor")) continue;
+      const anchor = document.createElement("a");
+      anchor.className = "heading-anchor";
+      anchor.href = `#${heading.id}`;
+      anchor.textContent = "#";
+      anchor.setAttribute("aria-label", `Link to ${heading.textContent ?? "section"}`);
+      anchor.addEventListener("click", (event) => {
+        event.preventDefault();
+        const url = `${window.location.origin}${window.location.pathname}#${heading.id}`;
+        navigator.clipboard?.writeText(url).catch(() => {});
+        history.replaceState(null, "", `#${heading.id}`);
+      });
+      heading.prepend(anchor);
+    }
+
+    // pager arrow keys — only when not typing in a field
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+        return;
+      const pager = document.querySelector(".doc-pager");
+      if (!pager) return;
+      const links = pager.querySelectorAll<HTMLAnchorElement>("a.doc-pager-link");
+      if (event.key === "ArrowLeft" && links[0]) {
+        links[0].click();
+      } else if (event.key === "ArrowRight" && links[1]) {
+        links[1].click();
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+  return null;
+}
+
+/**
+ * Copyable inline commands — elements marked .copyable get click-to-copy
+ * with a brief .is-copied state. Used for the macOS quarantine command on
+ * the download page.
+ */
+export function CopyableCommands() {
+  useEffect(() => {
+    const nodes = Array.from(document.querySelectorAll<HTMLElement>("code.copyable"));
+    if (nodes.length === 0) return;
+    const cleanups: Array<() => void> = [];
+    for (const node of nodes) {
+      const onClick = async () => {
+        try {
+          await navigator.clipboard.writeText(node.textContent ?? "");
+          node.classList.add("is-copied");
+          window.setTimeout(() => node.classList.remove("is-copied"), 1400);
+        } catch {
+          // clipboard unavailable — no-op
+        }
+      };
+      node.addEventListener("click", onClick);
+      cleanups.push(() => node.removeEventListener("click", onClick));
+    }
+    return () => cleanups.forEach((fn) => fn());
+  }, []);
+  return null;
+}

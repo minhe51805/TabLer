@@ -5,7 +5,7 @@ import {
   buildAIExecutionDetail,
   buildAIRequestFailureBubble,
   summarizeAIResponse,
-} from "@/components/AISlidePanel/hooks/use-ai-assistant-generation";
+} from "@/components/AISlidePanel/ai-bubble-builders";
 import { getAIWorkspaceCopy } from "@/components/AISlidePanel/ai-workspace-copy";
 import type { AIWorkspaceBubbleData } from "@/components/AISlidePanel/ai-workspace-types";
 import { AIRequestError } from "@/utils/ai-request-errors";

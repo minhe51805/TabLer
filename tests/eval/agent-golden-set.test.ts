@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   appendAgentFacts,
-  buildAgentControllerPrompt,
   parseAgentFacts,
   type AgentTraceStep,
 } from "@/components/AISlidePanel/ai-agent-context";
+import { buildAgentControllerPrompt } from "@/components/AISlidePanel/ai-agent-controller-prompt";
 import { buildSchemaRegroundingPrompt } from "@/components/AISlidePanel/ai-agent-grounding";
 import {
   computeSampleColumnStats,
@@ -38,7 +38,9 @@ const step = (observation: string): AgentTraceStep => ({
 describe("eval: sample_table_data column-stats gate (no full-table scans)", () => {
   it("falls back to sample-scoped stats for large or unknown-size tables", () => {
     expect(resolveColumnStatsScope(undefined, AI_AGENT_COLUMN_STATS_MAX_TABLE_ROWS)).toBe("whole");
-    expect(resolveColumnStatsScope(undefined, AI_AGENT_COLUMN_STATS_MAX_TABLE_ROWS + 1)).toBe("sample");
+    expect(resolveColumnStatsScope(undefined, AI_AGENT_COLUMN_STATS_MAX_TABLE_ROWS + 1)).toBe(
+      "sample",
+    );
     expect(resolveColumnStatsScope(undefined, null)).toBe("sample");
     expect(resolveColumnStatsScope(undefined, 42)).toBe("whole");
   });
@@ -91,18 +93,16 @@ describe("eval: claim verification (fabrications caught, noise ignored)", () => 
   });
 
   it("accepts rounded restatements of witnessed figures", () => {
-    const result = verifyAgentResponseAgainstEvidence(
-      "Approximately 2,400 orders were placed.",
-      [step('{"rowCount": 2401}')],
-    );
+    const result = verifyAgentResponseAgainstEvidence("Approximately 2,400 orders were placed.", [
+      step('{"rowCount": 2401}'),
+    ]);
     expect(result.unsupported).toEqual([]);
   });
 
   it("resolves locale-ambiguous separators against either reading", () => {
-    const result = verifyAgentResponseAgainstEvidence(
-      "The sample shows 1.234 distinct emails.",
-      [step('{"rowCount": 1234}')],
-    );
+    const result = verifyAgentResponseAgainstEvidence("The sample shows 1.234 distinct emails.", [
+      step('{"rowCount": 1234}'),
+    ]);
     expect(result.unsupported).toEqual([]);
   });
 
@@ -141,8 +141,7 @@ describe("eval: update_plan and delegate are first-class registry tools", () => 
     expect(AI_AGENT_TOOL_SPECS.delegate.parameters.required).toEqual(["instruction"]);
     // Both stay available even when workspace SQL tools are off.
     const disabled = new Set(
-      formatAgentToolCatalog(false)
-        .map((line) => line.match(/"action":"([^"]+)"/)?.[1]),
+      formatAgentToolCatalog(false).map((line) => line.match(/"action":"([^"]+)"/)?.[1]),
     );
     expect(disabled.has("update_plan")).toBe(true);
     expect(disabled.has("delegate")).toBe(true);
@@ -201,7 +200,9 @@ describe("eval: @@facts footer survives prompt clamping and never reaches the UI
       assistIntent: "sql",
       currentDatabase: null,
       availableTableNames: ["orders"],
-      steps: [{ step: 1, action: "sample_table_data", message: "peek", observation: longObservation }],
+      steps: [
+        { step: 1, action: "sample_table_data", message: "peek", observation: longObservation },
+      ],
       workspaceToolsEnabled: false,
     });
     expect(prompt).toContain("[observation truncated]");

@@ -1,19 +1,12 @@
 import {
-  FolderTree,
-  BarChart3,
   Plus,
-  GitBranch,
-  Activity,
   Terminal,
   Download,
   Upload,
   X,
   RotateCcw,
-  Search,
   Sparkles,
-  PanelRightClose,
   MoreHorizontal,
-  Database,
   Cloud,
   AlertCircle,
   LoaderCircle,
@@ -27,9 +20,10 @@ import { WorkspaceConnecting } from "./layout/WorkspaceConnecting";
 import { MetricsSidebar } from "./MetricsSidebar/MetricsSidebar";
 import { Sidebar } from "./Sidebar";
 import { TabBar } from "./TabBar";
+import { WorkspaceEmptyState, WorkspaceReadyState } from "./WorkspaceOverview";
+import { WorkspaceTabContent } from "./WorkspaceTabContent";
+import { WorkspaceSidebarNav } from "./WorkspaceSidebarNav";
 // Lazy-loaded components (performance optimization P1/P2)
-const DataGrid = lazy(() => import("./DataGrid/DataGrid").then((m) => ({ default: m.DataGrid })));
-const ERDiagram = lazy(() => import("./ERDiagram/ERDiagram").then((m) => ({ default: m.default })));
 const TerminalDock = lazy(() =>
   import("./TerminalDock/TerminalDock").then((m) => ({
     default: m.TerminalDock,
@@ -61,21 +55,7 @@ import { WorkspaceSyncModal } from "./WorkspaceSyncModal";
 import { useConnectionCapabilities } from "../hooks/useConnectionCapabilities";
 import { isCapabilitySupported } from "../types";
 
-const SQLEditor = lazy(() =>
-  import("./SQLEditor").then((module) => ({ default: module.SQLEditor })),
-);
-const TableStructure = lazy(() =>
-  import("./TableStructure/TableStructure").then((module) => ({
-    default: module.TableStructure,
-  })),
-);
-const MetricsBoard = lazy(() =>
-  import("./MetricsBoard/MetricsBoard").then((module) => ({
-    default: module.MetricsBoard,
-  })),
-);
-
-interface QueryChromeState {
+export interface QueryChromeState {
   isRunning: boolean;
   executionTimeMs?: number;
   rowCount?: number;
@@ -127,14 +107,6 @@ interface AppWorkspacePanelProps {
   onToggleSidebar: () => void;
   onSetConnectionFormIntent: (intent: "connect" | "bootstrap") => void;
   onHandleMouseDown: (e: React.MouseEvent) => void;
-}
-
-function LazyPanelFallback() {
-  return (
-    <div className="flex items-center justify-center h-full min-h-[220px] text-sm text-[var(--text-muted)]">
-      Loading workspace...
-    </div>
-  );
 }
 
 function LazyTerminalFallback() {
@@ -554,380 +526,50 @@ export function AppWorkspacePanel({
     }
 
     if (!isConnected) {
-      return (
-        <div className="workspace-empty">
-          <div className="workspace-empty-panel">
-            <div className="workspace-empty-hero">
-              <div className="workspace-empty-icon">
-                <Database className="workspace-empty-glyph w-10 h-10" />
-              </div>
-
-              <div className="workspace-empty-copy">
-                <span className="workspace-empty-kicker">{t("workspace.empty.kicker")}</span>
-                <h2 className="workspace-empty-title">{t("workspace.empty.title")}</h2>
-                <p className="workspace-empty-description">{t("workspace.empty.description")}</p>
-              </div>
-            </div>
-
-            <div className="workspace-empty-actions">
-              <button
-                type="button"
-                onClick={() => onSetConnectionFormIntent("connect")}
-                className="btn btn-primary"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                {t("workspace.empty.newConnection")}
-              </button>
-              <button
-                type="button"
-                onClick={() => onSetConnectionFormIntent("bootstrap")}
-                className="btn btn-secondary"
-              >
-                <Database className="w-3.5 h-3.5" />
-                {t("workspace.empty.createLocalDb")}
-              </button>
-            </div>
-
-            <div className="workspace-empty-grid">
-              <div className="workspace-empty-card">
-                <span className="workspace-empty-card-kicker">
-                  {t("workspace.empty.connections")}
-                </span>
-                <strong className="workspace-empty-card-title">
-                  {t("workspace.empty.savedWorkspaces")}
-                </strong>
-                <p className="workspace-empty-card-copy">
-                  {t("workspace.empty.savedWorkspacesDesc")}
-                </p>
-              </div>
-
-              <div className="workspace-empty-card">
-                <span className="workspace-empty-card-kicker">
-                  {t("workspace.empty.supported")}
-                </span>
-                <strong className="workspace-empty-card-title">
-                  {t("workspace.empty.primaryEngines")}
-                </strong>
-                <p className="workspace-empty-card-copy">
-                  {t("workspace.empty.primaryEnginesDesc")}
-                </p>
-              </div>
-
-              <div className="workspace-empty-card">
-                <span className="workspace-empty-card-kicker">{t("workspace.empty.workflow")}</span>
-                <strong className="workspace-empty-card-title">
-                  {t("workspace.empty.connectToQuery")}
-                </strong>
-                <p className="workspace-empty-card-copy">
-                  {t("workspace.empty.connectToQueryDesc")}
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      );
+      return <WorkspaceEmptyState t={t} onSetConnectionFormIntent={onSetConnectionFormIntent} />;
     }
 
     return (
-      <div className="workspace-empty workspace-ready-shell">
-        <div className="workspace-empty-panel workspace-ready-panel">
-          <div className="workspace-ready-header">
-            <div className="workspace-ready-header-left">
-              <div className="workspace-ready-icon">
-                <Sparkles className="workspace-ready-glyph w-5 h-5" />
-              </div>
-              <div className="workspace-ready-header-copy">
-                <span className="workspace-ready-kicker">{t("workspace.ready.kicker")}</span>
-                <h2 className="workspace-ready-title">{t("workspace.ready.title")}</h2>
-                <p className="workspace-ready-desc">{t("workspace.ready.description")}</p>
-              </div>
-            </div>
-            <div className="workspace-ready-header-right">
-              <div className="workspace-ready-meta-chip">
-                <span className="workspace-ready-meta-label">
-                  {t("workspace.ready.connection")}
-                </span>
-                <strong className="workspace-ready-meta-value">
-                  {activeConn?.name || activeDatabaseLabel}
-                </strong>
-              </div>
-              <div className="workspace-ready-meta-chip">
-                <span className="workspace-ready-meta-label">{t("workspace.ready.database")}</span>
-                <strong className="workspace-ready-meta-value">{activeDatabaseTarget}</strong>
-              </div>
-              <div className="workspace-ready-meta-chip">
-                <span className="workspace-ready-meta-label">{t("workspace.ready.engine")}</span>
-                <strong className="workspace-ready-meta-value">{activeEngineLabel}</strong>
-              </div>
-            </div>
-          </div>
-
-          <div className="workspace-ready-actions workspace-ready-actions--compact">
-            <button
-              type="button"
-              className="workspace-ready-action-card"
-              data-tone="query"
-              onClick={onNewQuery}
-            >
-              <div className="workspace-ready-action-icon">
-                {workspaceQueryProfile.surface === "command" ? (
-                  <Terminal className="w-4 h-4" />
-                ) : (
-                  <Plus className="w-4 h-4" />
-                )}
-              </div>
-              <div className="workspace-ready-action-body">
-                <span className="workspace-ready-action-title">
-                  {workspaceQueryProfile.surface === "command"
-                    ? t("workspace.ready.commandTitle")
-                    : t("workspace.ready.queryTitle")}
-                </span>
-                <span className="workspace-ready-action-kicker">
-                  {workspaceQueryProfile.surface === "command"
-                    ? t("workspace.ready.commandTerminal")
-                    : t("workspace.ready.sqlEditor")}
-                </span>
-              </div>
-              <kbd className="kbd">Ctrl+N</kbd>
-            </button>
-
-            <button
-              type="button"
-              className="workspace-ready-action-card"
-              data-tone="explorer"
-              onClick={onFocusExplorerSearch}
-            >
-              <div className="workspace-ready-action-icon">
-                <Search className="w-4 h-4" />
-              </div>
-              <div className="workspace-ready-action-body">
-                <span className="workspace-ready-action-title">
-                  {t("workspace.ready.explorerTitle")}
-                </span>
-                <span className="workspace-ready-action-kicker">
-                  {t("workspace.ready.explorerKicker")}
-                </span>
-              </div>
-              <kbd className="kbd">Ctrl+B</kbd>
-            </button>
-
-            <button
-              type="button"
-              className="workspace-ready-action-card"
-              data-tone="ai"
-              onClick={() => onOpenAISlidePanel()}
-            >
-              <div className="workspace-ready-action-icon">
-                <Sparkles className="w-4 h-4" />
-              </div>
-              <div className="workspace-ready-action-body">
-                <span className="workspace-ready-action-title">{t("workspace.ready.aiTitle")}</span>
-                <span className="workspace-ready-action-kicker">
-                  {t("workspace.ready.aiKicker")}
-                </span>
-              </div>
-              <kbd className="kbd">Ctrl+Shift+P</kbd>
-            </button>
-
-            <button
-              type="button"
-              className="workspace-ready-action-card"
-              data-tone="diagram"
-              onClick={handleOpenERDiagram}
-            >
-              <div className="workspace-ready-action-icon">
-                <GitBranch className="w-4 h-4" />
-              </div>
-              <div className="workspace-ready-action-body">
-                <span className="workspace-ready-action-title">ER Diagram</span>
-                <span className="workspace-ready-action-kicker">
-                  {t("workspace.ready.database")}
-                </span>
-              </div>
-              <kbd className="kbd">Ctrl+E</kbd>
-            </button>
-          </div>
-        </div>
-      </div>
+      <WorkspaceReadyState
+        t={t}
+        activeConnName={activeConn?.name || activeDatabaseLabel}
+        activeDatabaseTarget={activeDatabaseTarget}
+        activeEngineLabel={activeEngineLabel}
+        workspaceQueryProfile={workspaceQueryProfile}
+        onNewQuery={onNewQuery}
+        onFocusExplorerSearch={onFocusExplorerSearch}
+        onOpenAISlidePanel={() => onOpenAISlidePanel()}
+        onOpenERDiagram={handleOpenERDiagram}
+      />
     );
   };
 
-  const renderSingleTab = (tab: Tab, isActive: boolean) => {
-    switch (tab.type) {
-      case "query":
-        return (
-          <ErrorBoundary>
-            <Suspense fallback={<LazyPanelFallback />}>
-              <SQLEditor
-                key={tab.id}
-                connectionId={tab.connectionId}
-                initialContent={tab.content || ""}
-                initialCursor={tab.editorCursor}
-                tabId={tab.id}
-                tabSource={tab.source}
-                initialState={querySessionByTab[tab.id]}
-                runRequestNonce={queryRunRequestByTab[tab.id] ?? 0}
-                onChromeChange={(state) => onHandleQueryChromeChange(tab.id, state)}
-                onStateChange={(state) => onHandleQuerySessionChange(tab.id, state)}
-              />
-            </Suspense>
-          </ErrorBoundary>
-        );
-      case "table":
-        return (
-          <ErrorBoundary>
-            <Suspense fallback={<LazyPanelFallback />}>
-              <DataGrid
-                key={tab.id}
-                connectionId={tab.connectionId}
-                tableName={tab.tableName}
-                database={tab.database}
-                queryResult={tab.queryResult}
-                rowFocus={tab.rowFocus}
-                isActive={isActive}
-              />
-            </Suspense>
-          </ErrorBoundary>
-        );
-      case "structure":
-        return (
-          <ErrorBoundary>
-            <Suspense fallback={<LazyPanelFallback />}>
-              <TableStructure
-                key={tab.id}
-                connectionId={tab.connectionId}
-                tableName={tab.tableName || ""}
-                database={tab.database}
-                isActive={isActive}
-                structureFocusSection={tab.structureFocusSection}
-                structureFocusColumn={tab.structureFocusColumn}
-                structureFocusToken={tab.structureFocusToken}
-              />
-            </Suspense>
-          </ErrorBoundary>
-        );
-      case "metrics":
-        return (
-          <ErrorBoundary>
-            <Suspense fallback={<LazyPanelFallback />}>
-              <MetricsBoard
-                key={tab.id}
-                connectionId={tab.connectionId}
-                database={tab.database}
-                tabId={tab.id}
-                boardId={tab.metricsBoardId}
-                integratedSidebar={false}
-              />
-            </Suspense>
-          </ErrorBoundary>
-        );
-      case "er-diagram":
-        return (
-          <ErrorBoundary>
-            <Suspense fallback={<LazyPanelFallback />}>
-              <ERDiagram key={tab.id} connectionId={tab.connectionId} database={tab.database} />
-            </Suspense>
-          </ErrorBoundary>
-        );
-      default:
-        return null;
-    }
-  };
+  const renderSingleTab = (tab: Tab, isActive: boolean) => (
+    <WorkspaceTabContent
+      tab={tab}
+      isActive={isActive}
+      querySessionByTab={querySessionByTab}
+      queryRunRequestByTab={queryRunRequestByTab}
+      onHandleQueryChromeChange={onHandleQueryChromeChange}
+      onHandleQuerySessionChange={onHandleQuerySessionChange}
+    />
+  );
 
-  const sidebarNavItems = [
-    {
-      key: "database",
-      icon: FolderTree,
-      label: t("sidebar.dbShort"),
-      title: t("sidebar.databaseExplorer"),
-      active: isDatabasePanelActive,
-      onClick: onHandleShowDatabaseWorkspace,
-      disabled: !isConnected,
-    },
-    {
-      key: "erd",
-      icon: GitBranch,
-      label: t("sidebar.erdShort"),
-      title: t("sidebar.erdDiagram"),
-      active: isERDiagramPanelActive,
-      onClick: handleOpenERDiagram,
-      disabled: !isConnected || !activeConn?.id,
-    },
-    {
-      key: "metrics",
-      icon: BarChart3,
-      label: t("sidebar.metricsShort"),
-      title: t("sidebar.metricsBoards"),
-      active: isMetricsPanelActive,
-      onClick: onOpenMetricsBoard,
-      disabled: !isConnected,
-    },
-    {
-      key: "profiler",
-      icon: Activity,
-      label: t("sidebar.profilerShort"),
-      title: t("sidebar.liveProfiler"),
-      // The profiler is a modal overlay, not a workspace panel, so it has no
-      // persistent "active" panel state — the rail button just launches it.
-      active: false,
-      onClick: () => window.dispatchEvent(new CustomEvent("open-live-profiler")),
-      disabled: !isConnected,
-    },
-  ] as const;
-
-  // Single source of truth for the sidebar navigation rail. `compact` (collapsed
-  // sidebar) hides the text labels but keeps the exact same item set, order and
-  // actions as the expanded rail so the two states never drift apart.
   const renderSidebarNav = (compact: boolean) => (
-    <div
-      className={
-        compact
-          ? "workspace-sidebar-rail workspace-sidebar-rail--compact"
-          : "workspace-sidebar-rail"
-      }
-    >
-      {sidebarNavItems.map((item) => {
-        const Icon = item.icon;
-        return (
-          <button
-            key={item.key}
-            type="button"
-            className={`workspace-sidebar-rail-btn ${item.active ? "active" : ""}`}
-            onClick={() => {
-              if (item.disabled) return;
-              item.onClick();
-            }}
-            title={item.title}
-            disabled={item.disabled}
-          >
-            <Icon className="w-3.5 h-3.5" />
-            <span className="sr-only">{item.label}</span>
-          </button>
-        );
-      })}
-
-      <div className="workspace-sidebar-rail-spacer" />
-
-      <button
-        type="button"
-        className="workspace-sidebar-rail-btn"
-        onClick={() => onSetConnectionFormIntent("connect")}
-        title={t("sidebar.newConnection")}
-      >
-        <Plus className="w-3.5 h-3.5" />
-        <span className="sr-only">{t("sidebar.newConnection")}</span>
-      </button>
-
-      <button
-        type="button"
-        className="workspace-sidebar-rail-btn"
-        onClick={onToggleSidebar}
-        title={compact ? t("sidebar.expandSidebar") : t("titlebar.collapseSidebar")}
-      >
-        <PanelRightClose className={`w-3.5 h-3.5 ${compact ? "rotate-180" : ""}`} />
-        <span className="sr-only">{t("titlebar.collapseSidebar")}</span>
-      </button>
-    </div>
+    <WorkspaceSidebarNav
+      compact={compact}
+      t={t}
+      isConnected={isConnected}
+      isDatabasePanelActive={isDatabasePanelActive}
+      isERDiagramPanelActive={isERDiagramPanelActive}
+      isMetricsPanelActive={isMetricsPanelActive}
+      activeConnId={activeConn?.id}
+      onHandleShowDatabaseWorkspace={onHandleShowDatabaseWorkspace}
+      onOpenERDiagram={handleOpenERDiagram}
+      onOpenMetricsBoard={onOpenMetricsBoard}
+      onSetConnectionFormIntent={onSetConnectionFormIntent}
+      onToggleSidebar={onToggleSidebar}
+    />
   );
 
   return (

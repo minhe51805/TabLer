@@ -1,18 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft, ArrowRight } from "lucide-react";
-import { docHref, getDocHeadings, getDocs } from "@/lib/docs";
+import { docHref, getDocHeadings, getDocs, docBodyText } from "@/lib/docs";
 import type { SiteLanguage } from "@/lib/i18n";
 import { DocArticle } from "./DocArticle";
 import { DocToc } from "./DocToc";
+import { DocCopyPage } from "./DocCopyPage";
+import { DocFeedback } from "./DocFeedback";
 
-export function DocView({
-  language,
-  slug,
-}: {
-  language: SiteLanguage;
-  slug: string;
-}) {
+export function DocView({ language, slug }: { language: SiteLanguage; slug: string }) {
   const docs = getDocs(language);
   const index = docs.pages.findIndex((page) => page.slug === slug);
 
@@ -24,20 +20,33 @@ export function DocView({
   const previous = index > 0 ? docs.pages[index - 1] : null;
   const next = index < docs.pages.length - 1 ? docs.pages[index + 1] : null;
 
+  const group = docs.groups.find((g) => g.slugs.includes(page.slug));
+
   const { headings, idByIndex } = getDocHeadings(page);
   const hasToc = headings.length > 0;
 
   return (
-    <div
-      className={`docs-content-layout${
-        hasToc ? "" : " docs-content-layout--full"
-      }`}
-    >
+    <div className={`docs-content-layout${hasToc ? "" : " docs-content-layout--full"}`}>
       <article className="docs-article-shell">
         <header className="docs-article-head">
-          <p className="eyebrow">{docs.label}</p>
+          <nav className="docs-breadcrumb" aria-label="Breadcrumb">
+            <Link href="/docs">{docs.label}</Link>
+            {group ? (
+              <>
+                <span aria-hidden="true">/</span>
+                <span>{group.label}</span>
+              </>
+            ) : null}
+            <span aria-hidden="true">/</span>
+            <span aria-current="page">{page.title}</span>
+          </nav>
           <h1>{page.title}</h1>
           <p className="docs-article-lede">{page.description}</p>
+          <DocCopyPage
+            text={`# ${page.title}\n\n${page.description}\n\n${docBodyText(page)}`}
+            label={docs.copyPage}
+            copiedLabel={docs.copied}
+          />
         </header>
 
         <DocArticle blocks={page.blocks} headingIds={idByIndex} />
@@ -55,10 +64,7 @@ export function DocView({
             <span />
           )}
           {next ? (
-            <Link
-              className="doc-pager-link doc-pager-next"
-              href={docHref(next.slug)}
-            >
+            <Link className="doc-pager-link doc-pager-next" href={docHref(next.slug)}>
               <span>
                 <em>{docs.next}</em>
                 {next.title}
@@ -69,6 +75,22 @@ export function DocView({
             <span />
           )}
         </nav>
+
+        <DocFeedback
+          label={docs.feedback}
+          yesLabel={docs.feedbackYes}
+          noLabel={docs.feedbackNo}
+          thanksLabel={docs.feedbackThanks}
+        />
+
+        <a
+          className="docs-edit-link"
+          href="https://github.com/minhe51805/TabLer/edit/main/website/src/lib/docs.ts"
+          target="_blank"
+          rel="noreferrer"
+        >
+          {docs.editPage}
+        </a>
       </article>
 
       {hasToc ? <DocToc headings={headings} label={docs.onThisSection} /> : null}

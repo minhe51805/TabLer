@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import hookSource from "@/components/AISlidePanel/hooks/use-ai-slide-panel.ts?raw";
+import hookSource from "@/components/AISlidePanel/ai-agent-generate.ts?raw";
 
 describe("edit_query_sql seam pin (hook wiring tripwire)", () => {
   // Tripwire for the forgotten-wiring bug class: if the hook stops feeding

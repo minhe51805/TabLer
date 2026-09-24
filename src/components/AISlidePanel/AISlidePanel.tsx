@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { translateLanguage, useI18n } from "../../i18n";
+import { useI18n } from "../../i18n";
 import { useAIStore } from "../../stores/aiStore";
 import { useAIAutonomyStore } from "../../stores/aiAutonomyStore";
 import { useSafeModeStore } from "../../stores/safeModeStore";
@@ -8,33 +8,14 @@ import { emitAppToast } from "../../utils/app-toast";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUIStore } from "../../stores/uiStore";
 import {
-  inferDatabaseFromWorkspaceName,
-  selectActiveAIChatWorkspace,
-  useAIChatWorkspaceStore,
-} from "../../stores/aiChatWorkspaceStore";
-import {
   AUTO_COMPACT_TRIGGER_CHARS,
-  COMPACT_COMMAND,
-  buildCompactTranscript,
-  buildCompactUserPrompt,
-  buildPostCompactHistory,
   buildWorkspaceContextMessages,
-  deriveMemoryTitle,
-  extractDigestFromReply,
-  extractMemoryKeywords,
   isCompactCommand,
   estimateTokensFromChars,
-  formatTokensCompact,
   resolveAutoCompactTokenLimit,
 } from "../../utils/ai-context-compact";
-import type { AIConversationMessage, MetricsWidgetType } from "../../types";
-import type { AIMetricsWidgetSpec } from "../../utils/metrics-board-templates";
 import { normalizeAIProviderConfigs } from "../../utils/ai-provider-registry";
-import {
-  denyPendingAIFailoverConsent,
-  resolveAIFailoverConsent,
-} from "../../utils/ai-failover-consent";
-import { invokeMutation, invokeWithTimeout } from "../../utils/tauri-utils";
+import { invokeMutation } from "../../utils/tauri-utils";
 import { getLinkedWorkspaceDir } from "../../hooks/useLinkedFolders";
 import {
   buildComposerCommandContext,
@@ -43,18 +24,8 @@ import {
   findFileCommandName,
   isBackupCommand,
   isRollbackCommand,
-  matchSlashCommands,
-  mergeSlashCommands,
-  runsSlashCommandImmediately,
-  slashCommandDraft,
-  type AIDatabaseCheckpoint,
-  type AISlashCommand,
-  type AgentFileCommand,
   type ResolvedFileCommand,
 } from "./ai-slash-commands";
-import { useCommandPrefsStore } from "../../stores/commandPrefsStore";
-import { requestAICheckpointPick } from "./ai-checkpoint-picker";
-import { formatAgentSql } from "../../utils/ai-sql-format";
 import { AIWorkspacePanelView } from "./AIWorkspacePanelView";
 import { useAIAssistantGeneration } from "./hooks/use-ai-assistant-generation";
 import { useAIDashboardBubbleUpdates } from "./hooks/use-ai-dashboard-bubble-updates";
@@ -63,77 +34,38 @@ import { useAIPanelPreferences } from "./hooks/use-ai-panel-preferences";
 import { AI_REQUEST_REPLACED_MESSAGE } from "./ai-agent-action-requestor";
 import { resolveEditorAssistPrompt, useAISlidePanel } from "./hooks/use-ai-slide-panel";
 import { useAgentScheduleRunner } from "./hooks/use-agent-schedule-runner";
+import { useAIChatWorkspaces } from "./hooks/use-ai-chat-workspaces";
+import { useAIConsentGates } from "./hooks/use-ai-consent-gates";
+import { useAISlashMenu } from "./hooks/use-ai-slash-menu";
+import { useAIChatThreads } from "./hooks/use-ai-chat-threads";
+import { useAIBubbleActions } from "./hooks/use-ai-bubble-actions";
+import { isDataReadApproved } from "./ai-data-read-approvals";
+import { useAICompactContext } from "./hooks/use-ai-compact-context";
+import { useAIComposerAttachments } from "./hooks/use-ai-composer-attachments";
+import { useAIWorkspaceBridge } from "./hooks/use-ai-workspace-bridge";
+import { useAIBubbleRerun, type PendingPrompt } from "./hooks/use-ai-bubble-rerun";
 import {
-  approveDataRead,
-  dataReadScopeKey,
-  isDataReadApproved,
-  revokeDataRead,
-} from "./ai-data-read-approvals";
-import {
-  aiModeAllowsInsert,
-  aiModeAllowsRun,
   getDefaultAIWorkspaceInteractionMode,
   isAIWorkspaceAgentAutonomy,
   DEFAULT_AI_WORKSPACE_AGENT_AUTONOMY,
   type AIWorkspaceAgentAutonomy,
   type AIWorkspaceBubbleData,
-  type AIWorkspaceBubbleFeedback,
   type AIWorkspaceInteractionMode,
 } from "./ai-workspace-types";
 import { getAIWorkspaceCopy } from "./ai-workspace-copy";
-import { getAIPanelCopy } from "./ai-panel-copy";
+import { isDashboardSelectionSource } from "./ai-visualization-intent";
 import {
-  applyLearningProposal,
-  buildLearningSlug,
-  type LearningProposal,
-} from "./ai-agent-learning";
-import { invalidateAgentMemoryIndex } from "./hooks/use-agent-memory";
-import {
-  buildWorkspaceOverviewChartSql,
-  isDashboardSelectionSource,
-  isDashboardVisualizationPrompt,
-  isOverviewVisualizationPrompt,
-  isVisualizationPrompt,
-  prefersVietnameseSystemReply,
-  supportsOverviewMetricsBoard,
-} from "./ai-visualization-intent";
-import {
-  buildAIWorkspaceKey,
   estimateConversationFootprint,
   buildConversationHistoryMessages,
-  getBubbleConversationText,
   createAIWorkspaceId,
-  createChatThread,
   prunePersistedAIWorkspaceState,
   resolveHistoryBudget,
-  sanitizePersistedAIWorkspaceState,
   summarizePromptForDisplay,
   type AIChatThread,
   type PersistedAIWorkspaceState,
 } from "./ai-conversation-state";
-import {
-  buildExecutionDetail,
-  buildPromptWithSelection,
-  isSingleSqlStatement,
-  type SelectionContextState,
-} from "./ai-panel-selection";
-import {
-  MAX_IMAGES_PER_TURN,
-  processFilesIntoAttachmentDrafts,
-  type AIAttachmentDraft,
-} from "../../utils/ai-attachments";
-import type { AIAgentRecordLink } from "./ai-agent-record-links";
-/** Work captured while a run was in flight. `prompt` items carry the composer
- *  snapshot (draft + attachments + attached selection); `rerun` items are an
- *  edited prompt re-run against an existing bubble's slot. */
-type PendingPrompt =
-  | {
-      kind: "prompt";
-      draft: string;
-      attachments: AIAttachmentDraft[];
-      selection: SelectionContextState | null;
-    }
-  | { kind: "rerun"; bubbleId: string; prompt: string };
+import { buildPromptWithSelection, type SelectionContextState } from "./ai-panel-selection";
+import type { AIAttachmentDraft } from "../../utils/ai-attachments";
 
 interface Props {
   isOpen: boolean;
@@ -146,22 +78,6 @@ interface Props {
   };
   initialAttachmentNonce?: number;
   onClose: () => void;
-}
-interface OpenMetricsBoardResult {
-  success: boolean;
-  boardId?: string;
-  error?: string;
-  didChange: boolean;
-  addedCount: number;
-  addedTitles: string[];
-  created: boolean;
-}
-
-interface VisualizationReadConsentState {
-  title: string;
-  message: string;
-  confirmText: string;
-  cancelText: string;
 }
 
 const AI_WORKSPACE_AGENT_AUTONOMY_STORAGE_KEY = "tabler.ai.workspace.agentAutonomy.v1";
@@ -176,16 +92,6 @@ export function AISlidePanel({
 }: Props) {
   const { language } = useI18n();
   const aiCopy = useMemo(() => getAIWorkspaceCopy(language), [language]);
-  const chatWorkspaces = useAIChatWorkspaceStore((state) => state.workspaces);
-  const activeChatWorkspaceId = useAIChatWorkspaceStore((state) => state.activeWorkspaceId);
-  const createChatWorkspace = useAIChatWorkspaceStore((state) => state.createWorkspace);
-  const renameChatWorkspace = useAIChatWorkspaceStore((state) => state.renameWorkspace);
-  const deleteChatWorkspace = useAIChatWorkspaceStore((state) => state.deleteWorkspace);
-  const setActiveChatWorkspace = useAIChatWorkspaceStore((state) => state.setActiveWorkspace);
-  const saveChatContextDigest = useAIChatWorkspaceStore((state) => state.saveContextDigest);
-  const hydrateChatContextDigests = useAIChatWorkspaceStore((state) => state.hydrateDigests);
-  const bindChatWorkspaceDatabase = useAIChatWorkspaceStore((state) => state.bindWorkspaceDatabase);
-  const chatDatabaseCatalog = useConnectionStore((state) => state.databases);
   const aiConfigs = useAIStore((state) => state.aiConfigs);
   const loadAIConfigs = useAIStore((state) => state.loadAIConfigs);
   const saveAIConfigs = useAIStore((state) => state.saveAIConfigs);
@@ -193,32 +99,12 @@ export function AISlidePanel({
     (state) =>
       state.connections.find((connection) => connection.id === state.activeConnectionId)?.db_type,
   );
-  // Consent state lives ABOVE the agent hook so the hook's cancelGeneration
-  // can settle pending dialogs through onGenerationCancelled — a stopped run
-  // waiting on a consent promise would otherwise never unwind.
-  const visualizationConsentResolverRef = useRef<((value: boolean) => void) | null>(null);
-  const visualizationApprovalScopeRef = useRef<string | null>(null);
-  const destructiveConsentResolverRef = useRef<((approved: boolean) => void) | null>(null);
-  const [visualizationConsentPending, setVisualizationConsentPending] =
-    useState<VisualizationReadConsentState | null>(null);
-  const [destructiveConsentPending, setDestructiveConsentPending] =
-    useState<VisualizationReadConsentState | null>(null);
-  const [isFailoverConsentPending, setIsFailoverConsentPending] = useState(false);
-  const [isSessionDataReadEnabled, setIsSessionDataReadEnabled] = useState(false);
-
-  // Deny every consent this component can be waiting on. Denials are never
-  // persisted — a cancelled run is not a user decision, so the question may
-  // be asked again on the next run.
-  const denyPendingConsents = useCallback(() => {
-    visualizationConsentResolverRef.current?.(false);
-    visualizationConsentResolverRef.current = null;
-    setVisualizationConsentPending(null);
-    destructiveConsentResolverRef.current?.(false);
-    destructiveConsentResolverRef.current = null;
-    setDestructiveConsentPending(null);
-    denyPendingAIFailoverConsent();
-    setIsFailoverConsentPending(false);
-  }, []);
+  // Bridge: the consent hook needs connectionId/currentDatabase/activeProvider
+  // from useAISlidePanel, while useAISlidePanel needs denyPendingConsents for
+  // onGenerationCancelled. A stable ref-forwarded wrapper breaks the cycle —
+  // the real deny is wired right after the consent hook runs below.
+  const denyPendingConsentsRef = useRef<() => void>(() => {});
+  const denyPendingConsents = useCallback(() => denyPendingConsentsRef.current(), []);
 
   const {
     activeProvider,
@@ -239,6 +125,33 @@ export function AISlidePanel({
     runSql,
   } = useAISlidePanel({ isOpen, onGenerationCancelled: denyPendingConsents });
 
+  const {
+    denyPendingConsents: denyPendingConsentsImpl,
+    destructiveConsentPending,
+    destructiveConsentResolverRef,
+    failoverConsentState,
+    getCurrentVisualizationApprovalScope,
+    handleResolveFailoverConsent,
+    isSessionDataReadEnabled,
+    requestDestructiveConsent,
+    requestVisualizationReadConsent,
+    resolveDestructiveConsent,
+    resolveVisualizationConsent,
+    setDestructiveConsentPending,
+    setIsSessionDataReadEnabled,
+    setSessionDataReadEnabled,
+    setVisualizationConsentPending,
+    visualizationApprovalScopeRef,
+    visualizationConsentPending,
+    visualizationConsentResolverRef,
+  } = useAIConsentGates({
+    connectionId,
+    currentDatabase,
+    language,
+    activeProvider,
+  });
+  denyPendingConsentsRef.current = denyPendingConsentsImpl;
+
   // P10: the panel is the app's only agent runtime, so scheduled agent tasks
   // are executed here — read-only, one at a time, and only when the workspace is
   // already on the task's own connection/database. A task that cannot run stays
@@ -255,98 +168,35 @@ export function AISlidePanel({
   const isOpenRef = useRef(isOpen);
   const activeGenerationBubbleIdRef = useRef<string | null>(null);
   const cancelledGenerationBubbleIdsRef = useRef(new Set<string>());
-  const activeChatWorkspace = useMemo(
-    () =>
-      selectActiveAIChatWorkspace({
-        workspaces: chatWorkspaces,
-        activeWorkspaceId: activeChatWorkspaceId,
-      }),
-    [chatWorkspaces, activeChatWorkspaceId],
-  );
-  const currentWorkspaceKey = useMemo(
-    () => buildAIWorkspaceKey(connectionId, currentDatabase, activeChatWorkspaceId),
-    [connectionId, currentDatabase, activeChatWorkspaceId],
-  );
-  const lastWorkspaceKeyRef = useRef(currentWorkspaceKey);
-  const initialThreadRef = useRef<AIChatThread | null>(null);
-  if (!initialThreadRef.current) {
-    initialThreadRef.current = createChatThread(1, currentWorkspaceKey);
-  }
+  const [historyHydrated, setHistoryHydrated] = useState(false);
 
-  // A chat workspace owns its database context (like separate SSMS windows):
-  // activating a workspace must re-scope the connection to that workspace's
-  // database so tables/schemaObjects and the AI schema capsule follow it.
-  const ensureWorkspaceDatabase = useCallback(
-    (workspaceId: string | null) => {
-      if (!workspaceId || !connectionId) return;
-      const workspace = chatWorkspaces.find((item) => item.id === workspaceId);
-      if (!workspace) return;
-
-      void (async () => {
-        let boundDatabase = workspace.database ?? null;
-        let catalog = chatDatabaseCatalog;
-
-        // The catalog may be empty right after an app restart (the connection
-        // store keeps no per-session database list until it is fetched); legacy
-        // workspaces also need it to backfill their database from the name.
-        if (!boundDatabase || catalog.length === 0) {
-          if (catalog.length === 0) {
-            await useConnectionStore.getState().fetchDatabases(connectionId);
-            catalog = useConnectionStore.getState().databases;
-          }
-          if (!boundDatabase) {
-            const inferred = inferDatabaseFromWorkspaceName(workspace.name, catalog);
-            if (inferred) {
-              boundDatabase = inferred;
-              bindChatWorkspaceDatabase(workspace.id, inferred);
-            }
-          }
-        }
-
-        if (!boundDatabase) return;
-        // The workspace is bound to a database this server does not expose
-        // (e.g. the binding came from a different connection): leave the
-        // current context untouched instead of erroring on `use_database`.
-        if (catalog.length > 0 && !catalog.some((item) => item.name === boundDatabase)) return;
-        if (boundDatabase === useConnectionStore.getState().currentDatabase) return;
-        await useConnectionStore.getState().switchDatabase(connectionId, boundDatabase);
-      })();
-    },
-    [bindChatWorkspaceDatabase, chatDatabaseCatalog, chatWorkspaces, connectionId],
-  );
-
-  const handleSelectChatWorkspace = useCallback(
-    (workspaceId: string | null) => {
-      setActiveChatWorkspace(workspaceId);
-      ensureWorkspaceDatabase(workspaceId);
-    },
-    [ensureWorkspaceDatabase, setActiveChatWorkspace],
-  );
-
-  // Re-scopes the database once per workspace activation (panel open or
-  // workspace switch); manual database changes elsewhere are never reverted.
-  const syncedWorkspaceIdRef = useRef<string | null | undefined>(undefined);
-  useEffect(() => {
-    if (!isOpen) return;
-    if (syncedWorkspaceIdRef.current === activeChatWorkspaceId) return;
-    syncedWorkspaceIdRef.current = activeChatWorkspaceId;
-    // Only adopt the workspace's own database when the connection has no active
-    // database yet. If the user already selected a database (e.g. from the
-    // sidebar), that explicit choice is authoritative: merely opening the panel
-    // must not silently re-scope the shared connection session — on SQL Server
-    // a single session backs the whole workspace, so overriding it here makes
-    // the AI read a database the user never picked. Explicitly switching chat
-    // workspaces (handleSelectChatWorkspace) still re-scopes on purpose.
-    if (useConnectionStore.getState().currentDatabase) return;
-    ensureWorkspaceDatabase(activeChatWorkspaceId);
-  }, [activeChatWorkspaceId, ensureWorkspaceDatabase, isOpen]);
+  const {
+    activeChatWorkspace,
+    activeChatWorkspaceId,
+    chatDatabaseCatalog,
+    chatWorkspaces,
+    currentWorkspaceKey,
+    handleCreateUserWorkspace,
+    handleDeleteUserWorkspace,
+    handleRebindChatWorkspaceDatabase,
+    handleSelectChatWorkspace,
+    initialThreadRef,
+    lastWorkspaceKeyRef,
+    renameChatWorkspace,
+    saveChatContextDigest,
+    setThreadMemories,
+    threadMemories,
+  } = useAIChatWorkspaces({
+    connectionId,
+    currentDatabase,
+    isOpen,
+    isGenerating,
+    isRunning,
+    historyHydrated,
+    aiCopy,
+  });
 
   const [promptDraft, setPromptDraft] = useState(initialPrompt);
-  // Composer "/" command menu: open while the draft is exactly "/<letters>",
-  // dismissed by Escape until the draft changes again.
-  const [slashActiveIndex, setSlashActiveIndex] = useState(0);
-  const [slashDismissed, setSlashDismissed] = useState(false);
-  const [isBackingUp, setIsBackingUp] = useState(false);
   const [bubbles, setBubbles] = useState<AIWorkspaceBubbleData[]>([]);
   // Mirror for drain-time lookups: a queued edit-rerun resolves its bubble
   // after the current run settles, when the `bubbles` closure is already stale.
@@ -383,7 +233,6 @@ export function AISlidePanel({
     Record<string, string>
   >({});
   const [activeThreadId, setActiveThreadId] = useState<string>(initialThreadRef.current!.id);
-  const [historyHydrated, setHistoryHydrated] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isSwitchingProvider, setIsSwitchingProvider] = useState(false);
   const isProviderFailingOver = useAIStore((state) => state.isProviderFailingOver);
@@ -391,7 +240,6 @@ export function AISlidePanel({
   // picks and automatic failovers — either way the active provider is moving.
   const isProviderSwitching = isSwitchingProvider || isProviderFailingOver;
   const [attachedSelection, setAttachedSelection] = useState<SelectionContextState | null>(null);
-  const [deleteThreadPending, setDeleteThreadPending] = useState<string | null>(null);
   const [composerAttachments, setComposerAttachments] = useState<AIAttachmentDraft[]>([]);
   // Messages sent while a run is in flight wait here instead of being dropped:
   // the send path is single-slot (requestIdRef/streamingText are shared), so
@@ -400,30 +248,6 @@ export function AISlidePanel({
   const [pendingQueue, setPendingQueue] = useState<PendingPrompt[]>([]);
   const pendingQueueRef = useRef<PendingPrompt[]>([]);
   const [isAttachmentManagerOpen, setIsAttachmentManagerOpen] = useState(false);
-
-  // The agent hook raises "ai-failover-consent-request" the first time a
-  // provider fails; the dialog below collects the once-only decision.
-  useEffect(() => {
-    const onRequest = () => setIsFailoverConsentPending(true);
-    window.addEventListener("ai-failover-consent-request", onRequest);
-    return () => window.removeEventListener("ai-failover-consent-request", onRequest);
-  }, []);
-
-  const handleResolveFailoverConsent = useCallback((approved: boolean) => {
-    setIsFailoverConsentPending(false);
-    resolveAIFailoverConsent(approved);
-  }, []);
-
-  const failoverConsentState = isFailoverConsentPending
-    ? {
-        title: translateLanguage(language, "ai.failover.consentTitle"),
-        message: translateLanguage(language, "ai.failover.consentBody", {
-          failed: activeProvider?.name?.trim() || activeProvider?.model?.trim() || "",
-        }),
-        confirmText: translateLanguage(language, "ai.failover.consentAllow"),
-        cancelText: translateLanguage(language, "ai.failover.consentDeny"),
-      }
-    : null;
 
   const workspaceThreads = useMemo(
     () => chatThreads.filter((thread) => thread.workspaceKey === currentWorkspaceKey),
@@ -629,176 +453,6 @@ export function AISlidePanel({
     window.setTimeout(jump, 180);
   }, []);
 
-  const getCurrentVisualizationApprovalScope = useCallback(
-    // Persistent scope: connection + database only. Once a database is
-    // approved the prompt stays quiet across app launches and AI sessions
-    // (see ai-data-read-approvals.ts).
-    () => dataReadScopeKey(connectionId, currentDatabase),
-    [connectionId, currentDatabase],
-  );
-
-  const resolveVisualizationConsent = useCallback(
-    (approved: boolean) => {
-      const resolver = visualizationConsentResolverRef.current;
-      visualizationConsentResolverRef.current = null;
-      setVisualizationConsentPending(null);
-      if (approved) {
-        approveDataRead(connectionId, currentDatabase);
-        visualizationApprovalScopeRef.current = getCurrentVisualizationApprovalScope();
-        setIsSessionDataReadEnabled(true);
-      } else if (visualizationApprovalScopeRef.current === getCurrentVisualizationApprovalScope()) {
-        revokeDataRead(connectionId, currentDatabase);
-        visualizationApprovalScopeRef.current = null;
-        setIsSessionDataReadEnabled(false);
-      }
-      resolver?.(approved);
-    },
-    [connectionId, currentDatabase, getCurrentVisualizationApprovalScope],
-  );
-
-  const requestVisualizationReadConsent = useCallback(
-    async (promptText: string) => {
-      if (!connectionId) {
-        return true;
-      }
-
-      if (visualizationApprovalScopeRef.current === getCurrentVisualizationApprovalScope()) {
-        return true;
-      }
-
-      if (visualizationConsentResolverRef.current) {
-        visualizationConsentResolverRef.current(false);
-        visualizationConsentResolverRef.current = null;
-      }
-
-      const isVietnamese = prefersVietnameseSystemReply(promptText, language);
-      const isVisualization = isVisualizationPrompt(promptText);
-      const databaseLabel = currentDatabase || "current database";
-
-      return new Promise<boolean>((resolve) => {
-        visualizationConsentResolverRef.current = resolve;
-        setVisualizationConsentPending({
-          title: isVietnamese
-            ? isVisualization
-              ? "Cấp quyền đọc data để vẽ biểu đồ?"
-              : "Cấp quyền đọc data cho Agent?"
-            : isVisualization
-              ? "Allow AI to read data for charts?"
-              : "Allow Agent to read live data?",
-          message: isVietnamese
-            ? isVisualization
-              ? `Model đã có schema để hiểu cấu trúc DB. Bước tiếp theo cần đọc dữ liệu chỉ-đọc trong ${databaseLabel} để tạo chart/dashboard. Quyền sẽ được ghi nhớ cho database này, không hỏi lại. Bạn có muốn tiếp tục không?`
-              : `Agent đã có schema để hiểu cấu trúc DB. Bước tiếp theo cần đọc dữ liệu chỉ-đọc trong ${databaseLabel} để trả lời. Quyền sẽ được ghi nhớ cho database này, không hỏi lại. Bạn có muốn tiếp tục không?`
-            : isVisualization
-              ? `The model already has a schema capsule for structure. The next step needs read-only access to live data in ${databaseLabel} to build charts or dashboards. The grant is remembered for this database and will not be asked again. Continue?`
-              : `The agent already has the database schema. The next step needs read-only access to live data in ${databaseLabel} to answer your request. The grant is remembered for this database and will not be asked again. Continue?`,
-          confirmText: isVietnamese ? "Cho phép đọc data" : "Allow data read",
-          cancelText: isVietnamese ? "Không cho phép" : "Deny",
-        });
-      });
-    },
-    [connectionId, currentDatabase, getCurrentVisualizationApprovalScope, language],
-  );
-
-  // Destructive-action consent: ALWAYS asks, every single time. It never
-  // reuses the standing data-read grant (which silently auto-approves) and
-  // never persists an approval. Used for irreversible operations such as the
-  // agent's delete_memory, which must not ride on a read permission.
-  const resolveDestructiveConsent = useCallback((approved: boolean) => {
-    const resolver = destructiveConsentResolverRef.current;
-    destructiveConsentResolverRef.current = null;
-    setDestructiveConsentPending(null);
-    resolver?.(approved);
-  }, []);
-
-  const requestDestructiveConsent = useCallback(
-    async (detail: {
-      title: string;
-      message: string;
-      confirmText?: string;
-      cancelText?: string;
-    }) => {
-      // A new destructive prompt cancels any still-pending one (resolved false).
-      destructiveConsentResolverRef.current?.(false);
-      destructiveConsentResolverRef.current = null;
-      return new Promise<boolean>((resolve) => {
-        destructiveConsentResolverRef.current = resolve;
-        setDestructiveConsentPending({
-          title: detail.title,
-          message: detail.message,
-          confirmText: detail.confirmText ?? "Confirm",
-          cancelText: detail.cancelText ?? "Cancel",
-        });
-      });
-    },
-    [],
-  );
-
-  // Clicking the Data toggle only OPENS the confirmation dialog; the grant
-  // happens in resolveVisualizationConsent once the user confirms, so no
-  // permission is ever remembered from a single click.
-  const confirmSessionDataReadEnable = useCallback(() => {
-    if (!connectionId) {
-      return;
-    }
-    if (visualizationApprovalScopeRef.current === getCurrentVisualizationApprovalScope()) {
-      return;
-    }
-    if (visualizationConsentResolverRef.current) {
-      visualizationConsentResolverRef.current(false);
-      visualizationConsentResolverRef.current = null;
-    }
-    const isVietnamese = language === "vi";
-    const databaseLabel =
-      currentDatabase || (isVietnamese ? "database hiện tại" : "the current database");
-    visualizationConsentResolverRef.current = (approved: boolean) => {
-      resolveVisualizationConsent(approved);
-    };
-    setVisualizationConsentPending({
-      title: isVietnamese ? "Cho phép AI đọc live data?" : "Allow AI to read live data?",
-      message: isVietnamese
-        ? `TableR sẽ cho AI đọc dữ liệu chỉ-đọc trong ${databaseLabel} cho đến khi bạn tắt quyền này hoặc đổi sang database khác. Quyền được ghi nhớ, không hỏi lại. Tiếp tục?`
-        : `TableR will let the AI read read-only data in ${databaseLabel} until you turn this off or switch databases. The grant is remembered and will not be asked again. Continue?`,
-      confirmText: isVietnamese ? "Cho phép đọc data" : "Allow data read",
-      cancelText: isVietnamese ? "Không cho phép" : "Deny",
-    });
-  }, [
-    connectionId,
-    currentDatabase,
-    getCurrentVisualizationApprovalScope,
-    language,
-    resolveVisualizationConsent,
-    visualizationApprovalScopeRef,
-    visualizationConsentResolverRef,
-  ]);
-
-  const setSessionDataReadEnabled = useCallback(
-    (enabled: boolean) => {
-      if (enabled) {
-        confirmSessionDataReadEnable();
-        return;
-      }
-
-      if (visualizationConsentResolverRef.current) {
-        visualizationConsentResolverRef.current(false);
-        visualizationConsentResolverRef.current = null;
-      }
-      // An explicit toggle back to Ask re-arms the prompt for this database
-      // only; approvals for other databases stay remembered.
-      revokeDataRead(connectionId, currentDatabase);
-      visualizationApprovalScopeRef.current = null;
-      setVisualizationConsentPending(null);
-      setIsSessionDataReadEnabled(false);
-    },
-    [
-      confirmSessionDataReadEnable,
-      connectionId,
-      currentDatabase,
-      visualizationApprovalScopeRef,
-      visualizationConsentResolverRef,
-    ],
-  );
-
   useAIWorkspaceEffects({
     historyHydrated,
     isOpen,
@@ -875,6 +529,7 @@ export function AISlidePanel({
     connectionId,
     currentDatabase,
     getCurrentVisualizationApprovalScope,
+    setIsSessionDataReadEnabled,
     visualizationApprovalScopeRef,
   ]);
 
@@ -947,150 +602,16 @@ export function AISlidePanel({
     ],
   );
 
-  const openSqlInWorkspace = useCallback(
-    (
-      sql: string,
-      options?: {
-        title?: string;
-        viewMode?: "table" | "chart";
-        autoRun?: boolean;
-        focusWorkspace?: boolean;
-      },
-    ) => {
-      const normalizedSql = sql.trim();
-      if (!normalizedSql) return false;
-
-      if (!connectionId) {
-        setError(
-          language === "vi"
-            ? "Hãy kết nối database trước khi mở query AI trong workspace."
-            : "Connect to a database before opening an AI query in the workspace.",
-        );
-        return false;
-      }
-
-      window.dispatchEvent(
-        new CustomEvent("open-ai-workspace-query", {
-          detail: {
-            sql: normalizedSql,
-            connectionId,
-            database: currentDatabase || undefined,
-            title: options?.title,
-            resultViewMode: options?.viewMode ?? "table",
-            autoRun: options?.autoRun ?? false,
-            focusWorkspace: options?.focusWorkspace ?? false,
-          },
-        }),
-      );
-      return true;
-    },
-    [connectionId, currentDatabase, language, setError],
-  );
-
-  const openMetricsBoardInWorkspace = useCallback(
-    async (options?: {
-      title?: string;
-      template?: "database-overview";
-      mode?: "create" | "augment" | "rebuild" | "edit";
-      boardId?: string;
-      focusWorkspace?: boolean;
-      editTargetTitle?: string;
-      editTargetType?: MetricsWidgetType;
-      editQuery?: string;
-      editTitle?: string;
-      aiWidgets?: AIMetricsWidgetSpec[];
-    }) => {
-      if (!connectionId) {
-        setError(
-          language === "vi"
-            ? "Hãy kết nối database trước khi mở dashboard AI trong workspace."
-            : "Connect to a database before opening an AI dashboard in the workspace.",
-        );
-        return {
-          success: false,
-          didChange: false,
-          addedCount: 0,
-          addedTitles: [],
-          created: false,
-        } satisfies OpenMetricsBoardResult;
-      }
-
-      const requestId = createAIWorkspaceId();
-
-      const completion = await new Promise<OpenMetricsBoardResult>((resolve) => {
-        const timeoutId = window.setTimeout(() => {
-          window.removeEventListener("open-ai-metrics-board-complete", handleComplete);
-          resolve({
-            success: false,
-            error:
-              language === "vi"
-                ? "Thao tac dashboard AI het thoi gian cho."
-                : "The AI dashboard action timed out.",
-            didChange: false,
-            addedCount: 0,
-            addedTitles: [],
-            created: false,
-          });
-        }, 10_000);
-
-        const handleComplete = (event: Event) => {
-          const detail = (
-            event as CustomEvent<{
-              requestId?: string;
-              success?: boolean;
-              error?: string;
-              boardId?: string;
-              didChange?: boolean;
-              addedCount?: number;
-              addedTitles?: string[];
-              created?: boolean;
-            }>
-          ).detail;
-          if (detail?.requestId !== requestId) return;
-          window.clearTimeout(timeoutId);
-          window.removeEventListener("open-ai-metrics-board-complete", handleComplete);
-          if (!detail.success && detail.error) {
-            setError(detail.error);
-          }
-          resolve({
-            success: Boolean(detail?.success),
-            boardId: detail?.boardId,
-            error: detail?.error,
-            didChange: Boolean(detail?.didChange),
-            addedCount: Math.max(0, detail?.addedCount ?? 0),
-            addedTitles: Array.isArray(detail?.addedTitles)
-              ? detail.addedTitles.filter((value) => typeof value === "string")
-              : [],
-            created: Boolean(detail?.created),
-          });
-        };
-
-        window.addEventListener("open-ai-metrics-board-complete", handleComplete);
-        window.dispatchEvent(
-          new CustomEvent("open-ai-metrics-board", {
-            detail: {
-              requestId,
-              template: options?.template ?? "database-overview",
-              mode: options?.mode ?? "create",
-              boardId: options?.boardId,
-              editTargetTitle: options?.editTargetTitle,
-              editTargetType: options?.editTargetType,
-              editQuery: options?.editQuery,
-              editTitle: options?.editTitle,
-              aiWidgets: options?.aiWidgets,
-              connectionId,
-              database: currentDatabase || undefined,
-              title: options?.title,
-              focusWorkspace: options?.focusWorkspace ?? false,
-            },
-          }),
-        );
-      });
-
-      return completion;
-    },
-    [connectionId, currentDatabase, language, setError],
-  );
+  const { completeWorkspaceRedirect, openMetricsBoardInWorkspace, openSqlInWorkspace } =
+    useAIWorkspaceBridge({
+      aiCopy,
+      connectionId,
+      currentDatabase,
+      language,
+      openSessionRef,
+      setBubbles,
+      setError,
+    });
 
   const {
     updateBubbleForDashboardNoChange,
@@ -1101,34 +622,6 @@ export function AISlidePanel({
     updateBubbleForDashboardEdited,
     updateBubbleForDashboardRebuilt,
   } = useAIDashboardBubbleUpdates({ language, setBubbles });
-
-  const completeWorkspaceRedirect = useCallback(
-    (bubbleId?: string, sessionId?: number) => {
-      if (typeof sessionId === "number" && sessionId !== openSessionRef.current) return;
-      // Keep the conversation intact: instead of deleting the bubble and closing
-      // the panel, mark the bubble as opened in a workspace tab so the user can
-      // ask follow-up questions in the same thread.
-      if (bubbleId) {
-        setBubbles((current) =>
-          current.map((bubble) =>
-            bubble.id === bubbleId
-              ? {
-                  ...bubble,
-                  kind: "result",
-                  status: "ready",
-                  title: aiCopy.bubbleStates.openedInWorkspaceTitle,
-                  subtitle: aiCopy.bubbleStates.openedInWorkspaceSubtitle,
-                  preview: aiCopy.bubbleStates.openedInWorkspacePreview,
-                  detail: bubble.detail || aiCopy.bubbleStates.openedInWorkspacePreview,
-                  autoDismissAt: undefined,
-                }
-              : bubble,
-          ),
-        );
-      }
-    },
-    [aiCopy],
-  );
 
   const { createAssistantBubble } = useAIAssistantGeneration({
     activeAgentAutonomy,
@@ -1167,568 +660,73 @@ export function AISlidePanel({
     openSessionRef,
   });
 
-  const [isCompacting, setIsCompacting] = useState(false);
-  const [threadMemories, setThreadMemories] = useState<
-    Record<string, { title: string; keywords: string[]; summary: string }>
-  >({});
-
-  const handleCompactContext = useCallback(
-    async (
-      silent = false,
-    ): Promise<{ digest: string; recentHistory: AIConversationMessage[] } | null> => {
-      if (isCompacting) return null;
-      if (!activeChatWorkspace) {
-        if (!silent) setError(aiCopy.workspace.compactNeedsWorkspace);
-        return null;
-      }
-      const readyBubbles = activeThreadBubbles.filter(
-        (bubble) => bubble.kind === "assistant" && bubble.status === "ready",
-      );
-      if (readyBubbles.length === 0) {
-        if (!silent) setError(aiCopy.workspace.compactEmpty);
-        return null;
-      }
-
-      setIsCompacting(true);
-      try {
-        const transcript = buildCompactTranscript(activeThreadBubbles);
-        const reply = await useAIStore
-          .getState()
-          .askAI(
-            buildCompactUserPrompt(
-              transcript,
-              activeChatWorkspace.contextDigest,
-              activeChatWorkspace.name,
-            ),
-            "",
-            "panel",
-            "general",
-            [],
-          );
-        const digest = extractDigestFromReply(reply);
-        if (digest.trim()) {
-          saveChatContextDigest(activeChatWorkspace.id, digest);
-          try {
-            await invokeMutation("save_workspace_context_snapshot", {
-              workspaceId: activeChatWorkspace.id,
-              kind: "digest",
-              threadId: null,
-              payload: { digest },
-            });
-          } catch (digestCacheError) {
-            console.error("[AIWorkspace] Failed to cache digest:", digestCacheError);
-          }
-        }
-        // Claude Code / opencode semantics: the digest is the essence of the
-        // WHOLE conversation up to this point — every ready bubble is folded in
-        // (the summarizer sees them all via buildCompactTranscript) and no
-        // verbatim scrollback survives beside the digest afterwards.
-        const sortedReady = [...readyBubbles].sort(
-          (left, right) => left.createdAt - right.createdAt,
-        );
-        const removedIds = sortedReady.map((bubble) => bubble.id);
-
-        // Archive the FULL thread transcript in the SQLite cache before touching
-        // anything — compacting never destroys the original conversation (same
-        // contract as opencode's pruned-but-stored entries / Claude Code's
-        // pre-compaction scrollback).
-        const beforeBubbles = activeThreadBubbles.filter(
-          (bubble) => bubble.status !== "loading" && !bubble.compactedAt,
-        );
-        const beforeTokens = estimateTokensFromChars(estimateConversationFootprint(beforeBubbles));
-        const beforeMessages = beforeBubbles.length;
-        const compactedAt = Date.now();
-        const archivedBubbles = activeThreadBubbles.filter((bubble) => bubble.status !== "loading");
-        try {
-          await invokeMutation("save_workspace_context_snapshot", {
-            workspaceId: activeChatWorkspace.id,
-            kind: "transcript",
-            threadId: currentThread?.id ?? null,
-            payload: { compactedAt, bubbles: archivedBubbles },
-          });
-        } catch (archiveError) {
-          console.error("[AIWorkspace] Failed to archive transcript:", archiveError);
-        }
-
-        if (removedIds.length > 0) {
-          setBubbles((current) =>
-            current.map((bubble) =>
-              removedIds.includes(bubble.id) ? { ...bubble, compactedAt } : bubble,
-            ),
-          );
-        }
-
-        const effectiveDigest = digest.trim() || activeChatWorkspace.contextDigest;
-
-        // Codex-style memory: name this thread's digest and tag it with
-        // keywords so related context can be found and re-imported later.
-        if (currentThread?.id && effectiveDigest.trim()) {
-          const memoryTitle = deriveMemoryTitle(
-            effectiveDigest,
-            currentThread.label || activeChatWorkspace.name,
-          );
-          const memoryKeywords = extractMemoryKeywords(effectiveDigest);
-          try {
-            await invokeMutation("upsert_thread_memory", {
-              workspaceId: activeChatWorkspace.id,
-              threadId: currentThread.id,
-              title: memoryTitle,
-              summary: effectiveDigest,
-              keywords: memoryKeywords,
-            });
-            setThreadMemories((current) => ({
-              ...current,
-              [currentThread.id]: {
-                title: memoryTitle,
-                keywords: memoryKeywords,
-                summary: effectiveDigest,
-              },
-            }));
-          } catch (memoryError) {
-            console.error("[AIWorkspace] Failed to persist thread memory:", memoryError);
-            emitAppToast({
-              tone: "error",
-              title:
-                language === "vi" ? "Không lưu được ghi nhớ thread" : "Thread memory not saved",
-              description:
-                language === "vi"
-                  ? "Tóm tắt ngữ cảnh của thread này sẽ không khả dụng cho các lượt sau."
-                  : "This thread's context summary will not be available to future runs.",
-              durationMs: 5000,
-            });
-          }
-        }
-        if (currentThread?.id) {
-          const markerBubble: AIWorkspaceBubbleData = {
-            id: createAIWorkspaceId(),
-            threadId: currentThread.id,
-            workspaceKey: currentWorkspaceKey,
-            interactionMode: activeInteractionMode,
-            kind: "assistant",
-            status: "ready",
-            title: aiCopy.workspace.compactDoneTitle,
-            subtitle: aiCopy.workspace.compactDoneSubtitle,
-            prompt: COMPACT_COMMAND,
-            promptSummary: COMPACT_COMMAND,
-            preview: summarizePromptForDisplay(effectiveDigest),
-            detail: effectiveDigest,
-            x: 0,
-            y: 0,
-            pointer: { x: 0, y: 0, visible: false },
-            createdAt: Date.now(),
-          };
-          const afterTokens = estimateTokensFromChars(
-            estimateConversationFootprint([markerBubble]),
-          );
-          const afterMessages = 1;
-          markerBubble.subtitle = `${formatTokensCompact(beforeTokens)} → ${formatTokensCompact(afterTokens)} tokens · ${beforeMessages} → ${afterMessages} messages`;
-          setBubbles((current) => [...current, markerBubble]);
-        }
-        return { digest: effectiveDigest, recentHistory: buildPostCompactHistory(effectiveDigest) };
-      } catch (compactError) {
-        setError(compactError instanceof Error ? compactError.message : String(compactError));
-        return null;
-      } finally {
-        setIsCompacting(false);
-      }
-    },
-    [
-      activeChatWorkspace,
-      activeInteractionMode,
-      activeThreadBubbles,
-      aiCopy.workspace.compactDoneSubtitle,
-      aiCopy.workspace.compactDoneTitle,
-      aiCopy.workspace.compactEmpty,
-      aiCopy.workspace.compactNeedsWorkspace,
-      currentThread?.id,
-      currentThread?.label,
-      currentWorkspaceKey,
-      isCompacting,
-      language,
-      saveChatContextDigest,
-      setError,
-    ],
-  );
-
-  // The active model advertises image input via per-model `input_types` in the
-  // settings modal. When it does not, images are still attached but the user
-  // gets a one-time warning that the model may not support them.
-  const canAttachImages = Boolean(
-    activeProvider?.model &&
-    activeProvider?.model_settings?.[activeProvider.model]?.input_types?.includes("image"),
-  );
-  const imageWarningModelRef = useRef<string | null>(null);
-
-  const handleAddComposerAttachmentFiles = useCallback(
-    async (files: File[]) => {
-      const drafts = await processFilesIntoAttachmentDrafts(files);
-      if (drafts.length === 0) return;
-      const incomingImages = drafts.filter((draft) => draft.kind === "image").length;
-      const existingImages = composerAttachments.filter((draft) => draft.kind === "image").length;
-      const imageOverflow = incomingImages + existingImages > MAX_IMAGES_PER_TURN;
-      setComposerAttachments((current) => {
-        const existing = new Set(
-          current.map((draft) => `${draft.kind}:${draft.name}:${draft.size}`),
-        );
-        const merged = [...current];
-        let imageCount = current.filter((draft) => draft.kind === "image").length;
-        drafts.forEach((draft) => {
-          if (draft.kind === "image" && imageCount >= MAX_IMAGES_PER_TURN) return;
-          const key = `${draft.kind}:${draft.name}:${draft.size}`;
-          if (!existing.has(key)) {
-            existing.add(key);
-            if (draft.kind === "image") imageCount += 1;
-            merged.push(draft);
-          }
-        });
-        return merged;
-      });
-      if (imageOverflow) {
-        setError(aiCopy.attachments.imageLimit);
-      } else if (
-        !canAttachImages &&
-        incomingImages > 0 &&
-        imageWarningModelRef.current !== (activeProvider?.model ?? "")
-      ) {
-        // Warn once per active model: the request still carries the images.
-        imageWarningModelRef.current = activeProvider?.model ?? "";
-        setError(aiCopy.attachments.imageMaybeUnsupported);
-      }
-    },
-    [
-      activeProvider?.model,
-      aiCopy.attachments.imageLimit,
-      aiCopy.attachments.imageMaybeUnsupported,
-      canAttachImages,
+  const { handleCompactContext, isCompacting } = useAICompactContext({
+    activeChatWorkspace,
+    activeInteractionMode,
+    activeThreadBubbles,
+    aiCopy,
+    currentThread,
+    currentWorkspaceKey,
+    language,
+    saveChatContextDigest,
+    setBubbles,
+    setError,
+    setThreadMemories,
+  });
+  const { handleAddComposerAttachmentFiles, handleRemoveComposerAttachment } =
+    useAIComposerAttachments({
+      activeProvider,
+      aiCopy,
       composerAttachments,
+      setComposerAttachments,
       setError,
-    ],
-  );
+    });
 
-  const handleRemoveComposerAttachment = useCallback((id: string) => {
-    setComposerAttachments((current) => current.filter((draft) => draft.id !== id));
-  }, []);
-
-  // --- Composer "/" slash commands (/backup, /rollback, /compact + runbooks) ---
-  // The file-backed registry lives in Rust (`agent_commands.rs`). It is fetched
-  // once per panel mount and merged *under* the native commands, so a command
-  // file dropped into the commands directory appears without a restart, while
-  // `/backup` and friends keep their built-in behaviour.
-  const [fileCommands, setFileCommands] = useState<AgentFileCommand[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const registry = await invokeMutation<{
-          commands: AgentFileCommand[];
-          report?: { errors?: { path: string; reason: string }[] };
-        }>("list_user_slash_commands", {
-          // Linked-folder commands only load when the workspace dir is passed;
-          // without it the registry silently sees builtin/global commands only.
-          workspaceDir: await getLinkedWorkspaceDir(),
-        });
-        if (cancelled) return;
-        setFileCommands(registry.commands ?? []);
-        // A file that failed to parse is skipped by the loader; surface it so
-        // "the command is not in the menu" is diagnosable instead of silent.
-        const loadErrors = registry.report?.errors ?? [];
-        for (const error of loadErrors) {
-          console.warn(`[AIWorkspace] skipped slash command ${error.path}: ${error.reason}`);
-        }
-        if (loadErrors.length > 0) {
-          emitAppToast({
-            tone: "error",
-            title: "Some slash commands failed to load",
-            description: loadErrors
-              .slice(0, 3)
-              .map((error) => `${error.path}: ${error.reason}`)
-              .join("\n"),
-            durationMs: 8_000,
-          });
-        }
-      } catch (error) {
-        // A missing registry must never break the composer: the native commands
-        // still work and plain prompts still go through untouched.
-        console.warn("[AIWorkspace] command registry unavailable:", error);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const slashCommands = useMemo<AISlashCommand[]>(
-    () =>
-      mergeSlashCommands(
-        [
-          { name: "backup", description: aiCopy.composer.slashBackupDescription },
-          { name: "rollback", description: aiCopy.composer.slashRollbackDescription },
-          { name: "compact", description: aiCopy.composer.slashCompactDescription },
-          { name: "explain", description: aiCopy.composer.slashExplainDescription },
-          { name: "optimize", description: aiCopy.composer.slashOptimizeDescription },
-          { name: "fix", description: aiCopy.composer.slashFixDescription },
-        ],
-        fileCommands,
-        (name) => useCommandPrefsStore.getState().isEnabled(name),
-        aiCopy.composer.slashCustomBadge,
-      ),
-    [aiCopy, fileCommands],
-  );
-  // Menu opens only while the draft is exactly "/<name chars>" — plain typing,
-  // not mid-sentence slashes, so normal prompts are never interrupted. Command
-  // names allow letters, digits, dashes and underscores (review-sql etc.).
-  const slashQueryMatch = /^\/([a-zA-Z0-9_-]*)$/.exec(promptDraft.trim());
-  const slashMatches = useMemo(
-    () => (slashQueryMatch ? matchSlashCommands(slashQueryMatch[1], slashCommands) : []),
-    [slashCommands, slashQueryMatch],
-  );
-  const slashMenuOpen = slashQueryMatch !== null && slashMatches.length > 0 && !slashDismissed;
-
-  const handleBackupCommand = useCallback(async () => {
-    if (isBackingUp) return;
-    if (!connectionId || !activeConnectionDbType) {
-      setError(aiCopy.composer.noDatabaseSelected);
-      return;
-    }
-    setIsBackingUp(true);
-    try {
-      // "/backup <note>" — the trailing note becomes the checkpoint label.
-      const noteMatch = /^\/backup\s+(.+)$/i.exec(promptDraft.trim());
-      const result = await invokeWithTimeout<{
-        fileName: string;
-        label: string;
-        createdAt: number;
-        engine: string;
-        database: string | null;
-        tableCount: number;
-        rowCount: number;
-        sizeBytes: number;
-      }>(
-        "create_database_checkpoint",
-        {
-          connectionId,
-          database: currentDatabase || null,
-          dbType: activeConnectionDbType,
-          label: noteMatch?.[1]?.trim() || null,
-        },
-        120_000,
-        "Creating checkpoint",
-      );
-      emitAppToast({
-        tone: "success",
-        title: language === "vi" ? "Đã tạo điểm khôi phục" : "Restore checkpoint created",
-        description:
-          language === "vi"
-            ? `${result.tableCount} bảng · ${result.rowCount} dòng — dùng /rollback để khôi phục khi cần.`
-            : `${result.tableCount} tables · ${result.rowCount} rows — use /rollback to restore when needed.`,
-        durationMs: 10_000,
-      });
-    } catch (errorValue) {
-      const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
-      emitAppToast({
-        tone: "error",
-        title: language === "vi" ? "Tạo checkpoint thất bại" : "Checkpoint failed",
-        description: message,
-        durationMs: 10_000,
-      });
-    } finally {
-      setIsBackingUp(false);
-    }
-  }, [
+  const {
+    commitSlashCommand,
+    fileCommands,
+    handleBackupCommand,
+    handleComposerPromptChange,
+    handleRollbackCommand,
+    setSlashActiveIndex,
+    setSlashDismissed,
+    slashActiveIndex,
+    slashMatches,
+    slashMenuOpen,
+  } = useAISlashMenu({
+    promptDraft,
+    setPromptDraft,
+    connectionId,
     activeConnectionDbType,
-    aiCopy.composer.noDatabaseSelected,
+    currentDatabase,
+    language,
+    aiCopy,
+    setError,
+    composerTextareaRef,
+  });
+
+  const {
+    handleBubbleFeedback,
+    handleEditRerun,
+    handleRegenerateBubble,
+    handleRetryBubble,
+    runEditedPrompt,
+  } = useAIBubbleRerun({
+    bubbles,
+    bubblesRef,
     connectionId,
     currentDatabase,
-    isBackingUp,
+    historyBudget,
+    isGenerating,
     language,
-    promptDraft,
-    setError,
-  ]);
+    pendingQueueRef,
+    workspaceContextMessages,
+    createAssistantBubble,
+    setActiveThreadId,
+    setBubbles,
+    setPendingQueue,
+  });
 
-  const handleRollbackCommand = useCallback(async () => {
-    if (!connectionId || !activeConnectionDbType) {
-      setError(aiCopy.composer.noDatabaseSelected);
-      return;
-    }
-    try {
-      const checkpoints = await invokeWithTimeout<AIDatabaseCheckpoint[]>(
-        "list_database_checkpoints",
-        { connectionId },
-        60_000,
-        "Listing checkpoints",
-      );
-      const fileName = await requestAICheckpointPick(
-        checkpoints ?? [],
-        language,
-        connectionId,
-        activeConnectionDbType,
-      );
-      if (!fileName) return;
-      const restoreResult = await invokeWithTimeout<{
-        warning?: string | null;
-      }>(
-        "restore_database_checkpoint",
-        {
-          connectionId,
-          fileName,
-          dbType: activeConnectionDbType,
-        },
-        120_000,
-        "Restoring checkpoint",
-      );
-      if (restoreResult?.warning) {
-        emitAppToast({
-          tone: "error",
-          title:
-            language === "vi" ? "Snapshot pre-restore thất bại" : "Pre-restore snapshot failed",
-          description: restoreResult.warning,
-          durationMs: 10_000,
-        });
-      }
-      // Schema caches across the app must not keep serving pre-rollback data.
-      window.dispatchEvent(
-        new CustomEvent("table-data-updated", {
-          detail: { connectionId, invalidateStructure: true },
-        }),
-      );
-      emitAppToast({
-        tone: "success",
-        title: language === "vi" ? "Đã rollback database" : "Database restored",
-        description:
-          language === "vi"
-            ? "Database đã quay về điểm checkpoint. Hãy refresh explorer nếu cần."
-            : "The database was restored to the checkpoint. Refresh the explorer if needed.",
-        durationMs: 10_000,
-      });
-    } catch (errorValue) {
-      const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
-      emitAppToast({
-        tone: "error",
-        title: language === "vi" ? "Rollback thất bại" : "Rollback failed",
-        description: message,
-        durationMs: 10_000,
-      });
-    }
-  }, [
-    activeConnectionDbType,
-    aiCopy.composer.noDatabaseSelected,
-    connectionId,
-    language,
-    setError,
-  ]);
-
-  /**
-   * A command picked from the "/" menu lands in the composer, it does not run:
-   * the draft becomes `/name`, the caret follows it, and the user runs it with an
-   * ordinary Enter through `handleGenerate` — the one path that expands
-   * file-backed runbooks and handles `/backup`, `/compact` and `/rollback`. That
-   * keeps arguments reachable (`/backup nightly`, `/profile orders`) and stops a
-   * mis-click from starting work the user never confirmed.
-   *
-   * `/rollback` is the exception: it opens the checkpoint picker, which is itself
-   * the confirmation step (`runsSlashCommandImmediately`).
-   */
-  const commitSlashCommand = useCallback(
-    (name: string) => {
-      // Dismissed for the same keystroke, or the freshly inserted `/help` would be
-      // read as a search prefix and immediately re-open the menu over the caret.
-      setSlashDismissed(true);
-      setSlashActiveIndex(0);
-      if (runsSlashCommandImmediately(name)) {
-        setPromptDraft("");
-        void handleRollbackCommand();
-        return;
-      }
-      const draft = slashCommandDraft(name);
-      setPromptDraft(draft);
-      // Same idiom as the panel's initial prompt: the caret must sit after the
-      // inserted command, so the next keystroke types an argument instead of
-      // being swallowed before the text.
-      window.requestAnimationFrame(() => {
-        const composer = composerTextareaRef.current;
-        if (!composer) return;
-        composer.focus();
-        composer.setSelectionRange(draft.length, draft.length);
-      });
-    },
-    [handleRollbackCommand],
-  );
-
-  // Composer edits re-arm the "/" menu (Escape dismissal lasts one keystroke).
-  const handleComposerPromptChange = useCallback((value: string) => {
-    setSlashDismissed(false);
-    setSlashActiveIndex(0);
-    setPromptDraft(value);
-  }, []);
-
-  /** Re-fetch a finished bubble's persisted attachment bytes into drafts so a
-   *  re-run sends the same files the original turn carried. */
-  const loadBubbleAttachmentDrafts = useCallback(
-    async (bubble: AIWorkspaceBubbleData): Promise<AIAttachmentDraft[] | undefined> => {
-      if (!bubble.attachments || bubble.attachments.length === 0) return undefined;
-      const rows = await invokeMutation<{ id: string; mimeType: string; data: string }[]>(
-        "get_ai_attachment_data",
-        { ids: bubble.attachments.map((attachment) => attachment.id) },
-      ).catch(() => [] as { id: string; mimeType: string; data: string }[]);
-      const dataById: Record<string, string> = Object.fromEntries(
-        rows.map((row) => [row.id, row.data]),
-      );
-      return bubble.attachments.map((attachment) => ({
-        ...attachment,
-        ...(attachment.kind === "image"
-          ? {
-              dataUrl: `data:${attachment.mimeType};base64,${dataById[attachment.id] ?? ""}`,
-            }
-          : { textContent: dataById[attachment.id] ?? "" }),
-      }));
-    },
-    [],
-  );
-
-  /** Edit & re-run: regenerate the bubble's slot with the edited prompt text.
-   *  The bubble keeps its id/position; on failure the old answer is restored
-   *  by the generation hook's replaceBubble path. */
-  const runEditedPrompt = useCallback(
-    async (bubble: AIWorkspaceBubbleData, editedPrompt: string) => {
-      const trimmed = editedPrompt.trim();
-      if (!trimmed) return;
-      const retryHistory = buildConversationHistoryMessages(
-        bubblesRef.current.filter(
-          (currentBubble) =>
-            currentBubble.threadId === bubble.threadId &&
-            currentBubble.id !== bubble.id &&
-            !currentBubble.compactedAt,
-        ),
-        historyBudget,
-      );
-      const regenAttachments = await loadBubbleAttachmentDrafts(bubble);
-      setActiveThreadId(bubble.threadId);
-      const result = await createAssistantBubble(trimmed, {
-        mode: "compose",
-        userPrompt: trimmed,
-        history: [...workspaceContextMessages, ...retryHistory],
-        threadId: bubble.threadId,
-        workspaceKey: bubble.workspaceKey,
-        interactionMode: bubble.interactionMode,
-        attachments: regenAttachments,
-        replaceBubble: bubble,
-      });
-      if (result && !result.success && !result.cancelled) {
-        emitAppToast({
-          tone: "error",
-          title: getAIPanelCopy(language).responseActions.regenerateFailed,
-          durationMs: 4000,
-        });
-      }
-    },
-    [
-      createAssistantBubble,
-      historyBudget,
-      language,
-      loadBubbleAttachmentDrafts,
-      workspaceContextMessages,
-    ],
-  );
   const handleGenerate = useCallback(
     async (item?: PendingPrompt | string) => {
       const current: PendingPrompt =
@@ -1992,180 +990,6 @@ export function AISlidePanel({
     cancelGeneration();
   }, [cancelGeneration]);
 
-  const handleRetryBubble = useCallback(
-    async (bubble: AIWorkspaceBubbleData) => {
-      if (isGenerating) return;
-      const retryHistory = buildConversationHistoryMessages(
-        bubbles.filter(
-          (currentBubble) =>
-            currentBubble.threadId === bubble.threadId &&
-            currentBubble.id !== bubble.id &&
-            !currentBubble.compactedAt,
-        ),
-        historyBudget,
-      );
-      setActiveThreadId(bubble.threadId);
-      await createAssistantBubble(bubble.prompt, {
-        mode: "compose",
-        displayPrompt: bubble.promptSummary,
-        userPrompt: bubble.prompt,
-        history: [...workspaceContextMessages, ...retryHistory],
-        threadId: bubble.threadId,
-        workspaceKey: bubble.workspaceKey,
-        interactionMode: bubble.interactionMode,
-      });
-    },
-    [bubbles, createAssistantBubble, historyBudget, isGenerating, workspaceContextMessages],
-  );
-
-  // Regenerate: re-run the prompt that produced a finished bubble and swap the
-  // new answer into the same chat slot. Unlike Retry (which appends a fresh
-  // turn for failed runs), this keeps the conversation shape unchanged — and
-  // the generation hook restores the old answer untouched when the run fails.
-  const handleRegenerateBubble = useCallback(
-    async (bubble: AIWorkspaceBubbleData) => {
-      if (isGenerating) {
-        pendingQueueRef.current = [
-          ...pendingQueueRef.current,
-          { kind: "rerun", bubbleId: bubble.id, prompt: bubble.prompt },
-        ];
-        setPendingQueue(pendingQueueRef.current);
-        return;
-      }
-      const retryHistory = buildConversationHistoryMessages(
-        bubbles.filter(
-          (currentBubble) =>
-            currentBubble.threadId === bubble.threadId &&
-            currentBubble.id !== bubble.id &&
-            !currentBubble.compactedAt,
-        ),
-        historyBudget,
-      );
-      // Re-attach the turn's files: persisted attachments only carry metadata,
-      // so the bytes are fetched back into drafts for the model call.
-      const regenAttachments = await loadBubbleAttachmentDrafts(bubble);
-      setActiveThreadId(bubble.threadId);
-      const result = await createAssistantBubble(bubble.prompt, {
-        mode: "compose",
-        displayPrompt: bubble.promptSummary,
-        userPrompt: bubble.prompt,
-        history: [...workspaceContextMessages, ...retryHistory],
-        threadId: bubble.threadId,
-        workspaceKey: bubble.workspaceKey,
-        interactionMode: bubble.interactionMode,
-        attachments: regenAttachments,
-        replaceBubble: bubble,
-      });
-      if (result && !result.success && !result.cancelled) {
-        emitAppToast({
-          tone: "error",
-          title: getAIPanelCopy(language).responseActions.regenerateFailed,
-          durationMs: 4000,
-        });
-      }
-    },
-    [
-      bubbles,
-      createAssistantBubble,
-      historyBudget,
-      isGenerating,
-      language,
-      loadBubbleAttachmentDrafts,
-      workspaceContextMessages,
-    ],
-  );
-
-  // Edit & re-run entry point from the conversation view: a finished turn's
-  // prompt is edited inline, then re-run into the same chat slot. While a run
-  // is in flight the edit queues like any other send.
-  const handleEditRerun = useCallback(
-    (bubble: AIWorkspaceBubbleData, editedPrompt: string) => {
-      if (isGenerating) {
-        pendingQueueRef.current = [
-          ...pendingQueueRef.current,
-          { kind: "rerun", bubbleId: bubble.id, prompt: editedPrompt },
-        ];
-        setPendingQueue(pendingQueueRef.current);
-        return;
-      }
-      void runEditedPrompt(bubble, editedPrompt);
-    },
-    [isGenerating, runEditedPrompt],
-  );
-
-  // 👍/👎 on a finished answer: the sentiment is stored on the bubble (so the
-  // buttons stay marked across reloads) and mirrored into agent memory through
-  // the learning loop's writer, so future runs see the verdict in their index.
-  const handleBubbleFeedback = useCallback(
-    (bubble: AIWorkspaceBubbleData, feedback: AIWorkspaceBubbleFeedback) => {
-      setBubbles((current) =>
-        current.map((currentBubble) =>
-          currentBubble.id === bubble.id ? { ...currentBubble, feedback } : currentBubble,
-        ),
-      );
-      const panelCopy = getAIPanelCopy(language);
-      const answerText = getBubbleConversationText(bubble).trim();
-      const proposal: LearningProposal = {
-        id: `memory:feedback-${bubble.id}`,
-        kind: "memory",
-        title:
-          feedback.sentiment === "up"
-            ? "The user marked this answer helpful"
-            : "The user marked this answer unhelpful",
-        rationale: "Recorded from the per-response feedback control in the chat panel.",
-        memory: {
-          name: buildLearningSlug("feedback", bubble.id),
-          description:
-            feedback.sentiment === "up"
-              ? "Positive feedback on an assistant answer"
-              : "Negative feedback on an assistant answer",
-          body: [
-            "# User feedback",
-            "",
-            `Sentiment: ${feedback.sentiment === "up" ? "helpful" : "not helpful"}`,
-            ...(feedback.reasons?.length ? [`Reasons: ${feedback.reasons.join(", ")}`] : []),
-            ...(feedback.comment ? [`Comment: ${feedback.comment}`] : []),
-            "",
-            "## Prompt",
-            "",
-            bubble.prompt,
-            "",
-            "## Answer",
-            "",
-            answerText.length > 1500 ? `${answerText.slice(0, 1500)}…` : answerText,
-            ...(bubble.sql ? ["", "## SQL", "", "```sql", bubble.sql, "```"] : []),
-          ].join("\n"),
-        },
-      };
-      void applyLearningProposal(
-        proposal,
-        { connectionId, database: currentDatabase ?? null },
-        (command, args) => invokeMutation(command, args),
-      )
-        .then(() => {
-          invalidateAgentMemoryIndex(connectionId ?? undefined);
-          if (feedback.sentiment === "down") {
-            emitAppToast({
-              tone: "success",
-              title: panelCopy.responseActions.feedbackSaved,
-              durationMs: 3000,
-            });
-          }
-        })
-        .catch((errorValue: unknown) => {
-          console.warn("[AIWorkspace] feedback memory save failed:", errorValue);
-          if (feedback.sentiment === "down") {
-            emitAppToast({
-              tone: "error",
-              title: panelCopy.responseActions.feedbackFailed,
-              durationMs: 4000,
-            });
-          }
-        });
-    },
-    [connectionId, currentDatabase, language],
-  );
-
   const handleComposerKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
       // The "/" command menu owns the keyboard while it is open: arrows move the
@@ -2209,599 +1033,81 @@ export function AISlidePanel({
         void handleGenerate();
       }
     },
-    [commitSlashCommand, handleGenerate, slashActiveIndex, slashMatches, slashMenuOpen],
-  );
-
-  const handleCopyBubble = useCallback(
-    async (bubble: AIWorkspaceBubbleData): Promise<boolean> => {
-      const text = bubble.sql || bubble.detail || bubble.preview;
-      if (!text) return false;
-      const ok = await copyText(text);
-      const vi = language === "vi";
-      if (ok) {
-        emitAppToast({
-          tone: "success",
-          title: vi ? "Đã sao chép" : "Copied",
-          description: vi ? "Nội dung đã nằm trên clipboard." : "Content is on the clipboard.",
-          durationMs: 3_000,
-        });
-      } else {
-        emitAppToast({
-          tone: "error",
-          title: vi ? "Sao chép thất bại" : "Copy failed",
-          description: vi ? "Không thể ghi vào clipboard." : "Could not write to the clipboard.",
-          durationMs: 5_000,
-        });
-      }
-      return ok;
-    },
-    [copyText, language],
-  );
-
-  const handleInsertBubble = useCallback(
-    (bubble: AIWorkspaceBubbleData) => {
-      if (!bubble.sql || !aiModeAllowsInsert(bubble.interactionMode)) return;
-      insertSql(bubble.sql, bubble.risk);
-    },
-    [insertSql],
-  );
-
-  const handleOpenAgentRecord = useCallback(
-    (link: AIAgentRecordLink) => {
-      if (!connectionId) {
-        setError("Connect to a database before opening a record.");
-        return;
-      }
-
-      useUIStore.getState().addTab({
-        id: `table-${connectionId}-${currentDatabase || ""}-${link.tableName}-${crypto.randomUUID()}`,
-        type: "table",
-        title: link.tableName,
-        connectionId,
-        tableName: link.tableName,
-        database: currentDatabase || undefined,
-        rowFocus: {
-          token: crypto.randomUUID(),
-          values: link.rowKey,
-        },
-      });
-    },
-    [connectionId, currentDatabase, setError],
-  );
-
-  const handleRunBubble = useCallback(
-    async (bubble: AIWorkspaceBubbleData) => {
-      if (!bubble.sql || !aiModeAllowsRun(bubble.interactionMode)) return;
-      const sessionId = openSessionRef.current;
-      // The workspace Query tab should receive pretty-printed SQL — the same
-      // formatting the chat bubble shows — instead of the model's one-liner.
-      const runnableSql = formatAgentSql(bubble.sql);
-      const bubbleIntentPrompt = bubble.promptSummary?.trim() || bubble.prompt;
-
-      if (isVisualizationPrompt(bubbleIntentPrompt)) {
-        const wantsMetricsDashboard =
-          isDashboardVisualizationPrompt(bubbleIntentPrompt) &&
-          supportsOverviewMetricsBoard(activeConnectionDbType);
-        const deterministicOverviewChartSql = isOverviewVisualizationPrompt(bubbleIntentPrompt)
-          ? buildWorkspaceOverviewChartSql(activeConnectionDbType)
-          : null;
-        const preferredVisualizationSql =
-          deterministicOverviewChartSql ||
-          (runnableSql && isSingleSqlStatement(runnableSql) ? runnableSql : null);
-
-        if (wantsMetricsDashboard) {
-          const visualizationReadApproved =
-            await requestVisualizationReadConsent(bubbleIntentPrompt);
-          if (!visualizationReadApproved) {
-            setError(
-              prefersVietnameseSystemReply(bubbleIntentPrompt, language)
-                ? "Bạn chưa cấp quyền đọc data trong DB cho yêu cầu visualization này."
-                : "Visualization data access was not approved for this request.",
-            );
-            return;
-          }
-
-          const dashboardOpened = await openMetricsBoardInWorkspace({
-            title: "DB Overview Dashboard",
-            template: "database-overview",
-            focusWorkspace: true,
-          });
-
-          if (dashboardOpened.success && dashboardOpened.didChange) {
-            if (dashboardOpened.created) {
-              completeWorkspaceRedirect(bubble.id, sessionId);
-            } else {
-              updateBubbleForDashboardApplied(
-                bubble.id,
-                bubbleIntentPrompt,
-                dashboardOpened.addedCount,
-                dashboardOpened.addedTitles,
-              );
-            }
-            return;
-          }
-          if (dashboardOpened.success) {
-            updateBubbleForDashboardNoChange(
-              bubble.id,
-              bubbleIntentPrompt,
-              dashboardOpened.addedCount,
-            );
-            return;
-          }
-          updateBubbleForDashboardActionFailed(
-            bubble.id,
-            bubbleIntentPrompt,
-            dashboardOpened.error,
-          );
-          return;
-        }
-
-        if (!preferredVisualizationSql) {
-          return;
-        }
-
-        const autoRunInWorkspace =
-          deterministicOverviewChartSql !== null || bubble.risk?.level === "safe";
-        if (autoRunInWorkspace) {
-          const visualizationReadApproved =
-            await requestVisualizationReadConsent(bubbleIntentPrompt);
-          if (!visualizationReadApproved) {
-            setError(
-              prefersVietnameseSystemReply(bubbleIntentPrompt, language)
-                ? "Bạn chưa cấp quyền đọc data trong DB cho yêu cầu visualization này."
-                : "Visualization data access was not approved for this request.",
-            );
-            return;
-          }
-        }
-        const workspaceOpened = openSqlInWorkspace(preferredVisualizationSql, {
-          title: deterministicOverviewChartSql ? "DB Overview Chart" : "AI Chart",
-          viewMode: "chart",
-          autoRun: autoRunInWorkspace,
-          focusWorkspace: true,
-        });
-
-        if (workspaceOpened) {
-          completeWorkspaceRedirect(bubble.id, sessionId);
-          return;
-        }
-      }
-
-      // Approved SQL should run where the user can see it: push it into a
-      // Query tab in the workspace and execute there, instead of only running
-      // inside the AI sandbox. Safe read-only SQL auto-runs; mutating or
-      // dangerous SQL opens ready-to-run so the user presses Chạy themselves.
-      // The Duyệt chạy button itself never disappears — but a bubble that was
-      // already opened in the workspace must not spawn yet another tab.
-      // Exception: "full" autonomy is a standing human approval, so the run
-      // executes immediately in the sandbox — no ready-to-run tab that would
-      // only end in another confirmation dialog.
-      if (bubble.openedInWorkspace) {
-        return;
-      }
-      const approvedRiskLevel = bubble.risk?.level;
-      const fullAutonomyRun = activeAgentAutonomy === "full";
-      const workspaceOpened = fullAutonomyRun
-        ? false
-        : openSqlInWorkspace(runnableSql, {
-            title: "AI Query",
-            autoRun: approvedRiskLevel === "safe",
-            focusWorkspace: true,
-          });
-      if (workspaceOpened) {
-        setBubbles((current) =>
-          current.map((currentBubble) =>
-            currentBubble.id === bubble.id
-              ? { ...currentBubble, openedInWorkspace: true }
-              : currentBubble,
-          ),
-        );
-        return;
-      }
-
-      try {
-        const result = await runSql(runnableSql, { agentAutonomy: activeAgentAutonomy, language });
-        setBubbles((current) =>
-          current.map((currentBubble) =>
-            currentBubble.id === bubble.id
-              ? {
-                  ...currentBubble,
-                  kind: "result",
-                  status: "ready",
-                  title: aiCopy.bubbleStates.runSuccessTitle,
-                  subtitle: result.queryResult.sandboxed
-                    ? aiCopy.bubbleStates.runSuccessSandboxSubtitle
-                    : aiCopy.bubbleStates.runSuccessDirectSubtitle,
-                  preview: result.summary,
-                  detail: buildExecutionDetail(
-                    result.summary,
-                    result.queryResult.query,
-                    currentBubble.detail,
-                  ),
-                  autoDismissAt: undefined,
-                }
-              : currentBubble,
-          ),
-        );
-      } catch (errorValue) {
-        const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
-        setBubbles((current) =>
-          current.map((currentBubble) =>
-            currentBubble.id === bubble.id
-              ? {
-                  ...currentBubble,
-                  kind: "error",
-                  status: "error",
-                  title: aiCopy.bubbleStates.runFailedTitle,
-                  subtitle: aiCopy.bubbleStates.runFailedSubtitle,
-                  preview: message,
-                  detail: message,
-                  autoDismissAt: undefined,
-                }
-              : currentBubble,
-          ),
-        );
-      }
-    },
     [
+      commitSlashCommand,
+      handleGenerate,
+      setSlashActiveIndex,
+      setSlashDismissed,
+      slashActiveIndex,
+      slashMatches,
+      slashMenuOpen,
+    ],
+  );
+
+  const { handleCopyBubble, handleInsertBubble, handleOpenAgentRecord, handleRunBubble } =
+    useAIBubbleActions({
       activeAgentAutonomy,
       activeConnectionDbType,
-      aiCopy.bubbleStates.runFailedSubtitle,
-      aiCopy.bubbleStates.runFailedTitle,
-      aiCopy.bubbleStates.runSuccessDirectSubtitle,
-      aiCopy.bubbleStates.runSuccessSandboxSubtitle,
-      aiCopy.bubbleStates.runSuccessTitle,
-      completeWorkspaceRedirect,
+      aiCopy,
+      connectionId,
+      currentDatabase,
       language,
+      openSessionRef,
+      copyText,
+      completeWorkspaceRedirect,
+      insertSql,
       openMetricsBoardInWorkspace,
       openSqlInWorkspace,
       requestVisualizationReadConsent,
       runSql,
+      setBubbles,
       setError,
       updateBubbleForDashboardActionFailed,
       updateBubbleForDashboardApplied,
       updateBubbleForDashboardNoChange,
-    ],
-  );
-
-  const handleSelectThread = useCallback(
-    (threadId: string) => {
-      setActiveThreadId(threadId);
-      setActiveThreadIdsByWorkspace((current) => ({
-        ...current,
-        [currentWorkspaceKey]: threadId,
-      }));
-      setIsHistoryOpen(false);
-      setAttachedSelection(null);
-    },
-    [currentWorkspaceKey],
-  );
-
-  const handleRequestDeleteThread = useCallback((threadId: string, event: React.MouseEvent) => {
-    event.stopPropagation();
-    setDeleteThreadPending(threadId);
-  }, []);
-
-  const handleConfirmDeleteThread = useCallback(() => {
-    const threadId = deleteThreadPending;
-    if (!threadId) return;
-
-    setDeleteThreadPending(null);
-
-    const updatedThreads = chatThreads.filter((thread) => thread.id !== threadId);
-    const updatedBubbles = bubbles.filter((bubble) => bubble.threadId !== threadId);
-    const remainingWorkspaceThreads = updatedThreads.filter(
-      (thread) => thread.workspaceKey === currentWorkspaceKey,
-    );
-    const nextActiveThreadId =
-      activeThreadIdsByWorkspace[currentWorkspaceKey] === threadId
-        ? (remainingWorkspaceThreads[0]?.id ?? null)
-        : (activeThreadIdsByWorkspace[currentWorkspaceKey] ?? activeThreadId);
-
-    setChatThreads(updatedThreads);
-    setBubbles(updatedBubbles);
-    setThreadMemories((current) => {
-      if (!current[threadId]) return current;
-      const next = { ...current };
-      delete next[threadId];
-      return next;
     });
-    invokeMutation("delete_thread_memory_for_thread", { threadId }).catch((error: unknown) =>
-      console.error("[AIWorkspace] Failed to delete thread memory:", error),
-    );
-    invokeMutation("delete_ai_attachments_for_thread", { threadId }).catch((error: unknown) =>
-      console.error("[AIWorkspace] Failed to delete thread attachments:", error),
-    );
-    setActiveThreadIdsByWorkspace((current) => {
-      const next = { ...current };
-      if (nextActiveThreadId) {
-        next[currentWorkspaceKey] = nextActiveThreadId;
-      } else {
-        delete next[currentWorkspaceKey];
-      }
-      return next;
-    });
-    setActiveThreadId(nextActiveThreadId ?? initialThreadRef.current?.id ?? createAIWorkspaceId());
-  }, [
-    activeThreadId,
-    activeThreadIdsByWorkspace,
+
+  const {
+    deleteThreadPending,
+    handleCancelDeleteThread,
+    handleConfirmDeleteThread,
+    handleCreateChatThread,
+    handleImportChatThreads,
+    handleReloadChat,
+    handleRenameChatThread,
+    handleRequestDeleteThread,
+    handleResetStage,
+    handleSelectThread,
+    importableChatThreads,
+  } = useAIChatThreads({
     bubbles,
     chatThreads,
+    workspaceThreads,
     currentWorkspaceKey,
-    deleteThreadPending,
-  ]);
-
-  const handleRenameChatThread = useCallback(
-    (threadId: string, label: string) => {
-      const trimmed = label.trim();
-      if (!trimmed) return;
-      setChatThreads((current) =>
-        current.map((thread) =>
-          thread.id === threadId ? { ...thread, label: trimmed, updatedAt: Date.now() } : thread,
-        ),
-      );
-      // A compacted thread displays its memory title; keep both in sync so the
-      // rename survives the next compact too.
-      const memory = threadMemories[threadId];
-      if (memory && activeChatWorkspace) {
-        setThreadMemories((current) => ({
-          ...current,
-          [threadId]: { ...memory, title: trimmed },
-        }));
-        invokeMutation("upsert_thread_memory", {
-          workspaceId: activeChatWorkspace.id,
-          threadId,
-          title: trimmed,
-          summary: memory.summary,
-          keywords: memory.keywords,
-        }).catch((error: unknown) => {
-          console.error("[AIWorkspace] Failed to rename thread memory:", error);
-          emitAppToast({
-            tone: "error",
-            title: language === "vi" ? "Không lưu được ghi nhớ thread" : "Thread memory not saved",
-            durationMs: 4000,
-          });
-        });
-      }
-    },
-    [activeChatWorkspace, threadMemories, language],
-  );
-
-  const handleCancelDeleteThread = useCallback(() => {
-    setDeleteThreadPending(null);
-  }, []);
-
-  const handleCreateChatThread = useCallback(() => {
-    const nextThread = createChatThread(workspaceThreads.length + 1, currentWorkspaceKey);
-    setChatThreads((current) => [...current, nextThread]);
-    setActiveThreadId(nextThread.id);
-    // Update the per-workspace active map in the same tick: the workspace
-    // effects re-derive activeThreadId from this map, so leaving it on the
-    // old thread makes two effects ping-pong the view between the new empty
-    // chat and the in-progress one forever (constant visible jitter).
-    setActiveThreadIdsByWorkspace((current) => ({
-      ...current,
-      [currentWorkspaceKey]: nextThread.id,
-    }));
-    setIsHistoryOpen(false);
-    setPromptDraft(initialPrompt);
-    setAttachedSelection(null);
-    setError(null);
-    window.requestAnimationFrame(() => {
-      composerTextareaRef.current?.focus();
-      if (initialPrompt.trim()) {
-        composerTextareaRef.current?.setSelectionRange(initialPrompt.length, initialPrompt.length);
-      }
-    });
-  }, [currentWorkspaceKey, initialPrompt, setError, workspaceThreads.length]);
-
-  const handleResetStage = useCallback(() => {
-    // Starting a fresh thread must also stop any in-flight generation: the
-    // background run keeps publishing progress (provider failover retries)
-    // and re-rendering the panel while the user looks at the new empty
-    // thread, which reads as constant jitter.
-    const activeBubbleId = activeGenerationBubbleIdRef.current;
-    if (activeBubbleId) {
-      cancelledGenerationBubbleIdsRef.current.add(activeBubbleId);
-    }
-    cancelGeneration();
-    handleCreateChatThread();
-  }, [cancelGeneration, handleCreateChatThread]);
-
-  /** Reloads the current conversation from the persisted SQLite history so a
-   *  stale-looking chat can be refreshed without touching live generations. */
-  const handleReloadChat = useCallback(async () => {
-    if (isGenerating || isRunning) return;
-    try {
-      const persistedState = sanitizePersistedAIWorkspaceState(
-        await invokeMutation<PersistedAIWorkspaceState>("get_ai_workspace_history", {}),
-      );
-      const threads = persistedState.threads;
-      const loadedBubbles = persistedState.bubbles.filter((bubble) => bubble.status !== "loading");
-      setChatThreads(threads);
-      setBubbles(loadedBubbles);
-      setWorkspaceInteractionModes(persistedState.interactionModes);
-      const activeMap = persistedState.activeThreadIds;
-      setActiveThreadIdsByWorkspace(activeMap);
-      const workspaceThreadsForCurrentKey = threads.filter(
-        (thread) => thread.workspaceKey === currentWorkspaceKey,
-      );
-      const preferredThreadId = activeMap[currentWorkspaceKey];
-      const nextThreadId =
-        workspaceThreadsForCurrentKey.find((thread) => thread.id === preferredThreadId)?.id ??
-        [...workspaceThreadsForCurrentKey].sort(
-          (left, right) => right.updatedAt - left.updatedAt,
-        )[0]?.id ??
-        workspaceThreadsForCurrentKey[0]?.id;
-      if (nextThreadId) setActiveThreadId(nextThreadId);
-      setError(null);
-    } catch (error) {
-      console.error("[AIWorkspace] Failed to reload chat:", error);
-    }
-  }, [
-    currentWorkspaceKey,
+    activeThreadId,
+    activeThreadIdsByWorkspace,
+    activeChatWorkspace,
+    threadMemories,
+    initialThreadRef,
+    composerTextareaRef,
+    activeGenerationBubbleIdRef,
+    cancelledGenerationBubbleIdsRef,
+    initialPrompt,
     isGenerating,
     isRunning,
+    language,
+    cancelGeneration,
     setActiveThreadId,
     setActiveThreadIdsByWorkspace,
+    setAttachedSelection,
     setBubbles,
     setChatThreads,
     setError,
+    setIsHistoryOpen,
+    setPromptDraft,
+    setThreadMemories,
     setWorkspaceInteractionModes,
-  ]);
-
-  const importableChatThreads = useMemo(
-    () =>
-      chatThreads
-        .filter((thread) => thread.workspaceKey !== currentWorkspaceKey)
-        .sort((left, right) => right.updatedAt - left.updatedAt),
-    [chatThreads, currentWorkspaceKey],
-  );
-
-  /** Copies threads (and their bubbles) from other workspaces/scopes into the
-   *  current one — "import các đoạn chat liên quan" into this workspace. */
-  const handleImportChatThreads = useCallback(
-    (threadIds: string[]) => {
-      if (threadIds.length === 0) return;
-      const selectedIds = new Set(threadIds);
-      const sourceThreads = chatThreads.filter((thread) => selectedIds.has(thread.id));
-      if (sourceThreads.length === 0) return;
-      const now = Date.now();
-      const importedThreads: AIChatThread[] = [];
-      const importedBubbles: AIWorkspaceBubbleData[] = [];
-      sourceThreads.forEach((sourceThread) => {
-        const importedThread: AIChatThread = {
-          ...sourceThread,
-          id: createAIWorkspaceId(),
-          workspaceKey: currentWorkspaceKey,
-          createdAt: now,
-          updatedAt: now,
-        };
-        importedThreads.push(importedThread);
-        bubbles
-          .filter((bubble) => bubble.threadId === sourceThread.id && bubble.status !== "loading")
-          .forEach((bubble) => {
-            importedBubbles.push({
-              ...bubble,
-              id: createAIWorkspaceId(),
-              threadId: importedThread.id,
-              workspaceKey: currentWorkspaceKey,
-              pointer: { ...bubble.pointer },
-            });
-          });
-      });
-      const lastImportedThreadId = importedThreads[importedThreads.length - 1].id;
-      setChatThreads((current) => [...current, ...importedThreads]);
-      setBubbles((current) => [...current, ...importedBubbles]);
-      setActiveThreadIdsByWorkspace((current) => ({
-        ...current,
-        [currentWorkspaceKey]: lastImportedThreadId,
-      }));
-      setActiveThreadId(lastImportedThreadId);
-      setIsHistoryOpen(false);
-    },
-    [bubbles, chatThreads, currentWorkspaceKey],
-  );
-
-  const handleCreateUserWorkspace = useCallback(() => {
-    // Deliberately UNBOUND: the workspace starts in auto mode and follows
-    // whatever database is current when it is used. Binding it to
-    // `currentDatabase` here (the database that happened to be open at click
-    // time) is what made every later activation yank the connection back to
-    // that database. The user can pin a database via the switcher's DB chip;
-    // naming the workspace "db C" also binds it via name inference.
-    createChatWorkspace(
-      `${aiCopy.workspace.defaultName} ${chatWorkspaces.length + 1}`,
-      connectionId,
-      null,
-    );
-  }, [aiCopy.workspace.defaultName, chatWorkspaces.length, connectionId, createChatWorkspace]);
-
-  // Rebind (or unbind) a workspace's database from the switcher's DB chip.
-  // Binding to a new database also clears the workspace's compacted digest
-  // (store handles that) so the old database's context cannot leak through.
-  const handleRebindChatWorkspaceDatabase = useCallback(
-    (workspaceId: string, database: string) => {
-      // Audit fix: rebinding re-scopes the connection/schema immediately, which
-      // would make an in-flight agent run read evidence from a database it never
-      // verified. The switcher chip is disabled during runs; this guard is the
-      // backstop for programmatic calls.
-      if (isGenerating || isRunning) {
-        console.warn("[AIWorkspace] Rebind ignored while an agent run is active.");
-        return;
-      }
-      bindChatWorkspaceDatabase(workspaceId, database);
-      if (database) {
-        // Re-scope the connection immediately so the schema capsule and
-        // tables/schemaObjects follow the new binding.
-        ensureWorkspaceDatabase(workspaceId);
-      }
-    },
-    [bindChatWorkspaceDatabase, ensureWorkspaceDatabase, isGenerating, isRunning],
-  );
-
-  const handleDeleteUserWorkspace = useCallback(
-    (workspaceId: string) => {
-      deleteChatWorkspace(workspaceId);
-      invokeMutation("delete_workspace_context_snapshots", { workspaceId }).catch(
-        (error: unknown) => console.error("[AIWorkspace] Failed to delete workspace cache:", error),
-      );
-      invokeMutation("delete_thread_memories_for_workspace", { workspaceId }).catch(
-        (error: unknown) =>
-          console.error("[AIWorkspace] Failed to delete workspace memories:", error),
-      );
-      invokeMutation("delete_ai_attachments_for_workspace", { workspaceKey: workspaceId }).catch(
-        (error: unknown) =>
-          console.error("[AIWorkspace] Failed to delete workspace attachments:", error),
-      );
-    },
-    [deleteChatWorkspace],
-  );
-
-  // Hydrate compacted digests from the SQLite cache so workspace context
-  // survives restarts and localStorage clears.
-  useEffect(() => {
-    if (!historyHydrated || !isOpen || chatWorkspaces.length === 0) return;
-    let cancelled = false;
-    invokeMutation<{ workspaceId: string; digest: string; updatedAt: number }[]>(
-      "list_latest_workspace_digests",
-      {},
-    )
-      .then((entries) => {
-        if (!cancelled && Array.isArray(entries) && entries.length > 0) {
-          hydrateChatContextDigests(entries);
-        }
-      })
-      .catch((error: unknown) => {
-        console.error("[AIWorkspace] Failed to hydrate context digests:", error);
-      });
-
-    invokeMutation<{ threadId: string; title: string; keywords: string[]; summary: string }[]>(
-      "list_thread_memories",
-      {},
-    )
-      .then((memories) => {
-        if (cancelled || !Array.isArray(memories)) return;
-        const mapped: Record<string, { title: string; keywords: string[]; summary: string }> = {};
-        memories.forEach((memory) => {
-          if (memory.threadId) {
-            mapped[memory.threadId] = {
-              title: memory.title,
-              keywords: Array.isArray(memory.keywords) ? memory.keywords : [],
-              summary: memory.summary ?? "",
-            };
-          }
-        });
-        setThreadMemories(mapped);
-      })
-      .catch((error: unknown) => {
-        console.error("[AIWorkspace] Failed to hydrate thread memories:", error);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [chatWorkspaces.length, historyHydrated, hydrateChatContextDigests, isOpen]);
+  });
 
   const {
     activateProvider: handleActivateProvider,

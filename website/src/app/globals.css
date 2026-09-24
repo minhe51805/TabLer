@@ -5195,3 +5195,757 @@ a {
     transition: none;
   }
 }
+
+/* ---------- deep polish pass 5 ---------- */
+
+/* scroll-spy: the nav link for the section under the header gets a
+   recessed pill so the floating bar reads as a position indicator */
+.neu .main-nav a.is-current {
+  color: var(--neu-accent);
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-in);
+}
+
+.neu .main-nav a.is-current .nav-icon {
+  color: var(--neu-accent);
+}
+/* status pages (404 / error) join the neumorphic system — soft canvas,
+   extruded buttons, the same ink scale */
+.neu.status-page,
+.status-page {
+  background: var(--neu-bg, var(--canvas));
+  color: var(--neu-ink, var(--ink));
+}
+
+.status-page h1 {
+  font-family: var(--font-display);
+  font-size: clamp(40px, 6vw, 64px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--neu-ink, var(--ink-strong));
+}
+
+.status-page .button-primary {
+  background: var(--neu-accent, var(--blue));
+  box-shadow: 0 8px 20px rgba(8, 126, 252, 0.3);
+}
+
+.status-page .button-secondary {
+  background: var(--neu-surface, var(--paper));
+  box-shadow: var(--neu-shadow-out-sm, 0 2px 8px rgba(16, 24, 33, 0.08));
+}
+
+/* print: docs articles flatten to clean black-on-white — no shadows,
+   no nav chrome, links show their href, code blocks keep their border */
+@media print {
+  .site-header,
+  .docs-sidebar,
+  .docs-toc,
+  .scroll-progress,
+  .back-to-top,
+  .mobile-cta,
+  .doc-pager,
+  .site-footer,
+  .footer-wordmark {
+    display: none !important;
+  }
+
+  .neu,
+  .docs-page,
+  .docs-layout,
+  .docs-main,
+  .docs-content-layout {
+    display: block !important;
+    background: #fff !important;
+    box-shadow: none !important;
+  }
+
+  .doc-article,
+  .docs-article-shell {
+    max-width: 100% !important;
+    padding: 0 !important;
+  }
+
+  .doc-article h2,
+  .doc-article h3 {
+    page-break-after: avoid;
+  }
+
+  .doc-code,
+  .doc-table-wrap,
+  .doc-figure {
+    page-break-inside: avoid;
+    box-shadow: none !important;
+    border: 1px solid #ccc !important;
+  }
+
+  .doc-article a[href^="http"]::after {
+    content: " (" attr(href) ")";
+    font-size: 0.85em;
+    color: #555;
+  }
+}
+
+/* "/" hint inside the docs search box — a tiny recessed keycap that
+   disappears once the field has text or focus */
+.docs-search {
+  position: relative;
+}
+
+.docs-search-kbd {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11px;
+  color: var(--muted-soft);
+  background: var(--neu-bg-soft, #eef1f4);
+  box-shadow: var(--neu-shadow-in, inset 0 1px 3px rgba(16, 24, 33, 0.1));
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.docs-search:focus-within .docs-search-kbd,
+.docs-search-input:not(:placeholder-shown) ~ .docs-search-kbd {
+  opacity: 0;
+}
+
+/* ---------- deep polish pass 6 ---------- */
+
+/* workflow progression — each row owns a node on the central spine that
+   lights up while the row is in view, so the line reads as a journey */
+@media (min-width: 981px) {
+  .neu .workflow-row {
+    position: relative;
+  }
+
+  .neu .workflow-row::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--neu-bg-soft);
+    box-shadow: var(--neu-shadow-out-sm);
+    transform: translate(-50%, -50%) scale(0.8);
+    transition:
+      transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1),
+      background 0.3s ease,
+      box-shadow 0.3s ease;
+    z-index: 2;
+  }
+
+  .neu .workflow-row.is-active::before {
+    background: var(--neu-accent);
+    transform: translate(-50%, -50%) scale(1.15);
+    box-shadow:
+      0 0 0 6px rgba(8, 126, 252, 0.16),
+      var(--neu-shadow-out-sm);
+  }
+}
+
+/* docs headings get a hover anchor — a quiet # that appears at the left
+   edge and copies the section link on click */
+.doc-article h2,
+.doc-article h3 {
+  position: relative;
+}
+
+.doc-article h2 .heading-anchor,
+.doc-article h3 .heading-anchor {
+  position: absolute;
+  left: -1.4em;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1.1em;
+  text-align: center;
+  font-size: 0.75em;
+  font-weight: 400;
+  color: var(--muted-soft);
+  text-decoration: none;
+  opacity: 0;
+  transition:
+    opacity 0.2s ease,
+    color 0.2s ease;
+}
+
+.doc-article h2:hover .heading-anchor,
+.doc-article h3:hover .heading-anchor,
+.doc-article h2 .heading-anchor:focus-visible,
+.doc-article h3 .heading-anchor:focus-visible {
+  opacity: 1;
+}
+
+.doc-article .heading-anchor:hover {
+  color: var(--neu-accent);
+}
+
+/* download help: the macOS command gets a copy affordance — the code
+   pill is a button, swaps to a check for a beat after copying */
+.download-help code.copyable {
+  cursor: pointer;
+  border: none;
+  font: inherit;
+  transition:
+    box-shadow 0.2s ease,
+    color 0.2s ease;
+}
+
+.download-help code.copyable:hover {
+  color: var(--neu-accent);
+  box-shadow: var(--neu-shadow-in);
+}
+
+.download-help code.copyable.is-copied {
+  color: var(--green);
+}
+
+/* ---------- deep polish pass 7 ---------- */
+
+/* hero product frame gets a slow glare sweep — a diagonal light band
+   that crosses the glass every few seconds, like a screen catching a
+   window. Pure CSS; the frame already clips via border-radius. */
+.neu .product-frame {
+  position: relative;
+  overflow: hidden;
+}
+
+.neu .product-frame::before {
+  content: "";
+  position: absolute;
+  top: -60%;
+  left: -80%;
+  width: 55%;
+  height: 220%;
+  transform: rotate(18deg);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.14) 45%,
+    rgba(255, 255, 255, 0.22) 50%,
+    rgba(255, 255, 255, 0.14) 55%,
+    transparent
+  );
+  animation: frame-glare 7s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  pointer-events: none;
+  z-index: 3;
+}
+
+@keyframes frame-glare {
+  0%,
+  55% {
+    left: -80%;
+  }
+  85%,
+  100% {
+    left: 130%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .neu .product-frame::before {
+    animation: none;
+    display: none;
+  }
+}
+
+/* footer wordmark drifts up slightly as the footer enters — a quiet
+   parallax so the giant type doesn't sit dead static */
+.neu .footer-wordmark {
+  transform: translateY(18%);
+  transition: transform 1.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.neu .is-revealed .footer-wordmark,
+.neu .site-footer.is-revealed .footer-wordmark {
+  transform: translateY(0);
+}
+
+/* docs external links carry a small ↗ so readers know they leave the
+   site — only on real external hrefs, not anchors or internal links */
+.doc-article a[href^="http"]::after {
+  content: "↗";
+  font-size: 0.72em;
+  margin-left: 2px;
+  vertical-align: super;
+  color: var(--muted-soft);
+}
+
+/* docs "copy page" affordance — a quiet button in the article head that
+   copies the page's plain-text body for pasting into an LLM or notes */
+.docs-copy-page {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  padding: 7px 13px;
+  border: none;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--neu-muted);
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-out-sm);
+  cursor: pointer;
+  transition:
+    color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
+}
+
+.docs-copy-page:hover {
+  color: var(--neu-accent);
+  transform: translateY(-1px);
+  box-shadow: var(--neu-shadow-out);
+}
+
+.docs-copy-page.is-copied {
+  color: var(--green);
+}
+
+/* docs breadcrumb — a quiet trail above the title: Docs / Group / Page.
+   The current page is plain text, earlier crumbs are links. */
+.docs-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 18px;
+  font-size: 12.5px;
+  color: var(--muted-soft);
+}
+
+.docs-breadcrumb a {
+  color: var(--muted);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.docs-breadcrumb a:hover {
+  color: var(--neu-accent);
+}
+
+.docs-breadcrumb [aria-current="page"] {
+  color: var(--neu-ink);
+  font-weight: 600;
+}
+
+/* changelog RSS link — a small pill under the intro so feed readers can
+   subscribe without hunting the page source */
+.changelog-rss {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--neu-muted);
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-out-sm);
+  text-decoration: none;
+  transition:
+    color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
+}
+
+.changelog-rss:hover {
+  color: #e6a72e;
+  transform: translateY(-1px);
+  box-shadow: var(--neu-shadow-out);
+}
+
+/* agent mock — the AI workspace shot sits under the agent card grid,
+   same frame language as the ERD reveal */
+.neu .agent-mock {
+  margin-top: 56px;
+}
+
+/* "Edit this page on GitHub" — a quiet text link under the pager, the
+   standard docs-site contribution affordance */
+.docs-edit-link {
+  display: inline-block;
+  margin-top: 26px;
+  font-size: 13px;
+  color: var(--muted-soft);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.docs-edit-link:hover {
+  color: var(--neu-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* changelog version jump — a sticky rail of version pills on the left so
+   long release lists stay navigable; collapses under the stack on mobile */
+.changelog-layout {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+
+.changelog-nav {
+  position: sticky;
+  top: 100px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.changelog-nav a {
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 12px;
+  color: var(--neu-muted);
+  text-decoration: none;
+  transition:
+    color 0.2s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease;
+}
+
+.changelog-nav a:hover {
+  color: var(--neu-accent);
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-in);
+}
+
+.changelog-nav a.is-latest {
+  color: var(--neu-accent);
+  font-weight: 700;
+}
+
+@media (max-width: 720px) {
+  .changelog-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .changelog-nav {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+}
+
+/* high-contrast preference — stronger borders and ink for users who ask
+   the OS for more contrast */
+@media (prefers-contrast: more) {
+  .neu .feature-card,
+  .neu .plugin-card,
+  .neu .changelog-entry,
+  .neu .download-option,
+  .neu .doc-code,
+  .neu .product-frame {
+    border: 1.5px solid var(--neu-ink) !important;
+    box-shadow: none !important;
+  }
+
+  .neu .section-heading p,
+  .neu .feature-card p,
+  .neu .doc-article p,
+  .neu .changelog-date {
+    color: var(--neu-ink) !important;
+  }
+}
+
+/* plugins filter — same recessed search language as the docs sidebar,
+   full-width under the intro */
+.plugins-search {
+  position: relative;
+  margin: 26px 0 8px;
+  max-width: 420px;
+}
+
+.plugins-search-icon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted-soft);
+  pointer-events: none;
+}
+
+.plugins-search-input {
+  width: 100%;
+  padding: 12px 44px 12px 40px;
+  border: none;
+  border-radius: 12px;
+  font-size: 14px;
+  color: var(--neu-ink);
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-in);
+  outline: none;
+  transition: box-shadow 0.2s ease;
+}
+
+.plugins-search-input:focus {
+  box-shadow:
+    var(--neu-shadow-in),
+    0 0 0 2px rgba(8, 126, 252, 0.35);
+}
+
+.plugins-search-input::placeholder {
+  color: var(--muted-soft);
+}
+
+/* docs TOC on small screens — instead of hiding it outright, it becomes
+   a collapsed <details> the reader can open; desktop keeps it expanded
+   and hides the disclosure triangle */
+.docs-toc-details > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.docs-toc-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+@media (min-width: 1081px) {
+  /* desktop: the TOC is always open — the summary is just the label */
+  .docs-toc-details > summary {
+    pointer-events: none;
+  }
+}
+
+@media (max-width: 1080px) {
+  .docs-toc {
+    display: block;
+    position: static;
+    margin-bottom: 26px;
+  }
+
+  .docs-toc-details {
+    border-radius: var(--neu-radius-sm);
+    background: var(--neu-bg-soft);
+    box-shadow: var(--neu-shadow-out-sm);
+    padding: 12px 16px;
+  }
+
+  .docs-toc-details > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-left: 0;
+    font-weight: 600;
+    color: var(--neu-ink);
+  }
+
+  .docs-toc-details > summary::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid var(--muted-soft);
+    border-bottom: 2px solid var(--muted-soft);
+    transform: rotate(45deg);
+    transition: transform 0.25s ease;
+  }
+
+  .docs-toc-details[open] > summary::after {
+    transform: rotate(-135deg);
+  }
+
+  .docs-toc-details:not([open]) .docs-toc-inner {
+    display: none;
+  }
+
+  .docs-toc-inner {
+    margin-top: 12px;
+    max-height: 40vh;
+    overflow-y: auto;
+  }
+}
+
+/* search match highlight — a soft accent wash, not the browser's
+   default yellow marker */
+.docs-search-result mark {
+  background: rgba(8, 126, 252, 0.18);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
+/* collapsible changelog entries — long notes clip behind a fade with a
+   "Show more" button; short entries never see the control */
+.changelog-entry.is-collapsible .changelog-entry-body {
+  position: relative;
+  overflow: hidden;
+  max-height: none;
+  transition: max-height 0.5s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.changelog-entry.is-collapsed .changelog-entry-body {
+  max-height: 480px;
+}
+
+.changelog-entry.is-collapsed .changelog-entry-body::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 90px;
+  background: linear-gradient(transparent, var(--neu-bg-soft));
+  pointer-events: none;
+}
+
+.changelog-expand {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 12px;
+  padding: 7px 14px;
+  border: none;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--neu-muted);
+  background: var(--neu-bg);
+  box-shadow: var(--neu-shadow-out-sm);
+  cursor: pointer;
+  transition:
+    color 0.2s ease,
+    box-shadow 0.2s ease;
+}
+
+.changelog-expand:hover {
+  color: var(--neu-accent);
+  box-shadow: var(--neu-shadow-out);
+}
+
+.changelog-expand svg {
+  transition: transform 0.25s ease;
+}
+
+.changelog-expand svg.is-open {
+  transform: rotate(180deg);
+}
+
+/* syntax tokens inside doc code blocks — a muted GitHub-dark palette so
+   keywords, strings, comments, and numbers read at a glance */
+.doc-code .tok-kw {
+  color: #7eb6ff;
+  font-weight: 600;
+}
+
+.doc-code .tok-string {
+  color: #a5d6a7;
+}
+
+.doc-code .tok-comment {
+  color: #7d8a99;
+  font-style: italic;
+}
+
+.doc-code .tok-number {
+  color: #f2a96e;
+}
+
+/* "Was this helpful?" — a quiet yes/no row at the foot of each doc page */
+.doc-feedback {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 30px;
+  padding-top: 22px;
+  border-top: 1px solid var(--soft-line);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.doc-feedback-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.doc-feedback-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 13px;
+  border: none;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--neu-muted);
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-out-sm);
+  cursor: pointer;
+  transition:
+    color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
+}
+
+.doc-feedback-btn:hover {
+  color: var(--neu-accent);
+  transform: translateY(-1px);
+  box-shadow: var(--neu-shadow-out);
+}
+
+.doc-feedback.is-voted {
+  color: var(--green);
+  font-weight: 600;
+}
+
+/* route loading spinner - a quiet ring on the neumorphic canvas */
+.status-spinner {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 3px solid rgba(18, 24, 31, 0.08);
+  border-top-color: var(--neu-accent);
+  animation: status-spin 0.9s linear infinite;
+}
+
+@keyframes status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-spinner {
+    animation: none;
+    border-top-color: rgba(18, 24, 31, 0.2);
+  }
+}
+
+/* reduced-data: hide decorative imagery, keep the layout intact */
+@media (prefers-reduced-data: reduce) {
+  .hero-frame img,
+  .workflow-media img,
+  .doc-figure img {
+    display: none;
+  }
+
+  .hero-frame,
+  .workflow-media,
+  .doc-figure {
+    min-height: 120px;
+  }
+}
+
+/* visually hidden but announced to screen readers */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

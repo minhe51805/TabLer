@@ -16,7 +16,7 @@ const securityHeaders = [
     key: "Content-Security-Policy",
     value: [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'", // Next.js inline scripts + dev
+      `script-src 'self' 'unsafe-inline'${process.env.NODE_ENV === "development" ? " 'unsafe-eval'" : ""}`, // Next.js inline scripts; eval only needed by dev tooling
       "style-src 'self' 'unsafe-inline'", // CSS-in-JS + inline styles
       "img-src 'self' data: https:", // screenshots + OG images
       "font-src 'self' data:",

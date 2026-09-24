@@ -5173,15 +5173,24 @@ a {
     opacity: 0;
     transform: translateY(70px);
     pointer-events: none;
+    visibility: hidden;
     transition:
       opacity 0.35s ease,
-      transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+      transform 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+      visibility 0.35s;
   }
 
   .neu .mobile-cta.is-visible {
     opacity: 1;
     transform: translateY(0);
     pointer-events: auto;
+    visibility: visible;
+  }
+
+  /* keep the round button clear of the full-width mobile CTA bar */
+  .neu .back-to-top {
+    right: 14px;
+    bottom: 76px;
   }
 }
 

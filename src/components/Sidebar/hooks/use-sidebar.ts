@@ -12,19 +12,9 @@ import { getBulkActionsCopy } from "../bulk-actions-copy";
 import { getCodegenCopy } from "../codegen-copy";
 import { generateCode, type CodegenTarget } from "../../../utils/schema-codegen";
 import type { BulkDropTablePreview } from "../components/BulkDropTablesModal";
-import { getSeedRowsCopy } from "../../GenerateTestRows/seed-rows-copy";
-import {
-  applyConditionsWith,
-  applyCondition,
-  buildCloneScript,
-  buildDeleteTemplate,
-  buildDropScript,
-  buildInsertTemplate,
-  buildOverviewScript,
-  buildSelectScript,
-  buildTruncateScript,
-  buildUpdateTemplate,
-} from "./sidebar-filter-scripts";
+import { applyConditionsWith, applyCondition, buildDropScript } from "./sidebar-filter-scripts";
+import { getSidebarAutocompleteItems } from "./sidebar-autocomplete";
+import { buildTableContextMenuItems } from "./sidebar-context-menu";
 import { emitAppToast } from "../../../utils/app-toast";
 import { saveDatabaseDocs } from "../../../utils/schema-doc-collector";
 import { useQueryStore } from "../../../stores/queryStore";
@@ -903,386 +893,54 @@ export function useSidebar() {
   const hasSearch = search.trim().length > 0;
 
   // --- SQL keyword autocomplete suggestions ---
-  const autocompleteItems = useMemo<string[]>(() => {
-    const keywords = [
-      // Clauses
-      "WHERE",
-      "AND",
-      "OR",
-      "NOT",
-      "IN",
-      "NOT IN",
-      "BETWEEN",
-      "LIKE",
-      "ILIKE",
-      "ORDER BY",
-      "GROUP BY",
-      "HAVING",
-      "LIMIT",
-      "OFFSET",
-      "SELECT",
-      "FROM",
-      "JOIN",
-      "LEFT JOIN",
-      "RIGHT JOIN",
-      "INNER JOIN",
-      "FULL OUTER JOIN",
-      "CROSS JOIN",
-      "ON",
-      "USING",
-      "INSERT INTO",
-      "VALUES",
-      "UPDATE",
-      "SET",
-      "DELETE FROM",
-      "CREATE TABLE",
-      "ALTER TABLE",
-      "DROP TABLE",
-      "TRUNCATE",
-      "CREATE INDEX",
-      "DROP INDEX",
-      "DISTINCT",
-      "ALL",
-      "AS",
-      "CASE",
-      "WHEN",
-      "THEN",
-      "ELSE",
-      "END",
-      "UNION",
-      "UNION ALL",
-      "EXCEPT",
-      "INTERSECT",
-      "COUNT",
-      "SUM",
-      "AVG",
-      "MIN",
-      "MAX",
-      "COALESCE",
-      "NULLIF",
-      "NOW()",
-      "CURRENT_DATE",
-      "CURRENT_TIMESTAMP",
-      "TRUE",
-      "FALSE",
-      "NULL",
-      // Aggregate with ALL
-      "COUNT(*)",
-      "COUNT(DISTINCT",
-      "SUM(",
-      "AVG(",
-      "MAX(",
-      "MIN(",
-      // Window-like
-      "OVER",
-      "PARTITION BY",
-      "ROW_NUMBER()",
-      "RANK()",
-      "DENSE_RANK()",
-      "LEAD(",
-      "LAG(",
-      "FIRST_VALUE(",
-      "LAST_VALUE(",
-    ];
-    if (!search.trim()) return [];
-    const needle = search.toLowerCase();
-    return keywords.filter((kw) => kw.toLowerCase().includes(needle)).slice(0, 12);
-  }, [search]);
+  const autocompleteItems = useMemo<string[]>(() => getSidebarAutocompleteItems(search), [search]);
 
   // --- Context menu ---
-  const tableContextMenuItems = useMemo<ExplorerContextMenuItem[]>(() => {
-    if (!tableContextMenu) return [];
-
-    // Multi-selection menu: bulk actions only (export + guarded drop).
-    if (tableContextMenu.tables && tableContextMenu.tables.length > 1) {
-      const count = tableContextMenu.tables.length;
-      return [
-        {
-          key: "bulk-export",
-          label: `${bulkCopy.exportTables} (${count})`,
-          children: [
-            {
-              key: "bulk-export-csv",
-              label: bulkCopy.exportCsv,
-              action: () => void handleBulkExport("csv"),
-            },
-            {
-              key: "bulk-export-jsonl",
-              label: bulkCopy.exportJsonl,
-              action: () => void handleBulkExport("jsonl"),
-            },
-          ],
-        },
-        { key: "bulk-divider", divider: true },
-        {
-          key: "bulk-drop",
-          label: `${bulkCopy.dropTables} (${count})`,
-          action: () => void openBulkDrop(),
-          danger: true,
-        },
-      ];
-    }
-
-    const table = tableContextMenu.table;
-    const qualifiedName = getQualifiedTableName(table);
-    const isPinned = pinnedTableSet.has(qualifiedName);
-
-    return [
-      {
-        key: "open-in-new-tab",
-        label: t("explorer.context.openInNewTab"),
-        action: () => handleOpenTableInNewTab(table),
-      },
-      {
-        key: "open-structure",
-        label: t("explorer.context.openStructure"),
-        action: () => handleOpenStructureDraft(table),
-      },
-      {
-        key: "item-overview",
-        label: t("explorer.context.itemOverview"),
-        action: () => openQueryDraft(`${table.name} overview`, buildOverviewScript(table, dbType)),
-      },
-      { key: "divider-primary", divider: true },
-      {
-        key: "copy-name",
-        label: t("explorer.context.copyName"),
-        action: () => void handleCopyTableName(table),
-      },
-      {
-        key: "generate-docs",
-        label: t("explorer.context.generateDocs"),
-        action: () => void handleGenerateTableDocs(table),
-      },
-      {
-        key: "copy-as-code",
-        label: codegenCopy.menuLabel,
-        children: (["typescript", "zod", "rust", "go", "jsonschema"] as const).map((target) => ({
-          key: `codegen-${target}`,
-          label: codegenCopy.targets[target],
-          action: () => void handleCopyAsCode(table, target),
-        })),
-      },
-      {
-        key: "visual-query-builder",
-        label: t("querybuilder.title"),
-        action: () => void handleOpenQueryBuilder(table.name),
-      },
-      {
-        key: "pin-to-top",
-        label: isPinned ? t("explorer.context.unpin") : t("explorer.context.pinToTop"),
-        action: () => togglePinnedTable(table),
-      },
-      {
-        key: "export",
-        label: t("explorer.context.export"),
-        children: [
-          {
-            key: "export-select",
-            label: t("explorer.context.exportSelect"),
-            action: () => openQueryDraft(`${table.name} export`, buildSelectScript(table, dbType)),
-          },
-          {
-            key: "export-copy",
-            label: t("explorer.context.copySelect"),
-            action: () => void copyToClipboard(buildSelectScript(table, dbType)),
-          },
-        ],
-      },
-      {
-        key: "import",
-        label: t("explorer.context.import"),
-        children: [
-          {
-            key: "import-insert",
-            label: t("explorer.context.importInsert"),
-            action: () =>
-              openQueryDraft(`${table.name} insert`, buildInsertTemplate(table, dbType)),
-          },
-          {
-            key: "import-guide",
-            label: t("explorer.context.importGuide"),
-            action: () =>
-              openQueryDraft(
-                `${table.name} import`,
-                `-- Import guide for ${qualifiedName}\n-- Paste your INSERT statements or load a .sql file here.\n\n${buildInsertTemplate(table, dbType)}`,
-              ),
-          },
-        ],
-      },
-      {
-        key: "generate-test-rows",
-        label: getSeedRowsCopy(language).menuItem,
-        action: () => handleGenerateTestRows(table),
-      },
-      {
-        key: "new",
-        label: t("explorer.context.new"),
-        children: [
-          {
-            key: "new-query",
-            label: t("explorer.context.newQuery"),
-            action: () => openQueryDraft(`${table.name} query`, buildSelectScript(table, dbType)),
-          },
-          {
-            key: "new-structure",
-            label: t("explorer.context.newStructure"),
-            action: () => handleOpenStructureDraft(table),
-          },
-        ],
-      },
-      {
-        key: "copy-script-as",
-        label: t("explorer.context.copyScriptAs"),
-        children: [
-          {
-            key: "copy-select",
-            label: t("explorer.context.copySelect"),
-            action: () => void copyToClipboard(buildSelectScript(table, dbType)),
-          },
-          {
-            key: "copy-insert",
-            label: t("explorer.context.copyInsert"),
-            action: () => void copyToClipboard(buildInsertTemplate(table, dbType)),
-          },
-          {
-            key: "copy-update",
-            label: t("explorer.context.copyUpdate"),
-            action: () => void copyToClipboard(buildUpdateTemplate(table, dbType)),
-          },
-          {
-            key: "copy-delete",
-            label: t("explorer.context.copyDelete"),
-            action: () => void copyToClipboard(buildDeleteTemplate(table, dbType)),
-          },
-        ],
-      },
-      { key: "divider-maintenance", divider: true },
-      {
-        key: "maintenance",
-        label: "Maintenance",
-        children: [
-          // VACUUM: PostgreSQL, SQLite
-          ...([
-            "postgresql",
-            "greenplum",
-            "cockroachdb",
-            "redshift",
-            "vertica",
-            "sqlite",
-            "libsql",
-            "cloudflare_d1",
-          ].includes(dbType || "")
-            ? [
-                {
-                  key: "maintenance-vacuum",
-                  label: "VACUUM",
-                  action: () => void runMaintenanceCommand("vacuum", table.name),
-                },
-              ]
-            : []),
-          // ANALYZE: PostgreSQL, MySQL, SQLite
-          ...([
-            "postgresql",
-            "greenplum",
-            "cockroachdb",
-            "redshift",
-            "vertica",
-            "mysql",
-            "mariadb",
-            "sqlite",
-            "libsql",
-            "cloudflare_d1",
-          ].includes(dbType || "")
-            ? [
-                {
-                  key: "maintenance-analyze",
-                  label: "ANALYZE",
-                  action: () => void runMaintenanceCommand("analyze", table.name),
-                },
-              ]
-            : []),
-          // OPTIMIZE TABLE: MySQL, ClickHouse
-          ...(["mysql", "mariadb", "clickhouse"].includes(dbType || "")
-            ? [
-                {
-                  key: "maintenance-optimize",
-                  label: "OPTIMIZE TABLE",
-                  action: () => void runMaintenanceCommand("optimize", table.name),
-                },
-              ]
-            : []),
-          // REINDEX: PostgreSQL, SQLite
-          ...([
-            "postgresql",
-            "greenplum",
-            "cockroachdb",
-            "redshift",
-            "vertica",
-            "sqlite",
-            "libsql",
-            "cloudflare_d1",
-          ].includes(dbType || "")
-            ? [
-                {
-                  key: "maintenance-reindex",
-                  label: "REINDEX",
-                  action: () => void runMaintenanceCommand("reindex", table.name),
-                },
-              ]
-            : []),
-          // CHECK TABLE: MySQL, PostgreSQL
-          ...(["mysql", "mariadb", "postgresql", "greenplum", "cockroachdb"].includes(dbType || "")
-            ? [
-                {
-                  key: "maintenance-check",
-                  label: "CHECK TABLE",
-                  action: () => void runMaintenanceCommand("check_table", table.name),
-                },
-              ]
-            : []),
-        ],
-      },
-      { key: "divider-danger", divider: true },
-      {
-        key: "clone",
-        label: t("explorer.context.clone"),
-        action: () => openQueryDraft(`${table.name} clone`, buildCloneScript(table, dbType)),
-      },
-      {
-        key: "truncate",
-        label: t("explorer.context.truncate"),
-        action: () => openQueryDraft(`${table.name} truncate`, buildTruncateScript(table, dbType)),
-        danger: true,
-      },
-      {
-        key: "delete",
-        label: t("explorer.context.delete"),
-        action: () => openQueryDraft(`${table.name} delete`, buildDropScript(table, dbType)),
-        danger: true,
-      },
-    ];
-  }, [
-    tableContextMenu,
-    pinnedTableSet,
-    t,
-    dbType,
-    handleOpenTableInNewTab,
-    handleOpenStructureDraft,
-    openQueryDraft,
-    handleCopyTableName,
-    handleCopyAsCode,
-    codegenCopy,
-    handleGenerateTableDocs,
-    handleOpenQueryBuilder,
-    handleGenerateTestRows,
-    language,
-    togglePinnedTable,
-    runMaintenanceCommand,
-    bulkCopy,
-    handleBulkExport,
-    openBulkDrop,
-  ]);
+  const tableContextMenuItems = useMemo<ExplorerContextMenuItem[]>(
+    () =>
+      buildTableContextMenuItems({
+        tableContextMenu,
+        pinnedTableSet,
+        dbType,
+        language,
+        t,
+        bulkCopy,
+        codegenCopy,
+        onOpenTableInNewTab: handleOpenTableInNewTab,
+        onOpenStructureDraft: handleOpenStructureDraft,
+        openQueryDraft,
+        onCopyTableName: handleCopyTableName,
+        onCopyAsCode: handleCopyAsCode,
+        onGenerateTableDocs: handleGenerateTableDocs,
+        onOpenQueryBuilder: handleOpenQueryBuilder,
+        onGenerateTestRows: handleGenerateTestRows,
+        onTogglePinnedTable: togglePinnedTable,
+        onRunMaintenanceCommand: runMaintenanceCommand,
+        onBulkExport: handleBulkExport,
+        onOpenBulkDrop: openBulkDrop,
+      }),
+    [
+      tableContextMenu,
+      pinnedTableSet,
+      dbType,
+      language,
+      t,
+      bulkCopy,
+      codegenCopy,
+      handleOpenTableInNewTab,
+      handleOpenStructureDraft,
+      openQueryDraft,
+      handleCopyTableName,
+      handleCopyAsCode,
+      handleGenerateTableDocs,
+      handleOpenQueryBuilder,
+      handleGenerateTestRows,
+      togglePinnedTable,
+      runMaintenanceCommand,
+      handleBulkExport,
+      openBulkDrop,
+    ],
+  );
 
   // Selection is scoped to the current connection + database workspace.
   useEffect(() => {

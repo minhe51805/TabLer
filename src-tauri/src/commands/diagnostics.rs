@@ -141,6 +141,13 @@ pub fn export_diagnostic_bundle(
     );
     Ok(Some(path.to_string_lossy().into_owned()))
 }
+/// Records a frontend boot-timing mark so release builds can report startup
+/// latency without devtools. The payload is a label plus milliseconds since
+/// `performance.timeOrigin`; nothing user-identifying crosses the bridge.
+#[tauri::command]
+pub fn log_boot_timing(mark: &str, milliseconds: f64) {
+    log::info!("operation=boot.timing mark={} ms={:.1}", mark, milliseconds);
+}
 
 #[cfg(test)]
 mod tests {

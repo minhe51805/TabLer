@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { en, ko, tr, vi, zh } from "../../src/i18n";
+import { en } from "../../src/i18n/en";
+import { vi } from "../../src/i18n/vi";
+import { zh } from "../../src/i18n/zh";
+import { tr } from "../../src/i18n/tr";
+import { ko } from "../../src/i18n/ko";
 
 // The SQLEditor AI-edit proposal banner renders `tabs.aiProposal*`. The
 // dictionaries are Partial, so an omitted key silently degrades to the English

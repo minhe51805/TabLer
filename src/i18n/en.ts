@@ -72,6 +72,7 @@ export const en = {
   "menu.item.toggleBottomSidebar": "Toggle Bottom Sidebar",
   "menu.item.toggleQueryResultsPane": "Toggle Query Results Pane",
   "menu.item.toggleVimMode": "Vim Mode",
+  "menu.item.keepRunningInBackground": "Keep running in background",
   "menu.item.userManagement": "User management...",
   "menu.item.processList": "Process List...",
   "menu.item.searchInDatabase": "Search in database...",

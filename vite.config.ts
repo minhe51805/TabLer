@@ -13,6 +13,14 @@ export default defineConfig(async () => ({
   plugins: [react(), tailwindcss()],
   base: isTauriDev ? "/" : "./",
   build: {
+    // vendor-monaco is fetched on demand (or via the idle prefetch in
+    // main.tsx); preloading it from index.html would pull ~3.7 MB into the
+    // critical path before first paint.
+    modulePreload: {
+      resolveDependencies(_url, deps) {
+        return deps.filter((dep) => !dep.includes("vendor-monaco"));
+      },
+    },
     target:
       tauriPlatform === "windows" ? "chrome105" : tauriPlatform === "macos" ? "safari13" : "es2020",
     cssTarget: tauriPlatform === "windows" ? "chrome105" : undefined,

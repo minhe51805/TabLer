@@ -172,28 +172,35 @@ export function AppKeyboardHandler({
         );
       }
 
-      if (metaPressed && !e.shiftKey && key === "z") {
-        e.preventDefault();
-        window.dispatchEvent(new CustomEvent("datagrid-undo"));
-        return;
-      }
+      // DataGrid-scoped shortcuts must not fire while a Monaco editor has
+      // focus: the editor owns Ctrl+Z/Y (undo/redo) and Ctrl+D (add selection
+      // to next find match / multi-cursor). The window-level capture listener
+      // runs before Monaco's own handler, so without this guard a keypress in
+      // the SQL editor both edits text AND mutates the grid behind it.
+      if (!isMonacoTarget) {
+        if (metaPressed && !e.shiftKey && key === "z") {
+          e.preventDefault();
+          window.dispatchEvent(new CustomEvent("datagrid-undo"));
+          return;
+        }
 
-      if ((metaPressed && e.shiftKey && key === "z") || (metaPressed && key === "y")) {
-        e.preventDefault();
-        window.dispatchEvent(new CustomEvent("datagrid-redo"));
-        return;
-      }
+        if ((metaPressed && e.shiftKey && key === "z") || (metaPressed && key === "y")) {
+          e.preventDefault();
+          window.dispatchEvent(new CustomEvent("datagrid-redo"));
+          return;
+        }
 
-      if (metaPressed && key === "d") {
-        e.preventDefault();
-        window.dispatchEvent(new CustomEvent("datagrid-duplicate-row"));
-        return;
-      }
+        if (metaPressed && key === "d") {
+          e.preventDefault();
+          window.dispatchEvent(new CustomEvent("datagrid-duplicate-row"));
+          return;
+        }
 
-      if (metaPressed && key === "Enter") {
-        e.preventDefault();
-        window.dispatchEvent(new CustomEvent("datagrid-fk-preview"));
-        return;
+        if (metaPressed && key === "Enter") {
+          e.preventDefault();
+          window.dispatchEvent(new CustomEvent("datagrid-fk-preview"));
+          return;
+        }
       }
     };
 

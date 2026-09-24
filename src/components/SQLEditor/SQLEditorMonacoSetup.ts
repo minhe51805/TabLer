@@ -14,7 +14,8 @@ export { defineTableRTheme } from "./SQLEditorTheme";
 
 // Type for column objects from the table structure API
 type TableColumn = TableStructure["columns"][number];
-type CompletionColumn = Pick<TableColumn, "name" | "data_type" | "is_primary_key">;
+type CompletionColumn = Pick<TableColumn, "name" | "data_type" | "is_primary_key"> &
+  Partial<Pick<TableColumn, "is_nullable" | "default_value" | "comment">>;
 
 // Shape of a Monaco completion item we build internally
 type CompletionItem = {
@@ -91,12 +92,25 @@ export function registerSchemaCompletionProvider(
     };
   }
 
-  function colDetail(col: CompletionColumn, prefix: string): string {
+  function colDetail(col: CompletionColumn, suffix: string): string {
     const pk = col.is_primary_key ? " (PK)" : "";
-    return col.data_type + pk + prefix;
+    const nullable = col.is_nullable === undefined ? "" : col.is_nullable ? " NULL" : " NOT NULL";
+    return col.data_type + pk + nullable + suffix;
   }
 
-  async function provideCompletionItems(model: any, position: any): Promise<any> {
+  function colDoc(col: CompletionColumn): string | undefined {
+    const parts: string[] = [];
+    if (col.default_value !== undefined) parts.push(`Default: ${col.default_value}`);
+    if (col.comment) parts.push(col.comment);
+    return parts.length > 0 ? parts.join("\n") : undefined;
+  }
+
+  async function provideCompletionItems(
+    model: Monaco.editor.ITextModel,
+    position: Monaco.Position,
+    _context: Monaco.languages.CompletionContext,
+    token?: Monaco.CancellationToken,
+  ): Promise<Monaco.languages.CompletionList> {
     const analysis = analyzeSqlContext(model, position);
     const word = model.getWordUntilPosition(position);
     const range = makeRange({
@@ -108,46 +122,133 @@ export function registerSchemaCompletionProvider(
 
     const suggestions: CompletionItem[] = [];
     const completionSet = getCompletionSet(dbType);
+    const cancelled = () => !!token?.isCancellationRequested;
+    const qualifier = analysis.qualifier?.toLowerCase() ?? null;
+
+    const matchesQualifier = (scope: SQLTableScope) =>
+      scope.alias.toLowerCase() === qualifier ||
+      scope.table.toLowerCase() === qualifier ||
+      scope.table.toLowerCase().split(".").pop() === qualifier;
+
+    // A typed `alias.`/`table.` qualifier narrows column suggestions to that
+    // one scope; no qualifier means every scope contributes.
+    const columnScopes = (scopes: SQLTableScope[]) =>
+      qualifier ? scopes.filter(matchesQualifier) : scopes;
+
+    /** Pushes columns for the given scopes. With a qualifier typed the
+     *  insertText stays bare — `alias.col` would double the qualifier. */
+    async function pushScopeColumns(scopes: SQLTableScope[]) {
+      await Promise.all(
+        scopes.map(async (scope) => {
+          const prefix = qualifier ? "" : scope.alias !== scope.table ? scope.alias + "." : "";
+          const suffix = scope.alias !== scope.table ? " [" + scope.alias + "]" : "";
+          try {
+            const columns = await fetchScopeColumns(scope);
+            for (const col of columns) {
+              suggestions.push({
+                label: col.name,
+                kind: monaco.languages.CompletionItemKind.Field,
+                insertText: prefix + col.name,
+                detail: colDetail(col, suffix),
+                documentation: colDoc(col),
+                range,
+              });
+            }
+          } catch {
+            // Structure unavailable — skip this scope's columns.
+          }
+        }),
+      );
+    }
+
+    /** `qualifier.` matched no alias — treat it as a bare table name. */
+    async function pushQualifierTableColumns() {
+      if (!analysis.qualifier) return;
+      try {
+        const structure = await fetchStructure(analysis.qualifier);
+        for (const col of structure.columns) {
+          suggestions.push({
+            label: col.name,
+            kind: monaco.languages.CompletionItemKind.Field,
+            insertText: col.name,
+            detail: colDetail(col, ` (${analysis.qualifier})`),
+            documentation: colDoc(col),
+            range,
+          });
+        }
+      } catch {
+        // Not a fetchable table — nothing to add.
+      }
+    }
+
+    /** Fallback when no FROM/JOIN scope exists: qualified columns of every
+     *  known table, fetched under the concurrency cap. */
+    async function pushAllTableColumns() {
+      const tables = getTables();
+      await mapWithConcurrency(tables, STRUCTURE_FETCH_CONCURRENCY, async (t) => {
+        try {
+          const structure = await fetchStructure(t.name);
+          for (const col of structure.columns) {
+            suggestions.push({
+              label: t.name + "." + col.name,
+              kind: monaco.languages.CompletionItemKind.Field,
+              insertText: t.name + "." + col.name,
+              detail: colDetail(col, " (" + t.name + ")"),
+              documentation: colDoc(col),
+              range,
+            });
+          }
+        } catch {
+          // Skip tables we can't fetch structure for
+        }
+      });
+    }
+
+    const pushTableSuggestions = (detail: string) => {
+      // `schema.` filters to that schema; the qualifier is already typed so
+      // the insertText stays the bare table name.
+      const tables = qualifier
+        ? getTables().filter((t) => t.schema?.toLowerCase() === qualifier)
+        : getTables();
+      for (const table of tables) {
+        suggestions.push({
+          label: table.name,
+          kind: monaco.languages.CompletionItemKind.Class,
+          insertText: table.name,
+          detail: table.schema ? "schema: " + table.schema : detail,
+          documentation: table.schema ? "Schema: " + table.schema : undefined,
+          range,
+        });
+        if (table.schema && !qualifier) {
+          suggestions.push({
+            label: table.schema + "." + table.name,
+            kind: monaco.languages.CompletionItemKind.Class,
+            insertText: table.schema + "." + table.name,
+            detail: "Table (schema-qualified)",
+            range,
+          });
+        }
+      }
+    };
 
     // ── Context-specific completions ──────────────────────────────────────────
 
     switch (analysis.context) {
       case "FROM":
       case "JOIN": {
-        const tables = getTables();
-        const ctes = getCteScopes(model);
-        for (const cte of ctes) {
-          suggestions.push({
-            label: cte.table,
-            kind: monaco.languages.CompletionItemKind.Class,
-            insertText: cte.table,
-            detail: "CTE result",
-            documentation: cte.columns?.length ? `Columns: ${cte.columns.join(", ")}` : undefined,
-            range,
-          });
-        }
-        for (const table of tables) {
-          const schemaDetail = table.schema ? "schema: " + table.schema : "Table";
-          const schemaLabel = table.schema ? table.schema + "." + table.name : table.name;
-
-          suggestions.push({
-            label: table.name,
-            kind: monaco.languages.CompletionItemKind.Class,
-            insertText: table.name,
-            detail: schemaDetail,
-            documentation: table.schema ? "Schema: " + table.schema : undefined,
-            range,
-          });
-          if (table.schema) {
+        if (!qualifier) {
+          for (const cte of getCteScopes(model)) {
             suggestions.push({
-              label: schemaLabel,
+              label: cte.table,
               kind: monaco.languages.CompletionItemKind.Class,
-              insertText: schemaLabel,
-              detail: "Table (schema-qualified)",
+              insertText: cte.table,
+              detail: "CTE result",
+              documentation: cte.columns?.length ? `Columns: ${cte.columns.join(", ")}` : undefined,
               range,
             });
           }
         }
+        pushTableSuggestions("Table");
 
         if (analysis.context === "JOIN" && !analysis.isOnContext) {
           suggestions.push({
@@ -181,39 +282,52 @@ export function registerSchemaCompletionProvider(
 
       case "ON": {
         const tablesInScope = getTablesInScope(model, position);
+        const scoped = columnScopes(tablesInScope);
         const foreignKeysByTable = new Map<string, TableStructure["foreign_keys"]>();
+        // FK metadata is collected for every scope (join conditions span both
+        // sides); column suggestions respect the qualifier.
         await Promise.all(
           tablesInScope.map(async (scope) => {
-            const prefix = scope.alias !== scope.table ? `${scope.alias}.` : "";
-            if (scope.kind === "cte") {
-              for (const name of scope.columns ?? []) {
-                suggestions.push({
-                  label: name,
-                  kind: monaco.languages.CompletionItemKind.Field,
-                  insertText: prefix + name,
-                  detail: "CTE result",
-                  range,
-                });
+            if (scope.kind === "table") {
+              try {
+                const structure = await fetchStructure(scope.table);
+                foreignKeysByTable.set(normalizeTableKey(scope.table), structure.foreign_keys);
+                if (!scoped.includes(scope)) return;
+                const prefix = qualifier
+                  ? ""
+                  : scope.alias !== scope.table
+                    ? `${scope.alias}.`
+                    : "";
+                for (const col of structure.columns) {
+                  suggestions.push({
+                    label: col.name,
+                    kind: monaco.languages.CompletionItemKind.Field,
+                    insertText: prefix + col.name,
+                    detail: colDetail(col, ""),
+                    documentation: colDoc(col),
+                    range,
+                  });
+                }
+              } catch {
+                // Structure unavailable — skip this table's columns and FKs.
               }
               return;
             }
-            try {
-              const structure = await fetchStructure(scope.table);
-              foreignKeysByTable.set(normalizeTableKey(scope.table), structure.foreign_keys);
-              for (const col of structure.columns) {
-                suggestions.push({
-                  label: col.name,
-                  kind: monaco.languages.CompletionItemKind.Field,
-                  insertText: prefix + col.name,
-                  detail: colDetail(col, ""),
-                  range,
-                });
-              }
-            } catch {
-              // Structure unavailable — skip this table's columns and FKs.
+            if (!scoped.includes(scope)) return;
+            for (const name of scope.columns ?? []) {
+              suggestions.push({
+                label: name,
+                kind: monaco.languages.CompletionItemKind.Field,
+                insertText: name,
+                detail: "CTE result",
+                range,
+              });
             }
           }),
         );
+        if (cancelled()) return { suggestions: [], incomplete: false };
+        if (qualifier && scoped.length === 0) await pushQualifierTableColumns();
+        if (cancelled()) return { suggestions: [], incomplete: false };
 
         // FK-derived join conditions rank above plain columns via sortText.
         for (const join of buildJoinConditionSuggestions(tablesInScope, foreignKeysByTable)) {
@@ -250,124 +364,81 @@ export function registerSchemaCompletionProvider(
           range,
         });
 
-        if (tablesInScope.length > 0) {
-          await Promise.all(
-            tablesInScope.map(async (scope) => {
-              const columns = await fetchScopeColumns(scope);
-              const prefix = scope.alias !== scope.table ? scope.alias + "." : "";
-              for (const col of columns) {
-                suggestions.push({
-                  label: col.name,
-                  kind: monaco.languages.CompletionItemKind.Field,
-                  insertText: prefix + col.name,
-                  detail: colDetail(
-                    col,
-                    scope.alias !== scope.table ? " [" + scope.alias + "]" : "",
-                  ),
-                  range,
-                });
-              }
-            }),
-          );
+        const scoped = columnScopes(tablesInScope);
+        if (scoped.length > 0) {
+          await pushScopeColumns(scoped);
+        } else if (qualifier) {
+          await pushQualifierTableColumns();
         } else {
-          const tables = getTables();
-          await mapWithConcurrency(tables, STRUCTURE_FETCH_CONCURRENCY, async (t) => {
-            try {
-              const structure = await fetchStructure(t.name);
-              for (const col of structure.columns) {
-                suggestions.push({
-                  label: t.name + "." + col.name,
-                  kind: monaco.languages.CompletionItemKind.Field,
-                  insertText: t.name + "." + col.name,
-                  detail: col.data_type + " (" + t.name + ")",
-                  range,
-                });
-              }
-            } catch {
-              // Skip tables we can't fetch structure for
-            }
-          });
+          await pushAllTableColumns();
         }
+        if (cancelled()) return { suggestions: [], incomplete: false };
 
-        for (const kw of ["DISTINCT", "ALL", "AS"]) {
-          suggestions.push({
-            label: kw,
-            kind: monaco.languages.CompletionItemKind.Keyword,
-            insertText: kw + " ",
-            detail: "SELECT modifier",
-            range,
-          });
+        if (!qualifier) {
+          for (const kw of ["DISTINCT", "ALL", "AS"]) {
+            suggestions.push({
+              label: kw,
+              kind: monaco.languages.CompletionItemKind.Keyword,
+              insertText: kw + " ",
+              detail: "SELECT modifier",
+              range,
+            });
+          }
         }
         break;
       }
 
       case "WHERE": {
-        const tablesInScope = getTablesInScope(model, position);
-        if (tablesInScope.length > 0) {
-          await Promise.all(
-            tablesInScope.map(async (scope) => {
-              const columns = await fetchScopeColumns(scope);
-              const prefix = scope.alias !== scope.table ? `${scope.alias}.` : "";
-              for (const col of columns) {
-                suggestions.push({
-                  label: col.name,
-                  kind: monaco.languages.CompletionItemKind.Field,
-                  insertText: prefix + col.name,
-                  detail: col.data_type,
-                  range,
-                });
-              }
-            }),
-          );
+        const scoped = columnScopes(getTablesInScope(model, position));
+        if (scoped.length > 0) {
+          await pushScopeColumns(scoped);
+        } else if (qualifier) {
+          await pushQualifierTableColumns();
         } else {
-          const tables = getTables();
-          await mapWithConcurrency(tables, STRUCTURE_FETCH_CONCURRENCY, async (t) => {
-            try {
-              const structure = await fetchStructure(t.name);
-              for (const col of structure.columns) {
-                suggestions.push({
-                  label: t.name + "." + col.name,
-                  kind: monaco.languages.CompletionItemKind.Field,
-                  insertText: t.name + "." + col.name,
-                  detail: col.data_type + " (" + t.name + ")",
-                  range,
-                });
-              }
-            } catch {
-              // Skip
-            }
-          });
+          await pushAllTableColumns();
         }
+        if (cancelled()) return { suggestions: [], incomplete: false };
 
-        const whereOps = [
-          "=",
-          "!=",
-          "<>",
-          "<",
-          ">",
-          "<=",
-          ">=",
-          "IN",
-          "NOT IN",
-          "LIKE",
-          "NOT LIKE",
-          "ILIKE",
-          "NOT ILIKE",
-          "IS NULL",
-          "IS NOT NULL",
-          "BETWEEN",
-          "NOT BETWEEN",
-          "EXISTS",
-          "NOT EXISTS",
-        ];
-        for (const op of whereOps) {
-          suggestions.push({
-            label: op,
-            kind: monaco.languages.CompletionItemKind.Operator,
-            insertText: op + " ",
-            detail: "Comparison operator",
-            range,
-          });
+        if (!qualifier) {
+          const whereOps = [
+            "=",
+            "!=",
+            "<>",
+            "<",
+            ">",
+            "<=",
+            ">=",
+            "IN",
+            "NOT IN",
+            "LIKE",
+            "NOT LIKE",
+            "ILIKE",
+            "NOT ILIKE",
+            "IS NULL",
+            "IS NOT NULL",
+            "BETWEEN",
+            "NOT BETWEEN",
+            "EXISTS",
+            "NOT EXISTS",
+          ];
+          for (const op of whereOps) {
+            suggestions.push({
+              label: op,
+              kind: monaco.languages.CompletionItemKind.Operator,
+              insertText: op + " ",
+              detail: "Comparison operator",
+              range,
+            });
+          }
+          for (const kw of ["AND", "OR", "NOT"]) {
+            suggestions.push({
+              label: kw,
+              kind: monaco.languages.CompletionItemKind.Keyword,
+              insertText: kw + " ",
+              detail: "Combine conditions",
+              range,
+            });
+          }
         }
         break;
       }
@@ -375,57 +446,32 @@ export function registerSchemaCompletionProvider(
       case "ORDER BY":
       case "GROUP BY":
       case "HAVING": {
-        const tablesInScope = getTablesInScope(model, position);
-        if (tablesInScope.length > 0) {
-          await Promise.all(
-            tablesInScope.map(async (scope) => {
-              const columns = await fetchScopeColumns(scope);
-              const prefix = scope.alias !== scope.table ? scope.alias + "." : "";
-              for (const col of columns) {
-                suggestions.push({
-                  label: col.name,
-                  kind: monaco.languages.CompletionItemKind.Field,
-                  insertText: prefix + col.name,
-                  detail: colDetail(col, ""),
-                  range,
-                });
-              }
-            }),
-          );
+        const scoped = columnScopes(getTablesInScope(model, position));
+        if (scoped.length > 0) {
+          await pushScopeColumns(scoped);
+        } else if (qualifier) {
+          await pushQualifierTableColumns();
         } else {
-          const tables = getTables();
-          await mapWithConcurrency(tables, STRUCTURE_FETCH_CONCURRENCY, async (t) => {
-            try {
-              const structure = await fetchStructure(t.name);
-              for (const col of structure.columns) {
-                suggestions.push({
-                  label: t.name + "." + col.name,
-                  kind: monaco.languages.CompletionItemKind.Field,
-                  insertText: t.name + "." + col.name,
-                  detail: colDetail(col, " (" + t.name + ")"),
-                  range,
-                });
-              }
-            } catch {
-              // Skip
-            }
-          });
+          await pushAllTableColumns();
         }
+        if (cancelled()) return { suggestions: [], incomplete: false };
 
-        if (analysis.context === "HAVING") {
+        if (analysis.context === "HAVING" && !qualifier) {
           for (const fn of ["COUNT", "SUM", "AVG", "MIN", "MAX"]) {
+            const sig = completionSet.functionSignatures[fn.toLowerCase()];
             suggestions.push({
               label: fn,
               kind: monaco.languages.CompletionItemKind.Function,
-              insertText: fn + "()",
+              insertText: fn + "($1)",
               insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-              detail: "Aggregate function",
+              detail: sig ? sig.signature : "Aggregate function",
+              documentation: sig?.doc,
               range,
             });
           }
         }
 
-        if (analysis.context === "ORDER BY") {
+        if (analysis.context === "ORDER BY" && !qualifier) {
           for (const dir of ["ASC", "DESC"]) {
             suggestions.push({
               label: dir,
@@ -440,28 +486,25 @@ export function registerSchemaCompletionProvider(
       }
 
       case "SET": {
-        const tables = getTables();
-        if (tables.length > 0) {
-          const textBefore = model.getValue().substring(0, model.getOffsetAt(position));
-          const updateMatch = textBefore.match(/\bUPDATE\s+([\w]+)/i);
-          const tableName = updateMatch ? updateMatch[1] : tables[0].name;
-
-          if (tableName) {
-            try {
-              const structure = await fetchStructure(tableName);
-              for (const col of structure.columns) {
-                suggestions.push({
-                  label: col.name,
-                  kind: monaco.languages.CompletionItemKind.Field,
-                  insertText: col.name + " = ",
-                  insertTextRules: monaco.languages.CompletionItemInsertTextRule.InsertAsSnippet,
-                  detail: col.data_type + " = value",
-                  range,
-                });
-              }
-            } catch {
-              // Skip
+        // UPDATE <t> SET — the DML clause names the target table directly,
+        // which stays correct even when the editor holds several statements.
+        const tableName = analysis.targetTable ?? getTables()[0]?.name;
+        if (tableName) {
+          try {
+            const structure = await fetchStructure(tableName);
+            if (cancelled()) return { suggestions: [], incomplete: false };
+            for (const col of structure.columns) {
+              suggestions.push({
+                label: col.name,
+                kind: monaco.languages.CompletionItemKind.Field,
+                insertText: col.name + " = ",
+                detail: colDetail(col, " = value"),
+                documentation: colDoc(col),
+                range,
+              });
             }
+          } catch {
+            // Skip
           }
         }
         break;
@@ -486,13 +529,13 @@ export function registerSchemaCompletionProvider(
       }
 
       case "UPDATE": {
-        const tables = getTables();
-        for (const table of tables) {
+        pushTableSuggestions("Table to update");
+        if (analysis.targetTable && !qualifier) {
           suggestions.push({
-            label: table.name,
-            kind: monaco.languages.CompletionItemKind.Class,
-            insertText: table.name,
-            detail: "Table to update",
+            label: "SET",
+            kind: monaco.languages.CompletionItemKind.Keyword,
+            insertText: "SET ",
+            detail: "Assign updated values",
             range,
           });
         }
@@ -500,23 +543,41 @@ export function registerSchemaCompletionProvider(
       }
 
       case "INSERT INTO": {
-        const tables = getTables();
-        for (const table of tables) {
-          suggestions.push({
-            label: table.name,
-            kind: monaco.languages.CompletionItemKind.Class,
-            insertText: table.name,
-            detail: "Table to insert into",
-            range,
-          });
+        if (analysis.insertColumnList) {
+          // Inside `INSERT INTO t (…)` — offer the columns not yet listed.
+          const tableName = analysis.targetTable;
+          if (tableName) {
+            try {
+              const structure = await fetchStructure(tableName);
+              if (cancelled()) return { suggestions: [], incomplete: false };
+              const used = new Set(analysis.insertColumnList.map((c) => c.toLowerCase()));
+              for (const col of structure.columns) {
+                if (used.has(col.name.toLowerCase())) continue;
+                suggestions.push({
+                  label: col.name,
+                  kind: monaco.languages.CompletionItemKind.Field,
+                  insertText: col.name,
+                  detail: colDetail(col, ""),
+                  documentation: colDoc(col),
+                  range,
+                });
+              }
+            } catch {
+              // Skip
+            }
+          }
+          break;
         }
 
+        pushTableSuggestions("Table to insert into");
+
+        // `INSERT INTO t ` (cursor right after the table name) — offer the
+        // full column list as a snippet.
         const textBefore = model.getValue().substring(0, model.getOffsetAt(position));
-        const insertMatch = textBefore.match(/\bINSERT\s+INTO\s+([\w]+)\s*$/i);
-        if (insertMatch) {
-          const tableName = insertMatch[1];
+        if (/\bINSERT\s+INTO\s+[^\s,()]+\s*$/i.test(textBefore) && analysis.targetTable) {
           try {
-            const structure = await fetchStructure(tableName);
+            const structure = await fetchStructure(analysis.targetTable);
+            if (cancelled()) return { suggestions: [], incomplete: false };
             const cols = structure.columns.map((c) => c.name).join(", ");
             suggestions.push({
               label: "(column names)",
@@ -534,31 +595,37 @@ export function registerSchemaCompletionProvider(
       }
 
       case "DELETE FROM": {
-        const tables = getTables();
-        for (const table of tables) {
+        pushTableSuggestions("Table to delete from");
+        if (analysis.targetTable && !qualifier) {
           suggestions.push({
-            label: table.name,
-            kind: monaco.languages.CompletionItemKind.Class,
-            insertText: table.name,
-            detail: "Table to delete from",
+            label: "WHERE",
+            kind: monaco.languages.CompletionItemKind.Keyword,
+            insertText: "WHERE ",
+            detail: "Filter rows to delete",
             range,
           });
+          try {
+            const structure = await fetchStructure(analysis.targetTable);
+            if (cancelled()) return { suggestions: [], incomplete: false };
+            for (const col of structure.columns) {
+              suggestions.push({
+                label: col.name,
+                kind: monaco.languages.CompletionItemKind.Field,
+                insertText: col.name,
+                detail: colDetail(col, ""),
+                documentation: colDoc(col),
+                range,
+              });
+            }
+          } catch {
+            // Skip
+          }
         }
         break;
       }
 
       default: {
-        const tables = getTables();
-        for (const table of tables) {
-          const schemaDetail = table.schema ? "schema: " + table.schema : "Table";
-          suggestions.push({
-            label: table.name,
-            kind: monaco.languages.CompletionItemKind.Class,
-            insertText: table.name,
-            detail: schemaDetail,
-            range,
-          });
-        }
+        pushTableSuggestions("Table");
         break;
       }
     }
@@ -580,11 +647,13 @@ export function registerSchemaCompletionProvider(
       }
 
       for (const fn of completionSet.functions) {
+        const sig = completionSet.functionSignatures[fn.toLowerCase()];
         suggestions.push({
           label: fn,
           kind: monaco.languages.CompletionItemKind.Function,
           insertText: fn,
-          detail: "Function",
+          detail: sig ? sig.signature : "Function",
+          documentation: sig?.doc,
           range,
         });
       }

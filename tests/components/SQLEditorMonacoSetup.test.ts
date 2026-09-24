@@ -80,7 +80,8 @@ describe("schema completion provider", () => {
       lineNumber: 1,
       column: sql.length + 1,
     });
-    expect(result.suggestions.map((suggestion) => suggestion.insertText)).toContain("o.id");
+    // With `o.` already typed, insertText stays bare — `o.id` would double the qualifier.
+    expect(result.suggestions.map((suggestion) => suggestion.insertText)).toContain("id");
   });
 
   it("completes CTE columns without loading a structure for the CTE name", async () => {
@@ -99,7 +100,7 @@ describe("schema completion provider", () => {
       column: sql.length + 1,
     });
     expect(result.suggestions.map((suggestion) => suggestion.insertText)).toEqual(
-      expect.arrayContaining(["ao.id", "ao.total"]),
+      expect.arrayContaining(["id", "total"]),
     );
     expect(getTableStructure).not.toHaveBeenCalledWith("active_orders");
   });

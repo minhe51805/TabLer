@@ -17,6 +17,8 @@
 //! status, and a `schedule-fired` event reaches the frontend for the toast.
 
 use crate::database::manager::DatabaseManager;
+use crate::database::models::DatabaseType;
+use crate::storage::connection_storage::ConnectionStorage;
 use crate::storage::schedule_storage::{
     apply_agent_run_outcome, mark_agent_task_dispatched, mark_schedule_missed,
     normalize_catch_up_policy, normalize_schedule_kind, QuerySchedule, ScheduleRunOutcome,
@@ -72,7 +74,7 @@ pub fn save_query_schedule(
             // Reject non-readonly SQL at SAVE time, not first run: a schedule
             // that can never execute should not be storable (the runner
             // re-checks the same predicate before every fire).
-            if !is_readonly_schedulable(&sql) {
+            if !is_readonly_schedulable(&sql, schedule_database_type(connection_id.as_deref())) {
                 return Err(
                     "Only a single read-only SELECT/WITH statement can be scheduled — writes, DDL, and filesystem-access SQL are not schedulable."
                         .into(),
@@ -187,13 +189,27 @@ pub fn complete_agent_schedule_run(
 /// Readonly guard: a schedule is only allowed when the canonical classifier
 /// proves the whole input is a single read-only statement with no filesystem
 /// capability. The old leading-keyword check let `SELECT ... INTO` and
-/// mutating CTEs ride the scheduler.
-fn is_readonly_schedulable(sql: &str) -> bool {
-    let decision = crate::utils::sql::classify_sql(sql);
+/// mutating CTEs ride the scheduler. `database_type` is the target engine so
+/// dialect-specific reads (MySQL `SHOW`, `DESCRIBE`) classify the way the
+/// server will read them.
+fn is_readonly_schedulable(sql: &str, database_type: Option<DatabaseType>) -> bool {
+    let decision = crate::utils::sql::classify_sql_with_dialect(sql, database_type);
     decision.parse_error.is_none()
         && !decision.filesystem_access
         && decision.statements.len() == 1
         && decision.read_only
+}
+
+/// Engine a schedule's connection targets. The live session knows it when
+/// connected; a saved-but-disconnected connection still carries `db_type` in
+/// the store, so the guard never falls back to the generic dialect just
+/// because the app was restarted.
+fn schedule_database_type(connection_id: Option<&str>) -> Option<DatabaseType> {
+    let connection_id = connection_id?;
+    ConnectionStorage::new()
+        .ok()
+        .and_then(|storage| storage.load_connection_by_id(connection_id).ok())
+        .map(|config| config.db_type)
 }
 
 /// Runs one SQL schedule and persists the outcome. Failures are recorded on the
@@ -206,7 +222,10 @@ async fn run_schedule(
 ) -> Result<(), String> {
     let now = chrono::Utc::now().timestamp_millis();
     let outcome = async {
-        if !is_readonly_schedulable(&schedule.sql) {
+        if !is_readonly_schedulable(
+            &schedule.sql,
+            schedule_database_type(schedule.connection_id.as_deref()),
+        ) {
             return Err("Only a single SELECT or WITH statement can be scheduled.".to_string());
         }
         let Some(connection_id) = schedule.connection_id.clone() else {
@@ -448,25 +467,36 @@ pub fn spawn_scheduler(app: AppHandle) {
 mod tests {
     use super::is_readonly_schedulable;
     use crate::storage::schedule_storage::ScheduleRunOutcome;
-
     #[test]
     fn single_selects_and_ctes_are_schedulable() {
-        assert!(is_readonly_schedulable("SELECT * FROM users"));
-        assert!(is_readonly_schedulable("  select 1 ;"));
+        assert!(is_readonly_schedulable("SELECT * FROM users", None));
+        assert!(is_readonly_schedulable("  select 1 ;", None));
         assert!(is_readonly_schedulable(
-            "WITH recent AS (SELECT 1) SELECT * FROM recent"
+            "WITH recent AS (SELECT 1) SELECT * FROM recent",
+            None
         ));
+        // Dialect-aware: a MySQL server command the generic grammar cannot
+        // parse is still a schedulable read on MySQL/MariaDB.
+        assert!(is_readonly_schedulable(
+            "SHOW FULL PROCESSLIST",
+            Some(crate::database::models::DatabaseType::MySQL)
+        ));
+        assert!(!is_readonly_schedulable("SHOW FULL PROCESSLIST", None));
     }
 
     #[test]
     fn destructive_or_multi_statement_sql_is_refused() {
-        assert!(!is_readonly_schedulable("DELETE FROM users"));
-        assert!(!is_readonly_schedulable("UPDATE users SET x = 1"));
-        assert!(!is_readonly_schedulable("DROP TABLE users"));
-        assert!(!is_readonly_schedulable("SELECT 1; DROP TABLE users"));
-        assert!(!is_readonly_schedulable(""));
+        assert!(!is_readonly_schedulable("DELETE FROM users", None));
+        assert!(!is_readonly_schedulable("UPDATE users SET x = 1", None));
+        assert!(!is_readonly_schedulable("DROP TABLE users", None));
+        assert!(!is_readonly_schedulable("SELECT 1; DROP TABLE users", None));
+        assert!(!is_readonly_schedulable("", None));
+        // Reads that reach the filesystem are not schedulable either.
+        assert!(!is_readonly_schedulable(
+            "SELECT pg_read_file('/etc/passwd')",
+            Some(crate::database::models::DatabaseType::PostgreSQL)
+        ));
     }
-
     #[test]
     fn agent_run_status_accepts_only_real_outcomes() {
         assert_eq!(

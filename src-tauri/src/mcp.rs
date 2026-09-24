@@ -2,7 +2,7 @@ use crate::database::manager::DatabaseManager;
 use crate::mcp_security::{authorize_mcp_access, McpPermission};
 use crate::storage::connection_storage::ConnectionStorage;
 use crate::storage::mcp_storage::{McpAuditEvent, McpStorage};
-use crate::utils::sql::{classify_sql, detect_dangerous_capability};
+use crate::utils::sql::{classify_sql_with_dialect, detect_dangerous_capability};
 use anyhow::{anyhow, Result};
 use serde_json::{json, Value};
 use std::io::{self, BufRead, Write};
@@ -10,8 +10,13 @@ use std::io::{self, BufRead, Write};
 pub(crate) const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 
 /// MCP intentionally accepts exactly one inspection query and never a mutation.
-pub fn validate_read_only_mcp_query(sql: &str) -> Result<String> {
-    let decision = classify_sql(sql);
+/// `database_type` is the connection's engine so dialect-specific reads
+/// (MySQL `SHOW`, `DESCRIBE`) classify the way the server parses them.
+pub fn validate_read_only_mcp_query(
+    sql: &str,
+    database_type: Option<crate::database::models::DatabaseType>,
+) -> Result<String> {
+    let decision = classify_sql_with_dialect(sql, database_type);
     if let Some(error) = decision.parse_error {
         return Err(anyhow!("MCP could not parse SQL: {error}"));
     }
@@ -27,7 +32,7 @@ pub fn validate_read_only_mcp_query(sql: &str) -> Result<String> {
     // OS command through a dialect capability (pg_read_file, read_csv,
     // INTO OUTFILE, …) — reject those before the statement is accepted.
     if decision.filesystem_access {
-        let reason = detect_dangerous_capability(sql, None)
+        let reason = detect_dangerous_capability(sql, database_type)
             .unwrap_or_else(|| "uses a filesystem/network/OS capability".to_string());
         return Err(anyhow!("MCP read-only boundary blocks SQL that {reason}."));
     }
@@ -160,6 +165,7 @@ pub async fn run_stdio_server() -> Result<()> {
         "success",
     ));
     let database = config.database.clone();
+    let database_type = config.db_type;
     let manager = DatabaseManager::new();
     manager.connect(&config).await?;
 
@@ -239,7 +245,7 @@ pub async fn run_stdio_server() -> Result<()> {
                             .get("sql")
                             .and_then(Value::as_str)
                             .ok_or_else(|| anyhow!("sql is required."))?;
-                        let statement = validate_read_only_mcp_query(sql)?;
+                        let statement = validate_read_only_mcp_query(sql, Some(database_type))?;
                         text_result(driver.execute_query(&statement).await?)
                     }
                     _ => Err(anyhow!("Unknown read-only MCP tool '{name}'.")),
@@ -280,12 +286,27 @@ mod tests {
 
     #[test]
     fn mcp_rejects_writes_and_multi_statement_queries() {
-        assert!(validate_read_only_mcp_query("SELECT * FROM users").is_ok());
+        assert!(validate_read_only_mcp_query("SELECT * FROM users", None).is_ok());
         assert!(validate_read_only_mcp_query(
-            "WITH changed AS (DELETE FROM users RETURNING id) SELECT * FROM changed"
+            "WITH changed AS (DELETE FROM users RETURNING id) SELECT * FROM changed",
+            None
         )
         .is_err());
-        assert!(validate_read_only_mcp_query("EXPLAIN INSERT INTO users VALUES (1)").is_err());
-        assert!(validate_read_only_mcp_query("SELECT 1; DELETE FROM users").is_err());
+        assert!(
+            validate_read_only_mcp_query("EXPLAIN INSERT INTO users VALUES (1)", None).is_err()
+        );
+        assert!(validate_read_only_mcp_query("SELECT 1; DELETE FROM users", None).is_err());
+        // Filesystem/OS capabilities are refused even when they parse as reads.
+        assert!(validate_read_only_mcp_query(
+            "SELECT pg_read_file('/etc/passwd')",
+            Some(crate::database::models::DatabaseType::PostgreSQL)
+        )
+        .is_err());
+        // Dialect-aware: a MySQL server command is a read on MySQL.
+        assert!(validate_read_only_mcp_query(
+            "SHOW TABLES",
+            Some(crate::database::models::DatabaseType::MySQL)
+        )
+        .is_ok());
     }
 }

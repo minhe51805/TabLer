@@ -13,6 +13,11 @@ pub struct RestorePreview {
     pub schema_change_count: usize,
     pub data_change_count: usize,
     pub destructive_statement_count: usize,
+    /// Statements the SQL parser could not classify (MySQL `LOCK TABLES`,
+    /// `DELIMITER`, versioned comments, …). They are tolerated at apply time
+    /// — the human reviewed this preview — but the UI should still show the
+    /// count so "unreviewed" SQL is never invisible.
+    pub unclassified_statement_count: usize,
     pub transactional: bool,
     pub warning: Option<String>,
 }
@@ -65,12 +70,12 @@ pub(super) fn build_restore_preview(
         .filter(|statement| is_destructive(statement))
         .count();
     let transactional = supports_transactional_restore(db_type);
-
     Ok(RestorePreview {
         statement_count: statements.len(),
         schema_change_count,
         data_change_count,
         destructive_statement_count,
+        unclassified_statement_count: count_unclassified_statements(&statements, db_type),
         transactional,
         warning: (!transactional).then(|| {
             "This database can auto-commit schema changes during restore. TableR will stop at the first error, but earlier changes may remain.".to_string()
@@ -78,8 +83,32 @@ pub(super) fn build_restore_preview(
     })
 }
 
+/// Counts statements the classifier cannot classify (parse error or Unknown
+/// kind). The whole dump is parsed once first — the per-statement fallback
+/// only runs when the dump contains at least one unparseable statement.
+fn count_unclassified_statements(statements: &[String], db_type: DatabaseType) -> usize {
+    let decision =
+        crate::utils::sql::classify_sql_with_dialect(&statements.join(";\n"), Some(db_type));
+    if decision.parse_error.is_none() {
+        return decision
+            .statements
+            .iter()
+            .filter(|statement| statement.kind == crate::utils::sql::SqlStatementKind::Unknown)
+            .count();
+    }
+    statements
+        .iter()
+        .filter(|statement| {
+            let decision = crate::utils::sql::classify_sql_with_dialect(statement, Some(db_type));
+            decision.parse_error.is_some()
+                || decision
+                    .statements
+                    .iter()
+                    .any(|parsed| parsed.kind == crate::utils::sql::SqlStatementKind::Unknown)
+        })
+        .count()
+}
 /// Pre-restore snapshot policy for engines whose restore cannot abort
-/// atomically (see [`supports_transactional_restore`]).
 #[derive(Debug, Clone, Copy)]
 pub enum PreRestoreSnapshot {
     /// The caller already captured a safety snapshot before destructive
@@ -137,10 +166,24 @@ pub(super) async fn run_sql_restore(
     pre_restore: PreRestoreSnapshot,
 ) -> Result<RestoreResult, String> {
     db_manager.assert_write_allowed(connection_id).await?;
+    let statements = split_sql_statements(sql);
+    if statements.is_empty() {
+        return Err("The restore file does not contain any SQL statements.".to_string());
+    }
+    let mut warning: Option<String> = None;
     if enforce_safe_mode {
-        safe_mode
-            .assert_sql_allowed(connection_id, sql, Some(db_type))
+        // The human already reviewed the preview, so statements the parser
+        // cannot classify (LOCK TABLES, DELIMITER, …) are tolerated and
+        // counted instead of hard-failing the whole dump; classified
+        // statements still face the full level policy.
+        let unclassified = safe_mode
+            .assert_restore_statements_allowed(connection_id, &statements, Some(db_type))
             .await?;
+        if unclassified > 0 {
+            warning = Some(format!(
+                "{unclassified} statement(s) could not be classified by the SQL parser and were applied without Safe Mode review."
+            ));
+        }
     }
     // The capability gate targets engines whose driver cannot carry a SQL
     // restore at all (read-only drivers: OpenSearch, Oracle/ORDS). Limited
@@ -164,12 +207,7 @@ pub(super) async fn run_sql_restore(
             ));
         }
     }
-    let statements = split_sql_statements(sql);
-    if statements.is_empty() {
-        return Err("The restore file does not contain any SQL statements.".to_string());
-    }
     let transactional = supports_transactional_restore(db_type);
-    let mut warning: Option<String> = None;
     // Engines that cannot roll a failed restore back get a snapshot of the
     // CURRENT state first — the last line of defense when a mid-restore
     // failure leaves earlier changes applied.
@@ -192,9 +230,13 @@ pub(super) async fn run_sql_restore(
                             ));
                         }
                         log::warn!("pre-restore snapshot failed, continuing anyway: {error}");
-                        warning = Some(format!(
+                        let snapshot_warning = format!(
                             "Pre-restore snapshot failed ({error}) — the restore ran without a fresh fallback point."
-                        ));
+                        );
+                        warning = Some(match warning {
+                            Some(existing) => format!("{existing} {snapshot_warning}"),
+                            None => snapshot_warning,
+                        });
                     }
                 }
             }

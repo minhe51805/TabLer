@@ -5312,3 +5312,95 @@ a {
 .docs-search-input:not(:placeholder-shown) ~ .docs-search-kbd {
   opacity: 0;
 }
+
+/* ---------- deep polish pass 6 ---------- */
+
+/* workflow progression — each row owns a node on the central spine that
+   lights up while the row is in view, so the line reads as a journey */
+@media (min-width: 981px) {
+  .neu .workflow-row {
+    position: relative;
+  }
+
+  .neu .workflow-row::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: var(--neu-bg-soft);
+    box-shadow: var(--neu-shadow-out-sm);
+    transform: translate(-50%, -50%) scale(0.8);
+    transition:
+      transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1),
+      background 0.3s ease,
+      box-shadow 0.3s ease;
+    z-index: 2;
+  }
+
+  .neu .workflow-row.is-active::before {
+    background: var(--neu-accent);
+    transform: translate(-50%, -50%) scale(1.15);
+    box-shadow:
+      0 0 0 6px rgba(8, 126, 252, 0.16),
+      var(--neu-shadow-out-sm);
+  }
+}
+
+/* docs headings get a hover anchor — a quiet # that appears at the left
+   edge and copies the section link on click */
+.doc-article h2,
+.doc-article h3 {
+  position: relative;
+}
+
+.doc-article h2 .heading-anchor,
+.doc-article h3 .heading-anchor {
+  position: absolute;
+  left: -1.4em;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 1.1em;
+  text-align: center;
+  font-size: 0.75em;
+  font-weight: 400;
+  color: var(--muted-soft);
+  text-decoration: none;
+  opacity: 0;
+  transition:
+    opacity 0.2s ease,
+    color 0.2s ease;
+}
+
+.doc-article h2:hover .heading-anchor,
+.doc-article h3:hover .heading-anchor,
+.doc-article h2 .heading-anchor:focus-visible,
+.doc-article h3 .heading-anchor:focus-visible {
+  opacity: 1;
+}
+
+.doc-article .heading-anchor:hover {
+  color: var(--neu-accent);
+}
+
+/* download help: the macOS command gets a copy affordance — the code
+   pill is a button, swaps to a check for a beat after copying */
+.download-help code.copyable {
+  cursor: pointer;
+  border: none;
+  font: inherit;
+  transition:
+    box-shadow 0.2s ease,
+    color 0.2s ease;
+}
+
+.download-help code.copyable:hover {
+  color: var(--neu-accent);
+  box-shadow: var(--neu-shadow-in);
+}
+
+.download-help code.copyable.is-copied {
+  color: var(--green);
+}

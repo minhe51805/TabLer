@@ -41,6 +41,7 @@ import {
   WordStagger,
   BackToTop,
   SignalCounters,
+  WorkflowProgress,
 } from "./Home3D";
 import { EngineMark } from "./engine-logos";
 import { SiteFooter } from "./SiteFooter";
@@ -126,6 +127,7 @@ export default async function Home() {
       <div className="scroll-progress" aria-hidden="true" />
       <ScrollProgress />
       <ScrollSpy />
+      <WorkflowProgress />
       <SignalCounters />
       <MagneticButtons />
       <CursorGlow />

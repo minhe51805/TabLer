@@ -7,7 +7,7 @@ import { getDictionary } from "@/lib/i18n";
 import { engineHref, engineOrder, getDocs, docBodyText } from "@/lib/docs";
 import { LanguageToggle } from "../LanguageToggle";
 import { DocsSidebar } from "./DocsSidebar";
-import { ScrollProgress, ScrollReveal } from "../Home3D";
+import { ScrollProgress, ScrollReveal, DocEnhancements } from "../Home3D";
 
 export default async function DocsLayout({ children }: { children: ReactNode }) {
   const language = await getSiteLanguage();
@@ -30,6 +30,7 @@ export default async function DocsLayout({ children }: { children: ReactNode }) 
       <div className="scroll-progress" aria-hidden="true" />
       <ScrollProgress />
       <ScrollReveal />
+      <DocEnhancements />
       <header className="site-header">
         <div className="shell header-inner">
           <Link className="brand" href="/" aria-label="TableR home">

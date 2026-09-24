@@ -226,7 +226,7 @@ impl DuckDbDriver {
     }
 
     fn execute_select(
-        conn: &mut DuckConnection,
+        conn: &DuckConnection,
         sql: &str,
         original_query: &str,
         affected_rows: u64,
@@ -553,6 +553,64 @@ impl DatabaseDriver for DuckDbDriver {
                 sandboxed: false,
                 truncated: false,
             })
+        })
+        .await
+    }
+
+    async fn preview_write_transaction(&self, statements: &[String]) -> Result<Vec<QueryResult>> {
+        let statements = statements.to_vec();
+        self.with_connection(move |conn| {
+            let tx = conn
+                .transaction()
+                .context("Failed to open DuckDB transaction for write preview")?;
+            let mut results = Vec::new();
+
+            // Every statement runs inside one transaction; any failure stops
+            // the loop and the unconditional rollback below discards partial
+            // work. DuckDB transactions cover DDL as well, so no statement
+            // allowlist is needed.
+            let execution = (|| {
+                for statement in &statements {
+                    if statement.trim().is_empty() {
+                        continue;
+                    }
+
+                    if Self::query_returns_rows(statement) {
+                        results.push(Self::execute_select(
+                            &tx,
+                            statement,
+                            statement,
+                            0,
+                            false,
+                            &[],
+                        )?);
+                    } else {
+                        let affected = tx.execute(statement, [])? as u64;
+                        results.push(QueryResult {
+                            columns: Vec::new(),
+                            rows: Vec::new(),
+                            affected_rows: affected,
+                            execution_time_ms: 0,
+                            query: statement.clone(),
+                            sandboxed: true,
+                            truncated: false,
+                        });
+                    }
+                }
+                Ok::<_, anyhow::Error>(())
+            })();
+
+            let rollback = tx.rollback();
+            execution?;
+            if let Err(error) = rollback {
+                // A failed rollback can leave the preview's writes committed —
+                // never report a clean rollback that did not happen.
+                log::error!("write-preview rollback failed: {error}");
+                return Err(anyhow!(
+                    "Write preview rollback failed; the previewed statements may have been committed: {error}"
+                ));
+            }
+            Ok(results)
         })
         .await
     }
@@ -911,6 +969,7 @@ mod tests {
             startup_commands: None,
             pre_connect_script: None,
             query_timeout_seconds: None,
+            read_only: false,
             ssh_config: None,
         };
 
@@ -936,6 +995,64 @@ mod tests {
                 .get_table_data("items", None, 0, 10, None, None, None)
                 .await?;
             assert_eq!(rows.rows.len(), 1);
+        }
+
+        let _ = fs::remove_file(temp_path);
+        Ok(())
+    }
+    #[tokio::test]
+    async fn duckdb_preview_write_rolls_back() -> Result<()> {
+        let temp_path =
+            std::env::temp_dir().join(format!("tabler-duckdb-preview-{}.duckdb", Uuid::new_v4()));
+        let temp_path_string = temp_path.to_string_lossy().to_string();
+        let config = ConnectionConfig {
+            id: Uuid::new_v4().to_string(),
+            name: "DuckDB preview".to_string(),
+            db_type: DatabaseType::DuckDB,
+            host: None,
+            port: None,
+            username: None,
+            password: None,
+            database: None,
+            file_path: Some(temp_path_string.clone()),
+            use_ssl: false,
+            ssl_mode: None,
+            ssl_ca_cert_path: None,
+            ssl_client_cert_path: None,
+            ssl_client_key_path: None,
+            ssl_skip_host_verification: None,
+            color: None,
+            additional_fields: HashMap::new(),
+            startup_commands: None,
+            pre_connect_script: None,
+            query_timeout_seconds: None,
+            read_only: false,
+            ssh_config: None,
+        };
+
+        {
+            let driver = DuckDbDriver::connect(&config).await?;
+            driver
+                .execute_query("CREATE TABLE items (id INTEGER PRIMARY KEY, name VARCHAR); INSERT INTO items VALUES (1, 'alpha');")
+                .await?;
+
+            let preview = driver
+                .preview_write_transaction(&[
+                    "UPDATE items SET name = 'beta' WHERE id = 1".to_string(),
+                    "SELECT name FROM items WHERE id = 1".to_string(),
+                ])
+                .await?;
+
+            assert_eq!(preview.len(), 2);
+            assert_eq!(preview[0].affected_rows, 1);
+            // Inside the transaction the row reads as updated.
+            assert_eq!(preview[1].rows[0][0], serde_json::Value::from("beta"));
+
+            // After the unconditional rollback the committed value is intact.
+            let after = driver
+                .execute_query("SELECT name FROM items WHERE id = 1")
+                .await?;
+            assert_eq!(after.rows[0][0], serde_json::Value::from("alpha"));
         }
 
         let _ = fs::remove_file(temp_path);

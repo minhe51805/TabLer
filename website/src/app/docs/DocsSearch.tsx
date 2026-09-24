@@ -94,6 +94,13 @@ export function DocsSearch({
         placeholder={placeholder}
         value={query}
         aria-label={placeholder}
+        role="combobox"
+        aria-expanded={open && results.length > 0}
+        aria-controls="docs-search-results"
+        aria-activedescendant={
+          open && results.length > 0 ? `docs-search-result-${active}` : undefined
+        }
+        aria-autocomplete="list"
         onChange={(event) => updateQuery(event.target.value)}
         onFocus={() => setOpen(true)}
         onKeyDown={(event) => {
@@ -118,9 +125,14 @@ export function DocsSearch({
         /
       </kbd>
       {open && results.length > 0 ? (
-        <ul className="docs-search-results" role="listbox">
+        <ul className="docs-search-results" role="listbox" id="docs-search-results">
           {results.map((item, i) => (
-            <li key={item.slug} role="option" aria-selected={i === active}>
+            <li
+              key={item.slug}
+              role="option"
+              aria-selected={i === active}
+              id={`docs-search-result-${i}`}
+            >
               <button
                 type="button"
                 className={`docs-search-result${i === active ? " is-active" : ""}`}

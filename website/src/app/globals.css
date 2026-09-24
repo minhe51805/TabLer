@@ -5949,3 +5949,54 @@ a {
   white-space: nowrap;
   border: 0;
 }
+
+/* print: docs pages print as clean articles - no chrome, no sidebar */
+@media print {
+  .site-header,
+  .docs-sidebar,
+  .docs-toc,
+  .doc-pager,
+  .doc-feedback,
+  .docs-edit-link,
+  .docs-breadcrumb,
+  .docs-copy-page,
+  .scroll-progress,
+  .site-footer,
+  .docs-search,
+  .docs-menu-toggle {
+    display: none !important;
+  }
+
+  .docs-layout,
+  .docs-content-layout {
+    display: block;
+    padding: 0;
+  }
+
+  .docs-article-shell {
+    max-width: none;
+    padding: 0;
+  }
+
+  .doc-article {
+    font-size: 11pt;
+    line-height: 1.6;
+  }
+
+  .doc-code {
+    border: 1px solid #ccc;
+    break-inside: avoid;
+  }
+
+  .doc-callout,
+  .doc-steps li,
+  .doc-cards a {
+    break-inside: avoid;
+  }
+
+  a[href^="http"]::after {
+    content: " (" attr(href) ")";
+    font-size: 0.85em;
+    color: #666;
+  }
+}

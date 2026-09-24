@@ -42,6 +42,7 @@ describe("release scripts", () => {
         manifestPath,
         JSON.stringify({
           version,
+          notes: `Release notes for ${releaseTag}`,
           platforms: {
             "linux-x86_64": {
               url: `https://github.com/minhe51805/TableR/releases/download/${releaseTag}/TableR.AppImage`,

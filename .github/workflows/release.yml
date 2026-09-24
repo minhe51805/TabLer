@@ -83,10 +83,23 @@ jobs:
         if: steps.signing-mode.outputs.apple != 'true'
         run: echo "macOS will be built unsigned. Set the repository variable ENABLE_APPLE_SIGNING=true only after valid Apple signing and notarization secrets are configured."
 
-      - name: Warn when updater artifacts are disabled
+      - name: Fail when the updater is configured but unsigned
         if: steps.signing-mode.outputs.updater != 'true'
         run: |
-          echo "::warning::TAURI_SIGNING_PRIVATE_KEY is not configured — this release will ship WITHOUT updater artifacts (no latest.json, no .sig files). Installed builds will NOT be able to auto-update; the release notes will carry an 'auto-update disabled' banner."
+          # tauri.conf.json ships plugins.updater.endpoints, so installed builds
+          # will poll latest.json forever. Releasing without updater signing
+          # leaves that endpoint a permanent 404 — fail the pipeline instead of
+          # shipping a release whose auto-update can never work.
+          if grep -q '"updater"' src-tauri/tauri.conf.json && grep -q '"endpoints"' src-tauri/tauri.conf.json; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is not configured, but the updater endpoint IS configured in tauri.conf.json. A release without latest.json/.sig leaves installed builds unable to auto-update. Add the signing secrets, or remove plugins.updater from tauri.conf.json to ship an updater-less build."
+            exit 1
+          fi
+          echo "Updater is not configured in tauri.conf.json — proceeding without updater artifacts."
+
+      - name: Warn when Windows installer signing is disabled
+        if: steps.signing-mode.outputs.windows != 'true'
+        run: |
+          echo "::warning::Windows signing secrets are not configured — the .msi/.exe installers will be UNSIGNED. Windows SmartScreen will flag them as untrusted; the release notes will carry an 'unsigned installer' banner."
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -245,6 +258,7 @@ jobs:
       - name: Load release notes for tag
         env:
           HAS_UPDATER_SIGNING: ${{ needs.verify.outputs.has_updater_signing }}
+          HAS_WINDOWS_SIGNING: ${{ needs.verify.outputs.has_windows_signing }}
         shell: bash
         run: |
           # Tags may carry a letter suffix (v0.1.6a) while notes are named by base version (v0.1.6.md).
@@ -258,20 +272,20 @@ jobs:
             exit 1
           fi
           echo "Using release notes: $notes_file"
+          banner=""
+          if [ "$HAS_UPDATER_SIGNING" != "true" ]; then
+            banner="> **Auto-update disabled in this build.** This release was built without updater signing (TAURI_SIGNING_PRIVATE_KEY is not configured), so it cannot be installed via in-app update. Download and install it manually."
+          fi
+          if [ "$HAS_WINDOWS_SIGNING" != "true" ]; then
+            win_banner="> **Unsigned Windows installer.** The .msi/.exe installers in this release are not code-signed, so Windows SmartScreen may warn before running them. Verify the SHA256 checksums in SHA256SUMS.txt before installing."
+            if [ -n "$banner" ]; then banner="$banner"$'\n\n'"$win_banner"; else banner="$win_banner"; fi
+          fi
           {
             echo "RELEASE_BODY<<TABLER_RELEASE_BODY_EOF"
+            if [ -n "$banner" ]; then printf '%s\n\n' "$banner"; fi
             cat "$notes_file"
             echo "TABLER_RELEASE_BODY_EOF"
           } >> "$GITHUB_ENV"
-          if [ "$HAS_UPDATER_SIGNING" != "true" ]; then
-            {
-              echo "RELEASE_BODY<<TABLER_RELEASE_BODY_EOF"
-              echo "> **Auto-update disabled in this build.** This release was built without updater signing (TAURI_SIGNING_PRIVATE_KEY is not configured), so it cannot be installed via in-app update. Download and install it manually."
-              echo ""
-              cat "$notes_file"
-              echo "TABLER_RELEASE_BODY_EOF"
-            } >> "$GITHUB_ENV"
-          fi
 
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v1
@@ -293,6 +307,9 @@ jobs:
           uploadUpdaterJson: ${{ needs.verify.outputs.has_updater_signing == 'true' }}
           uploadUpdaterSignatures: ${{ needs.verify.outputs.has_updater_signing == 'true' }}
           updaterJsonPreferNsis: true
+          # updaterJsonPreferNsis: the updater manifest points Windows clients at
+          # the NSIS .exe installer (not the MSI) — per Tauri docs the NSIS
+          # bundle is the one the updater can install in place.
 
       - name: Smoke check Linux bundles
         if: matrix.target == 'linux'

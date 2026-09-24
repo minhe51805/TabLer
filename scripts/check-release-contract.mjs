@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 
 function fail(message) {
   process.stderr.write(`${message}\n`);
@@ -28,14 +28,7 @@ const releaseConfig = readJson("src-tauri/tauri.release.conf.json");
 
 const metadataResult = spawnSync(
   "cargo",
-  [
-    "metadata",
-    "--manifest-path",
-    "src-tauri/Cargo.toml",
-    "--no-deps",
-    "--format-version",
-    "1",
-  ],
+  ["metadata", "--manifest-path", "src-tauri/Cargo.toml", "--no-deps", "--format-version", "1"],
   { encoding: "utf8" },
 );
 
@@ -71,11 +64,39 @@ if (releaseTag && releaseTag !== `v${releaseLabel}`) {
   fail(`Release tag ${releaseTag} does not match release label v${releaseLabel}.`);
 }
 
-if (typeof tauriConfig.identifier !== "string" || !/^[a-zA-Z][a-zA-Z0-9-]*(\.[a-zA-Z0-9-]+){2,}$/.test(tauriConfig.identifier)) {
+// The release notes file is what the GitHub release body AND the in-app
+// update popup show (the updater manifest embeds it as `notes`). Require it
+// to exist and to lead with the release label so the popup never shows a
+// bare bundle version that disagrees with the tagged release.
+if (releaseTag) {
+  const notesCandidates = [
+    `docs/releases/${releaseTag}.md`,
+    `docs/releases/${releaseTag.replace(/^(v\d+(\.\d+)*).*$/, "$1")}.md`,
+  ];
+  const notesFile = notesCandidates.find((candidate) => existsSync(candidate));
+  if (!notesFile) {
+    fail(
+      `Release notes file not found for ${releaseTag} (expected ${notesCandidates.join(" or ")}).`,
+    );
+  }
+  const notesHead = readFileSync(notesFile, "utf8").slice(0, 512);
+  if (!notesHead.includes(`v${releaseLabel}`)) {
+    fail(
+      `Release notes ${notesFile} must mention the release label v${releaseLabel} near the top — the in-app update popup derives the displayed version from it.`,
+    );
+  }
+}
+
+if (
+  typeof tauriConfig.identifier !== "string" ||
+  !/^[a-zA-Z][a-zA-Z0-9-]*(\.[a-zA-Z0-9-]+){2,}$/.test(tauriConfig.identifier)
+) {
   fail("Tauri identifier must be a stable reverse-domain identifier with at least three segments.");
 }
 if (tauriConfig.identifier.toLowerCase().endsWith(".app")) {
-  fail("Tauri identifier must not end with .app because it conflicts with the macOS bundle extension.");
+  fail(
+    "Tauri identifier must not end with .app because it conflicts with the macOS bundle extension.",
+  );
 }
 if (releaseConfig?.bundle?.createUpdaterArtifacts !== true) {
   fail("Release config must enable bundle.createUpdaterArtifacts for signed updater bundles.");
@@ -90,7 +111,11 @@ try {
 } catch {
   fail("Updater public key must be valid base64-encoded minisign public-key content.");
 }
-if (!/^untrusted comment: minisign public key: [0-9A-F]{16}\nRW[A-Za-z0-9+/=]+$/i.test(decodedPublicKey)) {
+if (
+  !/^untrusted comment: minisign public key: [0-9A-F]{16}\nRW[A-Za-z0-9+/=]+$/i.test(
+    decodedPublicKey,
+  )
+) {
   fail("Updater public key is not valid minisign public-key content.");
 }
 for (const endpoint of updaterConfig.endpoints) {
@@ -100,7 +125,10 @@ for (const endpoint of updaterConfig.endpoints) {
   } catch {
     fail(`Updater endpoint is invalid: ${endpoint}`);
   }
-  if (url.protocol !== "https:" || !url.pathname.toLowerCase().endsWith("/releases/latest/download/latest.json")) {
+  if (
+    url.protocol !== "https:" ||
+    !url.pathname.toLowerCase().endsWith("/releases/latest/download/latest.json")
+  ) {
     fail(`Updater endpoint must be an HTTPS latest.json release URL: ${endpoint}`);
   }
 }

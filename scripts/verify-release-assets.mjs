@@ -34,9 +34,22 @@ export function verifyReleaseAssets(directory, options = {}) {
   // When updater signing was enabled for this release, the auto-update
   // manifest and per-bundle signatures must be present — a release without
   // them leaves installed clients unable to update (and the updater endpoint
-  // 404s).
+  // 404s). The expectation defaults to "on" whenever tauri.conf.json actually
+  // configures an updater endpoint, so a misconfigured pipeline fails loudly
+  // instead of silently shipping a release with no latest.json.
+  const updaterConfigured = (() => {
+    try {
+      const config = JSON.parse(fs.readFileSync("src-tauri/tauri.conf.json", "utf8"));
+      return Boolean(config?.plugins?.updater?.endpoints?.length);
+    } catch {
+      return false;
+    }
+  })();
   const expectUpdater =
-    options.expectUpdater === true || process.env.EXPECT_UPDATER_ARTIFACTS === "true";
+    options.expectUpdater ??
+    (process.env.EXPECT_UPDATER_ARTIFACTS !== undefined
+      ? process.env.EXPECT_UPDATER_ARTIFACTS === "true"
+      : updaterConfigured);
   if (expectUpdater) {
     if (!names.includes("latest.json")) {
       fail("updater manifest 'latest.json' is missing (updater signing was enabled)");
@@ -71,7 +84,7 @@ export function verifyReleaseAssets(directory, options = {}) {
 if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) {
   const directory = process.argv[2];
   if (!directory) fail("usage: node scripts/verify-release-assets.mjs <directory>");
-  const expectUpdater = process.argv.includes("--expect-updater");
+  const expectUpdater = process.argv.includes("--expect-updater") ? true : undefined;
   const report = verifyReleaseAssets(path.resolve(directory), { expectUpdater });
   console.log(`Verified ${report.count} downloaded release assets (${report.totalBytes} bytes).`);
 }

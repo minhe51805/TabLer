@@ -29,8 +29,21 @@ try {
 }
 
 const expectedVersion = packageJson.version;
+const releaseLabel = packageJson.releaseLabel ?? expectedVersion;
 if (manifest.version !== expectedVersion && manifest.version !== tag) {
   fail(`Updater version ${manifest.version} does not match release tag ${tag}.`);
+}
+// The in-app update popup derives the displayed version from the notes'
+// leading heading (updateDisplayVersion), so when the release label carries a
+// suffix the bundle version lacks (0.1.6 vs v0.1.6b), the notes MUST name the
+// label or the popup shows a version that disagrees with the release.
+if (releaseLabel !== expectedVersion) {
+  const notes = typeof manifest.notes === "string" ? manifest.notes : "";
+  if (!notes.includes(`v${releaseLabel}`)) {
+    fail(
+      `Updater manifest notes must mention the release label v${releaseLabel} — the in-app popup derives the displayed version from them.`,
+    );
+  }
 }
 if (!manifest.platforms || typeof manifest.platforms !== "object") {
   fail("Updater manifest does not contain a platforms map.");

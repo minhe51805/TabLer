@@ -21,15 +21,21 @@ afterEach(() => {
 describe("downloaded release asset verifier", () => {
   it("accepts a complete three-platform draft", () => {
     const root = fixture([
-      "TableR.msi", "TableR.dmg", "TableR.AppImage", "TableR.deb",
+      "TableR.msi",
+      "TableR.dmg",
+      "TableR.AppImage",
+      "TableR.deb",
+      "TableR.AppImage.sig",
     ]);
-    expect(verifyReleaseAssets(root)).toMatchObject({ count: 4 });
+    fs.writeFileSync(
+      path.join(root, "latest.json"),
+      JSON.stringify({ version: "0.0.0", platforms: { "linux-x86_64": {} } }),
+    );
+    expect(verifyReleaseAssets(root)).toMatchObject({ count: 6 });
   });
 
   it("rejects a draft missing a platform", () => {
-    const root = fixture([
-      "TableR.msi", "TableR.dmg", "TableR.AppImage",
-    ]);
+    const root = fixture(["TableR.msi", "TableR.dmg", "TableR.AppImage"]);
     expect(() => verifyReleaseAssets(root)).toThrow("Linux package artifact is missing");
   });
 });

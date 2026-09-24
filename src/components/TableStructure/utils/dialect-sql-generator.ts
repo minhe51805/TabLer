@@ -12,7 +12,8 @@ import type {
 
 export type SectionKey = "columns" | "indexes" | "foreign_keys" | "triggers" | "view_definition";
 export type DefaultMode = "keep" | "set" | "drop";
-export type SqlDialectFamily = "mysql" | "postgresql" | "sqlite";
+export type SqlDialectFamily =
+  "mysql" | "postgresql" | "sqlite" | "snowflake" | "bigquery" | "clickhouse";
 
 export interface ColumnEditorState {
   originalName: string;
@@ -51,6 +52,12 @@ export function resolveSqlDialect(dbType: DatabaseType): SqlDialectFamily {
     case "libsql":
     case "cloudflare_d1":
       return "sqlite";
+    case "snowflake":
+      return "snowflake";
+    case "bigquery":
+      return "bigquery";
+    case "clickhouse":
+      return "clickhouse";
     case "oracle":
       // ANSI double-quoted identifiers, same as the postgresql family.
       return "postgresql";
@@ -61,7 +68,8 @@ export function resolveSqlDialect(dbType: DatabaseType): SqlDialectFamily {
 
 export function quoteIdentifier(dbType: DatabaseType, value: string) {
   const normalized = value.trim();
-  if (resolveSqlDialect(dbType) === "mysql") {
+  const dialect = resolveSqlDialect(dbType);
+  if (dialect === "mysql" || dialect === "bigquery") {
     return `\`${normalized.replace(/`/g, "``")}\``;
   }
   return `"${normalized.replace(/"/g, '""')}"`;
@@ -125,6 +133,13 @@ export function buildColumnAlterStatements(
     };
   }
 
+  // ClickHouse ALTER COLUMN syntax is MODIFY COLUMN with the full type —
+  // nullability and defaults live inside the type expression, not as
+  // separate clauses.
+  if (dialect === "clickhouse") {
+    return buildClickHouseColumnAlter(dbType, tableName, database, original, editor);
+  }
+
   const nextName = editor.name.trim();
   const nextType = editor.dataType.trim();
   const originalType = (original.column_type || original.data_type || "").trim();
@@ -154,6 +169,44 @@ export function buildColumnAlterStatements(
     if (nextType !== originalType) {
       statements.push(
         `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} TYPE ${nextType}`,
+      );
+    }
+
+    if (!original.is_primary_key && editor.nullable !== original.is_nullable) {
+      statements.push(
+        `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} ${editor.nullable ? "DROP" : "SET"} NOT NULL`,
+      );
+    }
+
+    if (editor.defaultMode === "set") {
+      if (!nextDefault) {
+        return { statements: [], error: "Default expression is empty." };
+      }
+      if (nextDefault !== originalDefault) {
+        statements.push(
+          `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} SET DEFAULT ${nextDefault}`,
+        );
+      }
+    }
+
+    if (editor.defaultMode === "drop" && originalDefault) {
+      statements.push(
+        `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} DROP DEFAULT`,
+      );
+    }
+
+    return { statements };
+  }
+
+  // Snowflake and BigQuery share the ALTER COLUMN ... SET DATA TYPE shape;
+  // BigQuery additionally requires backtick identifiers (handled by
+  // quoteIdentifier) and does not support DROP DEFAULT — it uses
+  // ALTER COLUMN ... DROP DEFAULT only on some editions, so we emit
+  // SET DEFAULT NULL-equivalent via DROP DEFAULT where supported.
+  if (dialect === "snowflake" || dialect === "bigquery") {
+    if (nextType !== originalType) {
+      statements.push(
+        `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} SET DATA TYPE ${nextType}`,
       );
     }
 
@@ -349,6 +402,78 @@ export function getDefaultValueForType(dataType: string) {
     return "'{}'::jsonb";
   }
   return "''";
+}
+
+// ---------------------------------------------------------------------------
+// ClickHouse ALTER helpers
+// ---------------------------------------------------------------------------
+
+// ClickHouse stores nullability inside the type (Nullable(T)) and defaults
+// inside the column definition — there is no separate ALTER COLUMN SET/DROP
+// NOT NULL or SET DEFAULT clause. We emit one MODIFY COLUMN per change.
+function buildClickHouseColumnAlter(
+  dbType: DatabaseType,
+  tableName: string,
+  database: string | undefined,
+  original: ColumnDetail,
+  editor: ColumnEditorState,
+): BuildColumnSqlResult {
+  const nextName = editor.name.trim();
+  const nextType = editor.dataType.trim();
+  const originalType = (original.column_type || original.data_type || "").trim();
+  const originalDefault = (original.default_value || "").trim();
+  const nextDefault = editor.defaultValue.trim();
+  const tableRef = qualifyTableName(dbType, tableName, database);
+  const statements: string[] = [];
+
+  if (!nextName) {
+    return { statements: [], error: "Column name is required." };
+  }
+  if (!nextType) {
+    return { statements: [], error: "Column type is required." };
+  }
+
+  let currentName = original.name;
+
+  if (nextName !== original.name) {
+    statements.push(
+      `ALTER TABLE ${tableRef} RENAME COLUMN ${quoteIdentifier(dbType, original.name)} TO ${quoteIdentifier(dbType, nextName)}`,
+    );
+    currentName = nextName;
+  }
+
+  const typeChanged = nextType !== originalType;
+  const nullabilityChanged = editor.nullable !== original.is_nullable;
+  const defaultChanged =
+    (editor.defaultMode === "set" && nextDefault !== originalDefault) ||
+    (editor.defaultMode === "drop" && originalDefault !== "");
+
+  if (!typeChanged && !nullabilityChanged && !defaultChanged) {
+    return { statements };
+  }
+
+  // Rebuild the full column type: wrap in Nullable() when the column is
+  // nullable and the type is not already Nullable(...).
+  let fullType = nextType;
+  if (editor.nullable && !/^Nullable\s*\(/i.test(nextType)) {
+    fullType = `Nullable(${nextType})`;
+  }
+
+  const parts = [
+    `ALTER TABLE ${tableRef} MODIFY COLUMN ${quoteIdentifier(dbType, currentName)} ${fullType}`,
+  ];
+
+  if (editor.defaultMode === "set") {
+    if (!nextDefault) {
+      return { statements: [], error: "Default expression is empty." };
+    }
+    parts.push(`DEFAULT ${nextDefault}`);
+  } else if (editor.defaultMode === "keep" && originalDefault) {
+    parts.push(`DEFAULT ${originalDefault}`);
+  }
+
+  statements.push(parts.join(" "));
+  return { statements };
 }
 
 // ---------------------------------------------------------------------------

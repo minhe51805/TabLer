@@ -145,7 +145,7 @@
     "atomic_csv_import": "U",
     "data_export": "S",
     "explain": "S",
-    "schema_edit": "U",
+    "schema_edit": "S",
     "backup_restore": "L",
     "administration": "L"
   },
@@ -220,7 +220,7 @@
     "atomic_csv_import": "U",
     "data_export": "S",
     "explain": "S",
-    "schema_edit": "U",
+    "schema_edit": "S",
     "backup_restore": "L",
     "administration": "L"
   },
@@ -235,7 +235,7 @@
     "atomic_csv_import": "U",
     "data_export": "S",
     "explain": "U",
-    "schema_edit": "U",
+    "schema_edit": "S",
     "backup_restore": "L",
     "administration": "U"
   },

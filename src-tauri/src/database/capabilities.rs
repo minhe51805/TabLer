@@ -414,7 +414,7 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "snowflake",
             "Snowflake",
             DriverTier::Specialized,
-            S, S, S, L, S, S, U, U, S, S, U, L, L,
+            S, S, S, L, S, S, U, U, S, S, S, L, L,
             &["Prepared parameters, atomic edits/imports, and reviewed schema actions are not implemented.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."],
         ),
         DatabaseType::MSSQL => profile(
@@ -453,7 +453,7 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "clickhouse",
             "ClickHouse",
             DriverTier::Extended,
-            S, S, S, L, S, S, U, U, S, S, U, L, L,
+            S, S, S, L, S, S, U, U, S, S, S, L, L,
             &["Prepared parameters, atomic mutations/imports, and reviewed schema actions are not implemented.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."],
         ),
         DatabaseType::BigQuery => profile(
@@ -461,7 +461,7 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "bigquery",
             "Google BigQuery",
             DriverTier::Specialized,
-            S, S, S, L, S, S, U, U, S, U, U, L, U,
+            S, S, S, L, S, S, U, U, S, U, S, L, U,
             &["Prepared parameters, atomic mutations/imports, explain plans, and administration are not integrated.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."],
         ),
         DatabaseType::LibSQL => profile(

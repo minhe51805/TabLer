@@ -247,7 +247,7 @@
       "atomicCsvImport": "unsupported",
       "dataExport": "supported",
       "explain": "supported",
-      "schemaEdit": "unsupported",
+      "schemaEdit": "supported",
       "backupRestore": "limited",
       "administration": "limited"
     },
@@ -383,7 +383,7 @@
       "atomicCsvImport": "unsupported",
       "dataExport": "supported",
       "explain": "supported",
-      "schemaEdit": "unsupported",
+      "schemaEdit": "supported",
       "backupRestore": "limited",
       "administration": "limited"
     },
@@ -409,7 +409,7 @@
       "atomicCsvImport": "unsupported",
       "dataExport": "supported",
       "explain": "unsupported",
-      "schemaEdit": "unsupported",
+      "schemaEdit": "supported",
       "backupRestore": "limited",
       "administration": "unsupported"
     },

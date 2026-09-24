@@ -35,9 +35,8 @@ import {
 import { evaluateRunAgainstRules } from "./ai-agent-rules";
 import { getLinkedWorkspaceDir } from "../../hooks/useLinkedFolders";
 import { type AIAgentFinishAction } from "./ai-agent-tools";
+import { buildAgentControllerPrompt, buildAgentPlanPrompt } from "./ai-agent-controller-prompt";
 import {
-  buildAgentControllerPrompt,
-  buildAgentPlanPrompt,
   joinAgentInstructions,
   canonicalizeAgentArgs,
   countTrailingToolErrors,

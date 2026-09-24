@@ -3,8 +3,10 @@ import { agentToolAvailability } from "@/components/AISlidePanel/ai-agent-engine
 import { nativeToolPayloadForProvider } from "@/components/AISlidePanel/ai-agent-tool-schema";
 import {
   buildAgentControllerPrompt,
-  detectDatabaseMentionMismatch,
   buildAgentPlanPrompt,
+} from "@/components/AISlidePanel/ai-agent-controller-prompt";
+import {
+  detectDatabaseMentionMismatch,
   buildAgentRecoveryContext,
   buildAgentVisibleTableNames,
   buildSchemaCapsuleContext,

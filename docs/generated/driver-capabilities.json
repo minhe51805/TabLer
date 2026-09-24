@@ -87,7 +87,7 @@
       "explain": "supported",
       "schemaEdit": "supported",
       "backupRestore": "limited",
-      "administration": "limited"
+      "administration": "supported"
     },
     "limitations": [
       "CockroachDB shares the PostgreSQL wire driver; dialect-specific schema and administration coverage is incomplete.",
@@ -141,7 +141,7 @@
       "explain": "supported",
       "schemaEdit": "supported",
       "backupRestore": "limited",
-      "administration": "limited"
+      "administration": "supported"
     },
     "limitations": [
       "Redshift shares the PostgreSQL wire driver; DDL, restore, and administration semantics require dedicated coverage.",
@@ -357,7 +357,7 @@
       "explain": "supported",
       "schemaEdit": "supported",
       "backupRestore": "limited",
-      "administration": "limited"
+      "administration": "supported"
     },
     "limitations": [
       "Vertica shares the PostgreSQL wire driver; dialect-specific DDL and administration coverage is incomplete.",

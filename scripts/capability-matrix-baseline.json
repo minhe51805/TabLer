@@ -57,7 +57,7 @@
     "explain": "S",
     "schema_edit": "S",
     "backup_restore": "L",
-    "administration": "L"
+    "administration": "S"
   },
   "greenplum": {
     "connect": "S",
@@ -87,7 +87,7 @@
     "explain": "S",
     "schema_edit": "S",
     "backup_restore": "L",
-    "administration": "L"
+    "administration": "S"
   },
   "sqlite": {
     "connect": "S",
@@ -207,7 +207,7 @@
     "explain": "S",
     "schema_edit": "S",
     "backup_restore": "L",
-    "administration": "L"
+    "administration": "S"
   },
   "clickhouse": {
     "connect": "S",

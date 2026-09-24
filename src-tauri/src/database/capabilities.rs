@@ -370,7 +370,7 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "cockroachdb",
             "CockroachDB",
             DriverTier::Extended,
-            S, S, S, L, S, S, S, S, S, S, S, L, L,
+            S, S, S, L, S, S, S, S, S, S, S, L, S,
             &["CockroachDB shares the PostgreSQL wire driver; dialect-specific schema and administration coverage is incomplete.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.", "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied."]),
         DatabaseType::Greenplum => profile(
             database_type,
@@ -384,7 +384,7 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "redshift",
             "Amazon Redshift",
             DriverTier::Specialized,
-            S, S, S, L, S, S, S, S, S, S, S, L, L,
+            S, S, S, L, S, S, S, S, S, S, S, L, S,
             &["Redshift shares the PostgreSQL wire driver; DDL, restore, and administration semantics require dedicated coverage.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.", "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied.", "Explain returns a text plan; the JSON plan format is not supported."]),
         DatabaseType::SQLite => profile(
             database_type,
@@ -446,7 +446,7 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "vertica",
             "Vertica",
             DriverTier::Specialized,
-            S, S, S, L, S, S, S, S, S, S, S, L, L,
+            S, S, S, L, S, S, S, S, S, S, S, L, S,
             &["Vertica shares the PostgreSQL wire driver; dialect-specific DDL and administration coverage is incomplete.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.", "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied.", "Explain returns a text plan; the JSON plan format is not supported."]),
         DatabaseType::ClickHouse => profile(
             database_type,

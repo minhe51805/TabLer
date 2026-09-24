@@ -80,7 +80,7 @@ pub async fn get_user_role_snapshot(
         .map_err(|error| error.to_string())?;
     let engine = driver.driver_name().to_string();
     match engine.as_str() {
-        "postgresql" | "greenplum" => {
+        "postgresql" | "greenplum" | "cockroachdb" => {
             let result = driver
                 .execute_query(POSTGRES_PRINCIPALS_SQL)
                 .await
@@ -152,8 +152,46 @@ pub async fn get_user_role_snapshot(
                 privileges_unavailable: privileges.is_none(),
             })
         }
+        "redshift" => {
+            let result = driver
+                .execute_query(REDSHIFT_PRINCIPALS_SQL)
+                .await
+                .map_err(|error| error.to_string())?;
+            let privileges = driver
+                .execute_query(REDSHIFT_PRIVILEGES_SQL)
+                .await
+                .map_err(|error| {
+                    log::warn!("redshift privilege query failed: {error}");
+                    error.to_string()
+                })
+                .ok();
+            Ok(UserRoleSnapshot {
+                engine,
+                principals: postgres_principals(result, privileges.clone()),
+                privileges_unavailable: privileges.is_none(),
+            })
+        }
+        "vertica" => {
+            let result = driver
+                .execute_query(VERTICA_PRINCIPALS_SQL)
+                .await
+                .map_err(|error| error.to_string())?;
+            let privileges = driver
+                .execute_query(VERTICA_PRIVILEGES_SQL)
+                .await
+                .map_err(|error| {
+                    log::warn!("vertica privilege query failed: {error}");
+                    error.to_string()
+                })
+                .ok();
+            Ok(UserRoleSnapshot {
+                engine,
+                principals: postgres_principals(result, privileges.clone()),
+                privileges_unavailable: privileges.is_none(),
+            })
+        }
         _ => Err(
-            "Users & Roles is currently available for PostgreSQL, MySQL, MariaDB, and SQL Server."
+            "Users & Roles is currently available for PostgreSQL, CockroachDB, Redshift, Vertica, MySQL, MariaDB, and SQL Server."
                 .to_string(),
         ),
     }
@@ -213,8 +251,7 @@ pub async fn apply_user_role_change(
             .await
             .map_err(|error| error.to_string())?;
     }
-    drop(driver);
-    get_user_role_snapshot(connection_id, db_manager).await
+    Ok(get_user_role_snapshot(connection_id, db_manager).await?)
 }
 
 fn build_review(
@@ -250,12 +287,15 @@ fn build_executable_statements(
         .as_deref()
         .map(|value| require_privilege(value))
         .transpose()?;
-    let is_postgres = matches!(engine, "postgresql" | "greenplum");
+    let is_postgres = matches!(
+        engine,
+        "postgresql" | "greenplum" | "cockroachdb" | "redshift" | "vertica"
+    );
     let is_mysql = matches!(engine, "mysql" | "mariadb");
     let is_mssql = engine == "mssql";
     if !is_postgres && !is_mysql && !is_mssql {
         return Err(
-            "Users & Roles is currently available for PostgreSQL, MySQL, MariaDB, and SQL Server."
+            "Users & Roles is currently available for PostgreSQL, CockroachDB, Redshift, Vertica, MySQL, MariaDB, and SQL Server."
                 .to_string(),
         );
     }
@@ -668,6 +708,15 @@ const MYSQL_PRINCIPALS_SQL: &str = "SELECT User AS user_name, Host AS host_name 
 const MYSQL_PRIVILEGES_SQL: &str = "SELECT GRANTEE, PRIVILEGE_TYPE FROM information_schema.USER_PRIVILEGES ORDER BY GRANTEE, PRIVILEGE_TYPE";
 const MYSQL_ROLE_MEMBERSHIPS_SQL: &str = "SELECT CONCAT(TO_USER, '@', TO_HOST) AS grantee, CONCAT(FROM_USER, '@', FROM_HOST) AS role_name FROM mysql.role_edges ORDER BY TO_USER, TO_HOST, FROM_USER, FROM_HOST";
 const MARIADB_ROLE_MEMBERSHIPS_SQL: &str = "SELECT CONCAT(User, '@', Host) AS grantee, Role AS role_name FROM mysql.roles_mapping ORDER BY User, Host, Role";
+
+// Redshift exposes users via pg_user (not pg_roles) and group membership via
+// pg_group — pg_auth_members does not exist on Redshift.
+const REDSHIFT_PRINCIPALS_SQL: &str = "SELECT u.usename AS user_name, u.usecreatedb AS can_login, u.usesuper AS is_superuser, COALESCE((SELECT string_agg(g.groname, ',') FROM pg_group g WHERE u.usesysid = ANY(g.grolist)), '') AS roles FROM pg_user u ORDER BY u.usename";
+const REDSHIFT_PRIVILEGES_SQL: &str = "SELECT grantee, table_schema || '.' || table_name || ':' || privilege_type AS privilege FROM information_schema.role_table_grants ORDER BY grantee, table_schema, table_name, privilege_type";
+
+// Vertica uses v_catalog tables — no pg_roles/pg_auth_members.
+const VERTICA_PRINCIPALS_SQL: &str = "SELECT u.user_name, CASE WHEN u.is_super_user THEN 1 ELSE 0 END AS is_superuser, 1 AS can_login, COALESCE((SELECT string_agg(r.name, ',') FROM v_catalog.grants g JOIN v_catalog.roles r ON r.oid = g.grantee_id WHERE g.object_name = u.user_name AND g.object_type = 'ROLE'), '') AS roles FROM v_catalog.users u ORDER BY u.user_name";
+const VERTICA_PRIVILEGES_SQL: &str = "SELECT grantee, object_schema || '.' || object_name || ':' || privileges_description AS privilege FROM v_catalog.grants WHERE object_type = 'TABLE' ORDER BY grantee, object_schema, object_name";
 
 #[cfg(test)]
 mod tests {

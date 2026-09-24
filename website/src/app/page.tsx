@@ -451,7 +451,7 @@ export default async function Home() {
               width={1920}
               height={1080}
               alt="TableR ER diagram workspace displaying database tables and relationships"
-              loading="eager"
+              loading="lazy"
               sizes="(max-width: 720px) 94vw, 1180px"
             />
           </div>

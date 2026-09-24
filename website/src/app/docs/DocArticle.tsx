@@ -147,7 +147,7 @@ function renderBlock(block: DocBlock, key: number, id?: string) {
             width={block.width}
             height={block.height}
             alt={block.alt}
-            loading="eager"
+            loading="lazy"
             sizes="(max-width: 900px) 94vw, 820px"
           />
         </div>

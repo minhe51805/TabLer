@@ -5699,3 +5699,79 @@ a {
 .plugins-search-input::placeholder {
   color: var(--muted-soft);
 }
+
+/* docs TOC on small screens — instead of hiding it outright, it becomes
+   a collapsed <details> the reader can open; desktop keeps it expanded
+   and hides the disclosure triangle */
+.docs-toc-details > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.docs-toc-details > summary::-webkit-details-marker {
+  display: none;
+}
+
+@media (min-width: 1081px) {
+  /* desktop: the TOC is always open — the summary is just the label */
+  .docs-toc-details > summary {
+    pointer-events: none;
+  }
+}
+
+@media (max-width: 1080px) {
+  .docs-toc {
+    display: block;
+    position: static;
+    margin-bottom: 26px;
+  }
+
+  .docs-toc-details {
+    border-radius: var(--neu-radius-sm);
+    background: var(--neu-bg-soft);
+    box-shadow: var(--neu-shadow-out-sm);
+    padding: 12px 16px;
+  }
+
+  .docs-toc-details > summary {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding-left: 0;
+    font-weight: 600;
+    color: var(--neu-ink);
+  }
+
+  .docs-toc-details > summary::after {
+    content: "";
+    width: 8px;
+    height: 8px;
+    border-right: 2px solid var(--muted-soft);
+    border-bottom: 2px solid var(--muted-soft);
+    transform: rotate(45deg);
+    transition: transform 0.25s ease;
+  }
+
+  .docs-toc-details[open] > summary::after {
+    transform: rotate(-135deg);
+  }
+
+  .docs-toc-details:not([open]) .docs-toc-inner {
+    display: none;
+  }
+
+  .docs-toc-inner {
+    margin-top: 12px;
+    max-height: 40vh;
+    overflow-y: auto;
+  }
+}
+
+/* search match highlight — a soft accent wash, not the browser's
+   default yellow marker */
+.docs-search-result mark {
+  background: rgba(8, 126, 252, 0.18);
+  color: inherit;
+  border-radius: 3px;
+  padding: 0 1px;
+}

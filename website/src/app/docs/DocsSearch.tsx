@@ -129,8 +129,8 @@ export function DocsSearch({
               >
                 <FileText size={14} aria-hidden="true" />
                 <span>
-                  <strong>{item.title}</strong>
-                  <em>{item.description}</em>
+                  <strong>{highlight(item.title, query)}</strong>
+                  <em>{highlight(item.description, query)}</em>
                 </span>
               </button>
             </li>
@@ -138,5 +138,20 @@ export function DocsSearch({
         </ul>
       ) : null}
     </div>
+  );
+}
+
+/** Wraps the first case-insensitive occurrence of `q` in a <mark>. */
+function highlight(text: string, q: string) {
+  const needle = q.trim();
+  if (!needle) return text;
+  const index = text.toLowerCase().indexOf(needle.toLowerCase());
+  if (index === -1) return text;
+  return (
+    <>
+      {text.slice(0, index)}
+      <mark>{text.slice(index, index + needle.length)}</mark>
+      {text.slice(index + needle.length)}
+    </>
   );
 }

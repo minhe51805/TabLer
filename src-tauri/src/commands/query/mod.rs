@@ -196,13 +196,27 @@ pub async fn execute_query(
     Ok(result)
 }
 
+/// Outcome of a cancel request. `cancelled` means a registered request was
+/// signalled (the local token fired or a server kill landed); it does NOT
+/// prove the server stopped — `server_confirmed` is true only when the
+/// driver actually delivered a server-side cancel. Engines without a
+/// server-cancel path report `server_confirmed: false` so the UI can say
+/// "cancel requested; the server may still be running" instead of claiming
+/// the query was stopped.
+#[derive(Debug, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CancelQueryOutcome {
+    pub cancelled: bool,
+    pub server_confirmed: bool,
+}
+
 #[tauri::command]
 pub async fn cancel_query(
     request_id: String,
     connection_id: Option<String>,
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, QueryCancellationState>,
-) -> Result<bool, AppError> {
+) -> Result<CancelQueryOutcome, AppError> {
     let request_id = request_id.trim();
     if request_id.is_empty() {
         return Err("Request ID cannot be empty.".to_string().into());
@@ -214,7 +228,10 @@ pub async fn cancel_query(
         .filter(|value| !value.is_empty())
     else {
         // No connection context: only the local token could be signalled.
-        return Ok(token_cancelled);
+        return Ok(CancelQueryOutcome {
+            cancelled: token_cancelled,
+            server_confirmed: false,
+        });
     };
     // The caller asked for a server-side cancel: report whether it was
     // actually DELIVERED. A driver lookup or KILL failure is surfaced as an
@@ -228,7 +245,10 @@ pub async fn cancel_query(
         .cancel_query_request(request_id)
         .await
         .map_err(|error| format!("Server-side cancel failed: {error}"))?;
-    Ok(token_cancelled || server_cancelled)
+    Ok(CancelQueryOutcome {
+        cancelled: token_cancelled || server_cancelled,
+        server_confirmed: server_cancelled,
+    })
 }
 
 /// Progressive result delivery for large read queries (roadmap Phase 3B).

@@ -28,6 +28,7 @@ interface PickerStrings {
   localSoon: string;
   searchPlaceholder: string;
   emptySearch: string;
+  pasteConnectionUrl: string;
   readyNow: string;
   readyNowCaption: string;
   installPlugin: string;
@@ -79,6 +80,9 @@ export interface ConnectionPickerStepProps {
   onBack?: () => void;
   onInstallPlugin?: () => void;
   isInstallingPlugin?: boolean;
+  /** "Paste a connection URL" affordance — parses via the backend and jumps
+   *  straight into the details step. Omit to hide the input. */
+  onConnectionUrl?: (url: string) => void;
 }
 
 function getPickerMetaLabel(db: DbEntry, language: AppLanguage) {
@@ -443,6 +447,7 @@ export function ConnectionPickerStep({
   onContinue,
   onInstallPlugin,
   isInstallingPlugin,
+  onConnectionUrl,
 }: ConnectionPickerStepProps) {
   const readyCount = bootstrapMode ? Array.from(LOCAL_BOOTSTRAP_READY).length : supportedCount;
   const roadmapTotal = bootstrapMode ? localRoadmapCount : roadmapCount;
@@ -569,6 +574,36 @@ export function ConnectionPickerStep({
                   autoFocus
                 />
               </div>
+
+              {onConnectionUrl && !bootstrapMode ? (
+                <div className="connection-picker-searchbar">
+                  <Plug className="connection-picker-search-icon h-4 w-4 shrink-0" />
+                  <input
+                    type="text"
+                    defaultValue=""
+                    placeholder={strings.pasteConnectionUrl}
+                    className="connection-picker-search-input"
+                    aria-label={strings.pasteConnectionUrl}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter") {
+                        const value = event.currentTarget.value;
+                        event.currentTarget.value = "";
+                        onConnectionUrl(value);
+                      }
+                    }}
+                    onPaste={(event) => {
+                      // Only hijack scheme-looking pastes; anything else stays a
+                      // normal text paste so the field doubles as scratch space.
+                      const text = event.clipboardData.getData("text").trim();
+                      if (/^[a-z][a-z0-9+.-]*:\/\//i.test(text)) {
+                        event.preventDefault();
+                        event.currentTarget.value = "";
+                        onConnectionUrl(text);
+                      }
+                    }}
+                  />
+                </div>
+              ) : null}
 
               {filteredDbs.length === 0 ? (
                 <div className="connection-picker-empty">

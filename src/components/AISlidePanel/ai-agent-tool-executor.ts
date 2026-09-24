@@ -168,6 +168,10 @@ export interface AgentToolExecutorDeps {
     statements: string[],
   ) => Promise<{
     results: Array<{ affected_rows: number; rows: unknown[][]; truncated?: boolean }>;
+    /** Backend guarantee: the preview transaction was rolled back (always
+     *  true — engines that cannot roll a statement back reject it up front).
+     *  Optional so older backends/tests without the field still typecheck. */
+    rolledBack?: boolean;
   }>;
   /**
    * Non-executing EXPLAIN dry-run for mutating edit_query_sql proposals

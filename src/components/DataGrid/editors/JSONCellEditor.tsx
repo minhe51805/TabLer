@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import type { ICellEditorProps } from "./types";
+import { getDataGridCopy } from "../datagrid-copy";
+import { getCurrentAppLanguage } from "../../../i18n";
 
 export function JSONCellEditor({
   seedValue,
@@ -27,13 +29,17 @@ export function JSONCellEditor({
     textarea?.focus();
   }, [inputRef]);
 
+  const copy = getDataGridCopy(getCurrentAppLanguage()).editor;
+
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
     setLocalValue(val);
-    if (!val.trim() || /^null$/i.test(val)) {
+    // Empty input is the NULL gesture for nullable columns; the literal text
+    // "null" is valid JSON and must be stored as JSON null, not SQL NULL.
+    if (!val.trim()) {
       setIsValid(true);
       setErrorMsg("");
-      onChange("NULL");
+      onChange("");
       return;
     }
     try {
@@ -43,7 +49,7 @@ export function JSONCellEditor({
       onChange(val);
     } catch (err) {
       setIsValid(false);
-      setErrorMsg(err instanceof Error ? err.message : "Invalid JSON");
+      setErrorMsg(err instanceof Error ? err.message : copy.jsonInvalid);
       onChange(val); // Still allow typing but show error
     }
   };
@@ -64,7 +70,7 @@ export function JSONCellEditor({
     }
     if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
-      onCommit(isNullable && /^null$/i.test(localValue) ? null : localValue);
+      onCommit(isNullable && !localValue.trim() ? null : localValue);
     }
     if (e.key === "Escape") {
       e.preventDefault();
@@ -81,7 +87,7 @@ export function JSONCellEditor({
         value={localValue}
         onChange={handleChange}
         onBlur={() => {
-          onCommit(isNullable && /^null$/i.test(localValue) ? null : localValue);
+          onCommit(isNullable && !localValue.trim() ? null : localValue);
         }}
         onClick={(e) => e.stopPropagation()}
         onKeyDown={handleKeyDown}
@@ -92,14 +98,10 @@ export function JSONCellEditor({
       />
       {!isValid && (
         <span className="text-xs text-red-500 truncate" title={errorMsg}>
-          {errorMsg || "Invalid JSON"}
+          {errorMsg || copy.jsonInvalid}
         </span>
       )}
-      {isValid && (
-        <span className="text-xs text-[var(--text-muted)]">
-          Press Ctrl+Enter to commit
-        </span>
-      )}
+      {isValid && <span className="text-xs text-[var(--text-muted)]">{copy.jsonCommitHint}</span>}
     </div>
   );
 }

@@ -2,7 +2,7 @@ import { ArrowUpCircle, RefreshCw, X } from "lucide-react";
 import { useState } from "react";
 import { useI18n } from "../../i18n";
 import { getAppUpdateCopy } from "./app-update-copy";
-import { useAppUpdater } from "./use-app-updater";
+import { updateDisplayVersion, useAppUpdater } from "./use-app-updater";
 import "./app-update.css";
 
 /**
@@ -17,6 +17,8 @@ export function AppUpdateButton() {
     useAppUpdater();
   const [confirmOpen, setConfirmOpen] = useState(false);
   const labels = getAppUpdateCopy(language);
+
+  const displayVersion = update ? updateDisplayVersion(update) : "";
 
   if (!update || phase === "idle") {
     if (checkError && phase !== "checking") {
@@ -34,7 +36,22 @@ export function AppUpdateButton() {
         </div>
       );
     }
-    return null;
+    // Manual "check for updates" affordance: the automatic check runs once on
+    // mount, so without this there is no way to re-check on demand.
+    return (
+      <div className="app-update" data-no-window-drag="true">
+        <button
+          type="button"
+          className="app-update-btn"
+          onClick={() => void checkForUpdate()}
+          disabled={phase === "checking"}
+          title={labels.checkNow}
+          aria-label={labels.checkNow}
+        >
+          <RefreshCw className={`w-3 h-3 ${phase === "checking" ? "app-update-spin" : ""}`} />
+        </button>
+      </div>
+    );
   }
 
   const busy = phase === "downloading" || phase === "installing";
@@ -47,7 +64,7 @@ export function AppUpdateButton() {
         onClick={() => {
           if (!busy) setConfirmOpen((open) => !open);
         }}
-        title={`${labels.button} → v${update.version}`}
+        title={`${labels.button} → v${displayVersion}`}
       >
         {busy ? (
           <RefreshCw className="app-update-spin w-3 h-3" />
@@ -71,7 +88,7 @@ export function AppUpdateButton() {
             </button>
           </div>
           <p className="app-update-popup-version">
-            {labels.available} <strong>v{update.version}</strong>
+            {labels.available} <strong>v{displayVersion}</strong>
           </p>
           {update.notes ? <pre className="app-update-notes">{update.notes}</pre> : null}
           {error ? <p className="app-update-error">{error}</p> : null}

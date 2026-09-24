@@ -10,6 +10,8 @@ export interface ERDiagramCopy {
   exportNoTables: string;
   /** Canvas builder returned nothing before the PNG could be produced. */
   exportPrepareFailed: string;
+  /** Export snapshot builder returned nothing before the draw.io file could be produced. */
+  exportPrepareFileFailed: string;
   /** Fallback when the PNG export throws a non-Error. */
   exportPngFailed: string;
   /** Fallback when the SVG export throws a non-Error. */
@@ -30,6 +32,7 @@ const EN_COPY: ERDiagramCopy = {
   exportPngFailed: "Could not export the ER diagram PNG.",
   exportSvgFailed: "Could not export the ER diagram SVG.",
   exportDrawioFailed: "Could not export the ER diagram draw.io file.",
+  exportPrepareFileFailed: "Could not prepare the ER diagram export file.",
   notNullBackfillTitle: "Backfill NULL values first",
   notNullBackfillBody:
     'Column "{column}" has {count} NULL value(s). To set NOT NULL, TableR can update them to {default} first.',
@@ -42,6 +45,7 @@ const VI_COPY: ERDiagramCopy = {
   exportPngFailed: "Không thể xuất sơ đồ ER dạng PNG.",
   exportSvgFailed: "Không thể xuất sơ đồ ER dạng SVG.",
   exportDrawioFailed: "Không thể xuất tệp draw.io của sơ đồ ER.",
+  exportPrepareFileFailed: "Không thể chuẩn bị tệp xuất sơ đồ ER.",
   notNullBackfillTitle: "Điền giá trị cho ô NULL trước",
   notNullBackfillBody:
     'Cột "{column}" có {count} giá trị NULL. Để đặt NOT NULL, TableR có thể cập nhật chúng thành {default} trước.',
@@ -54,6 +58,7 @@ const KO_COPY: ERDiagramCopy = {
   exportPngFailed: "ER 다이어그램 PNG를 내보낼 수 없습니다.",
   exportSvgFailed: "ER 다이어그램 SVG를 내보낼 수 없습니다.",
   exportDrawioFailed: "ER 다이어그램 draw.io 파일을 내보낼 수 없습니다.",
+  exportPrepareFileFailed: "ER 다이어그램보내기 파일을 준비할 수 없습니다.",
   notNullBackfillTitle: "먼저 NULL 값을 채우세요",
   notNullBackfillBody:
     '"{column}" 열에 NULL 값이 {count}개 있습니다. NOT NULL을 설정하려면 TableR이 먼저 {default}(으)로 업데이트할 수 있습니다.',
@@ -66,6 +71,7 @@ const TR_COPY: ERDiagramCopy = {
   exportPngFailed: "ER diyagramı PNG'si dışa aktarılamadı.",
   exportSvgFailed: "ER diyagramı SVG'si dışa aktarılamadı.",
   exportDrawioFailed: "ER diyagramı draw.io dosyası dışa aktarılamadı.",
+  exportPrepareFileFailed: "ER diyagramı dışa aktarım dosyası hazırlanamadı.",
   notNullBackfillTitle: "Önce NULL değerleri doldurun",
   notNullBackfillBody:
     '"{column}" sütununda {count} NULL değer var. NOT NULL ayarlamak için TableR önce bunları {default} olarak güncelleyebilir.',
@@ -78,6 +84,7 @@ const ZH_COPY: ERDiagramCopy = {
   exportPngFailed: "无法导出 ER 图 PNG。",
   exportSvgFailed: "无法导出 ER 图 SVG。",
   exportDrawioFailed: "无法导出 ER 图 draw.io 文件。",
+  exportPrepareFileFailed: "无法准备 ER 图导出文件。",
   notNullBackfillTitle: "先回填 NULL 值",
   notNullBackfillBody:
     '列 "{column}" 有 {count} 个 NULL 值。要设置 NOT NULL，TableR 可以先将它们更新为 {default}。',

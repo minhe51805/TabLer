@@ -120,6 +120,30 @@ use storage::sql_favorites::{delete_sql_favorite, get_sql_favorites, save_sql_fa
 use storage::tab_persistence::TabPersistence;
 use utils::rate_limiter::{AIRequestLimiter, ConnectionAttemptLimiter};
 
+/// Show a blocking native error dialog for a startup failure that happens
+/// before the main window exists, then exit. Without this the process used to
+/// `return` silently — the app vanished with only a log line, leaving the user
+/// no way to know their data directory needs attention (see
+/// `docs/operations/STORAGE_RECOVERY.md` for the repair steps the dialog
+/// points at).
+fn fatal_startup_error(title: &str, error: &dyn std::fmt::Display) -> ! {
+    error!("[TableR] {title}: {error}");
+    let detail = format!(
+        "{title}:\n\n{error}\n\nTableR cannot start because its local data storage is \
+         unavailable or corrupt. Move the affected files aside (or restore them from a \
+         backup) and launch again — see docs/operations/STORAGE_RECOVERY.md for the \
+         recovery procedure."
+    );
+    // rfd renders a native dialog without a running event loop, so it works
+    // even when the failure happened before the Tauri app was built.
+    rfd::MessageDialog::new()
+        .set_title("TableR could not start")
+        .set_description(&detail)
+        .set_level(rfd::MessageLevel::Error)
+        .show();
+    std::process::exit(1);
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     #[cfg(feature = "e2e")]
@@ -129,11 +153,7 @@ pub fn run() {
     let data_dir = match utils::paths::resolve_data_dir() {
         Ok(path) => path,
         Err(error) => {
-            error!(
-                "[TableR] FAILED to resolve application data directory: {}",
-                error
-            );
-            return;
+            fatal_startup_error("Failed to resolve the application data directory", &error)
         }
     };
     if let Err(error) = observability::initialize(&data_dir) {
@@ -161,23 +181,14 @@ pub fn run() {
             );
             storage
         }
-        Err(error) => {
-            error!(
-                "[TableR] FAILED to initialize connection storage: {}",
-                error
-            );
-            return;
-        }
+        Err(error) => fatal_startup_error("Failed to initialize connection storage", &error),
     };
     let ai_storage = match AIStorage::new() {
         Ok(storage) => {
             info!("[TableR] AIStorage initialized: {:?}", start_time.elapsed());
             storage
         }
-        Err(error) => {
-            error!("[TableR] FAILED to initialize AI storage: {}", error);
-            return;
-        }
+        Err(error) => fatal_startup_error("Failed to initialize AI storage", &error),
     };
     let plugin_storage = match PluginStorage::new() {
         Ok(storage) => {
@@ -187,10 +198,7 @@ pub fn run() {
             );
             storage
         }
-        Err(error) => {
-            error!("[TableR] FAILED to initialize plugin storage: {}", error);
-            return;
-        }
+        Err(error) => fatal_startup_error("Failed to initialize plugin storage", &error),
     };
     let db_manager = DatabaseManager::with_plugin_storage(plugin_storage.clone());
     info!(
@@ -205,20 +213,11 @@ pub fn run() {
             );
             storage
         }
-        Err(error) => {
-            error!(
-                "[TableR] FAILED to initialize tab persistence storage: {}",
-                error
-            );
-            return;
-        }
+        Err(error) => fatal_startup_error("Failed to initialize tab persistence storage", &error),
     };
     let mcp_storage = match McpStorage::new() {
         Ok(storage) => storage,
-        Err(error) => {
-            error!("[TableR] FAILED to initialize MCP storage: {}", error);
-            return;
-        }
+        Err(error) => fatal_startup_error("Failed to initialize MCP storage", &error),
     };
     let connection_rate_limiter = ConnectionAttemptLimiter::new(
         Duration::from_secs(60),

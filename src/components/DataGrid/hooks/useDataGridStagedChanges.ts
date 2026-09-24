@@ -2,6 +2,8 @@ import { useCallback, type Dispatch, type RefObject, type SetStateAction } from 
 import type { QueryResult } from "../../../types";
 import type { StagedChange } from "../../../types/change-tracking";
 import { changeMatchesScope, changeScopeKey } from "../../../stores/change-tracking-store";
+import { getCurrentAppLanguage } from "../../../i18n";
+import { getDataGridCopy } from "../datagrid-copy";
 import type { GridCellValue, ResolvedColumn } from "./useDataGrid";
 
 interface DataGridStagedChangesParams {
@@ -129,7 +131,9 @@ export function useDataGridStagedChanges({
     if (tableChanges.length === 0) return;
 
     if (tableChanges.some((change) => change.type === "delete")) {
-      setError("The edit queue contains an operation that cannot be committed atomically yet.");
+      // Only staged deletes are unsupported here — updates and inserts commit
+      // fine. Name the actual blocker instead of a vague "not atomic" claim.
+      setError(getDataGridCopy(getCurrentAppLanguage()).stagedChanges.deleteNotCommittable);
       return;
     }
 

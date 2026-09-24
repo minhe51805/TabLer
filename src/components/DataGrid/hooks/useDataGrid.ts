@@ -1,5 +1,7 @@
 import type { ColumnDetail, QueryResult, RowKeyValue } from "../../../types";
 import type { DatabaseType } from "../../../types/database";
+import { getCurrentAppLanguage } from "../../../i18n";
+import { getDataGridCopy } from "../datagrid-copy";
 import { buildQualifiedObjectIdentity } from "../../../utils/database-object-identity";
 
 // ─── Cache types ───────────────────────────────────────────────────────────────
@@ -377,6 +379,7 @@ export function editorValueFromCell(value: GridCellValue) {
 
 export function parseEditorValue(rawValue: string, column: ResolvedColumn): GridCellValue {
   const trimmed = rawValue.trim();
+  const validation = getDataGridCopy(getCurrentAppLanguage()).validation;
 
   // Typed text stays text: only the dedicated NULL gestures (select option,
   // clear-range, paste-empty) produce real NULL — they bypass this parser.
@@ -384,12 +387,12 @@ export function parseEditorValue(rawValue: string, column: ResolvedColumn): Grid
   if (isBooleanColumn(column)) {
     if (/^(true|t|1|yes)$/i.test(trimmed)) return true;
     if (/^(false|f|0|no)$/i.test(trimmed)) return false;
-    throw new Error("Boolean values must be true or false.");
+    throw new Error(validation.boolean);
   }
 
   if (isNumericColumn(column)) {
     if (!/^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(trimmed)) {
-      throw new Error("Numeric columns only accept valid numbers.");
+      throw new Error(validation.numeric);
     }
     // Keep high-precision input as a string: Number() would silently round
     // bigint/decimal values beyond IEEE-754 precision.
@@ -408,7 +411,7 @@ export function parseEditorValue(rawValue: string, column: ResolvedColumn): Grid
     try {
       JSON.parse(trimmed);
     } catch {
-      throw new Error("Invalid JSON format.");
+      throw new Error(validation.json);
     }
     return trimmed;
   }
@@ -417,7 +420,7 @@ export function parseEditorValue(rawValue: string, column: ResolvedColumn): Grid
   if (isBlobColumn(column)) {
     const normalized = trimmed.replace(/\s+/g, "").toLowerCase();
     if (!/^[0-9a-f]*$/i.test(normalized) || normalized.length % 2 !== 0) {
-      throw new Error("Invalid hex format. Use space-separated bytes (e.g. '48 65 6c 6c 6f').");
+      throw new Error(validation.hex);
     }
     return trimmed;
   }

@@ -41,8 +41,14 @@ import { ColumnList } from "./components/ColumnList";
 import { FKList, IndexList, TriggerList, ViewDefinitionSection } from "./components/StructureList";
 import { ReviewPanel } from "./components/ReviewPanel";
 import { SchemaDiffReviewPanel } from "./components/SchemaDiffReviewPanel";
-import { buildSchemaMigrationReview, diffTableStructure, type SchemaMigrationReview, type TableSchemaDiff } from "../../utils/schema-diff";
+import {
+  buildSchemaMigrationReview,
+  diffTableStructure,
+  type SchemaMigrationReview,
+  type TableSchemaDiff,
+} from "../../utils/schema-diff";
 import { invalidateSchemaCache } from "../../utils/schema-cache";
+import { requestAppConfirmation } from "../../stores/confirmStore";
 
 interface Props {
   connectionId: string;
@@ -57,11 +63,7 @@ interface Props {
 const DEFAULT_SECTION_STATE = new Set<SectionKey>(["columns"]);
 const METADATA_LOAD_TIMEOUT_MS = 8000;
 
-import {
-  columnCache,
-  fullStructureCache,
-  schemaSnapshotPrefix,
-} from "./structure-cache";
+import { columnCache, fullStructureCache, schemaSnapshotPrefix } from "./structure-cache";
 import { useStructureToasts } from "./hooks/useStructureToasts";
 
 export function TableStructure({
@@ -105,15 +107,17 @@ export function TableStructure({
   const [expandedSections, setExpandedSections] = useState<Set<SectionKey>>(DEFAULT_SECTION_STATE);
   const [columnEditor, setColumnEditor] = useState<ColumnEditorState | null>(null);
   const [editorError, setEditorError] = useState<string | null>(null);
-  const [stagedColumnChanges, setStagedColumnChanges] = useState<Record<string, StagedColumnChange>>(
-    {}
-  );
+  const [stagedColumnChanges, setStagedColumnChanges] = useState<
+    Record<string, StagedColumnChange>
+  >({});
   const [isReviewOpen, setIsReviewOpen] = useState(false);
   const [reviewError, setReviewError] = useState<string | null>(null);
   const [isApplyingChanges, setIsApplyingChanges] = useState(false);
   const [isComparingSchema, setIsComparingSchema] = useState(false);
   const [schemaDiff, setSchemaDiff] = useState<TableSchemaDiff | null>(null);
-  const [schemaMigrationReview, setSchemaMigrationReview] = useState<SchemaMigrationReview | null>(null);
+  const [schemaMigrationReview, setSchemaMigrationReview] = useState<SchemaMigrationReview | null>(
+    null,
+  );
   const [isTopbarCondensed, setIsTopbarCondensed] = useState(false);
   const metadataStatusCopy = hasLoadedMetadata
     ? "Metadata is loaded and ready to inspect."
@@ -147,16 +151,16 @@ export function TableStructure({
         if (change.action === "drop") return [];
         return [applyDraftToColumn(column, change.draft)];
       }),
-    [columns, stagedColumnChanges]
+    [columns, stagedColumnChanges],
   );
   const pendingChangeCount = Object.keys(stagedColumnChanges).length;
   const reviewStatements = useMemo(
     () => Object.values(stagedColumnChanges).flatMap((change) => change.statements),
-    [stagedColumnChanges]
+    [stagedColumnChanges],
   );
   const destructiveChanges = useMemo(
     () => Object.values(stagedColumnChanges).filter((change) => change.action === "drop"),
-    [stagedColumnChanges]
+    [stagedColumnChanges],
   );
   const editorOriginalColumn =
     columns.find((column) => column.name === columnEditor?.originalName) || null;
@@ -258,7 +262,16 @@ export function TableStructure({
         }
       }
     },
-    [connectionId, database, displayTableName, getTableColumnsPreview, setFromColumns, setFromFullStructure, structureKey, tableName]
+    [
+      connectionId,
+      database,
+      displayTableName,
+      getTableColumnsPreview,
+      setFromColumns,
+      setFromFullStructure,
+      structureKey,
+      tableName,
+    ],
   );
 
   const withTimeout = useCallback(
@@ -268,8 +281,14 @@ export function TableStructure({
           reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`));
         }, ms);
         promise.then(
-          (value) => { window.clearTimeout(timer); resolve(value); },
-          (error) => { window.clearTimeout(timer); reject(error); }
+          (value) => {
+            window.clearTimeout(timer);
+            resolve(value);
+          },
+          (error) => {
+            window.clearTimeout(timer);
+            reject(error);
+          },
         );
       }),
     [],
@@ -289,7 +308,7 @@ export function TableStructure({
         const result = await withTimeout(
           getTableStructure(connectionId, tableName, database),
           METADATA_LOAD_TIMEOUT_MS,
-          `Timed out loading metadata for ${displayTableName}.`
+          `Timed out loading metadata for ${displayTableName}.`,
         );
 
         if (
@@ -334,7 +353,7 @@ export function TableStructure({
       structureKey,
       tableName,
       withTimeout,
-    ]
+    ],
   );
 
   const reloadStructure = useCallback(async () => {
@@ -354,7 +373,7 @@ export function TableStructure({
 
   const countNullValues = useCallback(
     (columnName: string) => countTableNullValues(connectionId, tableName, columnName, database),
-    [connectionId, countTableNullValues, database, tableName]
+    [connectionId, countTableNullValues, database, tableName],
   );
 
   const scrollToSection = (section: SectionKey) => {
@@ -391,7 +410,7 @@ export function TableStructure({
 
       scrollToSection(section);
     },
-    [hasLoadedMetadata, isLoadingMetadata, loadMetadata]
+    [hasLoadedMetadata, isLoadingMetadata, loadMetadata],
   );
 
   const toggleSection = (section: SectionKey) => {
@@ -411,11 +430,14 @@ export function TableStructure({
     }
   };
 
-  const openColumnEditor = useCallback((column: ColumnDetail) => {
-    setEditorError(null);
-    setColumnEditor(createEditorState(column, stagedColumnChanges[column.name]?.draft));
-    focusSection("columns");
-  }, [focusSection, stagedColumnChanges]);
+  const openColumnEditor = useCallback(
+    (column: ColumnDetail) => {
+      setEditorError(null);
+      setColumnEditor(createEditorState(column, stagedColumnChanges[column.name]?.draft));
+      focusSection("columns");
+    },
+    [focusSection, stagedColumnChanges],
+  );
 
   const updateColumnEditor = (updates: Partial<ColumnEditorState>) => {
     setEditorError(null);
@@ -451,20 +473,25 @@ export function TableStructure({
     showToast("success", "Change staged", `${editorOriginalColumn.name} is ready for review.`);
   };
 
-  const stageColumnDelete = () => {
+  const stageColumnDelete = async () => {
     if (!columnEditor || !editorOriginalColumn) return;
 
     if (!hasLoadedMetadata) {
-      const message = "Load full metadata first so indexes, foreign keys, and triggers can be checked before deleting a column.";
+      const message =
+        "Load full metadata first so indexes, foreign keys, and triggers can be checked before deleting a column.";
       setEditorError(message);
       showToast("info", "Load metadata first", message);
       void loadMetadata({ force: true });
       return;
     }
 
-    const confirmed = window.confirm(
-      `Stage deletion for column "${editorOriginalColumn.name}"?\n\nYou will still review the generated SQL before applying it.`,
-    );
+    // In-app ConfirmDialog — the native window.confirm is a no-op on macOS
+    // WKWebView and would silently skip the staging step there.
+    const confirmed = await requestAppConfirmation({
+      title: `Stage deletion for column "${editorOriginalColumn.name}"?`,
+      message: "You will still review the generated SQL before applying it.",
+      confirmText: "Stage deletion",
+    });
     if (!confirmed) {
       return;
     }
@@ -476,7 +503,7 @@ export function TableStructure({
       editorOriginalColumn,
       indexes,
       foreignKeys,
-      triggers
+      triggers,
     );
 
     if (deletePreview.error) {
@@ -496,7 +523,11 @@ export function TableStructure({
     setEditorError(null);
     setColumnEditor(null);
     setIsReviewOpen(true);
-    showToast("success", "Delete staged", `${editorOriginalColumn.name} will be dropped after review.`);
+    showToast(
+      "success",
+      "Delete staged",
+      `${editorOriginalColumn.name} will be dropped after review.`,
+    );
   };
 
   const discardStagedChanges = () => {
@@ -536,19 +567,52 @@ export function TableStructure({
   const saveSchemaSnapshot = useCallback(async () => {
     try {
       const structure = hasLoadedMetadata
-        ? { columns, indexes, foreign_keys: foreignKeys, triggers, view_definition: viewDefinition || undefined, object_type: objectType || undefined }
+        ? {
+            columns,
+            indexes,
+            foreign_keys: foreignKeys,
+            triggers,
+            view_definition: viewDefinition || undefined,
+            object_type: objectType || undefined,
+          }
         : await getTableStructure(connectionId, tableName, database);
-      window.localStorage.setItem(schemaSnapshotKey, JSON.stringify({ savedAt: Date.now(), structure }));
+      window.localStorage.setItem(
+        schemaSnapshotKey,
+        JSON.stringify({ savedAt: Date.now(), structure }),
+      );
       showToast("success", "Schema snapshot saved", `Baseline saved for ${displayTableName}.`);
     } catch (error) {
-      showToast("error", "Could not save snapshot", summarizeToastMessage(formatDbError(error, tableName)));
+      showToast(
+        "error",
+        "Could not save snapshot",
+        summarizeToastMessage(formatDbError(error, tableName)),
+      );
     }
-  }, [columns, connectionId, database, displayTableName, foreignKeys, getTableStructure, hasLoadedMetadata, indexes, objectType, schemaSnapshotKey, showToast, tableName, triggers, viewDefinition]);
+  }, [
+    columns,
+    connectionId,
+    database,
+    displayTableName,
+    foreignKeys,
+    getTableStructure,
+    hasLoadedMetadata,
+    indexes,
+    objectType,
+    schemaSnapshotKey,
+    showToast,
+    tableName,
+    triggers,
+    viewDefinition,
+  ]);
 
   const compareSchemaSnapshot = useCallback(async () => {
     const rawSnapshot = window.localStorage.getItem(schemaSnapshotKey);
     if (!rawSnapshot) {
-      showToast("info", "No schema snapshot", "Save a snapshot first, then compare it with the current table.");
+      showToast(
+        "info",
+        "No schema snapshot",
+        "Save a snapshot first, then compare it with the current table.",
+      );
       return;
     }
     try {
@@ -561,7 +625,11 @@ export function TableStructure({
       setSchemaDiff(nextDiff);
       setSchemaMigrationReview(buildSchemaMigrationReview(dbType, nextDiff, database));
     } catch (error) {
-      showToast("error", "Could not compare schema", summarizeToastMessage(formatDbError(error, tableName)));
+      showToast(
+        "error",
+        "Could not compare schema",
+        summarizeToastMessage(formatDbError(error, tableName)),
+      );
     } finally {
       setIsComparingSchema(false);
     }
@@ -569,7 +637,14 @@ export function TableStructure({
 
   const openSchemaDiffSqlDraft = useCallback(() => {
     if (!schemaMigrationReview?.statements.length) return;
-    addTab({ id: `query-${crypto.randomUUID()}`, type: "query", title: `Migration review ${displayTableName}`, connectionId, database, content: `${schemaMigrationReview.statements.join(";\n")};` });
+    addTab({
+      id: `query-${crypto.randomUUID()}`,
+      type: "query",
+      title: `Migration review ${displayTableName}`,
+      connectionId,
+      database,
+      content: `${schemaMigrationReview.statements.join(";\n")};`,
+    });
   }, [addTab, connectionId, database, displayTableName, schemaMigrationReview]);
 
   const applyStagedChanges = async () => {
@@ -587,11 +662,13 @@ export function TableStructure({
         const destructiveColumns = destructiveChanges
           .map((change) => change.original.name)
           .join(", ");
-        const confirmed = window.confirm(
-          `Apply destructive change${destructiveChanges.length === 1 ? "" : "s"} now?\n\n` +
+        const confirmed = await requestAppConfirmation({
+          title: `Apply destructive change${destructiveChanges.length === 1 ? "" : "s"} now?`,
+          message:
             `This will permanently remove column${destructiveChanges.length === 1 ? "" : "s"}: ${destructiveColumns}.\n\n` +
-            `Make sure you reviewed the generated SQL and have a backup if needed.`
-        );
+            `Make sure you reviewed the generated SQL and have a backup if needed.`,
+          confirmText: "Apply changes",
+        });
 
         if (!confirmed) {
           throw new Error("Apply cancelled.");
@@ -610,16 +687,16 @@ export function TableStructure({
           if (nullCount > 0) {
             const draft = change.draft;
             if (!draft) {
-              throw new Error(
-                `Missing staged draft for column "${change.original.name}".`
-              );
+              throw new Error(`Missing staged draft for column "${change.original.name}".`);
             }
             const defaultValue = getDefaultValueForType(draft.dataType);
-            const confirmed = window.confirm(
-              `Column "${change.original.name}" has ${nullCount} NULL value(s).\n\n` +
+            const confirmed = await requestAppConfirmation({
+              title: `Column "${change.original.name}" has ${nullCount} NULL value(s)`,
+              message:
                 `To set NOT NULL, the app can update them to ${defaultValue} first.\n\n` +
-                `Click OK to continue, or Cancel to stop.`
-            );
+                `Confirm to continue, or cancel to stop.`,
+              confirmText: "Update and apply",
+            });
 
             if (!confirmed) {
               throw new Error("Apply cancelled.");
@@ -647,12 +724,12 @@ export function TableStructure({
             tableName,
             database,
           },
-        })
+        }),
       );
       showToast(
         "success",
         "Structure updated",
-        `${appliedChangeCount} change${appliedChangeCount === 1 ? "" : "s"} applied to ${displayTableName}.`
+        `${appliedChangeCount} change${appliedChangeCount === 1 ? "" : "s"} applied to ${displayTableName}.`,
       );
     } catch (error) {
       const formattedError = formatDbError(error, tableName);
@@ -752,7 +829,7 @@ export function TableStructure({
     }
 
     const matchingColumn = columns.find(
-      (column) => column.name.toLowerCase() === pendingRequest.columnName?.toLowerCase()
+      (column) => column.name.toLowerCase() === pendingRequest.columnName?.toLowerCase(),
     );
     if (!matchingColumn) {
       pendingExternalFocusRef.current = null;
@@ -811,12 +888,14 @@ export function TableStructure({
 
   useEffect(() => {
     const handleTableDataUpdated = (event: Event) => {
-      const detail = (event as CustomEvent<{
-        connectionId: string;
-        database?: string;
-        tableName?: string;
-        invalidateStructure?: boolean;
-      }>).detail;
+      const detail = (
+        event as CustomEvent<{
+          connectionId: string;
+          database?: string;
+          tableName?: string;
+          invalidateStructure?: boolean;
+        }>
+      ).detail;
 
       if (!detail?.invalidateStructure) return;
       if (detail.connectionId !== connectionId) return;
@@ -864,7 +943,11 @@ export function TableStructure({
       <div className="structure-state">
         <div className="structure-state-card error">
           <span>{loadError || "Failed to load structure"}</span>
-          <button type="button" className="btn btn-secondary" onClick={() => void reloadStructure()}>
+          <button
+            type="button"
+            className="btn btn-secondary"
+            onClick={() => void reloadStructure()}
+          >
             Retry
           </button>
         </div>
@@ -904,10 +987,18 @@ export function TableStructure({
             {pendingChangeCount > 0 ? (
               <>
                 <span className="structure-pending-pill">{pendingChangeCount} pending</span>
-                <button type="button" className="btn btn-secondary" onClick={() => setIsReviewOpen(true)}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => setIsReviewOpen(true)}
+                >
                   Review
                 </button>
-                <button type="button" className="btn btn-primary" onClick={() => void applyStagedChanges()}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={() => void applyStagedChanges()}
+                >
                   {isApplyingChanges ? (
                     <Loader2 className="w-4 h-4 animate-spin" />
                   ) : (
@@ -918,15 +1009,32 @@ export function TableStructure({
               </>
             ) : (
               <>
-                <button type="button" className="btn btn-secondary" onClick={() => void saveSchemaSnapshot()}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => void saveSchemaSnapshot()}
+                >
                   <Save className="w-4 h-4" />
                   <span>Snapshot</span>
                 </button>
-                <button type="button" className="btn btn-secondary" onClick={() => void compareSchemaSnapshot()} disabled={isComparingSchema}>
-                  {isComparingSchema ? <Loader2 className="w-4 h-4 animate-spin" /> : <GitCompareArrows className="w-4 h-4" />}
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => void compareSchemaSnapshot()}
+                  disabled={isComparingSchema}
+                >
+                  {isComparingSchema ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <GitCompareArrows className="w-4 h-4" />
+                  )}
                   <span>Compare</span>
                 </button>
-                <button type="button" className="btn btn-secondary" onClick={() => focusSection("columns")}>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={() => focusSection("columns")}
+                >
                   Edit
                 </button>
                 <button
@@ -997,7 +1105,11 @@ export function TableStructure({
                     {hasLoadedMetadata ? indexes.length : isLoadingMetadata ? "..." : "Load"}
                   </strong>
                   <span className="structure-insight-meta">
-                    {hasLoadedMetadata ? "Metadata ready" : isLoadingMetadata ? "Fetching now" : "Open to fetch"}
+                    {hasLoadedMetadata
+                      ? "Metadata ready"
+                      : isLoadingMetadata
+                        ? "Fetching now"
+                        : "Open to fetch"}
                   </span>
                 </span>
               </button>
@@ -1015,7 +1127,11 @@ export function TableStructure({
                     {hasLoadedMetadata ? foreignKeys.length : isLoadingMetadata ? "..." : "Load"}
                   </strong>
                   <span className="structure-insight-meta">
-                    {hasLoadedMetadata ? "Relations loaded" : isLoadingMetadata ? "Fetching now" : "Open to fetch"}
+                    {hasLoadedMetadata
+                      ? "Relations loaded"
+                      : isLoadingMetadata
+                        ? "Fetching now"
+                        : "Open to fetch"}
                   </span>
                 </span>
               </button>
@@ -1031,7 +1147,9 @@ export function TableStructure({
                     <span className="structure-pending-pill">{pendingChangeCount} pending</span>
                   )}
                   <strong className="structure-topbar-queue-title">
-                    {pendingChangeCount > 0 ? "Review and apply when ready" : "Everything is synced"}
+                    {pendingChangeCount > 0
+                      ? "Review and apply when ready"
+                      : "Everything is synced"}
                   </strong>
                 </div>
                 <p className="structure-topbar-queue-description">
@@ -1044,10 +1162,18 @@ export function TableStructure({
               <div className="structure-topbar-actions">
                 {pendingChangeCount > 0 ? (
                   <>
-                    <button type="button" className="btn btn-secondary" onClick={() => setIsReviewOpen(true)}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => setIsReviewOpen(true)}
+                    >
                       Review SQL
                     </button>
-                    <button type="button" className="btn btn-secondary" onClick={discardStagedChanges}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={discardStagedChanges}
+                    >
                       Discard
                     </button>
                     <button
@@ -1065,15 +1191,32 @@ export function TableStructure({
                   </>
                 ) : (
                   <>
-                    <button type="button" className="btn btn-secondary" onClick={() => void saveSchemaSnapshot()}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => void saveSchemaSnapshot()}
+                    >
                       <Save className="w-4 h-4" />
                       <span>Snapshot</span>
                     </button>
-                    <button type="button" className="btn btn-secondary" onClick={() => void compareSchemaSnapshot()} disabled={isComparingSchema}>
-                      {isComparingSchema ? <Loader2 className="w-4 h-4 animate-spin" /> : <GitCompareArrows className="w-4 h-4" />}
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => void compareSchemaSnapshot()}
+                      disabled={isComparingSchema}
+                    >
+                      {isComparingSchema ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <GitCompareArrows className="w-4 h-4" />
+                      )}
                       <span>Compare</span>
                     </button>
-                    <button type="button" className="btn btn-secondary" onClick={() => focusSection("columns")}>
+                    <button
+                      type="button"
+                      className="btn btn-secondary"
+                      onClick={() => focusSection("columns")}
+                    >
                       Edit Columns
                     </button>
                     <button
@@ -1082,7 +1225,11 @@ export function TableStructure({
                       onClick={() => focusSection("indexes")}
                       disabled={isLoadingMetadata}
                     >
-                      {isLoadingMetadata ? "Loading..." : hasLoadedMetadata ? "Inspect Metadata" : "Load Metadata"}
+                      {isLoadingMetadata
+                        ? "Loading..."
+                        : hasLoadedMetadata
+                          ? "Inspect Metadata"
+                          : "Load Metadata"}
                     </button>
                   </>
                 )}
@@ -1128,7 +1275,9 @@ export function TableStructure({
             onLoadMetadata={loadMetadata}
           />
 
-          {(objectType === "VIEW" || !!viewDefinition || (isLoadingMetadata && !hasLoadedMetadata)) && (
+          {(objectType === "VIEW" ||
+            !!viewDefinition ||
+            (isLoadingMetadata && !hasLoadedMetadata)) && (
             <ViewDefinitionSection
               viewDefinition={viewDefinition}
               sectionRefs={sectionRefs}
@@ -1191,7 +1340,10 @@ export function TableStructure({
           diff={schemaDiff}
           review={schemaMigrationReview}
           onOpenSql={openSchemaDiffSqlDraft}
-          onClose={() => { setSchemaDiff(null); setSchemaMigrationReview(null); }}
+          onClose={() => {
+            setSchemaDiff(null);
+            setSchemaMigrationReview(null);
+          }}
         />
       )}
 

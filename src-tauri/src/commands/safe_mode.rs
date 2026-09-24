@@ -122,6 +122,21 @@ impl SafeModeState {
         self.assert_sql_allowed(connection_id, sql_or_probe, database_type)
             .await
     }
+
+    /// Restore-path gate: the human already reviewed the dump preview, so
+    /// statements the parser cannot classify are tolerated and counted
+    /// instead of hard-failing the whole restore. Classified statements
+    /// still face the full level policy; filesystem/OS capabilities are
+    /// blocked at every level. Returns the unclassified-statement count.
+    pub async fn assert_restore_statements_allowed(
+        &self,
+        connection_id: &str,
+        statements: &[String],
+        database_type: Option<DatabaseType>,
+    ) -> Result<usize, String> {
+        let level = self.effective_level(connection_id).await;
+        crate::utils::safe_mode::assert_restore_statements_allowed(level, statements, database_type)
+    }
 }
 
 #[tauri::command]

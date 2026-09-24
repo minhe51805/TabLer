@@ -93,6 +93,59 @@ fn is_hard_blocked_schema(canonical: &str) -> bool {
         || canonical.starts_with("TRUNCATE ")
         || canonical.starts_with("CREATE TABLE")
 }
+/// Restore-path variant of [`assert_sql_allowed_at_level_with_approval`].
+/// A dump file routinely contains statements the SQL parser cannot classify
+/// (MySQL `LOCK TABLES`, `DELIMITER`, versioned comments, …) — after the
+/// human reviewed the preview, hard-failing on those would make restore
+/// impossible, so unclassifiable statements are TOLERATED and counted
+/// instead of rejected. Statements that DO classify still face the full
+/// level policy, and filesystem/OS capabilities (`COPY FROM '/path'`,
+/// `LOAD DATA INFILE`, `INTO OUTFILE`) stay blocked at every level.
+/// Returns the number of statements that could not be classified.
+pub fn assert_restore_statements_allowed(
+    level: u8,
+    statements: &[String],
+    database_type: Option<DatabaseType>,
+) -> Result<usize, String> {
+    let level = clamp_safe_mode_level(level);
+    if level == 0 || statements.is_empty() {
+        return Ok(0);
+    }
+
+    let mut unclassified = 0usize;
+    for statement in statements {
+        let decision = classify_sql_with_dialect(statement, database_type);
+        // A capability probe is text-level and works even when the statement
+        // itself does not parse — file/OS access is never tolerated.
+        if decision.filesystem_access {
+            return Err(format!(
+                "[Safe Mode level {level} ({})] This restore contains filesystem/OS-access SQL (COPY FROM/TO a path, LOAD DATA INFILE, INTO OUTFILE, …), which is blocked at every level.",
+                safe_mode_level_label(level)
+            ));
+        }
+        if decision.parse_error.is_some()
+            || decision
+                .statements
+                .iter()
+                .any(|parsed| parsed.kind == SqlStatementKind::Unknown)
+        {
+            unclassified += 1;
+            continue;
+        }
+        if let Some(blocked) = decision
+            .statements
+            .iter()
+            .find(|parsed| is_blocked_at_level(level, parsed))
+        {
+            return Err(format!(
+                "[Safe Mode level {level} ({})] This restore contains a blocked statement (`{}`). Upgrade to a lower protection level or disable Safe Mode in settings to proceed.",
+                safe_mode_level_label(level),
+                blocked.sql.chars().take(120).collect::<String>()
+            ));
+        }
+    }
+    Ok(unclassified)
+}
 
 /// Level-3 carve-out: `ALTER TABLE … RENAME COLUMN` is the one DDL a Standard
 /// tier permits. The old substring check let `RENAME COLUMN a TO b, DROP
@@ -122,15 +175,22 @@ fn is_rename_column_only(sql: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{assert_sql_allowed_at_level_with_approval, is_blocked_at_level};
-    use crate::utils::sql::classify_sql;
+    use super::{
+        assert_restore_statements_allowed, assert_sql_allowed_at_level_with_approval,
+        is_blocked_at_level,
+    };
+    use crate::utils::sql::classify_sql_with_dialect;
 
     fn assert_allowed(level: u8, sql: &str, approved: bool) -> Result<(), String> {
         assert_sql_allowed_at_level_with_approval(level, sql, None, approved)
     }
 
     fn first_statement(sql: &str) -> crate::utils::sql::SqlStatementDecision {
-        classify_sql(sql).statements.into_iter().next().unwrap()
+        classify_sql_with_dialect(sql, None)
+            .statements
+            .into_iter()
+            .next()
+            .unwrap()
     }
 
     #[test]
@@ -221,5 +281,42 @@ mod tests {
         assert!(assert_allowed(4, "TRUNCATE TABLE users", true).is_err());
         // Plain writes were already allowed at 4-5 (confirm tier is UI-side).
         assert!(assert_allowed(5, "UPDATE users SET id = 1", true).is_ok());
+    }
+
+    #[test]
+    fn restore_gate_tolerates_unparseable_but_enforces_classified() {
+        let statements = vec![
+            "CREATE TABLE t (id INT)".to_string(),
+            "INSERT INTO t VALUES (1)".to_string(),
+            // Unparseable under every dialect — tolerated and counted.
+            "DELIMITER ;;".to_string(),
+        ];
+        // Level 3 (Standard): CREATE TABLE is hard-blocked even though the
+        // unparseable DELIMITER line is tolerated.
+        assert!(assert_restore_statements_allowed(3, &statements, None).is_err());
+        // Level 2 allows INSERT but CREATE TABLE is not the level-2 INSERT
+        // carve-out, so it is still blocked.
+        assert!(assert_restore_statements_allowed(2, &statements, None).is_err());
+
+        // A dump of plain writes passes at level 2+ and reports the
+        // unclassified count for the result warning.
+        let tolerated = vec![
+            "INSERT INTO t VALUES (1)".to_string(),
+            "DELIMITER ;;".to_string(),
+        ];
+        assert_eq!(
+            assert_restore_statements_allowed(2, &tolerated, None).unwrap(),
+            1
+        );
+
+        // Filesystem/OS capabilities are never tolerated, even unparseable.
+        let dangerous = vec!["LOAD DATA INFILE '/etc/passwd' INTO TABLE t".to_string()];
+        assert!(assert_restore_statements_allowed(5, &dangerous, None).is_err());
+
+        // Level 0 disables the gate entirely.
+        assert_eq!(
+            assert_restore_statements_allowed(0, &dangerous, None).unwrap(),
+            0
+        );
     }
 }

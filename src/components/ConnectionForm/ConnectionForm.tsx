@@ -143,6 +143,15 @@ export function ConnectionForm({
   // until then the auto-detection effect keeps it in sync with the host.
   const mssqlAuthTypeTouchedRef = useRef(false);
 
+  // Runtime availability of the engine currently being configured. The picker
+  // gates on `supported`, but editing a saved connection (or a pasted URL)
+  // skips the picker — this keeps the same gate on the connect/test paths so
+  // a plugin-gated engine without a usable driver fails here with an honest
+  // message instead of a raw backend rejection.
+  const selectedEngineAvailability = useMemo(
+    () => availableDatabases.find((db) => db.key === formData.db_type),
+    [availableDatabases, formData.db_type],
+  );
   // --- Derived ---
   const bootstrapMode = !editConnection && intentMode === "bootstrap";
   const currentEngine = getDatabaseEngine(formData.db_type) ?? selectedDb;
@@ -228,6 +237,7 @@ export function ConnectionForm({
         localReady: "Local sẵn sàng",
         localSoon: "Local sắp có",
         searchPlaceholder: "Tìm loại cơ sở dữ liệu...",
+        pasteConnectionUrl: "Dán URL kết nối (vd. postgres://user:pass@host:5432/db)",
         emptySearch: "Không có loại cơ sở dữ liệu nào khớp tìm kiếm.",
         readyNow: "Sẵn sàng ngay",
         readyNowCaption: "Các engine bạn có thể cấu hình ngay trong bản build này.",
@@ -353,6 +363,7 @@ export function ConnectionForm({
       searchPlaceholder: "Search database type...",
       emptySearch: "No database types match that search.",
       readyNow: "Ready now",
+      pasteConnectionUrl: "Paste a connection URL (e.g. postgres://user:pass@host:5432/db)",
       readyNowCaption: "Engines you can configure immediately in this build.",
       installPlugin: "Install plugin",
       installPluginSuccess: "Plugin installed",
@@ -683,7 +694,80 @@ export function ConnectionForm({
     setStep("form");
   };
 
+  // "Paste a connection URL" affordance in the picker: parse the full URL
+  // through the backend `parse_connection_url` command (which returns a
+  // complete ConnectionConfig, credentials included) and jump straight into
+  // the details step with every field filled. Gated engines still require
+  // their driver plugin — the same availability check the picker applies.
+  const handleConnectionUrl = useCallback(
+    async (rawUrl: string) => {
+      const url = rawUrl.trim();
+      if (!url) return;
+      try {
+        const parsed = await invokeWithTimeout<ConnectionConfig>(
+          "parse_connection_url",
+          { url },
+          5_000,
+          "Parsing connection URL",
+        );
+        const engine = availableDatabases.find((db) => db.key === parsed.db_type);
+        if (!engine) {
+          emitAppToast({
+            tone: "error",
+            title: language === "vi" ? "Engine không được hỗ trợ" : "Unsupported engine",
+            description:
+              language === "vi"
+                ? `URL này trỏ tới ${parsed.db_type}, engine chưa có trong TableR.`
+                : `This URL targets ${parsed.db_type}, which TableR does not support.`,
+          });
+          return;
+        }
+        if (!engine.supported) {
+          emitAppToast({
+            tone: "error",
+            title:
+              language === "vi" ? `${engine.label} chưa sẵn sàng` : `${engine.label} is not ready`,
+            description:
+              language === "vi"
+                ? "Engine này cần plugin driver trước khi kết nối. Cài nó từ Trình quản lý plugin."
+                : "This engine needs its driver plugin before connecting. Install it from Plugin Manager.",
+          });
+          return;
+        }
+        urlPasteHandledRef.current = parsed.host ?? url;
+        passwordDraftRef.current = parsed.password ?? "";
+        setSelectedDb(engine);
+        setFormData({
+          ...parsed,
+          password: undefined,
+          additional_fields: {
+            ...(parsed.additional_fields ?? {}),
+            ...pluginDriverFields(parsed.db_type),
+          },
+        });
+        setStep("form");
+      } catch (error) {
+        emitAppToast({
+          tone: "error",
+          title: language === "vi" ? "URL không hợp lệ" : "Invalid connection URL",
+          description: String(error),
+        });
+      }
+    },
+    [availableDatabases, language, pluginDriverFields],
+  );
+
   const handleTest = async () => {
+    if (selectedEngineAvailability && !selectedEngineAvailability.supported) {
+      setTestResult({
+        success: false,
+        message:
+          language === "vi"
+            ? `${selectedEngineAvailability.label} chưa khả dụng trong bản build này — cần plugin driver trước khi kết nối.`
+            : `${selectedEngineAvailability.label} is not available in this build — it needs its driver plugin before connecting.`,
+      });
+      return;
+    }
     setIsTesting(true);
     setTestResult(null);
     try {
@@ -711,6 +795,16 @@ export function ConnectionForm({
   };
 
   const handleConnect = async () => {
+    if (selectedEngineAvailability && !selectedEngineAvailability.supported) {
+      setTestResult({
+        success: false,
+        message:
+          language === "vi"
+            ? `${selectedEngineAvailability.label} chưa khả dụng trong bản build này — cần plugin driver trước khi kết nối.`
+            : `${selectedEngineAvailability.label} is not available in this build — it needs its driver plugin before connecting.`,
+      });
+      return;
+    }
     if (bootstrapMode && showBootstrapWorkflow) {
       await handleCreateDatabase();
       return;
@@ -1034,6 +1128,7 @@ export function ConnectionForm({
     searchPlaceholder: copy.searchPlaceholder,
     emptySearch: copy.emptySearch,
     readyNow: copy.readyNow,
+    pasteConnectionUrl: copy.pasteConnectionUrl,
     readyNowCaption: copy.readyNowCaption,
     installPlugin: copy.installPlugin,
     roadmapCaption: copy.roadmapCaption,
@@ -1150,6 +1245,7 @@ export function ConnectionForm({
         onBack={() => setStep("pick")}
         onInstallPlugin={handleInstallPluginFromPicker}
         isInstallingPlugin={isInstallingPlugin}
+        onConnectionUrl={handleConnectionUrl}
       />
     );
 

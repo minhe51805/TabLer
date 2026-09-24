@@ -14,6 +14,9 @@ interface RestorePreviewShape {
   schemaChangeCount: number;
   dataChangeCount: number;
   destructiveStatementCount: number;
+  /** Statements the classifier could not categorize — the restore still runs
+   *  them, so the user should know the preview undercounts the blast radius. */
+  unclassifiedStatementCount?: number;
   transactional: boolean;
   warning?: string | null;
 }
@@ -136,7 +139,10 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
 
   const searchableCheckpoints = filterCheckpointsBySearch(request.checkpoints, daySearch);
   const dayGroups = groupCheckpointsByDay(searchableCheckpoints, request.language);
-  const activeDayKey = selectedDayKey && dayGroups[selectedDayKey] ? selectedDayKey : Object.keys(dayGroups)[0] ?? null;
+  const activeDayKey =
+    selectedDayKey && dayGroups[selectedDayKey]
+      ? selectedDayKey
+      : (Object.keys(dayGroups)[0] ?? null);
   const dayCheckpoints = activeDayKey ? dayGroups[activeDayKey]! : [];
 
   const respond = (fileName: string | null) => {
@@ -196,12 +202,7 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
             <h2 className="ckpt-dialog__title">{copy.checkpointTitle}</h2>
             {!confirming && <p className="ckpt-dialog__subtitle">{copy.checkpointHint}</p>}
           </div>
-          <button
-            type="button"
-            onClick={close}
-            className="ckpt-dialog__close"
-            aria-label="Close"
-          >
+          <button type="button" onClick={close} className="ckpt-dialog__close" aria-label="Close">
             <X size={16} />
           </button>
         </div>
@@ -225,19 +226,22 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
                     value={daySearch}
                     onChange={(event) => setDaySearch(event.target.value)}
                   />
-                  {Object.entries(groupCheckpointsByDay(filterCheckpointsBySearch(request.checkpoints, daySearch), request.language)).map(
-                    ([dayKey, dayItems]) => (
-                      <button
-                        key={dayKey}
-                        type="button"
-                        className={`ckpt-day-rail__item${selectedDayKey === dayKey ? " is-active" : ""}`}
-                        onClick={() => setSelectedDayKey(dayKey)}
-                      >
-                        <span className="ckpt-day-rail__label">{dayKey}</span>
-                        <span className="ckpt-day-rail__count">{dayItems.length}</span>
-                      </button>
+                  {Object.entries(
+                    groupCheckpointsByDay(
+                      filterCheckpointsBySearch(request.checkpoints, daySearch),
+                      request.language,
                     ),
-                  )}
+                  ).map(([dayKey, dayItems]) => (
+                    <button
+                      key={dayKey}
+                      type="button"
+                      className={`ckpt-day-rail__item${selectedDayKey === dayKey ? " is-active" : ""}`}
+                      onClick={() => setSelectedDayKey(dayKey)}
+                    >
+                      <span className="ckpt-day-rail__label">{dayKey}</span>
+                      <span className="ckpt-day-rail__count">{dayItems.length}</span>
+                    </button>
+                  ))}
                 </aside>
 
                 {/* Right pane: checkpoints of the selected day */}
@@ -246,140 +250,158 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
                     <p className="ckpt-day-pane__title">{selectedDayKey}</p>
                   )}
                   <ul className="ckpt-list">
-                {dayCheckpoints.map((checkpoint) => (
-                  <li key={checkpoint.fileName} className="ckpt-item-row">
-                    <button
-                      type="button"
-                      className="ckpt-item"
-                      onClick={() => void startConfirm(checkpoint)}
-                    >
-                      <span className="ckpt-item__icon">
-                        <History size={15} />
-                      </span>
-                      <span className="ckpt-item__main">
-                        {renaming?.fileName === checkpoint.fileName ? (
-                          <input
-                            type="text"
-                            className="ckpt-item__rename"
-                            aria-label={copy.checkpointRenameTitle}
-                            title={copy.checkpointRenameTitle}
-                            autoFocus
-                            value={renaming.value}
-                            onChange={(event) =>
-                              setRenaming({ fileName: checkpoint.fileName, value: event.target.value })
-                            }
-                            onBlur={() => setRenaming(null)}
-                            onKeyDown={(event) => {
-                              if (event.key === "Enter") {
-                                const next = renaming.value.trim();
-                                if (!next) {
-                                  setRenaming(null);
-                                  return;
+                    {dayCheckpoints.map((checkpoint) => (
+                      <li key={checkpoint.fileName} className="ckpt-item-row">
+                        <button
+                          type="button"
+                          className="ckpt-item"
+                          onClick={() => void startConfirm(checkpoint)}
+                        >
+                          <span className="ckpt-item__icon">
+                            <History size={15} />
+                          </span>
+                          <span className="ckpt-item__main">
+                            {renaming?.fileName === checkpoint.fileName ? (
+                              <input
+                                type="text"
+                                className="ckpt-item__rename"
+                                aria-label={copy.checkpointRenameTitle}
+                                title={copy.checkpointRenameTitle}
+                                autoFocus
+                                value={renaming.value}
+                                onChange={(event) =>
+                                  setRenaming({
+                                    fileName: checkpoint.fileName,
+                                    value: event.target.value,
+                                  })
                                 }
-                                void invokeMutation("rename_database_checkpoint", {
-                                  connectionId: request.connectionId,
-                                  fileName: checkpoint.fileName,
-                                  label: next,
-                                })
-                                  .then(() =>
-                                    setRequest((current) =>
-                                      current
-                                        ? {
-                                            ...current,
-                                            checkpoints: current.checkpoints.map((entry) =>
-                                              entry.fileName === checkpoint.fileName
-                                                ? { ...entry, label: next }
-                                                : entry,
-                                            ),
-                                          }
-                                        : current,
+                                onBlur={() => setRenaming(null)}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter") {
+                                    const next = renaming.value.trim();
+                                    if (!next) {
+                                      setRenaming(null);
+                                      return;
+                                    }
+                                    void invokeMutation("rename_database_checkpoint", {
+                                      connectionId: request.connectionId,
+                                      fileName: checkpoint.fileName,
+                                      label: next,
+                                    })
+                                      .then(() =>
+                                        setRequest((current) =>
+                                          current
+                                            ? {
+                                                ...current,
+                                                checkpoints: current.checkpoints.map((entry) =>
+                                                  entry.fileName === checkpoint.fileName
+                                                    ? { ...entry, label: next }
+                                                    : entry,
+                                                ),
+                                              }
+                                            : current,
+                                        ),
+                                      )
+                                      .then(() => setRenaming(null))
+                                      .catch(() => setRenaming(null));
+                                  } else if (event.key === "Escape") {
+                                    event.preventDefault();
+                                    event.stopPropagation();
+                                    setRenaming(null);
+                                  }
+                                }}
+                                onClick={(event) => event.stopPropagation()}
+                              />
+                            ) : (
+                              <span className="ckpt-item__label">{checkpoint.label}</span>
+                            )}
+                            <span className="ckpt-item__meta">
+                              {formatCheckpointClock(checkpoint.createdAt, request.language)}·{" "}
+                              {checkpoint.database}· {checkpoint.tableCount}T/{checkpoint.rowCount}R
+                            </span>
+                          </span>
+                          <span className="ckpt-item__chevron-wrap">
+                            <ChevronRight size={14} className="ckpt-item__chevron" />
+                          </span>
+                          <span
+                            className={`ckpt-item__delete${deleteConfirmId === checkpoint.fileName ? " is-confirm" : ""}`}
+                            role="button"
+                            tabIndex={0}
+                            title={
+                              deleteConfirmId === checkpoint.fileName
+                                ? copy.checkpointDeleteConfirm
+                                : copy.checkpointDelete
+                            }
+                            aria-label={copy.checkpointDelete}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              if (deleteConfirmId !== checkpoint.fileName) {
+                                setDeleteConfirmId(checkpoint.fileName);
+                                window.setTimeout(
+                                  () =>
+                                    setDeleteConfirmId((current) =>
+                                      current === checkpoint.fileName ? null : current,
                                     ),
-                                  )
-                                  .then(() => setRenaming(null))
-                                  .catch(() => setRenaming(null));
-                              } else if (event.key === "Escape") {
+                                  3000,
+                                );
+                                return;
+                              }
+                              setDeleteConfirmId(null);
+                              void invokeMutation("delete_database_checkpoint", {
+                                connectionId: request.connectionId,
+                                fileName: checkpoint.fileName,
+                              })
+                                .then(() =>
+                                  setRequest((current) =>
+                                    current
+                                      ? {
+                                          ...current,
+                                          checkpoints: current.checkpoints.filter(
+                                            (entry) => entry.fileName !== checkpoint.fileName,
+                                          ),
+                                        }
+                                      : current,
+                                  ),
+                                )
+                                .catch(() => undefined);
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
                                 event.preventDefault();
-                                event.stopPropagation();
-                                setRenaming(null);
+                                (event.currentTarget as HTMLElement).click();
                               }
                             }}
-                            onClick={(event) => event.stopPropagation()}
-                          />
-                        ) : (
-                          <span className="ckpt-item__label">{checkpoint.label}</span>
-                        )}
-                        <span className="ckpt-item__meta">
-                          {formatCheckpointClock(checkpoint.createdAt, request.language)}
-                          · {checkpoint.database}
-                          · {checkpoint.tableCount}T/{checkpoint.rowCount}R
-                        </span>
-                      </span>
-                      <span className="ckpt-item__chevron-wrap">
-                        <ChevronRight size={14} className="ckpt-item__chevron" />
-                      </span>
-                      <span
-                        className={`ckpt-item__delete${deleteConfirmId === checkpoint.fileName ? " is-confirm" : ""}`}
-                        role="button"
-                        tabIndex={0}
-                        title={deleteConfirmId === checkpoint.fileName ? copy.checkpointDeleteConfirm : copy.checkpointDelete}
-                        aria-label={copy.checkpointDelete}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          if (deleteConfirmId !== checkpoint.fileName) {
-                            setDeleteConfirmId(checkpoint.fileName);
-                            window.setTimeout(() => setDeleteConfirmId((current) => (current === checkpoint.fileName ? null : current)), 3000);
-                            return;
-                          }
-                          setDeleteConfirmId(null);
-                          void invokeMutation("delete_database_checkpoint", {
-                            connectionId: request.connectionId,
-                            fileName: checkpoint.fileName,
-                          })
-                            .then(() =>
-                              setRequest((current) =>
-                                current
-                                  ? {
-                                      ...current,
-                                      checkpoints: current.checkpoints.filter(
-                                        (entry) => entry.fileName !== checkpoint.fileName,
-                                      ),
-                                    }
-                                  : current,
-                              ),
-                            )
-                            .catch(() => undefined);
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            (event.currentTarget as HTMLElement).click();
-                          }
-                        }}
-                      >
-                        <Trash2 size={13} />
-                      </span>
-                      <span
-                        className="ckpt-item__rename-btn"
-                        role="button"
-                        tabIndex={0}
-                        title={copy.checkpointRename}
-                        aria-label={copy.checkpointRename}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setRenaming({ fileName: checkpoint.fileName, value: checkpoint.label });
-                        }}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            setRenaming({ fileName: checkpoint.fileName, value: checkpoint.label });
-                          }
-                        }}
-                      >
-                        <Pencil size={12} />
-                      </span>
-                    </button>
-                  </li>
-                ))}
+                          >
+                            <Trash2 size={13} />
+                          </span>
+                          <span
+                            className="ckpt-item__rename-btn"
+                            role="button"
+                            tabIndex={0}
+                            title={copy.checkpointRename}
+                            aria-label={copy.checkpointRename}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setRenaming({
+                                fileName: checkpoint.fileName,
+                                value: checkpoint.label,
+                              });
+                            }}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                setRenaming({
+                                  fileName: checkpoint.fileName,
+                                  value: checkpoint.label,
+                                });
+                              }
+                            }}
+                          >
+                            <Pencil size={12} />
+                          </span>
+                        </button>
+                      </li>
+                    ))}
                   </ul>
                 </div>
               </div>
@@ -393,13 +415,16 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
               <div className="ckpt-confirm-card">
                 <div className="ckpt-confirm-card__main">
                   <span className="ckpt-confirm-card__label">{confirming.label}</span>
-                  <span className="ckpt-confirm-card__meta">{formatCheckpointClock(confirming.createdAt, request.language)} · {confirming.engine} · {confirming.database} · {confirming.tableCount}T/{confirming.rowCount}R</span>
+                  <span className="ckpt-confirm-card__meta">
+                    {formatCheckpointClock(confirming.createdAt, request.language)} ·{" "}
+                    {confirming.engine} · {confirming.database} · {confirming.tableCount}T/
+                    {confirming.rowCount}R
+                  </span>
                 </div>
               </div>
               {previewLoading ? (
                 <p className="ckpt-dialog__loading">
-                  <Loader2 size={14} className="animate-spin" />
-                  …
+                  <Loader2 size={14} className="animate-spin" />…
                 </p>
               ) : previewError ? (
                 <div className="ckpt-dialog__error">{previewError}</div>
@@ -422,6 +447,14 @@ export function AICheckpointPickerModal({ copy }: AICheckpointPickerModalProps) 
                     >
                       <strong>{preview.destructiveStatementCount}</strong> destructive
                     </span>
+                    {(preview.unclassifiedStatementCount ?? 0) > 0 && (
+                      <span
+                        className="ckpt-stat ckpt-stat--danger"
+                        title="Statements the safety classifier could not categorize — they still run during the restore."
+                      >
+                        <strong>{preview.unclassifiedStatementCount}</strong> unclassified
+                      </span>
+                    )}
                   </div>
                   {preview.warning ? (
                     <div className="ckpt-dialog__warning">⚠ {preview.warning}</div>

@@ -933,7 +933,7 @@ export function ERDiagram({ connectionId, database }: Props) {
 
       const svg = buildERDiagramSvg(nodes, edges);
       if (!svg) {
-        throw new Error("Could not prepare the ER diagram export image.");
+        throw new Error(erdCopy.exportPrepareFailed);
       }
 
       const fileName = buildERDiagramExportFileName(activeDatabaseLabel, "svg");
@@ -969,7 +969,7 @@ export function ERDiagram({ connectionId, database }: Props) {
 
       const snapshot = buildERDiagramExportSnapshot(nodes, edges);
       if (!snapshot) {
-        throw new Error("Could not prepare the ER diagram export file.");
+        throw new Error(erdCopy.exportPrepareFileFailed);
       }
 
       const xml = buildDrawioDiagramXml(snapshot);

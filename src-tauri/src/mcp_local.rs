@@ -480,7 +480,7 @@ async fn execute_tool(state: &LocalMcpState, connection_id: &str, params: &Value
                         "External MCP query exceeds the 12 KB request limit."
                     ));
                 }
-                let statement = validate_read_only_mcp_query(sql)?;
+                let statement = validate_read_only_mcp_query(sql, Some(config.db_type))?;
                 let query_result =
                     timeout(REQUEST_TIMEOUT, driver.execute_query(&statement)).await??;
                 text_result(bounded_query_result(query_result))

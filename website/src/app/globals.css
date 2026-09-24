@@ -5561,3 +5561,9 @@ a {
   transform: translateY(-1px);
   box-shadow: var(--neu-shadow-out);
 }
+
+/* agent mock — the AI workspace shot sits under the agent card grid,
+   same frame language as the ERD reveal */
+.neu .agent-mock {
+  margin-top: 56px;
+}

@@ -16,6 +16,7 @@ export default function sitemap(): MetadataRoute.Sitemap {
   return [
     { url: `${siteUrl}/`, lastModified, changeFrequency: "weekly", priority: 1 },
     { url: `${siteUrl}/download`, lastModified, changeFrequency: "daily", priority: 0.9 },
+    { url: `${siteUrl}/plugins`, lastModified, changeFrequency: "weekly", priority: 0.7 },
     { url: `${siteUrl}/changelog`, lastModified, changeFrequency: "daily", priority: 0.7 },
     ...docsEntries,
   ];

@@ -46,9 +46,9 @@ import {
 import { EngineMark } from "./engine-logos";
 import { SiteFooter } from "./SiteFooter";
 
-const downloadUrl = "/download";
+export const revalidate = 300;
 
-export const revalidate = 0;
+const downloadUrl = "/download";
 
 const featureIcons = [Database, Code2, Bot, Network];
 
@@ -404,6 +404,23 @@ export default async function Home() {
                 </article>
               );
             })}
+          </div>
+
+          <div className="product-frame agent-mock">
+            <div className="frame-bar" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+              <strong>TableR / AI workspace</strong>
+            </div>
+            <Image
+              className="product-image"
+              src="/screenshots/table-r-ai-workspace.png"
+              width={1920}
+              height={1080}
+              alt="TableR AI workspace with the agent panel beside the SQL editor"
+              sizes="(max-width: 720px) 94vw, 1180px"
+            />
           </div>
         </div>
       </section>

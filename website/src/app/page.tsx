@@ -225,7 +225,7 @@ export default async function Home() {
                   <span />
                   <span />
                   <span />
-                  <strong className="frame-title">ant_language / Query workspace</strong>
+                  <strong className="frame-title">ant_language / Connection launcher</strong>
                 </div>
                 <div className="hero-phase-stack">
                   {workflowMedia.map((media, index) => (

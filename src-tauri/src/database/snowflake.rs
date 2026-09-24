@@ -14,6 +14,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::Value as JsonValue;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
@@ -147,6 +148,7 @@ impl SnowflakeDriver {
                 timestamp_tz_output_format: "YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM",
                 timezone: "UTC",
                 use_cached_result: true,
+                multi_statement_count: None,
             },
         }
     }
@@ -741,6 +743,65 @@ impl DatabaseDriver for SnowflakeDriver {
             .execute_single_query(&sql, Some(&database_name), &sql)
             .await?;
         Ok(result.affected_rows)
+    }
+    async fn insert_table_rows_atomically(
+        &self,
+        requests: &[TableRowInsertRequest],
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        if requests.is_empty() {
+            return Err(anyhow!("CSV import requires at least one row"));
+        }
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+        }
+
+        // One multi-statement request keeps every INSERT inside a single
+        // server-side transaction: BEGIN; INSERT…; COMMIT.
+        let statement_count = requests.len() as u64 + 2;
+        let mut parameters = Vec::new();
+        let statement = self.build_atomic_insert_batch(requests, true, &mut parameters)?;
+        let bindings = Self::statement_bindings(&parameters)?;
+        let attempted = async {
+            let response = self
+                .post_statement(&statement, None, Some(bindings), Some(statement_count))
+                .await?;
+            self.await_result_set(response).await
+        };
+
+        match attempted.await {
+            // Snowflake does not support bind variables in multi-statement
+            // requests; retry once with escaped literals when it rejects them.
+            Err(error) if Self::is_multi_statement_binding_error(&error) => {
+                let literal_statement =
+                    self.build_atomic_insert_batch(requests, false, &mut Vec::new())?;
+                let response = self
+                    .post_statement(&literal_statement, None, None, Some(statement_count))
+                    .await?;
+                self.await_result_set(response).await?;
+            }
+            other => {
+                other?;
+            }
+        }
+
+        Ok(requests.len() as u64)
+    }
+
+    async fn insert_table_row_stream_atomically(
+        &self,
+        mut rows: tokio::sync::mpsc::Receiver<crate::database::models::CsvImportRow>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        let mut requests = Vec::new();
+        while let Some(row) = rows.recv().await {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+            }
+            requests.push(row.map_err(anyhow::Error::msg)?);
+        }
+        self.insert_table_rows_atomically(&requests, cancelled)
+            .await
     }
 
     async fn use_database(&self, database: &str) -> Result<()> {

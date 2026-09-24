@@ -11,6 +11,7 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::Value as JsonValue;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
@@ -411,6 +412,74 @@ impl DatabaseDriver for BigQueryDriver {
             .execute_single_query(&sql, Some(&table_reference.dataset_id), &sql)
             .await?;
         Ok(result.affected_rows)
+    }
+    async fn insert_table_rows_atomically(
+        &self,
+        requests: &[TableRowInsertRequest],
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        if requests.is_empty() {
+            return Err(anyhow!("CSV import requires at least one row"));
+        }
+
+        let dataset = self
+            .resolve_dataset_name(requests[0].database.as_deref())
+            .await?;
+
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+        }
+
+        // One scripted query keeps every INSERT inside a single server-side
+        // transaction: BEGIN TRANSACTION; INSERT…; COMMIT TRANSACTION.
+        let mut sql = String::from("BEGIN TRANSACTION");
+        let mut parameters = Vec::new();
+        for request in requests {
+            if request.values.is_empty() {
+                return Err(anyhow!("Each CSV row requires at least one column value"));
+            }
+            let table_reference = self.parse_table_reference(&request.table, Some(&dataset))?;
+            let columns = request
+                .values
+                .iter()
+                .map(|(column, _)| quote_bigquery_identifier(column))
+                .collect::<Result<Vec<_>>>()?;
+
+            sql.push_str("; INSERT INTO ");
+            sql.push_str(&Self::qualify_table_name(&table_reference)?);
+            sql.push_str(" (");
+            sql.push_str(&columns.join(", "));
+            sql.push_str(") VALUES (");
+            sql.push_str(&vec!["?"; request.values.len()].join(", "));
+            sql.push(')');
+
+            parameters.extend(request.values.iter().map(|(column, value)| QueryParameter {
+                name: column.clone(),
+                value: value.clone(),
+                data_type: Self::json_value_parameter_type(value),
+            }));
+        }
+        sql.push_str("; COMMIT TRANSACTION;");
+
+        self.execute_parameterized_single_query(&sql, Some(&dataset), &sql, &parameters)
+            .await?;
+        Ok(requests.len() as u64)
+    }
+
+    async fn insert_table_row_stream_atomically(
+        &self,
+        mut rows: tokio::sync::mpsc::Receiver<crate::database::models::CsvImportRow>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        let mut requests = Vec::new();
+        while let Some(row) = rows.recv().await {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+            }
+            requests.push(row.map_err(anyhow::Error::msg)?);
+        }
+        self.insert_table_rows_atomically(&requests, cancelled)
+            .await
     }
 
     async fn use_database(&self, database: &str) -> Result<()> {

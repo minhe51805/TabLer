@@ -79,6 +79,10 @@ pub(super) struct SnowflakeStatementParameters {
     pub(super) timestamp_tz_output_format: &'static str,
     pub(super) timezone: &'static str,
     pub(super) use_cached_result: bool,
+    /// Snowflake requires the statement count as a string session parameter
+    /// when a request carries more than one statement.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) multi_statement_count: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -249,9 +253,12 @@ impl SnowflakeDriver {
         statement: &str,
         database_override: Option<&str>,
         bindings: Option<BTreeMap<String, SnowflakeStatementBinding>>,
+        multi_statement_count: Option<u64>,
     ) -> Result<SnowflakeApiResponse> {
         let mut request = self.build_statement_request(statement, database_override);
         request.bindings = bindings;
+        request.parameters.multi_statement_count =
+            multi_statement_count.map(|count| count.to_string());
         let response = self
             .apply_common_headers(self.client.post(&self.statements_url))
             .json(&request)
@@ -498,7 +505,7 @@ impl SnowflakeDriver {
         let started_at = Instant::now();
         let result_set = self
             .await_result_set(
-                self.post_statement(trimmed_sql, database_override, bindings)
+                self.post_statement(trimmed_sql, database_override, bindings, None)
                     .await?,
             )
             .await?;
@@ -633,6 +640,75 @@ impl SnowflakeDriver {
                 ))
             })
             .collect()
+    }
+
+    /// Infers the bind-variable type for a JSON cell value so CSV imports can
+    /// travel through `bindings` instead of interpolated SQL text.
+    pub(super) fn json_value_parameter_type(value: &JsonValue) -> QueryParameterType {
+        match value {
+            JsonValue::Null => QueryParameterType::Null,
+            JsonValue::Bool(_) => QueryParameterType::Boolean,
+            JsonValue::Number(number) if number.as_i64().is_some() => QueryParameterType::Integer,
+            JsonValue::Number(_) => QueryParameterType::Decimal,
+            JsonValue::String(_) => QueryParameterType::Text,
+            JsonValue::Array(_) | JsonValue::Object(_) => QueryParameterType::Json,
+        }
+    }
+
+    /// Builds one multi-statement request (`BEGIN; INSERT…; COMMIT`) for an
+    /// atomic CSV import. When `bind` is set the values become `:N` bind
+    /// placeholders appended to `parameters`; otherwise they are escaped into
+    /// the SQL text as literals.
+    pub(super) fn build_atomic_insert_batch(
+        &self,
+        requests: &[TableRowInsertRequest],
+        bind: bool,
+        parameters: &mut Vec<QueryParameter>,
+    ) -> Result<String> {
+        let mut statement = String::from("BEGIN");
+        for request in requests {
+            if request.values.is_empty() {
+                return Err(anyhow!("Each CSV row requires at least one column value"));
+            }
+            let table_reference =
+                self.parse_table_reference(&request.table, request.database.as_deref())?;
+            let columns = request
+                .values
+                .iter()
+                .map(|(column, _)| quote_snowflake_identifier(column))
+                .collect::<Result<Vec<_>>>()?;
+
+            statement.push_str("; INSERT INTO ");
+            statement.push_str(&Self::qualify_table_name(&table_reference)?);
+            statement.push_str(" (");
+            statement.push_str(&columns.join(", "));
+            statement.push_str(") VALUES (");
+            for (index, (column, value)) in request.values.iter().enumerate() {
+                if index > 0 {
+                    statement.push_str(", ");
+                }
+                if bind {
+                    statement.push_str(&format!(":{}", parameters.len() + 1));
+                    parameters.push(QueryParameter {
+                        name: column.clone(),
+                        value: value.clone(),
+                        data_type: Self::json_value_parameter_type(value),
+                    });
+                } else {
+                    statement.push_str(&Self::quote_sql_literal(value)?);
+                }
+            }
+            statement.push(')');
+        }
+        statement.push_str("; COMMIT");
+        Ok(statement)
+    }
+
+    /// Snowflake does not support bind variables inside multi-statement
+    /// requests; detect that rejection so the caller can retry with literals.
+    pub(super) fn is_multi_statement_binding_error(error: &anyhow::Error) -> bool {
+        let message = error.to_string().to_ascii_lowercase();
+        message.contains("bind variable") || message.contains("binding")
     }
 
     pub(super) fn info_schema_relation(database: &str, relation: &str) -> Result<String> {

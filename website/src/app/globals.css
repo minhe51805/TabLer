@@ -5898,3 +5898,54 @@ a {
   color: var(--green);
   font-weight: 600;
 }
+
+/* route loading spinner - a quiet ring on the neumorphic canvas */
+.status-spinner {
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  border: 3px solid rgba(18, 24, 31, 0.08);
+  border-top-color: var(--neu-accent);
+  animation: status-spin 0.9s linear infinite;
+}
+
+@keyframes status-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .status-spinner {
+    animation: none;
+    border-top-color: rgba(18, 24, 31, 0.2);
+  }
+}
+
+/* reduced-data: hide decorative imagery, keep the layout intact */
+@media (prefers-reduced-data: reduce) {
+  .hero-frame img,
+  .workflow-media img,
+  .doc-figure img {
+    display: none;
+  }
+
+  .hero-frame,
+  .workflow-media,
+  .doc-figure {
+    min-height: 120px;
+  }
+}
+
+/* visually hidden but announced to screen readers */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

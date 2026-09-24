@@ -12,13 +12,18 @@ export function PluginsSearch({ placeholder }: { placeholder: string }) {
   const [query, setQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
 
-  useEffect(() => {
+  const [matchCount, setMatchCount] = useState<number | null>(null);
+
+  const applyFilter = (q: string) => {
     const cards = document.querySelectorAll<HTMLElement>(".plugin-card");
-    const q = query.trim().toLowerCase();
+    const needle = q.trim().toLowerCase();
+    let visible = 0;
     for (const card of cards) {
-      const match = !q || (card.dataset.name ?? "").includes(q);
+      const match = !needle || (card.dataset.name ?? "").includes(needle);
       card.hidden = !match;
+      if (match) visible += 1;
     }
+    setMatchCount(needle ? visible : null);
     // hide empty group sections when every card inside is filtered out
     document.querySelectorAll<HTMLElement>(".plugins-group").forEach((group) => {
       const anyVisible = Array.from(group.querySelectorAll<HTMLElement>(".plugin-card")).some(
@@ -26,7 +31,7 @@ export function PluginsSearch({ placeholder }: { placeholder: string }) {
       );
       group.hidden = !anyVisible;
     });
-  }, [query]);
+  };
 
   // "/" focuses the field, same convention as the docs search
   useEffect(() => {
@@ -52,11 +57,17 @@ export function PluginsSearch({ placeholder }: { placeholder: string }) {
         placeholder={placeholder}
         aria-label={placeholder}
         value={query}
-        onChange={(event) => setQuery(event.target.value)}
+        onChange={(event) => {
+          setQuery(event.target.value);
+          applyFilter(event.target.value);
+        }}
       />
       <kbd className="docs-search-kbd" aria-hidden="true">
         /
       </kbd>
+      <span className="sr-only" role="status" aria-live="polite">
+        {matchCount === null ? "" : `${matchCount} plugin${matchCount === 1 ? "" : "s"} match`}
+      </span>
     </div>
   );
 }

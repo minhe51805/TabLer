@@ -1,9 +1,5 @@
 import type { DatabaseType } from "../../types";
-import {
-  buildDbEntry,
-  ENGINE_EXTRA_FIELDS,
-  type DbEntry,
-} from "./engine-registry-shared";
+import { buildDbEntry, ENGINE_EXTRA_FIELDS, type DbEntry } from "./engine-registry-shared";
 
 export type {
   ConnectionEngineMode,
@@ -304,6 +300,22 @@ export const ALL_DATABASES: DbEntry[] = [
     defaultHost: "127.0.0.1",
     hostPlaceholder: "search.example.com",
     fieldProfile: "optionalUserSecretWithDatabase",
+  }),
+  buildDbEntry({
+    key: "oracle",
+    abbr: "Or",
+    label: "Oracle (ORDS)",
+    color: "#c74634",
+    supported: true,
+    connectionMode: "network",
+    defaultPort: 443,
+    supportsSsl: true,
+    localBootstrap: "none",
+    isFile: false,
+    defaultHost: "127.0.0.1",
+    hostPlaceholder: "ords.example.com",
+    fieldProfile: "standardSql",
+    extraFields: ENGINE_EXTRA_FIELDS.oracle,
   }),
 ];
 

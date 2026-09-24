@@ -212,6 +212,55 @@ impl ConnectionConfig {
                     validate_network_host(host, false)?;
                 }
             }
+            DatabaseType::Oracle => {
+                let host = self
+                    .host
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| "Oracle ORDS host is required".to_string())?;
+                validate_network_host(host, false)?;
+
+                if self
+                    .username
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .is_none()
+                {
+                    return Err("Oracle ORDS username is required".to_string());
+                }
+
+                if self
+                    .password
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                    .is_none()
+                {
+                    return Err("Oracle ORDS password is required".to_string());
+                }
+
+                for key in ["ords_schema", "ords_base_path"] {
+                    if let Some(value) = self
+                        .additional_fields
+                        .get(key)
+                        .map(String::as_str)
+                        .map(str::trim)
+                        .filter(|value| !value.is_empty())
+                    {
+                        if value.len() > 128 {
+                            return Err(format!("Oracle ORDS {key} is too long"));
+                        }
+                    }
+                }
+
+                if let Some(port) = self.port {
+                    if port == 0 {
+                        return Err("Port cannot be zero".to_string());
+                    }
+                }
+            }
             _ => {
                 // For network databases, host is required
                 if let Some(ref host) = self.host {

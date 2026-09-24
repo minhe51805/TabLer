@@ -16,6 +16,11 @@ use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
+/// Server-side query cap sent as the `max_execution_time` URL param — the
+/// outer tokio timeout only aborts the HTTP wait; without this ClickHouse
+/// keeps running the statement after the client gives up.
+const CLICKHOUSE_MAX_EXECUTION_TIME_SECS: u64 = 120;
+
 #[derive(Debug, Deserialize)]
 struct ClickHouseMetaColumn {
     name: String,
@@ -170,10 +175,26 @@ impl ClickHouseDriver {
     }
 
     async fn post_query(&self, sql: &str, database: Option<&str>) -> Result<String> {
+        self.post_query_with_params(sql, database, &[]).await
+    }
+
+    /// POST `sql` with ClickHouse `param_<name>` URL arguments carrying bound
+    /// values for `{name:Type}` placeholders — the HTTP interface has no
+    /// positional `?` binds, so values never enter the query text.
+    async fn post_query_with_params(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+        params: &[(String, String)],
+    ) -> Result<String> {
+        // Server-side execution cap: the outer tokio timeout aborts the HTTP
+        // wait, but ClickHouse would keep running the query without this.
         let mut request = self
             .client
             .post(&self.base_url)
             .basic_auth(&self.username, Some(&self.password))
+            .query(&[("max_execution_time", CLICKHOUSE_MAX_EXECUTION_TIME_SECS)])
+            .query(params)
             .body(sql.to_string());
 
         if let Some(database_name) = database.map(str::trim).filter(|value| !value.is_empty()) {
@@ -202,8 +223,17 @@ impl ClickHouseDriver {
     }
 
     async fn query_json(&self, sql: &str, database: Option<&str>) -> Result<ClickHouseJsonResult> {
+        self.query_json_with_params(sql, database, &[]).await
+    }
+
+    async fn query_json_with_params(
+        &self,
+        sql: &str,
+        database: Option<&str>,
+        params: &[(String, String)],
+    ) -> Result<ClickHouseJsonResult> {
         let body = self
-            .post_query(&Self::append_json_format(sql)?, database)
+            .post_query_with_params(&Self::append_json_format(sql)?, database, params)
             .await?;
 
         serde_json::from_str(&body).context("Failed to parse ClickHouse JSON response")
@@ -518,6 +548,42 @@ impl DatabaseDriver for ClickHouseDriver {
             rows: Vec::new(),
             affected_rows: total_affected,
             execution_time_ms: elapsed,
+            query: sql.to_string(),
+            sandboxed: false,
+            truncated: false,
+        })
+    }
+
+    async fn execute_parameterized_query(
+        &self,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        let start = Instant::now();
+        let database = self.current_database_name(None);
+        let (rewritten_sql, params) = rewrite_clickhouse_placeholders(sql, parameters)?;
+
+        if Self::query_returns_rows(&rewritten_sql) {
+            let result = self
+                .query_json_with_params(&rewritten_sql, Some(&database), &params)
+                .await?;
+            return Ok(Self::build_result_from_json(
+                result,
+                start.elapsed().as_millis(),
+                sql.to_string(),
+                0,
+                false,
+                MAX_QUERY_RESULT_ROWS,
+            ));
+        }
+
+        self.post_query_with_params(&rewritten_sql, Some(&database), &params)
+            .await?;
+        Ok(QueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            affected_rows: 0,
+            execution_time_ms: start.elapsed().as_millis(),
             query: sql.to_string(),
             sandboxed: false,
             truncated: false,
@@ -845,5 +911,320 @@ fn clickhouse_count_value(value: &serde_json::Value) -> Option<i64> {
         serde_json::Value::Number(number) => number.as_i64(),
         serde_json::Value::String(text) => text.trim().parse().ok(),
         _ => None,
+    }
+}
+
+/// ClickHouse's HTTP interface binds values through `{name:Type}` placeholders
+/// plus `param_<name>` URL arguments, not positional `?` markers. Rewrite each
+/// `?` outside literals/comments/heredocs to `{param_N:Type}` (N = 1..n) and
+/// produce the matching `param_N` arguments. `parameters` is ordered to match
+/// marker positions, so the Nth `?` consumes `parameters[N-1]`.
+fn rewrite_clickhouse_placeholders(
+    sql: &str,
+    parameters: &[QueryParameter],
+) -> Result<(String, Vec<(String, String)>)> {
+    let chars = sql.chars().collect::<Vec<_>>();
+    let mut output = String::with_capacity(sql.len());
+    let mut param_args = Vec::new();
+    let mut index = 0;
+    let mut state = ClickHouseScanState::Normal;
+    let mut heredoc_tag: Option<String> = None;
+
+    while index < chars.len() {
+        if let Some(tag) = heredoc_tag.as_deref() {
+            let tag_chars = tag.chars().collect::<Vec<_>>();
+            if chars[index..].starts_with(&tag_chars) {
+                output.push_str(tag);
+                index += tag_chars.len();
+                heredoc_tag = None;
+            } else {
+                output.push(chars[index]);
+                index += 1;
+            }
+            continue;
+        }
+        let current = chars[index];
+        match state {
+            ClickHouseScanState::Normal => {
+                if current == '-' && chars.get(index + 1) == Some(&'-') {
+                    output.push_str("--");
+                    index += 2;
+                    state = ClickHouseScanState::LineComment;
+                    continue;
+                }
+                if current == '#' {
+                    output.push(current);
+                    index += 1;
+                    state = ClickHouseScanState::LineComment;
+                    continue;
+                }
+                if current == '/' && chars.get(index + 1) == Some(&'*') {
+                    output.push_str("/*");
+                    index += 2;
+                    state = ClickHouseScanState::BlockComment;
+                    continue;
+                }
+                if current == '\'' {
+                    output.push(current);
+                    index += 1;
+                    state = ClickHouseScanState::SingleQuote;
+                    continue;
+                }
+                if current == '"' {
+                    output.push(current);
+                    index += 1;
+                    state = ClickHouseScanState::DoubleQuote;
+                    continue;
+                }
+                if current == '`' {
+                    output.push(current);
+                    index += 1;
+                    state = ClickHouseScanState::BacktickQuote;
+                    continue;
+                }
+                if current == '$' {
+                    let (_, tag_end) = read_clickhouse_heredoc_tag(&chars, index + 1);
+                    if chars.get(tag_end) == Some(&'$') {
+                        let tag = chars[index..=tag_end].iter().collect::<String>();
+                        output.push_str(&tag);
+                        index = tag_end + 1;
+                        heredoc_tag = Some(tag);
+                        continue;
+                    }
+                }
+                if current == '?' {
+                    let position = param_args.len() + 1;
+                    let parameter = parameters.get(position - 1).ok_or_else(|| {
+                        anyhow!(
+                            "ClickHouse query has {position} '?' markers but only {} parameters were supplied",
+                            parameters.len()
+                        )
+                    })?;
+                    let name = format!("param_{position}");
+                    output.push_str(&format!(
+                        "{{{name}:{}}}",
+                        clickhouse_parameter_type(parameter.data_type)
+                    ));
+                    param_args.push((name, clickhouse_parameter_value(parameter)?));
+                    index += 1;
+                    continue;
+                }
+                output.push(current);
+                index += 1;
+            }
+            ClickHouseScanState::LineComment => {
+                output.push(current);
+                index += 1;
+                if current == '\n' {
+                    state = ClickHouseScanState::Normal;
+                }
+            }
+            ClickHouseScanState::BlockComment => {
+                output.push(current);
+                if current == '*' && chars.get(index + 1) == Some(&'/') {
+                    output.push('/');
+                    index += 2;
+                    state = ClickHouseScanState::Normal;
+                } else {
+                    index += 1;
+                }
+            }
+            ClickHouseScanState::SingleQuote => {
+                output.push(current);
+                if current == '\\' && index + 1 < chars.len() {
+                    output.push(chars[index + 1]);
+                    index += 2;
+                } else if current == '\'' && chars.get(index + 1) == Some(&'\'') {
+                    output.push('\'');
+                    index += 2;
+                } else {
+                    index += 1;
+                    if current == '\'' {
+                        state = ClickHouseScanState::Normal;
+                    }
+                }
+            }
+            ClickHouseScanState::DoubleQuote => {
+                output.push(current);
+                if current == '\\' && index + 1 < chars.len() {
+                    output.push(chars[index + 1]);
+                    index += 2;
+                } else if current == '"' && chars.get(index + 1) == Some(&'"') {
+                    output.push('"');
+                    index += 2;
+                } else {
+                    index += 1;
+                    if current == '"' {
+                        state = ClickHouseScanState::Normal;
+                    }
+                }
+            }
+            ClickHouseScanState::BacktickQuote => {
+                output.push(current);
+                index += 1;
+                if current == '`' {
+                    state = ClickHouseScanState::Normal;
+                }
+            }
+        }
+    }
+
+    if param_args.len() != parameters.len() {
+        bail!(
+            "ClickHouse query has {} '?' markers but {} parameters were supplied",
+            param_args.len(),
+            parameters.len()
+        );
+    }
+    Ok((output, param_args))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ClickHouseScanState {
+    Normal,
+    LineComment,
+    BlockComment,
+    SingleQuote,
+    DoubleQuote,
+    BacktickQuote,
+}
+
+fn read_clickhouse_heredoc_tag(chars: &[char], start: usize) -> (String, usize) {
+    let mut end = start;
+    while chars
+        .get(end)
+        .is_some_and(|value| *value == '_' || value.is_ascii_alphanumeric())
+    {
+        end += 1;
+    }
+    (chars[start..end].iter().collect(), end)
+}
+
+fn clickhouse_parameter_type(data_type: QueryParameterType) -> &'static str {
+    match data_type {
+        QueryParameterType::Text | QueryParameterType::Json => "String",
+        QueryParameterType::Integer => "Int64",
+        QueryParameterType::Decimal => "Float64",
+        QueryParameterType::Boolean => "Bool",
+        QueryParameterType::Null => "Nullable(String)",
+    }
+}
+
+/// Serialize a bound value into the text form ClickHouse parses for
+/// `param_<name>` URL arguments. NULL uses the `\N` sentinel — the literal
+/// string "NULL" is not accepted for Nullable parameters.
+fn clickhouse_parameter_value(parameter: &QueryParameter) -> Result<String> {
+    match parameter.data_type {
+        QueryParameterType::Text => parameter
+            .value
+            .as_str()
+            .map(str::to_string)
+            .ok_or_else(|| anyhow!("Parameter '{}' must be a string.", parameter.name)),
+        QueryParameterType::Integer => parameter
+            .value
+            .as_i64()
+            .map(|value| value.to_string())
+            .ok_or_else(|| anyhow!("Parameter '{}' must be an integer.", parameter.name)),
+        QueryParameterType::Decimal => parameter
+            .value
+            .as_f64()
+            .map(|value| value.to_string())
+            .ok_or_else(|| anyhow!("Parameter '{}' must be a number.", parameter.name)),
+        QueryParameterType::Boolean => parameter
+            .value
+            .as_bool()
+            .map(|value| if value { "1" } else { "0" }.to_string())
+            .ok_or_else(|| anyhow!("Parameter '{}' must be boolean.", parameter.name)),
+        QueryParameterType::Json => Ok(parameter.value.to_string()),
+        QueryParameterType::Null => Ok("\\N".to_string()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{clickhouse_parameter_value, rewrite_clickhouse_placeholders};
+    use crate::database::models::{QueryParameter, QueryParameterType};
+    use serde_json::json;
+
+    fn param(
+        name: &str,
+        value: serde_json::Value,
+        data_type: QueryParameterType,
+    ) -> QueryParameter {
+        QueryParameter {
+            name: name.to_string(),
+            value,
+            data_type,
+        }
+    }
+
+    #[test]
+    fn rewrites_markers_to_named_placeholders() {
+        let parameters = [
+            param("a", json!("x"), QueryParameterType::Text),
+            param("b", json!(7), QueryParameterType::Integer),
+            param("c", json!(true), QueryParameterType::Boolean),
+            param("d", json!(null), QueryParameterType::Null),
+        ];
+        let (sql, args) =
+            rewrite_clickhouse_placeholders("SELECT ?, ?, ?, ?", &parameters).unwrap();
+        assert_eq!(
+            sql,
+            "SELECT {param_1:String}, {param_2:Int64}, {param_3:Bool}, {param_4:Nullable(String)}"
+        );
+        assert_eq!(
+            args,
+            vec![
+                ("param_1".to_string(), "x".to_string()),
+                ("param_2".to_string(), "7".to_string()),
+                ("param_3".to_string(), "1".to_string()),
+                ("param_4".to_string(), "\\N".to_string()),
+            ]
+        );
+    }
+
+    #[test]
+    fn skips_markers_inside_literals_and_comments() {
+        let parameters = [param("a", json!(1), QueryParameterType::Integer)];
+        let (sql, args) = rewrite_clickhouse_placeholders(
+            "SELECT '?' AS s, \"?\" AS d, `?` AS b, $tag$?$tag$ AS h, ? -- ?\n/* ? */ # ?",
+            &parameters,
+        )
+        .unwrap();
+        assert_eq!(
+            sql,
+            "SELECT '?' AS s, \"?\" AS d, `?` AS b, $tag$?$tag$ AS h, {param_1:Int64} -- ?\n/* ? */ # ?"
+        );
+        assert_eq!(args, vec![("param_1".to_string(), "1".to_string())]);
+    }
+
+    #[test]
+    fn skips_backslash_escaped_quotes() {
+        let parameters = [param("a", json!("v"), QueryParameterType::Text)];
+        let (sql, args) =
+            rewrite_clickhouse_placeholders("SELECT '\\'?\\'' , ?", &parameters).unwrap();
+        assert_eq!(sql, "SELECT '\\'?\\'' , {param_1:String}");
+        assert_eq!(args.len(), 1);
+    }
+
+    #[test]
+    fn rejects_marker_parameter_count_mismatch() {
+        assert!(rewrite_clickhouse_placeholders("SELECT ?, ?", &[]).is_err());
+        let parameters = [
+            param("a", json!(1), QueryParameterType::Integer),
+            param("b", json!(2), QueryParameterType::Integer),
+        ];
+        assert!(rewrite_clickhouse_placeholders("SELECT ?", &parameters).is_err());
+    }
+
+    #[test]
+    fn rejects_mismatched_value_types() {
+        assert!(
+            clickhouse_parameter_value(&param("a", json!("x"), QueryParameterType::Integer))
+                .is_err()
+        );
+        assert!(
+            clickhouse_parameter_value(&param("a", json!(1), QueryParameterType::Text)).is_err()
+        );
     }
 }

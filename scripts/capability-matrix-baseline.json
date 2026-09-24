@@ -55,9 +55,9 @@
     "atomic_csv_import": "S",
     "data_export": "S",
     "explain": "S",
-    "schema_edit": "L",
+    "schema_edit": "S",
     "backup_restore": "L",
-    "administration": "L"
+    "administration": "S"
   },
   "greenplum": {
     "connect": "S",
@@ -70,9 +70,9 @@
     "atomic_csv_import": "S",
     "data_export": "S",
     "explain": "S",
-    "schema_edit": "L",
+    "schema_edit": "S",
     "backup_restore": "L",
-    "administration": "L"
+    "administration": "S"
   },
   "redshift": {
     "connect": "S",
@@ -84,10 +84,10 @@
     "atomic_edit_queue": "S",
     "atomic_csv_import": "S",
     "data_export": "S",
-    "explain": "L",
-    "schema_edit": "L",
+    "explain": "S",
+    "schema_edit": "S",
     "backup_restore": "L",
-    "administration": "L"
+    "administration": "S"
   },
   "sqlite": {
     "connect": "S",
@@ -100,7 +100,7 @@
     "atomic_csv_import": "S",
     "data_export": "S",
     "explain": "S",
-    "schema_edit": "U",
+    "schema_edit": "S",
     "backup_restore": "S",
     "administration": "N"
   },
@@ -111,18 +111,18 @@
     "query_cancellation": "L",
     "pagination": "S",
     "inline_edit": "S",
-    "atomic_edit_queue": "U",
+    "atomic_edit_queue": "S",
     "atomic_csv_import": "U",
     "data_export": "S",
     "explain": "S",
-    "schema_edit": "U",
+    "schema_edit": "S",
     "backup_restore": "L",
     "administration": "N"
   },
   "cassandra": {
     "connect": "S",
     "query": "S",
-    "prepared_parameters": "U",
+    "prepared_parameters": "S",
     "query_cancellation": "L",
     "pagination": "S",
     "inline_edit": "S",
@@ -137,21 +137,6 @@
   "snowflake": {
     "connect": "S",
     "query": "S",
-    "prepared_parameters": "U",
-    "query_cancellation": "L",
-    "pagination": "S",
-    "inline_edit": "S",
-    "atomic_edit_queue": "U",
-    "atomic_csv_import": "U",
-    "data_export": "S",
-    "explain": "S",
-    "schema_edit": "U",
-    "backup_restore": "L",
-    "administration": "L"
-  },
-  "mssql": {
-    "connect": "S",
-    "query": "S",
     "prepared_parameters": "S",
     "query_cancellation": "L",
     "pagination": "S",
@@ -159,10 +144,25 @@
     "atomic_edit_queue": "U",
     "atomic_csv_import": "U",
     "data_export": "S",
-    "explain": "L",
-    "schema_edit": "U",
+    "explain": "S",
+    "schema_edit": "S",
     "backup_restore": "L",
     "administration": "L"
+  },
+  "mssql": {
+    "connect": "S",
+    "query": "S",
+    "prepared_parameters": "S",
+    "query_cancellation": "S",
+    "pagination": "S",
+    "inline_edit": "S",
+    "atomic_edit_queue": "S",
+    "atomic_csv_import": "S",
+    "data_export": "S",
+    "explain": "S",
+    "schema_edit": "S",
+    "backup_restore": "L",
+    "administration": "S"
   },
   "redis": {
     "connect": "S",
@@ -204,15 +204,15 @@
     "atomic_edit_queue": "S",
     "atomic_csv_import": "S",
     "data_export": "S",
-    "explain": "L",
-    "schema_edit": "L",
+    "explain": "S",
+    "schema_edit": "S",
     "backup_restore": "L",
-    "administration": "L"
+    "administration": "S"
   },
   "clickhouse": {
     "connect": "S",
     "query": "S",
-    "prepared_parameters": "U",
+    "prepared_parameters": "S",
     "query_cancellation": "L",
     "pagination": "S",
     "inline_edit": "S",
@@ -220,14 +220,14 @@
     "atomic_csv_import": "U",
     "data_export": "S",
     "explain": "S",
-    "schema_edit": "U",
+    "schema_edit": "S",
     "backup_restore": "L",
     "administration": "L"
   },
   "bigquery": {
     "connect": "S",
     "query": "S",
-    "prepared_parameters": "U",
+    "prepared_parameters": "S",
     "query_cancellation": "L",
     "pagination": "S",
     "inline_edit": "S",
@@ -235,29 +235,29 @@
     "atomic_csv_import": "U",
     "data_export": "S",
     "explain": "U",
-    "schema_edit": "U",
+    "schema_edit": "S",
     "backup_restore": "L",
     "administration": "U"
   },
   "libsql": {
     "connect": "S",
     "query": "S",
-    "prepared_parameters": "U",
+    "prepared_parameters": "S",
     "query_cancellation": "L",
     "pagination": "S",
     "inline_edit": "S",
-    "atomic_edit_queue": "U",
+    "atomic_edit_queue": "S",
     "atomic_csv_import": "U",
     "data_export": "S",
     "explain": "S",
-    "schema_edit": "U",
+    "schema_edit": "S",
     "backup_restore": "L",
     "administration": "N"
   },
   "cloudflare_d1": {
     "connect": "S",
     "query": "S",
-    "prepared_parameters": "U",
+    "prepared_parameters": "S",
     "query_cancellation": "L",
     "pagination": "S",
     "inline_edit": "S",
@@ -265,7 +265,7 @@
     "atomic_csv_import": "U",
     "data_export": "S",
     "explain": "S",
-    "schema_edit": "U",
+    "schema_edit": "S",
     "backup_restore": "L",
     "administration": "N"
   },
@@ -281,6 +281,21 @@
     "data_export": "S",
     "explain": "U",
     "schema_edit": "N",
+    "backup_restore": "U",
+    "administration": "U"
+  },
+  "oracle": {
+    "connect": "S",
+    "query": "S",
+    "prepared_parameters": "S",
+    "query_cancellation": "L",
+    "pagination": "S",
+    "inline_edit": "U",
+    "atomic_edit_queue": "U",
+    "atomic_csv_import": "U",
+    "data_export": "S",
+    "explain": "S",
+    "schema_edit": "U",
     "backup_restore": "U",
     "administration": "U"
   }

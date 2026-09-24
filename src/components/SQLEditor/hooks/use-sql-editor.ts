@@ -107,6 +107,10 @@ export function useSQLEditor({
   const supportsPreparedParams =
     capabilityProfile === null ||
     isCapabilitySupported(capabilityProfile.capabilities.preparedParameters);
+  // EXPLAIN is only offered where the driver can actually produce a plan —
+  // engines marked unsupported would surface a raw driver error on click.
+  const supportsExplain =
+    capabilityProfile === null || isCapabilitySupported(capabilityProfile.capabilities.explain);
   // `{{param}}` fill request — set by handleExecute when the editor text
   // contains favorites-style placeholders; SQLEditor renders the dialog.
   const [paramFillRequest, setParamFillRequest] = useState<{
@@ -1052,6 +1056,7 @@ export function useSQLEditor({
     explainPlan,
     explainSourceSql,
     isRunningExplain,
+    supportsExplain,
     setExplainPlan,
     aiProposal,
     acceptAiProposal,

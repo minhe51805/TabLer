@@ -20,8 +20,13 @@ impl MssqlDriver {
 
         Ok(Self {
             client: Arc::new(Mutex::new(client)),
+            config: config.clone(),
             current_db: Arc::new(RwLock::new(Some(database_name.to_string()))),
             poisoned: Arc::new(RwLock::new(None)),
+            cancel_registry: Arc::new(RwLock::new(
+                crate::database::query_cancel::QueryCancelRegistry::new(),
+            )),
+            session_id: Arc::new(RwLock::new(None)),
         })
     }
 

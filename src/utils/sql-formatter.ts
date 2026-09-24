@@ -27,6 +27,8 @@ function mapDialect(dbType: DatabaseType | undefined): SqlLanguage {
       return "clickhouse";
     case "snowflake":
       return "snowflake";
+    case "oracle":
+      return "plsql";
     case "cassandra":
     case "vertica":
     case "mongodb":

@@ -146,6 +146,13 @@ impl LibSqlDriver {
         }
     }
 
+    fn parameter_to_libsql_value(parameter: &QueryParameter) -> Result<LibSqlValue> {
+        match parameter.data_type {
+            QueryParameterType::Json => Ok(LibSqlValue::Text(parameter.value.to_string())),
+            _ => Self::serde_to_libsql_value(&parameter.value),
+        }
+    }
+
     async fn collect_rows_limited(
         &self,
         sql: &str,
@@ -529,6 +536,52 @@ impl DatabaseDriver for LibSqlDriver {
         })
     }
 
+    async fn execute_parameterized_query(
+        &self,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        let values = parameters
+            .iter()
+            .map(Self::parameter_to_libsql_value)
+            .collect::<Result<Vec<_>>>()?;
+        let start = Instant::now();
+
+        if Self::query_returns_rows(sql) {
+            let rows = self
+                .connection
+                .query(sql, values)
+                .await
+                .with_context(|| format!("Failed to execute LibSQL query: {sql}"))?;
+            let (columns, rows, truncated) = Self::collect_rows(rows).await?;
+            return Ok(Self::build_result(
+                columns,
+                rows,
+                start.elapsed().as_millis(),
+                sql.to_string(),
+                0,
+                false,
+                truncated,
+            ));
+        }
+
+        let affected_rows = self
+            .connection
+            .execute(sql, values)
+            .await
+            .with_context(|| format!("Failed to execute LibSQL statement: {sql}"))?;
+
+        Ok(QueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            affected_rows,
+            execution_time_ms: start.elapsed().as_millis(),
+            query: sql.to_string(),
+            sandboxed: false,
+            truncated: false,
+        })
+    }
+
     async fn preview_write_transaction(&self, statements: &[String]) -> Result<Vec<QueryResult>> {
         let tx = self
             .connection
@@ -682,6 +735,63 @@ impl DatabaseDriver for LibSqlDriver {
             .execute(&sql, params)
             .await
             .with_context(|| format!("Failed to update LibSQL table cell in {}", request.table))
+    }
+
+    async fn apply_table_updates_atomically(
+        &self,
+        updates: &[TableCellUpdateRequest],
+    ) -> Result<u64> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await
+            .context("Failed to open LibSQL transaction for atomic updates")?;
+
+        let mut affected_rows = 0u64;
+
+        for request in updates {
+            if request.primary_keys.is_empty() {
+                return Err(anyhow!(
+                    "Inline update requires at least one primary key column"
+                ));
+            }
+
+            let mut sql = format!(
+                "UPDATE {} SET {} = ? WHERE ",
+                quote_sqlite_identifier(&request.table)?,
+                quote_sqlite_order_by(&request.target_column)?,
+            );
+            let mut params = vec![Self::serde_to_libsql_value(&request.value)?];
+
+            for (index, primary_key) in request.primary_keys.iter().enumerate() {
+                if index > 0 {
+                    sql.push_str(" AND ");
+                }
+                sql.push_str(&quote_sqlite_order_by(&primary_key.column)?);
+                if primary_key.value.is_null() {
+                    sql.push_str(" IS NULL");
+                } else {
+                    sql.push_str(" = ?");
+                    params.push(Self::serde_to_libsql_value(&primary_key.value)?);
+                }
+            }
+
+            let rows_affected = tx.execute(&sql, params).await.with_context(|| {
+                format!("Failed to update LibSQL table cell in {}", request.table)
+            })?;
+            if rows_affected == 0 {
+                return Err(anyhow!(
+                    "An edit queue row no longer matches its primary-key selector"
+                ));
+            }
+            affected_rows += rows_affected;
+        }
+
+        tx.commit()
+            .await
+            .context("Failed to commit LibSQL atomic update transaction")?;
+
+        Ok(affected_rows)
     }
 
     async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64> {
@@ -859,5 +969,77 @@ impl DatabaseDriver for LibSqlDriver {
             })
             .collect();
         Ok(values)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn param(value: serde_json::Value, data_type: QueryParameterType) -> QueryParameter {
+        QueryParameter {
+            name: "p".to_string(),
+            value,
+            data_type,
+        }
+    }
+
+    #[test]
+    fn parameter_to_libsql_value_maps_types() {
+        assert!(matches!(
+            LibSqlDriver::parameter_to_libsql_value(&param(
+                serde_json::json!("hello"),
+                QueryParameterType::Text
+            ))
+            .unwrap(),
+            LibSqlValue::Text(ref s) if s == "hello"
+        ));
+        assert!(matches!(
+            LibSqlDriver::parameter_to_libsql_value(&param(
+                serde_json::json!(42),
+                QueryParameterType::Integer
+            ))
+            .unwrap(),
+            LibSqlValue::Integer(42)
+        ));
+        assert!(matches!(
+            LibSqlDriver::parameter_to_libsql_value(&param(
+                serde_json::json!(2.5),
+                QueryParameterType::Decimal
+            ))
+            .unwrap(),
+            LibSqlValue::Real(v) if v == 2.5
+        ));
+        assert!(matches!(
+            LibSqlDriver::parameter_to_libsql_value(&param(
+                serde_json::json!(true),
+                QueryParameterType::Boolean
+            ))
+            .unwrap(),
+            LibSqlValue::Integer(1)
+        ));
+        assert!(matches!(
+            LibSqlDriver::parameter_to_libsql_value(&param(
+                serde_json::Value::Null,
+                QueryParameterType::Null
+            ))
+            .unwrap(),
+            LibSqlValue::Null
+        ));
+        // Json values are bound as serialized text, never interpolated.
+        assert!(matches!(
+            LibSqlDriver::parameter_to_libsql_value(&param(
+                serde_json::json!({"a": 1}),
+                QueryParameterType::Json
+            ))
+            .unwrap(),
+            LibSqlValue::Text(ref s) if s == "{\"a\":1}"
+        ));
+    }
+
+    #[test]
+    fn serde_to_libsql_value_rejects_unsupported() {
+        assert!(LibSqlDriver::serde_to_libsql_value(&serde_json::json!([1, 2])).is_err());
+        assert!(LibSqlDriver::serde_to_libsql_value(&serde_json::json!({"a": 1})).is_err());
     }
 }

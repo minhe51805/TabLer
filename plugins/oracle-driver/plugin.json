@@ -1,0 +1,36 @@
+{
+  "apiVersion": 1,
+  "id": "oracle-driver",
+  "name": "Oracle (ORDS) read-only driver",
+  "version": "1.0.0",
+  "publishedAt": "2026-09-24T00:00:00.000Z",
+  "kind": "adapter",
+  "description": "Adds read-only Oracle Database connectivity over Oracle REST Data Services (ORDS) through the declarative HTTP driver host.",
+  "author": "TableR Team",
+  "entry": null,
+  "capabilities": ["database"],
+  "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+  "compatibility": {
+    "minAppVersion": "0.1.4",
+    "maxAppVersion": null,
+    "platforms": [],
+    "architectures": []
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "digest": "455b39ea9edf370530c8914ea7668fa55fe214fc0c9062af33a2f1c5b04f263d"
+  },
+  "updateUrl": null,
+  "contributes": {
+    "formats": [],
+    "drivers": [
+      {
+        "id": "oracle",
+        "label": "Oracle (ORDS)",
+        "protocol": "oracle",
+        "runtime": "declarative-http-v1",
+        "status": "stable"
+      }
+    ]
+  }
+}

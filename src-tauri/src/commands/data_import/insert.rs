@@ -131,7 +131,9 @@ pub fn build_insert_batch(
 /// and a plain CREATE is emitted only when the table is missing.
 fn create_table_sql(database_type: DatabaseType, table_sql: &str, defs: &[String]) -> String {
     let if_not_exists = match database_type {
-        DatabaseType::MSSQL => "",
+        // MSSQL and Oracle (pre-23c) lack IF NOT EXISTS; existence is checked
+        // via `list_tables` first and a plain CREATE is emitted when missing.
+        DatabaseType::MSSQL | DatabaseType::Oracle => "",
         _ => "IF NOT EXISTS ",
     };
     format!(

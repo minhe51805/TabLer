@@ -523,7 +523,7 @@ struct ParsedJdbcUrl {
 }
 
 /// Map a provider/driver/URL-scheme hint to a DatabaseType. Returns `None`
-/// for engines TableR cannot connect to (oracle, db2, h2, ...) and for
+/// for engines TableR cannot connect to (db2, h2, ...) and for
 /// unrecognized hints — those entries are reported as skipped.
 fn engine_from_hint(hint: &str) -> Option<DatabaseType> {
     let hint = hint.to_lowercase();
@@ -565,8 +565,13 @@ fn engine_from_hint(hint: &str) -> Option<DatabaseType> {
         Some(DatabaseType::Vertica)
     } else if hint.contains("bigquery") {
         Some(DatabaseType::BigQuery)
+    } else if hint.contains("oracle") || hint.contains("ords") {
+        // Oracle thin/JDBC URLs (jdbc:oracle:thin:@//host:1521/service) map to
+        // the ORDS driver; the imported port/service usually needs adjusting
+        // to the ORDS HTTP endpoint and schema alias.
+        Some(DatabaseType::Oracle)
     } else {
-        // oracle, db2, h2, derby, hive, generic jdbc drivers, ...
+        // db2, h2, derby, hive, generic jdbc drivers, ...
         None
     }
 }
@@ -589,6 +594,17 @@ fn parse_jdbc_url(url: &str) -> Option<ParsedJdbcUrl> {
     }
     let (scheme, mut tail) = rest.split_once(':')?;
     let scheme = scheme.to_lowercase();
+
+    // Oracle JDBC URLs carry a driver subscheme before the address:
+    // `jdbc:oracle:thin:@//host:1521/service` (and `oci:`/`oci8:` variants).
+    if scheme == "oracle" {
+        for subscheme in ["thin:", "oci8:", "oci:"] {
+            if let Some(rest) = tail.strip_prefix(subscheme) {
+                tail = rest;
+                break;
+            }
+        }
+    }
     let mut parsed = ParsedJdbcUrl {
         scheme: scheme.clone(),
         ..ParsedJdbcUrl::default()
@@ -1171,6 +1187,28 @@ mod tests {
     fn dbeaver_json_skips_unsupported_engines() {
         let json = r#"{
             "connections": {
+                "db2": {
+                    "provider": "db2",
+                    "driver": "db2_jcc",
+                    "name": "DB2 LUW",
+                    "configuration": {
+                        "url": "jdbc:db2://db2.host:50000/SAMPLE",
+                        "user": "db2inst1"
+                    }
+                }
+            }
+        }"#;
+
+        let result = parse_external_file("data-sources.json", json).unwrap();
+        assert!(result.connections.is_empty());
+        assert_eq!(result.skipped.len(), 1);
+        assert_eq!(result.skipped[0].name, "DB2 LUW");
+    }
+
+    #[test]
+    fn dbeaver_json_imports_oracle_thin_url() {
+        let json = r#"{
+            "connections": {
                 "ora": {
                     "provider": "oracle",
                     "driver": "oracle_thin",
@@ -1184,9 +1222,14 @@ mod tests {
         }"#;
 
         let result = parse_external_file("data-sources.json", json).unwrap();
-        assert!(result.connections.is_empty());
-        assert_eq!(result.skipped.len(), 1);
-        assert_eq!(result.skipped[0].name, "Oracle DB");
+        assert!(result.skipped.is_empty());
+        assert_eq!(result.connections.len(), 1);
+        let oracle = &result.connections[0];
+        assert_eq!(oracle.db_type, DatabaseType::Oracle);
+        assert_eq!(oracle.host.as_deref(), Some("oracle.host"));
+        assert_eq!(oracle.port, Some(1521));
+        assert_eq!(oracle.database.as_deref(), Some("ORCL"));
+        assert_eq!(oracle.username.as_deref(), Some("scott"));
     }
 
     #[test]

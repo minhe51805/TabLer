@@ -85,9 +85,19 @@ function makeNode(
 ): ExplainNode {
   const cost = detail.total_cost ?? detail.Total_Cost;
   const startupCost = detail.startup_cost ?? detail.Startup_Cost;
-  const rows = detail.plan_rows ?? detail.Plan_Rows ?? detail["Plan Rows"] ?? detail.estimated_rows ?? detail.EstimatedRows;
-  const actualRows = detail.actual_rows ?? detail.Actual_Rows ?? detail["Actual Rows"] ?? detail.actualRows;
-  const actualTime = detail.actual_total_time ?? detail["Actual Total Time"] ?? detail.actual_time ?? detail.Actual_Time;
+  const rows =
+    detail.plan_rows ??
+    detail.Plan_Rows ??
+    detail["Plan Rows"] ??
+    detail.estimated_rows ??
+    detail.EstimatedRows;
+  const actualRows =
+    detail.actual_rows ?? detail.Actual_Rows ?? detail["Actual Rows"] ?? detail.actualRows;
+  const actualTime =
+    detail.actual_total_time ??
+    detail["Actual Total Time"] ??
+    detail.actual_time ??
+    detail.Actual_Time;
   const rowWidth = detail.plan_width ?? detail.Plan_Width ?? detail["Plan Width"];
 
   return {
@@ -124,12 +134,20 @@ function insertNode(
 
 /** Extract a clean string label from a detail object */
 function getOpName(detail: Record<string, unknown>): string {
-  const n = detail.Node_Type ?? detail["Node Type"] ?? detail.node_type ?? detail.Operation ?? detail.operation ?? "Operation";
+  const n =
+    detail.Node_Type ??
+    detail["Node Type"] ??
+    detail.node_type ??
+    detail.Operation ??
+    detail.operation ??
+    "Operation";
   return String(n);
 }
 
 /** Extract table/index/join info from detail */
-function getExtras(detail: Record<string, unknown>): Record<string, string | number | boolean | null> {
+function getExtras(
+  detail: Record<string, unknown>,
+): Record<string, string | number | boolean | null> {
   const extras: Record<string, string | number | boolean | null> = {};
   const aliases: [string, string][] = [
     ["Relation_Name", "table"],
@@ -186,15 +204,16 @@ function getExtras(detail: Record<string, unknown>): Record<string, string | num
 // PostgreSQL / CockroachDB / DuckDB (JSON format)
 // ---------------------------------------------------------------------------
 
-function parsePostgresJson(raw: unknown, nodes: Map<string, ExplainNode>, roots: ExplainNode[]): void {
+function parsePostgresJson(
+  raw: unknown,
+  nodes: Map<string, ExplainNode>,
+  roots: ExplainNode[],
+): void {
   if (!raw || typeof raw !== "object") return;
 
   const obj = (Array.isArray(raw) ? raw[0] : raw) as Record<string, unknown>;
 
-  function walk(
-    plan: Record<string, unknown>,
-    parentId: string | null,
-  ): void {
+  function walk(plan: Record<string, unknown>, parentId: string | null): void {
     if (!plan || typeof plan !== "object") return;
     const p = plan as Record<string, unknown>;
     const op = getOpName(p);
@@ -226,37 +245,45 @@ function parseMySQLJson(raw: unknown, nodes: Map<string, ExplainNode>, roots: Ex
   const obj = raw as Record<string, unknown>;
   const planObj = obj.query_block ?? obj.explain ?? obj.EXPLAIN ?? obj;
 
-  function walk(
-    plan: Record<string, unknown>,
-    parentId: string | null,
-  ): void {
+  function walk(plan: Record<string, unknown>, parentId: string | null): void {
     if (!plan || typeof plan !== "object") return;
     const p = plan as Record<string, unknown>;
-    const table = p.table && typeof p.table === "object" ? p.table as Record<string, unknown> : p;
+    const table = p.table && typeof p.table === "object" ? (p.table as Record<string, unknown>) : p;
     const accessType = table.access_type ?? table.type;
     const tableName = table.table_name ?? table.table;
     const op = String(
-      p.operation
-      ?? (accessType ? `${accessType} ${tableName ?? "table"}` : undefined)
-      ?? (p.select_id !== undefined ? "Query block" : "Operation"),
+      p.operation ??
+        (accessType ? `${accessType} ${tableName ?? "table"}` : undefined) ??
+        (p.select_id !== undefined ? "Query block" : "Operation"),
     );
     const extras: Record<string, string | number | boolean | null> = {
       table: typeof tableName === "string" ? tableName : null,
       type: typeof accessType === "string" ? accessType : null,
       possible_keys: typeof table.possible_keys === "string" ? table.possible_keys : null,
       key: typeof table.key === "string" ? table.key : null,
-      rows_examined: typeof table.rows_examined_per_scan === "number" ? table.rows_examined_per_scan : null,
+      rows_examined:
+        typeof table.rows_examined_per_scan === "number" ? table.rows_examined_per_scan : null,
       filtered: typeof table.filtered === "number" ? table.filtered : null,
       using_index: (typeof table.using_index === "boolean" ? table.using_index : false) || null,
     };
-    const costInfo = p.cost_info && typeof p.cost_info === "object" ? p.cost_info as Record<string, unknown> : {};
-    const node = makeNode(op, { ...p, ...table, total_cost: costInfo.query_cost ?? table.cost ?? p.cost }, extras, parentId);
+    const costInfo =
+      p.cost_info && typeof p.cost_info === "object"
+        ? (p.cost_info as Record<string, unknown>)
+        : {};
+    const node = makeNode(
+      op,
+      { ...p, ...table, total_cost: costInfo.query_cost ?? table.cost ?? p.cost },
+      extras,
+      parentId,
+    );
     insertNode(nodes, roots, node, parentId);
 
     const children = [
       ...(Array.isArray(p.nested_loop) ? p.nested_loop : []),
       ...(Array.isArray(p.children) ? p.children : []),
-      ...(p.materialized_from_subquery && typeof p.materialized_from_subquery === "object" ? [p.materialized_from_subquery] : []),
+      ...(p.materialized_from_subquery && typeof p.materialized_from_subquery === "object"
+        ? [p.materialized_from_subquery]
+        : []),
     ];
     for (const child of children) {
       walk(child as Record<string, unknown>, node.id);
@@ -270,15 +297,16 @@ function parseMySQLJson(raw: unknown, nodes: Map<string, ExplainNode>, roots: Ex
 // ClickHouse (JSON format)
 // ---------------------------------------------------------------------------
 
-function parseClickHouseJson(raw: unknown, nodes: Map<string, ExplainNode>, roots: ExplainNode[]): void {
+function parseClickHouseJson(
+  raw: unknown,
+  nodes: Map<string, ExplainNode>,
+  roots: ExplainNode[],
+): void {
   if (!raw || typeof raw !== "object") return;
 
   const obj = raw as Record<string, unknown>;
 
-  function walk(
-    plan: Record<string, unknown>,
-    parentId: string | null,
-  ): void {
+  function walk(plan: Record<string, unknown>, parentId: string | null): void {
     if (!plan || typeof plan !== "object") return;
     const p = plan as Record<string, unknown>;
     const op = String(p.name ?? p.Name ?? p.operator ?? p.Operator ?? "Step");
@@ -313,13 +341,18 @@ function parseClickHouseJson(raw: unknown, nodes: Map<string, ExplainNode>, root
 function parseSQLiteText(raw: string, nodes: Map<string, ExplainNode>, roots: ExplainNode[]): void {
   if (!raw) return;
 
-  const lines = raw.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
+  const lines = raw
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
   const stack: ExplainNode[] = [];
 
   for (const line of lines) {
     // Detect indentation level (each "|--" or "`--" adds one level)
     const indentMatch = line.match(/^(\|?[-`]\s*)+/);
-    const indent = indentMatch ? (indentMatch[0].replace(/[|`-]/g, "").length * 2 + indentMatch[0].length) : 0;
+    const indent = indentMatch
+      ? indentMatch[0].replace(/[|`-]/g, "").length * 2 + indentMatch[0].length
+      : 0;
     const depth = Math.floor(indent / 2);
 
     // Extract operation text
@@ -373,12 +406,16 @@ function parseSQLiteText(raw: string, nodes: Map<string, ExplainNode>, roots: Ex
   }
 }
 
-function parseSQLiteRows(raw: unknown[], nodes: Map<string, ExplainNode>, roots: ExplainNode[]): void {
+function parseSQLiteRows(
+  raw: unknown[],
+  nodes: Map<string, ExplainNode>,
+  roots: ExplainNode[],
+): void {
   const ids = new Map<number, string>();
   const parentByNode = new Map<string, number>();
 
   raw.forEach((row, index) => {
-    const detail = row && typeof row === "object" ? row as Record<string, unknown> : {};
+    const detail = row && typeof row === "object" ? (row as Record<string, unknown>) : {};
     const id = Number(detail.id ?? detail.selectid ?? index);
     const parent = Number(detail.parent ?? -1);
     const operation = String(detail.detail ?? detail.DETAIL ?? detail.plan ?? "SQLite operation");
@@ -406,7 +443,10 @@ function parseSQLiteRows(raw: unknown[], nodes: Map<string, ExplainNode>, roots:
 function parseMSSQLText(raw: string, nodes: Map<string, ExplainNode>, roots: ExplainNode[]): void {
   if (!raw) return;
 
-  const lines = raw.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
+  const lines = raw
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
 
   for (const line of lines) {
     // Skip header/blank lines
@@ -432,10 +472,17 @@ function parseMSSQLText(raw: string, nodes: Map<string, ExplainNode>, roots: Exp
 // Generic text fallback
 // ---------------------------------------------------------------------------
 
-function parseTextFallback(raw: string, nodes: Map<string, ExplainNode>, roots: ExplainNode[]): void {
+function parseTextFallback(
+  raw: string,
+  nodes: Map<string, ExplainNode>,
+  roots: ExplainNode[],
+): void {
   if (!raw) return;
 
-  const lines = raw.split("\n").map((l) => l.trim()).filter((l) => l.length > 0);
+  const lines = raw
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0);
 
   for (const line of lines) {
     if (line.startsWith("===") || line.startsWith("--") || line.length < 3) continue;
@@ -459,10 +506,7 @@ function parseTextFallback(raw: string, nodes: Map<string, ExplainNode>, roots: 
  * @param output - Raw output from EXPLAIN query (usually JSON or text)
  * @returns Normalized ParsedExplainPlan
  */
-export function parseExplainOutput(
-  dbType: DatabaseType,
-  output: unknown,
-): ParsedExplainPlan {
+export function parseExplainOutput(dbType: DatabaseType, output: unknown): ParsedExplainPlan {
   resetNodeCounter();
   const nodes = new Map<string, ExplainNode>();
   const roots: ExplainNode[] = [];
@@ -486,14 +530,18 @@ export function parseExplainOutput(
 
   try {
     if (isJson && typeof output === "object") {
-      const obj = (Array.isArray(output) && output.length === 1 ? output[0] : output) as Record<string, unknown>;
+      const obj = (Array.isArray(output) && output.length === 1 ? output[0] : output) as Record<
+        string,
+        unknown
+      >;
 
       // Detect ANALYZE mode
       const serialized = JSON.stringify(obj).toLowerCase();
-      analyzed = serialized.includes("actual time")
-        || serialized.includes("actual total time")
-        || serialized.includes("actual_rows")
-        || serialized.includes("actual_time");
+      analyzed =
+        serialized.includes("actual time") ||
+        serialized.includes("actual total time") ||
+        serialized.includes("actual_rows") ||
+        serialized.includes("actual_time");
 
       // Extract total cost if present
       if ("Total Cost" in obj) totalCost = Number(obj["Total Cost"]);
@@ -601,7 +649,9 @@ export function getExplainHotspots(plan: ParsedExplainPlan, limit = 4): ExplainH
         reasons.push(`${node.actualTimeMs.toFixed(2)} ms`);
       }
       if (node.actualRows !== undefined && node.estimatedRows !== undefined) {
-        const ratio = Math.max(node.actualRows, node.estimatedRows) / Math.max(1, Math.min(node.actualRows, node.estimatedRows));
+        const ratio =
+          Math.max(node.actualRows, node.estimatedRows) /
+          Math.max(1, Math.min(node.actualRows, node.estimatedRows));
         if (ratio >= 3) {
           score += 20;
           reasons.push(`${ratio.toFixed(1)}x row estimate`);
@@ -624,16 +674,12 @@ export function buildExplainQuery(sql: string, dbType: DatabaseType, analyze = f
     case "postgresql":
     case "cockroachdb":
     case "greenplum":
-    case "redshift":
-    case "vertica":
       return analyze
         ? `EXPLAIN (ANALYZE, COSTS, VERBOSE, BUFFERS, FORMAT JSON) ${sql}`
         : `EXPLAIN (COSTS, VERBOSE, FORMAT JSON) ${sql}`;
 
     case "duckdb":
-      return analyze
-        ? `EXPLAIN ANALYZE ${sql}`
-        : `EXPLAIN ${sql}`;
+      return analyze ? `EXPLAIN ANALYZE ${sql}` : `EXPLAIN ${sql}`;
 
     case "mysql":
     case "mariadb":
@@ -643,29 +689,34 @@ export function buildExplainQuery(sql: string, dbType: DatabaseType, analyze = f
       return `EXPLAIN FORMAT=JSON ${sql}`;
 
     case "sqlite":
-      return analyze
-        ? `EXPLAIN QUERY PLAN ${sql}`
-        : `EXPLAIN QUERY PLAN ${sql}`;
+      return analyze ? `EXPLAIN QUERY PLAN ${sql}` : `EXPLAIN QUERY PLAN ${sql}`;
 
     case "mssql":
+      // SHOWPLAN_* is a session-level flag — without the trailing OFF every
+      // later statement on this connection returns a plan instead of rows.
       return analyze
-        ? `SET SHOWPLAN_XML ON; ${sql}`
-        : `SET SHOWPLAN_TEXT ON; ${sql}`;
+        ? `SET SHOWPLAN_XML ON; ${sql}; SET SHOWPLAN_XML OFF`
+        : `SET SHOWPLAN_TEXT ON; ${sql}; SET SHOWPLAN_TEXT OFF`;
 
     case "snowflake":
-    case "bigquery":
-      return analyze
-        ? `EXPLAIN ${sql}`
-        : `EXPLAIN ${sql}`;
-
     case "clickhouse":
-      return analyze
-        ? `EXPLAIN ${sql}`
-        : `EXPLAIN ${sql}`;
+      return `EXPLAIN ${sql}`;
+
+    case "redshift":
+    case "vertica":
+      // Text plans only — neither accepts Postgres's FORMAT JSON option.
+      return `EXPLAIN ${sql}`;
 
     case "libsql":
     case "cloudflare_d1":
       return `EXPLAIN QUERY PLAN ${sql}`;
+
+    case "oracle":
+      // EXPLAIN PLAN writes PLAN_TABLE and returns no rows — the plan must be
+      // read back through DBMS_XPLAN. A fixed STATEMENT_ID keeps the pair
+      // consistent across ORDS's pooled connections; the DELETE clears stale
+      // rows from earlier explains.
+      return `DELETE FROM PLAN_TABLE WHERE STATEMENT_ID = 'TABLER'; EXPLAIN PLAN SET STATEMENT_ID = 'TABLER' FOR ${sql}; SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY('PLAN_TABLE', 'TABLER', 'TYPICAL'))`;
 
     default:
       return `EXPLAIN ${sql}`;
@@ -673,12 +724,26 @@ export function buildExplainQuery(sql: string, dbType: DatabaseType, analyze = f
 }
 
 /** Determine the operation category for color coding */
-export function getNodeCategory(operation: string): "scan" | "join" | "sort" | "index" | "aggregate" | "other" {
+export function getNodeCategory(
+  operation: string,
+): "scan" | "join" | "sort" | "index" | "aggregate" | "other" {
   const op = operation.toLowerCase();
-  if (op.includes("scan") || op.includes("seq") || op.includes("index scan") || op.includes("table scan") || op.includes("full scan")) {
+  if (
+    op.includes("scan") ||
+    op.includes("seq") ||
+    op.includes("index scan") ||
+    op.includes("table scan") ||
+    op.includes("full scan")
+  ) {
     return "scan";
   }
-  if (op.includes("join") || op.includes("nestloop") || op.includes("hash join") || op.includes("merge join") || op.includes("nested loop")) {
+  if (
+    op.includes("join") ||
+    op.includes("nestloop") ||
+    op.includes("hash join") ||
+    op.includes("merge join") ||
+    op.includes("nested loop")
+  ) {
     return "join";
   }
   if (op.includes("sort") || op.includes("order") || op.includes("top") || op.includes("limit")) {
@@ -687,7 +752,13 @@ export function getNodeCategory(operation: string): "scan" | "join" | "sort" | "
   if (op.includes("index") || op.includes("bitmap") || op.includes("seek")) {
     return "index";
   }
-  if (op.includes("agg") || op.includes("group") || op.includes("hash") || op.includes("window") || op.includes("count")) {
+  if (
+    op.includes("agg") ||
+    op.includes("group") ||
+    op.includes("hash") ||
+    op.includes("window") ||
+    op.includes("count")
+  ) {
     return "aggregate";
   }
   return "other";

@@ -25,6 +25,7 @@ pub enum DatabaseType {
     #[serde(rename = "cloudflare_d1", alias = "cloudflared1")]
     CloudflareD1,
     OpenSearch,
+    Oracle,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -80,7 +80,7 @@ pub async fn get_user_role_snapshot(
         .map_err(|error| error.to_string())?;
     let engine = driver.driver_name().to_string();
     match engine.as_str() {
-        "postgresql" | "greenplum" => {
+        "postgresql" | "greenplum" | "cockroachdb" => {
             let result = driver
                 .execute_query(POSTGRES_PRINCIPALS_SQL)
                 .await
@@ -133,8 +133,66 @@ pub async fn get_user_role_snapshot(
                 privileges_unavailable: privileges.is_none() || role_memberships.is_none(),
             })
         }
+        "mssql" => {
+            let principals = driver
+                .execute_query(MSSQL_PRINCIPALS_SQL)
+                .await
+                .map_err(|error| error.to_string())?;
+            let privileges = driver
+                .execute_query(MSSQL_PRIVILEGES_SQL)
+                .await
+                .map_err(|error| {
+                    log::warn!("mssql privilege query failed: {error}");
+                    error.to_string()
+                })
+                .ok();
+            Ok(UserRoleSnapshot {
+                engine,
+                principals: mssql_principals(principals, privileges.clone()),
+                privileges_unavailable: privileges.is_none(),
+            })
+        }
+        "redshift" => {
+            let result = driver
+                .execute_query(REDSHIFT_PRINCIPALS_SQL)
+                .await
+                .map_err(|error| error.to_string())?;
+            let privileges = driver
+                .execute_query(REDSHIFT_PRIVILEGES_SQL)
+                .await
+                .map_err(|error| {
+                    log::warn!("redshift privilege query failed: {error}");
+                    error.to_string()
+                })
+                .ok();
+            Ok(UserRoleSnapshot {
+                engine,
+                principals: postgres_principals(result, privileges.clone()),
+                privileges_unavailable: privileges.is_none(),
+            })
+        }
+        "vertica" => {
+            let result = driver
+                .execute_query(VERTICA_PRINCIPALS_SQL)
+                .await
+                .map_err(|error| error.to_string())?;
+            let privileges = driver
+                .execute_query(VERTICA_PRIVILEGES_SQL)
+                .await
+                .map_err(|error| {
+                    log::warn!("vertica privilege query failed: {error}");
+                    error.to_string()
+                })
+                .ok();
+            Ok(UserRoleSnapshot {
+                engine,
+                principals: postgres_principals(result, privileges.clone()),
+                privileges_unavailable: privileges.is_none(),
+            })
+        }
         _ => Err(
-            "Users & Roles is currently available for PostgreSQL, MySQL, and MariaDB.".to_string(),
+            "Users & Roles is currently available for PostgreSQL, CockroachDB, Redshift, Vertica, MySQL, MariaDB, and SQL Server."
+                .to_string(),
         ),
     }
 }
@@ -193,8 +251,7 @@ pub async fn apply_user_role_change(
             .await
             .map_err(|error| error.to_string())?;
     }
-    drop(driver);
-    get_user_role_snapshot(connection_id, db_manager).await
+    Ok(get_user_role_snapshot(connection_id, db_manager).await?)
 }
 
 fn build_review(
@@ -230,15 +287,22 @@ fn build_executable_statements(
         .as_deref()
         .map(|value| require_privilege(value))
         .transpose()?;
-    let is_postgres = matches!(engine, "postgresql" | "greenplum");
+    let is_postgres = matches!(
+        engine,
+        "postgresql" | "greenplum" | "cockroachdb" | "redshift" | "vertica"
+    );
     let is_mysql = matches!(engine, "mysql" | "mariadb");
-    if !is_postgres && !is_mysql {
+    let is_mssql = engine == "mssql";
+    if !is_postgres && !is_mysql && !is_mssql {
         return Err(
-            "Users & Roles is currently available for PostgreSQL, MySQL, and MariaDB.".to_string(),
+            "Users & Roles is currently available for PostgreSQL, CockroachDB, Redshift, Vertica, MySQL, MariaDB, and SQL Server."
+                .to_string(),
         );
     }
     let user = if is_postgres {
         quote_postgres_identifier(user_name)
+    } else if is_mssql {
+        quote_mssql_identifier(user_name)?
     } else {
         mysql_account(user_name, request.host.as_deref())?
     };
@@ -253,6 +317,17 @@ fn build_executable_statements(
                     .map(|password| format!(" PASSWORD {password}"))
                     .unwrap_or_default();
                 format!("CREATE ROLE {user} LOGIN{password};")
+            } else if is_mssql {
+                // SQL Server separates the server LOGIN from the database
+                // USER — create both so the principal can actually connect.
+                let password = request
+                    .password
+                    .as_deref()
+                    .filter(|value| !value.is_empty())
+                    .map(quote_mssql_literal)
+                    .map(|password| format!(" WITH PASSWORD = {password}"))
+                    .unwrap_or_default();
+                format!("CREATE LOGIN {user}{password}; CREATE USER {user} FOR LOGIN {user};")
             } else {
                 let password = request
                     .password
@@ -266,21 +341,39 @@ fn build_executable_statements(
         }
         UserRoleChangeAction::GrantRole => {
             let role = role_name.ok_or_else(|| "Role name is required.".to_string())?;
-            let role = if is_postgres {
-                quote_postgres_identifier(role)
+            if is_mssql {
+                // SQL Server role membership goes through ALTER ROLE, not
+                // GRANT — GRANT assigns permissions, not membership.
+                format!(
+                    "ALTER ROLE {} ADD MEMBER {};",
+                    quote_mssql_identifier(role)?,
+                    user
+                )
             } else {
-                quote_mysql_identifier(role)
-            };
-            format!("GRANT {role} TO {user};")
+                let role = if is_postgres {
+                    quote_postgres_identifier(role)
+                } else {
+                    quote_mysql_identifier(role)
+                };
+                format!("GRANT {role} TO {user};")
+            }
         }
         UserRoleChangeAction::RevokeRole => {
             let role = role_name.ok_or_else(|| "Role name is required.".to_string())?;
-            let role = if is_postgres {
-                quote_postgres_identifier(role)
+            if is_mssql {
+                format!(
+                    "ALTER ROLE {} DROP MEMBER {};",
+                    quote_mssql_identifier(role)?,
+                    user
+                )
             } else {
-                quote_mysql_identifier(role)
-            };
-            format!("REVOKE {role} FROM {user};")
+                let role = if is_postgres {
+                    quote_postgres_identifier(role)
+                } else {
+                    quote_mysql_identifier(role)
+                };
+                format!("REVOKE {role} FROM {user};")
+            }
         }
         UserRoleChangeAction::GrantPrivilege | UserRoleChangeAction::RevokePrivilege => {
             let privilege = privilege.ok_or_else(|| "Privilege is required.".to_string())?;
@@ -288,7 +381,16 @@ fn build_executable_statements(
                 .object_name
                 .as_deref()
                 .ok_or_else(|| "Object name is required.".to_string())?;
-            let object = quote_qualified_object(object_name, is_postgres)?;
+            let object = quote_qualified_object(
+                object_name,
+                if is_postgres {
+                    "postgres"
+                } else if is_mssql {
+                    "mssql"
+                } else {
+                    "mysql"
+                },
+            )?;
             let verb = if matches!(request.action, UserRoleChangeAction::GrantPrivilege) {
                 "GRANT"
             } else {
@@ -297,6 +399,10 @@ fn build_executable_statements(
             let direction = if verb == "GRANT" { "TO" } else { "FROM" };
             if is_postgres {
                 format!("{verb} {privilege} ON TABLE {object} {direction} {user};")
+            } else if is_mssql {
+                // SQL Server qualifies objects as schema.object and uses
+                // OBJECT:: for the grant target.
+                format!("{verb} {privilege} ON OBJECT::{object} {direction} {user};")
             } else {
                 format!("{verb} {privilege} ON {object} {direction} {user};")
             }
@@ -324,7 +430,7 @@ fn require_privilege(value: &str) -> Result<&str, String> {
     }
 }
 
-fn quote_qualified_object(value: &str, postgres: bool) -> Result<String, String> {
+fn quote_qualified_object(value: &str, dialect: &str) -> Result<String, String> {
     let parts = value.split('.').map(str::trim).collect::<Vec<_>>();
     if parts.is_empty() || parts.len() > 3 {
         return Err("Object name must contain one to three qualified identifiers.".to_string());
@@ -333,10 +439,10 @@ fn quote_qualified_object(value: &str, postgres: bool) -> Result<String, String>
         .into_iter()
         .map(|part| {
             let identifier = require_identifier(part, "Object identifier")?;
-            Ok(if postgres {
-                quote_postgres_identifier(identifier)
-            } else {
-                quote_mysql_identifier(identifier)
+            Ok(match dialect {
+                "postgres" => quote_postgres_identifier(identifier),
+                "mssql" => quote_mssql_identifier(identifier)?,
+                _ => quote_mysql_identifier(identifier),
             })
         })
         .collect::<Result<Vec<_>, String>>()
@@ -367,6 +473,14 @@ fn quote_postgres_literal(value: &str) -> String {
 
 fn quote_mysql_literal(value: &str) -> String {
     format!("'{}'", value.replace('\\', "\\\\").replace('\'', "\\'"))
+}
+
+fn quote_mssql_identifier(value: &str) -> Result<String, String> {
+    crate::database::safety::quote_mssql_identifier(value).map_err(|e| e.to_string())
+}
+
+fn quote_mssql_literal(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 fn mysql_account(user: &str, host: Option<&str>) -> Result<String, String> {
@@ -460,6 +574,38 @@ fn mysql_principals(
         .collect()
 }
 
+fn mssql_principals(
+    result: QueryResult,
+    privileges: Option<QueryResult>,
+) -> Vec<UserRolePrincipal> {
+    let direct_privileges = build_privilege_map(privileges, false);
+    let role_map = result
+        .rows
+        .iter()
+        .map(|row| (row_string(row, 0), split_csv(&row_string(row, 3))))
+        .collect::<HashMap<_, _>>();
+    result
+        .rows
+        .into_iter()
+        .map(|row| {
+            let name = row_string(&row, 0);
+            let direct = direct_privileges.get(&name).cloned().unwrap_or_default();
+            let effective = collect_effective_privileges(&name, &direct_privileges, &role_map);
+            UserRolePrincipal {
+                id: name.clone(),
+                name,
+                host: None,
+                can_login: row_bool(&row, 1),
+                is_superuser: row_bool(&row, 2),
+                roles: split_csv(&row_string(&row, 3)),
+                direct_privileges: direct,
+                privileges: effective.clone(),
+                effective_privileges: effective,
+            }
+        })
+        .collect()
+}
+
 fn build_privilege_map(
     result: Option<QueryResult>,
     normalize_mysql: bool,
@@ -545,6 +691,9 @@ fn split_csv(value: &str) -> Vec<String> {
         .collect()
 }
 
+const MSSQL_PRINCIPALS_SQL: &str = "SELECT p.name AS user_name, CASE WHEN p.type_desc IN ('SQL_LOGIN','WINDOWS_LOGIN','WINDOWS_GROUP') THEN 1 ELSE 0 END AS can_login, CASE WHEN p.name = 'sa' OR IS_SRVROLEMEMBER('sysadmin', p.name) = 1 THEN 1 ELSE 0 END AS is_superuser, COALESCE((SELECT STRING_AGG(r.name, ',') FROM sys.database_role_members drm JOIN sys.database_principals r ON r.principal_id = drm.role_principal_id JOIN sys.database_principals dp ON dp.principal_id = drm.member_principal_id WHERE dp.name = p.name), '') AS roles FROM sys.server_principals p WHERE p.type_desc IN ('SQL_LOGIN','WINDOWS_LOGIN','WINDOWS_GROUP','CERTIFICATE_MAPPED_LOGIN') AND p.name NOT LIKE '##%' ORDER BY p.name";
+const MSSQL_PRIVILEGES_SQL: &str = "SELECT grantee.name AS grantee, SCHEMA_NAME(o.schema_id) + '.' + o.name + ':' + perm.permission_name AS privilege FROM sys.database_permissions perm JOIN sys.objects o ON o.object_id = perm.major_id JOIN sys.database_principals grantee ON grantee.principal_id = perm.grantee_principal_id WHERE perm.class = 1 ORDER BY grantee.name, privilege";
+
 fn normalize_mysql_grantee(value: &str) -> String {
     value
         .trim()
@@ -559,6 +708,15 @@ const MYSQL_PRINCIPALS_SQL: &str = "SELECT User AS user_name, Host AS host_name 
 const MYSQL_PRIVILEGES_SQL: &str = "SELECT GRANTEE, PRIVILEGE_TYPE FROM information_schema.USER_PRIVILEGES ORDER BY GRANTEE, PRIVILEGE_TYPE";
 const MYSQL_ROLE_MEMBERSHIPS_SQL: &str = "SELECT CONCAT(TO_USER, '@', TO_HOST) AS grantee, CONCAT(FROM_USER, '@', FROM_HOST) AS role_name FROM mysql.role_edges ORDER BY TO_USER, TO_HOST, FROM_USER, FROM_HOST";
 const MARIADB_ROLE_MEMBERSHIPS_SQL: &str = "SELECT CONCAT(User, '@', Host) AS grantee, Role AS role_name FROM mysql.roles_mapping ORDER BY User, Host, Role";
+
+// Redshift exposes users via pg_user (not pg_roles) and group membership via
+// pg_group — pg_auth_members does not exist on Redshift.
+const REDSHIFT_PRINCIPALS_SQL: &str = "SELECT u.usename AS user_name, u.usecreatedb AS can_login, u.usesuper AS is_superuser, COALESCE((SELECT string_agg(g.groname, ',') FROM pg_group g WHERE u.usesysid = ANY(g.grolist)), '') AS roles FROM pg_user u ORDER BY u.usename";
+const REDSHIFT_PRIVILEGES_SQL: &str = "SELECT grantee, table_schema || '.' || table_name || ':' || privilege_type AS privilege FROM information_schema.role_table_grants ORDER BY grantee, table_schema, table_name, privilege_type";
+
+// Vertica uses v_catalog tables — no pg_roles/pg_auth_members.
+const VERTICA_PRINCIPALS_SQL: &str = "SELECT u.user_name, CASE WHEN u.is_super_user THEN 1 ELSE 0 END AS is_superuser, 1 AS can_login, COALESCE((SELECT string_agg(r.name, ',') FROM v_catalog.grants g JOIN v_catalog.roles r ON r.oid = g.grantee_id WHERE g.object_name = u.user_name AND g.object_type = 'ROLE'), '') AS roles FROM v_catalog.users u ORDER BY u.user_name";
+const VERTICA_PRIVILEGES_SQL: &str = "SELECT grantee, object_schema || '.' || object_name || ':' || privileges_description AS privilege FROM v_catalog.grants WHERE object_type = 'TABLE' ORDER BY grantee, object_schema, object_name";
 
 #[cfg(test)]
 mod tests {
@@ -646,5 +804,47 @@ mod tests {
         );
         request.privilege = Some("SUPER".to_string());
         assert!(build_executable_statements("postgresql", &request).is_err());
+    }
+
+    #[test]
+    fn mssql_create_user_builds_login_and_user() {
+        let statements =
+            build_executable_statements("mssql", &request(UserRoleChangeAction::CreateUser))
+                .unwrap();
+        assert_eq!(
+            statements,
+            vec![
+                "CREATE LOGIN [analyst\"team] WITH PASSWORD = 'not-for-logs'; CREATE USER [analyst\"team] FOR LOGIN [analyst\"team];"
+            ]
+        );
+    }
+
+    #[test]
+    fn mssql_role_membership_uses_alter_role_not_grant() {
+        let statements =
+            build_executable_statements("mssql", &request(UserRoleChangeAction::GrantRole))
+                .unwrap();
+        assert_eq!(
+            statements,
+            vec!["ALTER ROLE [read_only] ADD MEMBER [analyst\"team];"]
+        );
+        let statements =
+            build_executable_statements("mssql", &request(UserRoleChangeAction::RevokeRole))
+                .unwrap();
+        assert_eq!(
+            statements,
+            vec!["ALTER ROLE [read_only] DROP MEMBER [analyst\"team];"]
+        );
+    }
+
+    #[test]
+    fn mssql_privilege_grant_uses_object_syntax() {
+        let mut request = request(UserRoleChangeAction::GrantPrivilege);
+        request.privilege = Some("select".to_string());
+        request.object_name = Some("dbo.order items".to_string());
+        assert_eq!(
+            build_executable_statements("mssql", &request).unwrap(),
+            vec!["GRANT SELECT ON OBJECT::[dbo].[order items] TO [analyst\"team];"]
+        );
     }
 }

@@ -20,6 +20,7 @@ pub mod mssql;
 pub mod mysql;
 mod mysql_support;
 pub mod opensearch;
+pub mod oracle;
 pub mod parameterized_query;
 pub mod pgpass;
 pub mod postgres;

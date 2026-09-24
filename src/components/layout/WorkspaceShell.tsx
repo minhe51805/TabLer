@@ -1,9 +1,9 @@
-import { lazy, Suspense, type CSSProperties, type ReactNode } from "react";
+import { Suspense, type CSSProperties, type ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { AppTitleBar } from "../AppTitleBar";
 import { ErrorBoundary } from "../ErrorBoundary";
-import { WorkspaceBootFallback } from "./WorkspaceBootFallback";
 import { WorkspaceErrorFallback } from "./WorkspaceErrorFallback";
+import { AppWorkspacePanel } from "../AppWorkspacePanel";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUIStore } from "../../stores/uiStore";
 import { useGlobalErrorStore } from "../../stores/globalErrorStore";
@@ -15,9 +15,9 @@ import type { QueryEditorSessionState } from "../SQLEditor";
 import type { ConnectionConfig, Tab } from "../../types/database";
 import type { WindowMenuSectionKey } from "../../types/app-types";
 
-const AppWorkspacePanel = lazy(() =>
-  import("../AppWorkspacePanel").then((module) => ({ default: module.AppWorkspacePanel })),
-);
+// AppWorkspacePanel renders unconditionally on the first frame, so a lazy
+// boundary here only bought a second loading screen after the boot screen —
+// the chunk is part of the eager path either way.
 
 interface WorkspaceShellProps {
   titlebarContextTitle: string;
@@ -151,7 +151,7 @@ export function WorkspaceShell(props: WorkspaceShellProps) {
           />
         )}
       >
-        <Suspense fallback={<WorkspaceBootFallback />}>
+        <Suspense fallback={null}>
           <AppWorkspacePanel
             tabs={tabs}
             activeTab={activeTab}

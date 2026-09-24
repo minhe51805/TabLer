@@ -834,6 +834,9 @@ export function AppWorkspacePanel({
               <TabBar
                 pane="primary"
                 queryChrome={activeQueryChrome}
+                serverSideCancel={isCapabilitySupported(
+                  capabilityProfile?.capabilities.queryCancellation,
+                )}
                 onRunActiveQuery={onRunActiveQuery}
                 // cancelQuery surfaces its own failure inside queryStore —
                 // the void only marks the fire-and-forget intent.
@@ -869,6 +872,9 @@ export function AppWorkspacePanel({
                 <TabBar
                   pane="secondary"
                   queryChrome={activeQueryChrome}
+                  serverSideCancel={isCapabilitySupported(
+                    capabilityProfile?.capabilities.queryCancellation,
+                  )}
                   onRunActiveQuery={onRunActiveQuery}
                   onCancelActiveQuery={() => void cancelQuery()}
                   onClearVisibleTabs={() => useUIStore.getState().removeTabsForPane("secondary")}

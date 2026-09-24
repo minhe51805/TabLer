@@ -13,8 +13,8 @@ use crate::database::parameterized_query::{
 };
 use crate::database::safety::{
     quote_bigquery_identifier, quote_cassandra_identifier, quote_clickhouse_identifier,
-    quote_mssql_identifier, quote_mysql_identifier, quote_postgres_identifier,
-    quote_snowflake_identifier, quote_sqlite_identifier,
+    quote_mssql_identifier, quote_mysql_identifier, quote_oracle_identifier,
+    quote_postgres_identifier, quote_snowflake_identifier, quote_sqlite_identifier,
 };
 use serde::Serialize;
 use std::sync::Arc;
@@ -144,6 +144,7 @@ pub fn quote_qualified_identifier(
         DatabaseType::BigQuery => quote_bigquery_identifier(part),
         DatabaseType::Snowflake => quote_snowflake_identifier(part),
         DatabaseType::Cassandra => quote_cassandra_identifier(part),
+        DatabaseType::Oracle => quote_oracle_identifier(part),
         other => Err(anyhow::anyhow!(
             "Global search does not support this engine ({other:?})"
         )),

@@ -3,27 +3,35 @@ import { buildExplainQuery, getExplainHotspots, parseExplainOutput } from "@/uti
 
 describe("EXPLAIN parser fixtures", () => {
   it("parses PostgreSQL JSON ANALYZE timing, row estimates, and nested plans", () => {
-    const plan = parseExplainOutput("postgresql", [{
-      Plan: {
-        "Node Type": "Nested Loop",
-        "Total Cost": 140,
-        "Plan Rows": 10,
-        "Actual Rows": 55,
-        "Actual Total Time": 18.4,
-        Plans: [{
-          "Node Type": "Seq Scan",
-          "Relation Name": "orders",
-          "Total Cost": 120,
+    const plan = parseExplainOutput("postgresql", [
+      {
+        Plan: {
+          "Node Type": "Nested Loop",
+          "Total Cost": 140,
           "Plan Rows": 10,
-          "Actual Rows": 50,
-          "Actual Total Time": 16.2,
-        }],
+          "Actual Rows": 55,
+          "Actual Total Time": 18.4,
+          Plans: [
+            {
+              "Node Type": "Seq Scan",
+              "Relation Name": "orders",
+              "Total Cost": 120,
+              "Plan Rows": 10,
+              "Actual Rows": 50,
+              "Actual Total Time": 16.2,
+            },
+          ],
+        },
       },
-    }]);
+    ]);
 
     expect(plan.analyzed).toBe(true);
     expect(plan.nodes).toHaveLength(2);
-    expect(plan.nodes[0]).toMatchObject({ operation: "Nested Loop", actualTimeMs: 18.4, actualRows: 55 });
+    expect(plan.nodes[0]).toMatchObject({
+      operation: "Nested Loop",
+      actualTimeMs: 18.4,
+      actualRows: 55,
+    });
     expect(plan.nodes[1]).toMatchObject({ operation: "Seq Scan", parentId: plan.nodes[0].id });
     expect(getExplainHotspots(plan).map((hotspot) => hotspot.node.operation)).toContain("Seq Scan");
   });
@@ -33,14 +41,25 @@ describe("EXPLAIN parser fixtures", () => {
       query_block: {
         select_id: 1,
         nested_loop: [
-          { table: { table_name: "orders", access_type: "ALL", rows_examined_per_scan: 500, filtered: 50 } },
+          {
+            table: {
+              table_name: "orders",
+              access_type: "ALL",
+              rows_examined_per_scan: 500,
+              filtered: 50,
+            },
+          },
           { table: { table_name: "customers", access_type: "eq_ref", key: "PRIMARY" } },
         ],
       },
     });
 
     expect(plan.nodes).toHaveLength(3);
-    expect(plan.nodes.map((node) => node.operation)).toEqual(["Query block", "ALL orders", "eq_ref customers"]);
+    expect(plan.nodes.map((node) => node.operation)).toEqual([
+      "Query block",
+      "ALL orders",
+      "eq_ref customers",
+    ]);
     expect(plan.nodes[1].extras).toMatchObject({ table: "orders", rows_examined: 500 });
   });
 
@@ -56,11 +75,28 @@ describe("EXPLAIN parser fixtures", () => {
   });
 
   it("builds engine-safe EXPLAIN commands for the primary engines", () => {
-    expect(buildExplainQuery("SELECT * FROM orders", "postgresql", true))
-      .toContain("EXPLAIN (ANALYZE, COSTS, VERBOSE, BUFFERS, FORMAT JSON)");
-    expect(buildExplainQuery("SELECT * FROM orders", "mysql"))
-      .toBe("EXPLAIN FORMAT=JSON SELECT * FROM orders");
-    expect(buildExplainQuery("SELECT * FROM orders", "sqlite"))
-      .toBe("EXPLAIN QUERY PLAN SELECT * FROM orders");
+    expect(buildExplainQuery("SELECT * FROM orders", "postgresql", true)).toContain(
+      "EXPLAIN (ANALYZE, COSTS, VERBOSE, BUFFERS, FORMAT JSON)",
+    );
+    expect(buildExplainQuery("SELECT * FROM orders", "mysql")).toBe(
+      "EXPLAIN FORMAT=JSON SELECT * FROM orders",
+    );
+    expect(buildExplainQuery("SELECT * FROM orders", "sqlite")).toBe(
+      "EXPLAIN QUERY PLAN SELECT * FROM orders",
+    );
+    // SHOWPLAN_* is session-level: without the trailing OFF, every later
+    // statement on the shared MSSQL connection returns a plan, not rows.
+    expect(buildExplainQuery("SELECT * FROM orders", "mssql")).toBe(
+      "SET SHOWPLAN_TEXT ON; SELECT * FROM orders; SET SHOWPLAN_TEXT OFF",
+    );
+    // Oracle's EXPLAIN PLAN writes PLAN_TABLE and returns no rows — the plan
+    // must be read back through DBMS_XPLAN under a fixed STATEMENT_ID.
+    expect(buildExplainQuery("SELECT * FROM orders", "oracle")).toContain(
+      "DBMS_XPLAN.DISPLAY('PLAN_TABLE', 'TABLER'",
+    );
+    // Redshift/Vertica reject Postgres's FORMAT JSON — plain text EXPLAIN.
+    expect(buildExplainQuery("SELECT * FROM orders", "redshift")).toBe(
+      "EXPLAIN SELECT * FROM orders",
+    );
   });
 });

@@ -76,6 +76,16 @@ pub fn quote_cassandra_identifier(value: &str) -> Result<String> {
     quote_identifier_with(value, '"', "Identifier")
 }
 
+/// Oracle identifiers fold to uppercase when unquoted, so the driver quotes
+/// every name it emits AND uppercases it first — a user typing `employees`
+/// must hit the stored `EMPLOYEES` object, not a case-sensitive miss.
+pub fn quote_oracle_identifier(value: &str) -> Result<String> {
+    let identifier = validate_identifier_part(value, "Identifier")?;
+    let uppercased = identifier.to_uppercase();
+    let escaped = uppercased.replace('"', "\"\"");
+    Ok(format!("\"{escaped}\""))
+}
+
 pub fn quote_mssql_identifier(value: &str) -> Result<String> {
     let identifier = validate_identifier_part(value, "Identifier")?;
     Ok(format!("[{}]", identifier.replace(']', "]]")))
@@ -237,6 +247,15 @@ pub fn quote_sqlite_order_by(column: &str) -> Result<String> {
     Ok(parts
         .iter()
         .map(|part| quote_sqlite_identifier(part))
+        .collect::<Result<Vec<_>>>()?
+        .join("."))
+}
+
+pub fn quote_oracle_order_by(column: &str) -> Result<String> {
+    let parts = split_qualified_name(column)?;
+    Ok(parts
+        .iter()
+        .map(|part| quote_oracle_identifier(part))
         .collect::<Result<Vec<_>>>()?
         .join("."))
 }
@@ -606,4 +625,8 @@ pub fn sanitize_mssql_filter_clause(filter: Option<&str>) -> Result<Option<Strin
 
 pub fn sanitize_sqlite_filter_clause(filter: Option<&str>) -> Result<Option<String>> {
     sanitize_filter_clause_with(filter, quote_sqlite_order_by, false)
+}
+
+pub fn sanitize_oracle_filter_clause(filter: Option<&str>) -> Result<Option<String>> {
+    sanitize_filter_clause_with(filter, quote_oracle_order_by, false)
 }

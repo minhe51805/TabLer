@@ -14,6 +14,7 @@ use super::mongodb::MongoDbDriver;
 use super::mssql::MssqlDriver;
 use super::mysql::MySqlDriver;
 use super::opensearch::OpenSearchDriver;
+use super::oracle::OracleDriver;
 use super::postgres::PostgresDriver;
 #[cfg(feature = "redis-driver")]
 use super::redis::RedisDriver;
@@ -411,6 +412,11 @@ impl DatabaseManager {
                 )
                 .await?;
                 Arc::new(OpenSearchDriver::connect(&actual_config, plugin_id).await?)
+            }
+            DatabaseType::Oracle => {
+                require_installed_http_plugin(&self.plugin_storage, &mut actual_config, "oracle")
+                    .await?;
+                Arc::new(OracleDriver::connect(&actual_config).await?)
             }
         };
 

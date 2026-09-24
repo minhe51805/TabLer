@@ -18,6 +18,10 @@ interface Props {
   /** Which split pane this strip renders. Defaults to the primary pane. */
   pane?: TabPane;
   queryChrome?: QueryChromeState | null;
+  /** Whether the active engine can abort the query server-side. When false
+   *  the Stop button still works — it releases the UI — but the tooltip says
+   *  the server may keep running the statement. */
+  serverSideCancel?: boolean;
   onRunActiveQuery?: () => void;
   onCancelActiveQuery?: () => void;
   onClearVisibleTabs?: () => void;
@@ -144,6 +148,7 @@ const TabBarItem = memo(function TabBarItem({
 export function TabBar({
   pane = "primary",
   queryChrome,
+  serverSideCancel = true,
   onRunActiveQuery,
   onCancelActiveQuery,
   onClearVisibleTabs,
@@ -365,11 +370,16 @@ export function TabBar({
 
           {showRunButton && (
             <button
-              data-testid="run-query"
+              title={
+                queryChrome?.isRunning
+                  ? serverSideCancel
+                    ? copy.stopQuery
+                    : copy.stopQueryClientOnly
+                  : t("tabs.runTitle")
+              }
               type="button"
               onClick={queryChrome?.isRunning ? onCancelActiveQuery : onRunActiveQuery}
               className="tabbar-run-btn"
-              title={queryChrome?.isRunning ? copy.stopQuery : t("tabs.runTitle")}
             >
               {queryChrome?.isRunning ? (
                 <Square className="w-3.5 h-3.5" />

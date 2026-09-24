@@ -21,7 +21,7 @@ binary. The product-level target the epic started from:
 > out of the box (no plugin required): **MySQL, SQLite, SQL Server, PostgreSQL,
 > MongoDB, Redis, DuckDB**. Every other engine (MariaDB, CockroachDB, Greenplum,
 > Redshift, Vertica, Cassandra, LibSQL, ClickHouse, BigQuery, Snowflake,
-> Cloudflare D1) is presented as plugin-gated: the connection picker and the
+> Cloudflare D1, OpenSearch, Oracle) is presented as plugin-gated: the connection picker and the
 > Plugin Manager both list it under "needs a plugin / roadmap" until a matching
 > driver plugin is installed and enabled. The single frontend source of truth is
 > `BUILTIN_ENGINE_KEYS` in `src/utils/plugin-driver-runtime.ts`, consumed by
@@ -45,7 +45,7 @@ adding a new `DatabaseType` forces a packaging decision.
 | Distribution    | Meaning                                                                                                                                                                                                                                              | Engines                                                                                                    |
 | --------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
 | `builtin`       | Always compiled in; ships in every build.                                                                                                                                                                                                            | MySQL, MariaDB, PostgreSQL, CockroachDB, Greenplum, Redshift, Vertica, SQLite, SQL Server (MSSQL), MongoDB |
-| `plugin_http`   | HTTP/REST engines; the compiled driver is gated behind an installable plugin manifest (`declarative-http-v1`).                                                                                                                                       | ClickHouse, BigQuery, Snowflake, Cloudflare D1, OpenSearch                                                 |
+| `plugin_http`   | HTTP/REST engines; the compiled driver is gated behind an installable plugin manifest (`declarative-http-v1`).                                                                                                                                       | ClickHouse, BigQuery, Snowflake, Cloudflare D1, OpenSearch, Oracle (ORDS)                                  |
 | `plugin_native` | Wire-protocol crate compiled behind a Cargo feature (off by default). The lean default build ships none of them; each is delivered as an installable out-of-process `driver-sidecar-v1` plugin, or linked back in with `--features <engine>-driver`. | DuckDB, Cassandra, Redis, LibSQL                                                                           |
 
 The classification is serialized into `docs/generated/driver-capabilities.json`
@@ -89,8 +89,8 @@ extra to keep in-app.
 
 ### Phase 2 - HTTP engines gated behind installable plugins
 
-- `manager.rs` routes ClickHouse, BigQuery, Snowflake, Cloudflare D1 and
-  OpenSearch through `require_installed_http_plugin(...)`: they only connect once
+- `manager.rs` routes ClickHouse, BigQuery, Snowflake, Cloudflare D1,
+  OpenSearch and Oracle through `require_installed_http_plugin(...)`: they only connect once
   a matching plugin is installed, enabled and verified.
 - Four new plugin manifests (`plugins/{clickhouse,bigquery,snowflake,cloudflare-d1}-driver/`)
   plus the regenerated `plugin-registry.json` (6 packages, digests computed by

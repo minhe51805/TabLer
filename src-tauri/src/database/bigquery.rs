@@ -257,6 +257,15 @@ impl DatabaseDriver for BigQueryDriver {
         })
     }
 
+    async fn execute_parameterized_query(
+        &self,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        self.execute_parameterized_single_query(sql, None, sql, parameters)
+            .await
+    }
+
     async fn get_table_data(
         &self,
         table: &str,
@@ -484,8 +493,17 @@ mod tests {
     use super::super::bigquery_support::{
         BigQueryTableCell, BigQueryTableFieldSchema, BigQueryTableRow,
     };
+    use super::super::models::{QueryParameter, QueryParameterType};
     use super::BigQueryDriver;
     use serde_json::json;
+
+    fn parameter(value: serde_json::Value, data_type: QueryParameterType) -> QueryParameter {
+        QueryParameter {
+            name: "p".to_string(),
+            value,
+            data_type,
+        }
+    }
 
     #[test]
     fn parses_bigquery_repeated_record_rows() {
@@ -531,5 +549,93 @@ mod tests {
             BigQueryDriver::quote_sql_literal(&json!(null)).unwrap(),
             "NULL"
         );
+    }
+
+    #[test]
+    fn builds_positional_query_parameters() {
+        let binding = BigQueryDriver::query_parameter_binding(&parameter(
+            json!("O'Reilly"),
+            QueryParameterType::Text,
+        ))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(&binding).unwrap(),
+            json!({
+                "parameterType": { "type": "STRING" },
+                "parameterValue": { "value": "O'Reilly" }
+            })
+        );
+
+        let binding = BigQueryDriver::query_parameter_binding(&parameter(
+            json!(42),
+            QueryParameterType::Integer,
+        ))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(&binding).unwrap(),
+            json!({
+                "parameterType": { "type": "INT64" },
+                "parameterValue": { "value": "42" }
+            })
+        );
+
+        let binding = BigQueryDriver::query_parameter_binding(&parameter(
+            json!(2.5),
+            QueryParameterType::Decimal,
+        ))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(&binding).unwrap(),
+            json!({
+                "parameterType": { "type": "NUMERIC" },
+                "parameterValue": { "value": "2.5" }
+            })
+        );
+
+        let binding = BigQueryDriver::query_parameter_binding(&parameter(
+            json!(true),
+            QueryParameterType::Boolean,
+        ))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(&binding).unwrap(),
+            json!({
+                "parameterType": { "type": "BOOL" },
+                "parameterValue": { "value": "true" }
+            })
+        );
+
+        let binding = BigQueryDriver::query_parameter_binding(&parameter(
+            json!({"id": 1}),
+            QueryParameterType::Json,
+        ))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(&binding).unwrap(),
+            json!({
+                "parameterType": { "type": "STRING" },
+                "parameterValue": { "value": "{\"id\":1}" }
+            })
+        );
+
+        // BigQuery encodes a NULL parameter by omitting `value`.
+        let binding = BigQueryDriver::query_parameter_binding(&parameter(
+            json!(null),
+            QueryParameterType::Null,
+        ))
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(&binding).unwrap(),
+            json!({
+                "parameterType": { "type": "STRING" },
+                "parameterValue": {}
+            })
+        );
+
+        assert!(BigQueryDriver::query_parameter_binding(&parameter(
+            json!("nope"),
+            QueryParameterType::Integer,
+        ))
+        .is_err());
     }
 }

@@ -5173,15 +5173,24 @@ a {
     opacity: 0;
     transform: translateY(70px);
     pointer-events: none;
+    visibility: hidden;
     transition:
       opacity 0.35s ease,
-      transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+      transform 0.35s cubic-bezier(0.16, 1, 0.3, 1),
+      visibility 0.35s;
   }
 
   .neu .mobile-cta.is-visible {
     opacity: 1;
     transform: translateY(0);
     pointer-events: auto;
+    visibility: visible;
+  }
+
+  /* keep the round button clear of the full-width mobile CTA bar */
+  .neu .back-to-top {
+    right: 14px;
+    bottom: 76px;
   }
 }
 
@@ -5948,4 +5957,68 @@ a {
   clip: rect(0, 0, 0, 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* print: docs pages print as clean articles - no chrome, no sidebar */
+@media print {
+  .site-header,
+  .docs-sidebar,
+  .docs-toc,
+  .doc-pager,
+  .doc-feedback,
+  .docs-edit-link,
+  .docs-breadcrumb,
+  .docs-copy-page,
+  .scroll-progress,
+  .site-footer,
+  .docs-search,
+  .docs-menu-toggle {
+    display: none !important;
+  }
+
+  .docs-layout,
+  .docs-content-layout {
+    display: block;
+    padding: 0;
+  }
+
+  .docs-article-shell {
+    max-width: none;
+    padding: 0;
+  }
+
+  .doc-article {
+    font-size: 11pt;
+    line-height: 1.6;
+  }
+
+  .doc-code {
+    border: 1px solid #ccc;
+    break-inside: avoid;
+  }
+
+  .doc-callout,
+  .doc-steps li,
+  .doc-cards a {
+    break-inside: avoid;
+  }
+
+  a[href^="http"]::after {
+    content: " (" attr(href) ")";
+    font-size: 0.85em;
+    color: #666;
+  }
+}
+
+/* global reduced-motion safety net - anything still animating after the
+ per-component blocks above gets a near-instant transition instead */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

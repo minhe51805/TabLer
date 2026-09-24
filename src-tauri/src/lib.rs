@@ -44,7 +44,7 @@ use ai_workspace_cache::{
 
 use ai_workspace_history::{get_ai_workspace_history, save_ai_workspace_history};
 use commands::ai::{
-    ask_ai, ask_ai_stream, cancel_ai_request, get_ai_configs, list_provider_models,
+    ask_ai, ask_ai_stream, cancel_ai_request, get_ai_configs, get_ai_limits, list_provider_models,
     save_agent_trace, save_ai_configs, AIRequestCancellationState,
 };
 use commands::ai_checkpoints::{
@@ -65,7 +65,7 @@ use commands::data_import::{
 };
 use commands::deep_link::parse_deep_link;
 use commands::diagnostics::{
-    export_diagnostic_bundle, preview_diagnostic_bundle, DiagnosticReviewState,
+    export_diagnostic_bundle, log_boot_timing, preview_diagnostic_bundle, DiagnosticReviewState,
 };
 use commands::export::*;
 use commands::file::*;
@@ -99,7 +99,8 @@ use commands::users_roles::{
     apply_user_role_change, get_user_role_snapshot, review_user_role_change,
 };
 use commands::window::{
-    apply_window_profile, apply_window_profile_to_main, open_external_url, WindowProfile,
+    apply_window_profile, apply_window_profile_to_main, open_external_url,
+    set_keep_running_in_background, WindowProfile,
 };
 use commands::workspace_sync::{pull_workspace_sync, push_workspace_sync};
 use database::manager::DatabaseManager;
@@ -245,6 +246,15 @@ pub fn run() {
     let builder = builder.plugin(tauri_plugin_wdio::init());
 
     let app = builder
+        // Must be registered before any other plugin that touches the app
+        // handle at setup; a second launch focuses the existing window.
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            if let Some(window) = app.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_dialog::init())
@@ -275,6 +285,37 @@ pub fn run() {
 
             if let Err(e) = watcher::start_watcher(app.handle().clone()) {
                 error!("[TableR] Failed to start watcher: {}", e);
+            }
+
+            // Tray icon: Open/Quit. Closing the window only hides to the tray
+            // when the frontend opted in via set_keep_running_in_background —
+            // the default close behavior stays a real exit.
+            {
+                use tauri::menu::{Menu, MenuItem};
+                use tauri::tray::TrayIconBuilder;
+                let open = MenuItem::with_id(app, "tray.open", "Open TableR", true, None::<&str>)?;
+                let quit = MenuItem::with_id(app, "tray.quit", "Quit", true, None::<&str>)?;
+                let menu = Menu::with_items(app, &[&open, &quit])?;
+                let mut tray = TrayIconBuilder::with_id("tabler-tray")
+                    .menu(&menu)
+                    .tooltip("TableR")
+                    .on_menu_event(|app, event| match event.id().as_ref() {
+                        "tray.open" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.unminimize();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        "tray.quit" => app.exit(0),
+                        _ => {}
+                    });
+                if let Some(icon) = app.default_window_icon() {
+                    tray = tray.icon(icon.clone());
+                }
+                if let Err(error) = tray.build(app) {
+                    error!("[TableR] Failed to build tray icon: {}", error);
+                }
             }
 
             // Query scheduler: minute-tick loop over persisted schedules.
@@ -369,6 +410,7 @@ pub fn run() {
             open_support_page,
             preview_diagnostic_bundle,
             export_diagnostic_bundle,
+            log_boot_timing,
             // Query commands
             execute_query,
             classify_sql_safety,
@@ -427,6 +469,7 @@ pub fn run() {
             ask_ai_stream,
             cancel_ai_request,
             get_ai_configs,
+            get_ai_limits,
             save_ai_configs,
             list_provider_models,
             // Query history commands
@@ -579,7 +622,24 @@ pub fn run() {
             execute_profiler_sample,
             push_workspace_sync,
             pull_workspace_sync,
-        ]);
+            // Resident mode: mirror of the frontend's keep-in-background pref
+            set_keep_running_in_background,
+        ])
+        .on_window_event(|window, event| {
+            // Opt-in resident mode: closing the main window hides it to the
+            // tray instead of quitting. Only when the frontend enabled it —
+            // default close stays a real exit. Other windows (profiler) close
+            // normally.
+            if window.label() != "main" {
+                return;
+            }
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                if commands::window::keep_running_in_background() {
+                    api.prevent_close();
+                    let _ = window.hide();
+                }
+            }
+        });
 
     if let Err(error) = app.run(tauri::generate_context!()) {
         error!("error while running tauri application: {}", error);

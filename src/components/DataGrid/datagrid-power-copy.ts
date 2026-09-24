@@ -28,11 +28,15 @@ export interface DataGridPowerCopy {
     avg: string;
   };
   copyAs: {
-    /** Copy-menu entries. */
+    /** Copy/export menu entries. */
     markdown: string;
     markdownHint: string;
     insert: string;
     insertHint: string;
+    xml: string;
+    xmlHint: string;
+    ndjson: string;
+    ndjsonHint: string;
   };
   /** "Set selected cells to…" bulk-edit menu item and dialog. */
   setCells: {
@@ -84,6 +88,10 @@ const EN_COPY: DataGridPowerCopy = {
     markdownHint: "GFM table",
     insert: "INSERT",
     insertHint: "SQL statements",
+    xml: "XML",
+    xmlHint: "XML document",
+    ndjson: "NDJSON",
+    ndjsonHint: "One JSON object per line",
   },
   setCells: {
     menuItem: "Set selected cells to…",
@@ -133,6 +141,10 @@ const VI_COPY: DataGridPowerCopy = {
     markdownHint: "Bảng GFM",
     insert: "INSERT",
     insertHint: "Câu lệnh SQL",
+    xml: "XML",
+    xmlHint: "Tài liệu XML",
+    ndjson: "NDJSON",
+    ndjsonHint: "Một object JSON mỗi dòng",
   },
   setCells: {
     menuItem: "Đặt các ô đã chọn thành…",
@@ -183,6 +195,10 @@ const KO_COPY: DataGridPowerCopy = {
     markdownHint: "GFM 테이블",
     insert: "INSERT",
     insertHint: "SQL 문",
+    xml: "XML",
+    xmlHint: "XML 문서",
+    ndjson: "NDJSON",
+    ndjsonHint: "줄당 하나의 JSON 객체",
   },
   setCells: {
     menuItem: "선택한 셀을 다음으로 설정…",
@@ -232,6 +248,10 @@ const TR_COPY: DataGridPowerCopy = {
     markdownHint: "GFM tablosu",
     insert: "INSERT",
     insertHint: "SQL deyimleri",
+    xml: "XML",
+    xmlHint: "XML belgesi",
+    ndjson: "NDJSON",
+    ndjsonHint: "Satır başına bir JSON nesnesi",
   },
   setCells: {
     menuItem: "Seçili hücreleri şuna ayarla…",
@@ -283,6 +303,10 @@ const ZH_COPY: DataGridPowerCopy = {
     markdownHint: "GFM 表格",
     insert: "INSERT",
     insertHint: "SQL 语句",
+    xml: "XML",
+    xmlHint: "XML 文档",
+    ndjson: "NDJSON",
+    ndjsonHint: "每行一个 JSON 对象",
   },
   setCells: {
     menuItem: "将所选单元格设置为…",

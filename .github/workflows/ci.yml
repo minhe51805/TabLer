@@ -46,6 +46,12 @@ jobs:
       - name: Validate agent skills
         run: npm run check:agent-skills
 
+      # The driver capability matrix in capabilities.rs is the product contract
+      # for what the UI enables; a cell downgrade (S->L/U/N or L->U/N) is a
+      # regression. Gate it against the checked-in baseline.
+      - name: Check capability matrix
+        run: npm run check:capability-matrix
+
       - name: Agent golden-set eval
         run: npm run eval:agent
 

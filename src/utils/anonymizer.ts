@@ -782,7 +782,7 @@ async function noisyNumber(value: number, salt: string): Promise<number> {
   return Math.round(value * factor * 1_000_000) / 1_000_000;
 }
 
-async function anonymizeValue(
+export async function anonymizeValue(
   value: AnonymizerValue,
   strategy: AnonymizerStrategy,
   salt: string,

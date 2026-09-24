@@ -195,6 +195,43 @@ export async function exportToJSON(
 }
 
 /**
+ * Builds NDJSON content — one JSON object per line, no surrounding array.
+ * Matches the shape the streaming backend writes for `jsonl` exports.
+ */
+export function buildNdjsonContent(
+  columns: string[],
+  rows: (string | number | boolean | null)[][],
+): string {
+  return rows
+    .map((row) => {
+      const obj: Record<string, string | number | boolean | null> = {};
+      columns.forEach((col, idx) => {
+        obj[col] = row[idx] ?? null;
+      });
+      return JSON.stringify(obj);
+    })
+    .join("\n");
+}
+
+/**
+ * Exports the loaded rows to an NDJSON file via the native save dialog.
+ * For full-table exports the streaming `jsonl` path is used instead.
+ */
+export async function exportToNDJSON(
+  columns: string[],
+  rows: (string | number | boolean | null)[][],
+  filename?: string,
+): Promise<void> {
+  if (rows.length === 0) return;
+
+  await saveExportFile({
+    fileName: filename ?? buildExportFilename(columns[0], "ndjson"),
+    content: buildNdjsonContent(columns, rows),
+    filters: [{ name: "NDJSON", extensions: ["ndjson"] }],
+  });
+}
+
+/**
  * Exports row data to a Markdown table file via the native save dialog.
  * Frontend-only format: the streaming backend export supports csv/jsonl only.
  */

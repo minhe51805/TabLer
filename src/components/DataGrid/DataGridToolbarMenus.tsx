@@ -189,7 +189,7 @@ export function DataGridRefreshMenu({
   );
 }
 
-/** Export dropdown: CSV/JSON/XLSX/Markdown/MQL plus plugin-registered formats. */
+/** Export dropdown: CSV/JSON/XLSX/Markdown/XML/NDJSON/MQL plus plugin-registered formats. */
 export function DataGridExportMenu({
   open,
   anchorRef,
@@ -202,6 +202,8 @@ export function DataGridExportMenu({
   onExportJSON,
   onExportXLSX,
   onExportMarkdown,
+  onExportXML,
+  onExportNDJSON,
   onExportMQL,
   onPluginExport,
   onClose,
@@ -217,6 +219,8 @@ export function DataGridExportMenu({
   onExportJSON: () => void;
   onExportXLSX: () => void;
   onExportMarkdown: () => void;
+  onExportXML: () => void;
+  onExportNDJSON: () => void;
   onExportMQL: () => void;
   onPluginExport: (format: RuntimePluginFormat) => void;
   onClose: () => void;
@@ -246,6 +250,18 @@ export function DataGridExportMenu({
       hint: powerCopy.copyAs.markdownHint,
       icon: Table2,
       run: onExportMarkdown,
+    },
+    {
+      label: powerCopy.copyAs.xml,
+      hint: powerCopy.copyAs.xmlHint,
+      icon: FileCode,
+      run: onExportXML,
+    },
+    {
+      label: powerCopy.copyAs.ndjson,
+      hint: powerCopy.copyAs.ndjsonHint,
+      icon: Braces,
+      run: onExportNDJSON,
     },
     {
       label: "MQL",

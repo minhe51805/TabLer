@@ -824,7 +824,8 @@ export function BackToTop() {
     const onScroll = () => {
       if (!raf) raf = requestAnimationFrame(update);
     };
-    const onClick = () => window.scrollTo({ top: 0, behavior: "smooth" });
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const onClick = () => window.scrollTo({ top: 0, behavior: reducedMotion ? "auto" : "smooth" });
     update();
     window.addEventListener("scroll", onScroll, { passive: true });
     btn?.addEventListener("click", onClick);

@@ -112,6 +112,109 @@ mod mssql_parse_tests {
 }
 
 #[cfg(test)]
+mod mssql_sql_builder_tests {
+    use super::MssqlDriver;
+    use crate::database::models::{RowKeyValue, TableCellUpdateRequest, TableRowInsertRequest};
+    use serde_json::json;
+
+    fn update_request(
+        table: &str,
+        database: Option<&str>,
+        target_column: &str,
+        value: serde_json::Value,
+        primary_keys: Vec<RowKeyValue>,
+    ) -> TableCellUpdateRequest {
+        TableCellUpdateRequest {
+            table: table.to_string(),
+            database: database.map(str::to_string),
+            target_column: target_column.to_string(),
+            value,
+            primary_keys,
+        }
+    }
+
+    fn key(column: &str, value: serde_json::Value) -> RowKeyValue {
+        RowKeyValue {
+            column: column.to_string(),
+            value,
+        }
+    }
+
+    #[test]
+    fn cell_update_uses_bracket_quoting_and_numbered_params() {
+        let request = update_request(
+            "users",
+            None,
+            "display name",
+            json!("alice"),
+            vec![key("id", json!(5))],
+        );
+        let (sql, values) = MssqlDriver::build_cell_update_statement(&request).unwrap();
+        assert_eq!(
+            sql,
+            "UPDATE [dbo].[users] SET [display name] = @P1 WHERE [id] = @P2"
+        );
+        assert_eq!(values, vec![json!("alice"), json!(5)]);
+    }
+
+    #[test]
+    fn cell_update_binds_each_non_null_key_and_skips_null_keys() {
+        let request = update_request(
+            "sales.orders",
+            Some("appdb"),
+            "total",
+            json!(9.5),
+            vec![
+                key("tenant", json!("t1")),
+                key("note", json!(null)),
+                key("id", json!(7)),
+            ],
+        );
+        let (sql, values) = MssqlDriver::build_cell_update_statement(&request).unwrap();
+        assert_eq!(
+            sql,
+            "UPDATE [appdb].[sales].[orders] SET [total] = @P1 \
+             WHERE [tenant] = @P2 AND [note] IS NULL AND [id] = @P3"
+        );
+        assert_eq!(values, vec![json!(9.5), json!("t1"), json!(7)]);
+    }
+
+    #[test]
+    fn cell_update_without_primary_keys_is_rejected() {
+        let request = update_request("users", None, "name", json!("x"), vec![]);
+        assert!(MssqlDriver::build_cell_update_statement(&request).is_err());
+    }
+
+    #[test]
+    fn row_insert_quotes_columns_and_escapes_brackets() {
+        let request = TableRowInsertRequest {
+            table: "audit]log".to_string(),
+            database: None,
+            values: vec![
+                ("id".to_string(), json!(1)),
+                ("we]ird".to_string(), json!("v")),
+            ],
+        };
+        let (sql, values) = MssqlDriver::build_row_insert_statement(&request).unwrap();
+        assert_eq!(
+            sql,
+            "INSERT INTO [dbo].[audit]]log] ([id], [we]]ird]) VALUES (@P1, @P2)"
+        );
+        assert_eq!(values, vec![json!(1), json!("v")]);
+    }
+
+    #[test]
+    fn row_insert_without_values_is_rejected() {
+        let request = TableRowInsertRequest {
+            table: "users".to_string(),
+            database: None,
+            values: vec![],
+        };
+        assert!(MssqlDriver::build_row_insert_statement(&request).is_err());
+    }
+}
+
+#[cfg(test)]
 mod mssql_live_diagnostics {
     // The tests here are Windows-only (live SQL Server + SSPI); gate the
     // imports so non-Windows `--include-ignored` CI runs stay warning-free.

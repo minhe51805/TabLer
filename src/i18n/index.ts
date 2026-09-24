@@ -1,14 +1,23 @@
-import { useCallback } from "react";
+import { useCallback, useEffect } from "react";
 import { create } from "zustand";
 
 import { en } from "./en";
-import { vi } from "./vi";
-import { zh } from "./zh";
-import { tr } from "./tr";
-import { ko } from "./ko";
 
-// Re-export language objects
-export { en, vi, zh, tr, ko };
+// Non-English locales load on demand: the eager path only ever reads the
+// resolved language plus the English fallback, so bundling all five costs
+// ~190 KB of object literals parsed before first paint for no benefit.
+// Dynamic imports are runtime-selected by the stored preference — a static
+// import would defeat the split.
+const localeLoaders = {
+  vi: () => import("./vi"),
+  zh: () => import("./zh"),
+  tr: () => import("./tr"),
+  ko: () => import("./ko"),
+} as const;
+
+// Only the eager fallback is re-exported; other locales load via
+// ensureLanguage(). Tests import locale files directly.
+export { en };
 
 // Types
 export type AppLanguage = "en" | "vi" | "zh" | "tr" | "ko";
@@ -40,7 +49,14 @@ function getInitialLanguagePreference(): AppLanguagePreference {
   if (typeof window === "undefined") return "auto";
 
   const stored = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
-  if (stored === "auto" || stored === "en" || stored === "vi" || stored === "zh" || stored === "tr" || stored === "ko") {
+  if (
+    stored === "auto" ||
+    stored === "en" ||
+    stored === "vi" ||
+    stored === "zh" ||
+    stored === "tr" ||
+    stored === "ko"
+  ) {
     return stored;
   }
 
@@ -49,27 +65,53 @@ function getInitialLanguagePreference(): AppLanguagePreference {
 
 type LanguageState = {
   languagePreference: AppLanguagePreference;
+  /** Bumped when a locale finishes loading so subscribed components re-render. */
+  languageVersion: number;
   setLanguage: (language: AppLanguagePreference) => void;
 };
 
 export const useLanguageStore = create<LanguageState>((set) => ({
   languagePreference: getInitialLanguagePreference(),
+  languageVersion: 0,
   setLanguage: (languagePreference) => {
     if (typeof window !== "undefined") {
       window.localStorage.setItem(LANGUAGE_STORAGE_KEY, languagePreference);
     }
     set({ languagePreference });
+    ensureLanguage(resolveLanguage(languagePreference));
   },
 }));
 
-const translations: Record<AppLanguage, Partial<Record<keyof typeof en, string>>> = { en, vi, zh, tr, ko };
+type TranslationTable = Partial<Record<keyof typeof en, string>>;
+
+const translations: Partial<Record<AppLanguage, TranslationTable>> = { en };
+
+/** Loads a non-English locale once; resolves immediately for `en` or a
+ *  locale that is already cached. */
+export function ensureLanguage(language: AppLanguage): Promise<void> {
+  if (language === "en" || translations[language]) {
+    return Promise.resolve();
+  }
+  return localeLoaders[language]()
+    .then((module) => {
+      translations[language] = (module as Record<string, TranslationTable>)[language];
+      useLanguageStore.setState((state) => ({ languageVersion: state.languageVersion + 1 }));
+    })
+    .catch((error) => {
+      console.error(`[i18n] failed to load locale "${language}"`, error);
+    });
+}
+
+// Warm the resolved locale at module load; components render English for the
+// first frame and swap when the chunk arrives (sub-100 ms on local bundle).
+void ensureLanguage(resolveLanguage(getInitialLanguagePreference()));
 
 export function translateLanguage(
   language: AppLanguage,
   key: TranslationKey,
   params?: Record<string, string | number>,
 ) {
-  const template = translations[language][key] ?? translations.en[key] ?? key;
+  const template = translations[language]?.[key] ?? en[key] ?? key;
 
   if (!params) return template;
 
@@ -78,10 +120,7 @@ export function translateLanguage(
   );
 }
 
-export function translateCurrent(
-  key: TranslationKey,
-  params?: Record<string, string | number>,
-) {
+export function translateCurrent(key: TranslationKey, params?: Record<string, string | number>) {
   return translateLanguage(getCurrentAppLanguage(), key, params);
 }
 
@@ -112,7 +151,12 @@ export function formatCountLabel(
 export function useI18n() {
   const languagePreference = useLanguageStore((state) => state.languagePreference);
   const setLanguage = useLanguageStore((state) => state.setLanguage);
+  // Subscribing to languageVersion re-renders once the lazy locale arrives.
+  useLanguageStore((state) => state.languageVersion);
   const language = resolveLanguage(languagePreference);
+  useEffect(() => {
+    void ensureLanguage(language);
+  }, [language]);
   const t = useCallback(
     (key: TranslationKey, params?: Record<string, string | number>) =>
       translateLanguage(language, key, params),

@@ -150,3 +150,18 @@ pub fn open_external_url(url: String, app: AppHandle) -> Result<(), String> {
         .open_url(&url, None::<String>)
         .map_err(|e| format!("Failed to open external URL: {}", e))
 }
+
+/// Whether closing the main window hides it to the tray instead of quitting.
+/// Frontend-owned setting (localStorage) mirrored here at boot and on toggle;
+/// the Rust side needs it synchronously inside the CloseRequested handler.
+static KEEP_RUNNING_IN_BACKGROUND: AtomicU8 = AtomicU8::new(0);
+
+pub fn keep_running_in_background() -> bool {
+    KEEP_RUNNING_IN_BACKGROUND.load(Ordering::Relaxed) == 1
+}
+
+#[tauri::command]
+pub fn set_keep_running_in_background(enabled: bool) -> Result<(), String> {
+    KEEP_RUNNING_IN_BACKGROUND.store(if enabled { 1 } else { 0 }, Ordering::Relaxed);
+    Ok(())
+}

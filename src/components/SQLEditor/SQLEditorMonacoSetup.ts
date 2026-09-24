@@ -1,6 +1,12 @@
 import type * as Monaco from "monaco-editor";
 import type { TableStructure } from "../../types";
-import { analyzeSqlContext, getCteScopes, getTablesInScope, type SQLTableScope } from "./SQLContextAnalyzer";
+import {
+  analyzeSqlContext,
+  getCteScopes,
+  getTablesInScope,
+  type SQLTableScope,
+} from "./SQLContextAnalyzer";
+import { buildJoinConditionSuggestions, normalizeTableKey } from "./sql-join-suggestions";
 import { getCompletionSet } from "../../utils/sql-completions";
 import type { DatabaseType } from "../../types/database";
 
@@ -18,6 +24,7 @@ type CompletionItem = {
   insertTextRules?: Monaco.languages.CompletionItemInsertTextRule;
   detail?: string;
   documentation?: string;
+  sortText?: string;
   range: Monaco.IRange;
 };
 
@@ -52,10 +59,9 @@ async function mapWithConcurrency<T, R>(
 }
 
 export function registerSchemaCompletionProvider(
-   
   monaco: any,
   deps: CompletionProviderDeps,
-  _onDispose?: () => void
+  _onDispose?: () => void,
 ): { dispose: () => void; prefetchStructures?: () => Promise<void> } {
   const { getTables, getTableStructure, dbType } = deps;
 
@@ -67,7 +73,11 @@ export function registerSchemaCompletionProvider(
 
   async function fetchScopeColumns(scope: SQLTableScope): Promise<CompletionColumn[]> {
     if (scope.kind === "cte") {
-      return (scope.columns ?? []).map((name) => ({ name, data_type: "CTE result", is_primary_key: false }));
+      return (scope.columns ?? []).map((name) => ({
+        name,
+        data_type: "CTE result",
+        is_primary_key: false,
+      }));
     }
     return (await fetchStructure(scope.table)).columns;
   }
@@ -86,7 +96,6 @@ export function registerSchemaCompletionProvider(
     return col.data_type + pk + prefix;
   }
 
-   
   async function provideCompletionItems(model: any, position: any): Promise<any> {
     const analysis = analyzeSqlContext(model, position);
     const word = model.getWordUntilPosition(position);
@@ -149,8 +158,13 @@ export function registerSchemaCompletionProvider(
             range,
           });
           const joinTypes = [
-            "LEFT JOIN", "RIGHT JOIN", "INNER JOIN", "FULL JOIN",
-            "CROSS JOIN", "NATURAL JOIN", "LEFT OUTER JOIN",
+            "LEFT JOIN",
+            "RIGHT JOIN",
+            "INNER JOIN",
+            "FULL JOIN",
+            "CROSS JOIN",
+            "NATURAL JOIN",
+            "LEFT OUTER JOIN",
           ];
           for (const jt of joinTypes) {
             suggestions.push({
@@ -167,21 +181,52 @@ export function registerSchemaCompletionProvider(
 
       case "ON": {
         const tablesInScope = getTablesInScope(model, position);
+        const foreignKeysByTable = new Map<string, TableStructure["foreign_keys"]>();
         await Promise.all(
           tablesInScope.map(async (scope) => {
-            const columns = await fetchScopeColumns(scope);
             const prefix = scope.alias !== scope.table ? `${scope.alias}.` : "";
-            for (const col of columns) {
-              suggestions.push({
-                label: col.name,
-                kind: monaco.languages.CompletionItemKind.Field,
-                insertText: prefix + col.name,
-                detail: colDetail(col, ""),
-                range,
-              });
+            if (scope.kind === "cte") {
+              for (const name of scope.columns ?? []) {
+                suggestions.push({
+                  label: name,
+                  kind: monaco.languages.CompletionItemKind.Field,
+                  insertText: prefix + name,
+                  detail: "CTE result",
+                  range,
+                });
+              }
+              return;
             }
-          })
+            try {
+              const structure = await fetchStructure(scope.table);
+              foreignKeysByTable.set(normalizeTableKey(scope.table), structure.foreign_keys);
+              for (const col of structure.columns) {
+                suggestions.push({
+                  label: col.name,
+                  kind: monaco.languages.CompletionItemKind.Field,
+                  insertText: prefix + col.name,
+                  detail: colDetail(col, ""),
+                  range,
+                });
+              }
+            } catch {
+              // Structure unavailable — skip this table's columns and FKs.
+            }
+          }),
         );
+
+        // FK-derived join conditions rank above plain columns via sortText.
+        for (const join of buildJoinConditionSuggestions(tablesInScope, foreignKeysByTable)) {
+          suggestions.push({
+            label: join.label,
+            kind: monaco.languages.CompletionItemKind.Snippet,
+            insertText: join.insertText,
+            detail: join.detail,
+            sortText: join.sortText,
+            range,
+          });
+        }
+
         for (const kw of ["AND", "OR"]) {
           suggestions.push({
             label: kw,
@@ -215,34 +260,33 @@ export function registerSchemaCompletionProvider(
                   label: col.name,
                   kind: monaco.languages.CompletionItemKind.Field,
                   insertText: prefix + col.name,
-                  detail: colDetail(col, scope.alias !== scope.table ? " [" + scope.alias + "]" : ""),
+                  detail: colDetail(
+                    col,
+                    scope.alias !== scope.table ? " [" + scope.alias + "]" : "",
+                  ),
                   range,
                 });
               }
-            })
+            }),
           );
         } else {
           const tables = getTables();
-          await mapWithConcurrency(
-            tables,
-            STRUCTURE_FETCH_CONCURRENCY,
-            async (t) => {
-              try {
-                const structure = await fetchStructure(t.name);
-                for (const col of structure.columns) {
-                  suggestions.push({
-                    label: t.name + "." + col.name,
-                    kind: monaco.languages.CompletionItemKind.Field,
-                    insertText: t.name + "." + col.name,
-                    detail: col.data_type + " (" + t.name + ")",
-                    range,
-                  });
-                }
-              } catch {
-                // Skip tables we can't fetch structure for
+          await mapWithConcurrency(tables, STRUCTURE_FETCH_CONCURRENCY, async (t) => {
+            try {
+              const structure = await fetchStructure(t.name);
+              for (const col of structure.columns) {
+                suggestions.push({
+                  label: t.name + "." + col.name,
+                  kind: monaco.languages.CompletionItemKind.Field,
+                  insertText: t.name + "." + col.name,
+                  detail: col.data_type + " (" + t.name + ")",
+                  range,
+                });
               }
+            } catch {
+              // Skip tables we can't fetch structure for
             }
-          );
+          });
         }
 
         for (const kw of ["DISTINCT", "ALL", "AS"]) {
@@ -265,47 +309,56 @@ export function registerSchemaCompletionProvider(
               const columns = await fetchScopeColumns(scope);
               const prefix = scope.alias !== scope.table ? `${scope.alias}.` : "";
               for (const col of columns) {
-              suggestions.push({
-                label: col.name,
-                kind: monaco.languages.CompletionItemKind.Field,
-                insertText: prefix + col.name,
+                suggestions.push({
+                  label: col.name,
+                  kind: monaco.languages.CompletionItemKind.Field,
+                  insertText: prefix + col.name,
                   detail: col.data_type,
                   range,
                 });
               }
-            })
+            }),
           );
         } else {
           const tables = getTables();
-          await mapWithConcurrency(
-            tables,
-            STRUCTURE_FETCH_CONCURRENCY,
-            async (t) => {
-              try {
-                const structure = await fetchStructure(t.name);
-                for (const col of structure.columns) {
-                  suggestions.push({
-                    label: t.name + "." + col.name,
-                    kind: monaco.languages.CompletionItemKind.Field,
-                    insertText: t.name + "." + col.name,
-                    detail: col.data_type + " (" + t.name + ")",
-                    range,
-                  });
-                }
-              } catch {
-                // Skip
+          await mapWithConcurrency(tables, STRUCTURE_FETCH_CONCURRENCY, async (t) => {
+            try {
+              const structure = await fetchStructure(t.name);
+              for (const col of structure.columns) {
+                suggestions.push({
+                  label: t.name + "." + col.name,
+                  kind: monaco.languages.CompletionItemKind.Field,
+                  insertText: t.name + "." + col.name,
+                  detail: col.data_type + " (" + t.name + ")",
+                  range,
+                });
               }
+            } catch {
+              // Skip
             }
-          );
+          });
         }
 
         const whereOps = [
-          "=", "!=", "<>", "<", ">", "<=", ">=",
-          "IN", "NOT IN",
-          "LIKE", "NOT LIKE", "ILIKE", "NOT ILIKE",
-          "IS NULL", "IS NOT NULL",
-          "BETWEEN", "NOT BETWEEN",
-          "EXISTS", "NOT EXISTS",
+          "=",
+          "!=",
+          "<>",
+          "<",
+          ">",
+          "<=",
+          ">=",
+          "IN",
+          "NOT IN",
+          "LIKE",
+          "NOT LIKE",
+          "ILIKE",
+          "NOT ILIKE",
+          "IS NULL",
+          "IS NOT NULL",
+          "BETWEEN",
+          "NOT BETWEEN",
+          "EXISTS",
+          "NOT EXISTS",
         ];
         for (const op of whereOps) {
           suggestions.push({
@@ -337,30 +390,26 @@ export function registerSchemaCompletionProvider(
                   range,
                 });
               }
-            })
+            }),
           );
         } else {
           const tables = getTables();
-          await mapWithConcurrency(
-            tables,
-            STRUCTURE_FETCH_CONCURRENCY,
-            async (t) => {
-              try {
-                const structure = await fetchStructure(t.name);
-                for (const col of structure.columns) {
-                  suggestions.push({
-                    label: t.name + "." + col.name,
-                    kind: monaco.languages.CompletionItemKind.Field,
-                    insertText: t.name + "." + col.name,
-                    detail: colDetail(col, " (" + t.name + ")"),
-                    range,
-                  });
-                }
-              } catch {
-                // Skip
+          await mapWithConcurrency(tables, STRUCTURE_FETCH_CONCURRENCY, async (t) => {
+            try {
+              const structure = await fetchStructure(t.name);
+              for (const col of structure.columns) {
+                suggestions.push({
+                  label: t.name + "." + col.name,
+                  kind: monaco.languages.CompletionItemKind.Field,
+                  insertText: t.name + "." + col.name,
+                  detail: colDetail(col, " (" + t.name + ")"),
+                  range,
+                });
               }
+            } catch {
+              // Skip
             }
-          );
+          });
         }
 
         if (analysis.context === "HAVING") {
@@ -564,23 +613,19 @@ export function registerSchemaCompletionProvider(
     /** Warms the versioned structure cache so the first completion burst
      *  never fires dozens of parallel metadata queries. */
     prefetchStructures: () =>
-      mapWithConcurrency(
-        getTables(),
-        3,
-        (t) => fetchStructure(t.name).catch(() => undefined),
-      ).then(() => undefined),
+      mapWithConcurrency(getTables(), 3, (t) => fetchStructure(t.name).catch(() => undefined)).then(
+        () => undefined,
+      ),
   };
 }
 
 /** Legacy completion provider providing only table names + basic SQL keywords. */
 export function registerStandardCompletionProvider(
-   
   monaco: any,
   getTables: () => Array<{ name: string }>,
-  _onDispose?: () => void
+  _onDispose?: () => void,
 ): { dispose: () => void } {
   return monaco.languages.registerCompletionItemProvider("sql", {
-     
     provideCompletionItems: (model: any, position: any) => {
       const word = model.getWordUntilPosition(position);
       const range = {
@@ -600,9 +645,27 @@ export function registerStandardCompletionProvider(
       }));
 
       const keywordSuggestions = [
-        "SELECT", "FROM", "WHERE", "AND", "OR", "ORDER BY", "GROUP BY", "LIMIT",
-        "JOIN", "LEFT JOIN", "INNER JOIN", "ON", "AS", "INSERT INTO", "VALUES",
-        "UPDATE", "SET", "DELETE FROM", "CREATE TABLE", "DROP TABLE", "ALTER TABLE",
+        "SELECT",
+        "FROM",
+        "WHERE",
+        "AND",
+        "OR",
+        "ORDER BY",
+        "GROUP BY",
+        "LIMIT",
+        "JOIN",
+        "LEFT JOIN",
+        "INNER JOIN",
+        "ON",
+        "AS",
+        "INSERT INTO",
+        "VALUES",
+        "UPDATE",
+        "SET",
+        "DELETE FROM",
+        "CREATE TABLE",
+        "DROP TABLE",
+        "ALTER TABLE",
       ].map((k) => ({
         label: k,
         kind: monaco.languages.CompletionItemKind.Keyword,

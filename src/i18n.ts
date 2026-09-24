@@ -2,10 +2,7 @@
 // Per-language translation objects live in src/i18n/*.ts
 export {
   en,
-  vi,
-  zh,
-  tr,
-  ko,
+  ensureLanguage,
   getCurrentAppLanguage,
   useLanguageStore,
   translateLanguage,

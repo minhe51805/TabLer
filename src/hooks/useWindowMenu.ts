@@ -9,6 +9,7 @@
 import { useMemo } from "react";
 import { useI18n, type AppLanguagePreference } from "../i18n";
 import { useEditorPreferencesStore } from "../stores/editorPreferencesStore";
+import { useWindowBehaviorStore } from "../stores/windowBehaviorStore";
 import { useAppLayoutStore } from "../stores/appLayoutStore";
 import { useTheme, ThemeEngine } from "../stores/useTheme";
 import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "../utils/ui-scale";
@@ -80,6 +81,7 @@ export interface UseWindowMenuOptions {
 export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
   const { t, language } = useI18n();
   const vimModeEnabled = useEditorPreferencesStore((s) => s.vimModeEnabled);
+  const keepRunningInBackground = useWindowBehaviorStore((s) => s.keepRunningInBackground);
   const { theme: activeTheme } = useTheme();
   // Option A: MiniMax is the single global look. The theme menu simply lists
   // whatever ThemeEngine exposes (MiniMax + any user-imported themes); the old
@@ -272,6 +274,17 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
             },
             selected: vimModeEnabled,
             shortcut: "Ctrl Shift V",
+          },
+          {
+            key: "keep-running-in-background",
+            label: t("menu.item.keepRunningInBackground"),
+            action: () => {
+              useWindowBehaviorStore
+                .getState()
+                .setKeepRunningInBackground(!keepRunningInBackground);
+              closeMenu();
+            },
+            selected: keepRunningInBackground,
           },
           { divider: true },
           {
@@ -560,6 +573,7 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
       connectionsCount,
       uiFontScale,
       vimModeEnabled,
+      keepRunningInBackground,
       themeMenuLabel,
       toggleTerminalLabel,
       themeMenuOptions,

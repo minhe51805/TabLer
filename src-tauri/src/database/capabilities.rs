@@ -106,8 +106,10 @@ pub const fn agent_allows_sql_read(database_type: DatabaseType) -> bool {
 /// Agent write-preview boundary. The preview runs inside a rollback-only
 /// transaction, so it is only honest on drivers that override
 /// `preview_write_transaction` (MySQL/MariaDB, SQLite, the shared PostgreSQL
-/// wire driver, MSSQL). Every other engine hits the default "not supported"
-/// error — advertising the tool there dead-ends the run.
+/// wire driver, MSSQL, DuckDB, libSQL). Every other engine hits the default
+/// "not supported" error — advertising the tool there dead-ends the run.
+/// Cloudflare D1 is deliberately absent: its REST API cannot span a
+/// transaction across requests, so a preview could persist writes.
 pub const fn agent_allows_sql_write_preview(database_type: DatabaseType) -> bool {
     matches!(
         database_type,
@@ -120,6 +122,8 @@ pub const fn agent_allows_sql_write_preview(database_type: DatabaseType) -> bool
             | DatabaseType::Redshift
             | DatabaseType::Vertica
             | DatabaseType::MSSQL
+            | DatabaseType::DuckDB
+            | DatabaseType::LibSQL
     )
 }
 
@@ -388,8 +392,8 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "sqlite",
             "SQLite",
             DriverTier::Core,
-            S, S, S, L, S, S, S, S, S, S, U, S, N,
-            &["Local engine: cancel stops waiting; the embedded engine finishes the statement in the background.", "Direct column schema changes are not wired into TableR actions yet."],
+            S, S, S, L, S, S, S, S, S, S, S, S, N,
+            &["Local engine: cancel stops waiting; the embedded engine finishes the statement in the background.", "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied."],
         ),
         DatabaseType::DuckDB => profile(
             database_type,
@@ -420,8 +424,8 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "mssql",
             "SQL Server",
             DriverTier::Extended,
-            S, S, S, L, S, S, U, U, S, L, U, L, L,
-            &["Server-side cancellation, atomic edit/import queues, and reviewed schema actions are incomplete."],
+            S, S, S, L, S, S, S, S, S, L, S, L, L,
+            &["Server-side cancellation is not wired.", "Reviewed schema changes run in one transaction; statements SQL Server forbids inside transactions (ALTER DATABASE, CREATE/DROP DATABASE, BACKUP/RESTORE, RECONFIGURE, full-text index DDL) are rejected and rolled back.", "Stored procedures are listed with definitions but there is no dedicated proc editor/executor surface."],
         ),
         DatabaseType::Redis => profile(
             database_type,
@@ -681,6 +685,8 @@ mod tests {
                     | DatabaseType::Redshift
                     | DatabaseType::Vertica
                     | DatabaseType::MSSQL
+                    | DatabaseType::DuckDB
+                    | DatabaseType::LibSQL
             );
             match model {
                 QueryModel::Sql => {

@@ -1,6 +1,8 @@
 import { useCallback, type Dispatch, type RefObject, type SetStateAction } from "react";
 import { requestAppConfirmation } from "../../../stores/confirmStore";
 import type { TableFilterPlan } from "./useDataGrid";
+import { getCurrentAppLanguage } from "../../../i18n";
+import { getDataGridMaskingCopy } from "../datagrid-masking-copy";
 
 /** Error prefix the backend emits when the picked export path already exists. */
 const EXPORT_FILE_EXISTS_CODE = "TABLER_EXPORT_FILE_EXISTS";
@@ -32,6 +34,8 @@ interface DataGridTableExportParams {
   ) => Promise<unknown>;
   cancelTableExport: (operationId: string) => Promise<unknown>;
   tableExportOperationIdRef: RefObject<string | null>;
+  /** True while any column mask is active — streaming export cannot mask. */
+  masksActive?: boolean;
 }
 
 /**
@@ -52,6 +56,7 @@ export function useDataGridTableExport({
   exportTableData,
   cancelTableExport,
   tableExportOperationIdRef,
+  masksActive,
 }: DataGridTableExportParams) {
   const handleFullTableExport = useCallback(
     async (format: "csv" | "jsonl") => {
@@ -62,6 +67,12 @@ export function useDataGridTableExport({
         setError(
           "Cannot export with the current filter: it can only run over loaded rows. Clear the filter or narrow it to export matching rows.",
         );
+        return;
+      }
+      // The backend streams raw rows — it cannot apply view masks, so a
+      // full-table export under active masks would leak unmasked data.
+      if (masksActive) {
+        setError(getDataGridMaskingCopy(getCurrentAppLanguage()).exportBlocked);
         return;
       }
       const operationId = `export-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
@@ -122,6 +133,7 @@ export function useDataGridTableExport({
       sortColumn,
       sortDir,
       tableExportOperationIdRef,
+      masksActive,
       tableName,
     ],
   );

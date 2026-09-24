@@ -17,6 +17,8 @@ import { renderCellEditor, type LookupValue } from "./cellEditorResolver";
 import { formatDate, parseDate } from "../../stores/dateFormatStore";
 import { getCurrentAppLanguage } from "../../i18n";
 import { getDataGridCopy } from "./datagrid-copy";
+import { getDataGridMaskingCopy } from "./datagrid-masking-copy";
+import "./datagrid-masking.css";
 
 /** Per-grid inline-edit draft. Created inside DataGrid (useRef) — never a
  *  module singleton, or two mounted grids would share one draft. */
@@ -97,6 +99,14 @@ interface DataGridColumnsProps {
   dbType?: string;
   /** Custom display formatting overrides per column */
   columnDisplayFormats?: Record<string, ColumnDisplayFormat>;
+  /** Columns with a mask rule (revealed or not) — drives the header badge. */
+  maskedColumnNames?: ReadonlySet<string>;
+  /** Columns actively rendering masked (rule set AND not revealed). */
+  activeMaskedNames?: ReadonlySet<string>;
+  /** Masked copy of the displayed rows, aligned by displayed row index. */
+  maskedRows?: GridCellValue[][] | null;
+  /** Session-only reveal toggle for the header badge. */
+  onToggleMaskReveal?: (colName: string) => void;
 }
 
 export function buildDataGridColumns({
@@ -137,6 +147,10 @@ export function buildDataGridColumns({
   dateFormat,
   dbType: _dbType,
   columnDisplayFormats = {},
+  maskedColumnNames,
+  activeMaskedNames,
+  maskedRows,
+  onToggleMaskReveal,
 }: DataGridColumnsProps): ColumnDef<unknown[], unknown>[] {
   return [
     {
@@ -202,8 +216,12 @@ export function buildDataGridColumns({
       const isGeometry = isGeometryColumn(col);
       const isBlob = isBlobColumn(col);
       const displayFormat = columnDisplayFormats[col.name] || "default";
+      const isMasked = maskedColumnNames?.has(col.name) ?? false;
+      const isActivelyMasked = activeMaskedNames?.has(col.name) ?? false;
       const isEditableColumn =
-        canAttemptInlineEdit && (structureStatus !== "ready" || !col.is_primary_key);
+        canAttemptInlineEdit &&
+        !isActivelyMasked &&
+        (structureStatus !== "ready" || !col.is_primary_key);
 
       const multiEntry = multiSort.find((s) => s.column === col.name);
       const headerIsSorted = sortColumn === col.name || !!multiEntry;
@@ -223,6 +241,9 @@ export function buildDataGridColumns({
             dir={headerDir}
             priority={headerPriority}
             onSort={handleSort}
+            isMasked={isMasked}
+            isRevealed={isMasked && !isActivelyMasked}
+            onToggleMaskReveal={onToggleMaskReveal}
           />
         ),
         accessorFn: (row: unknown[]) => (row as (string | number | boolean | null)[])[idx],
@@ -246,6 +267,13 @@ export function buildDataGridColumns({
           const stringValue = value === null ? null : String(value);
           const isUrl = isUrlCell(stringValue);
           const isImageCell = isUrl && stringValue !== null && isImageUrl(stringValue);
+          // View-time masking: the masked matrix is aligned by displayed row
+          // index; null means the async anonymizer is still computing.
+          const maskedCell = isActivelyMasked ? (maskedRows?.[rowIndex]?.[idx] ?? null) : null;
+          const maskPending = isActivelyMasked && maskedRows === null;
+          const maskingCopy = isActivelyMasked
+            ? getDataGridMaskingCopy(getCurrentAppLanguage())
+            : null;
 
           // Custom date formatting (date detection hoisted per column)
           let displayValue: string | null = null;
@@ -317,7 +345,18 @@ export function buildDataGridColumns({
                   {isSaving && (
                     <span className="animate-spin inline-block w-3.5 h-3.5 border-2 border-[var(--accent)] border-t-transparent rounded-full" />
                   )}
-                  {isImageCell && stringValue !== null ? (
+                  {isActivelyMasked ? (
+                    <span
+                      className={`datagrid-cell-value masked${maskPending ? " masked-pending" : ""}`}
+                      data-null-placeholder={nullPlaceholder}
+                    >
+                      {maskPending
+                        ? maskingCopy?.pendingPlaceholder
+                        : maskedCell === null
+                          ? nullPlaceholder
+                          : String(maskedCell)}
+                    </span>
+                  ) : isImageCell && stringValue !== null ? (
                     <div className="datagrid-url-cell">
                       <img
                         src={stringValue}

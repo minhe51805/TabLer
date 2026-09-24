@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import hookSource from "@/components/AISlidePanel/hooks/use-ai-slide-panel.ts?raw";
+import hookSource from "@/components/AISlidePanel/ai-agent-generate.ts?raw";
 import {
   getAgentMemoryIndex,
   invalidateAgentMemoryIndex,

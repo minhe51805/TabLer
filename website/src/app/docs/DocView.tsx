@@ -6,6 +6,7 @@ import type { SiteLanguage } from "@/lib/i18n";
 import { DocArticle } from "./DocArticle";
 import { DocToc } from "./DocToc";
 import { DocCopyPage } from "./DocCopyPage";
+import { DocFeedback } from "./DocFeedback";
 
 export function DocView({ language, slug }: { language: SiteLanguage; slug: string }) {
   const docs = getDocs(language);
@@ -74,6 +75,13 @@ export function DocView({ language, slug }: { language: SiteLanguage; slug: stri
             <span />
           )}
         </nav>
+
+        <DocFeedback
+          label={docs.feedback}
+          yesLabel={docs.feedbackYes}
+          noLabel={docs.feedbackNo}
+          thanksLabel={docs.feedbackThanks}
+        />
 
         <a
           className="docs-edit-link"

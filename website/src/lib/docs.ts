@@ -64,6 +64,10 @@ export type DocsBundle = {
   copyPage: string;
   copied: string;
   editPage: string;
+  feedback: string;
+  feedbackYes: string;
+  feedbackNo: string;
+  feedbackThanks: string;
   groups: DocGroup[];
   pages: DocPage[];
 };
@@ -3972,10 +3976,14 @@ const en: DocsBundle = {
   previous: "Previous",
   next: "Next",
   menu: "Documentation menu",
+  editPage: "Edit this page on GitHub",
+  feedback: "Was this page helpful?",
+  feedbackYes: "Yes",
+  feedbackNo: "No",
+  feedbackThanks: "Thanks for the feedback!",
   searchPlaceholder: "Search docs",
   copyPage: "Copy page",
   copied: "Copied",
-  editPage: "Edit this page on GitHub",
   groups: [
     { label: "Getting started", slugs: ["", "getting-started"] },
     {
@@ -5438,6 +5446,10 @@ const vi: DocsBundle = {
   copyPage: "Sao chép trang",
   copied: "Đã chép",
   editPage: "Sửa trang này trên GitHub",
+  feedback: "Trang này có hữu ích không?",
+  feedbackYes: "Có",
+  feedbackNo: "Không",
+  feedbackThanks: "Cảm ơn phản hồi của bạn!",
   groups: [
     { label: "Bắt đầu", slugs: ["", "getting-started"] },
     {

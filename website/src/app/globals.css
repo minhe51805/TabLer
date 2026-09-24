@@ -5831,3 +5831,70 @@ a {
 .changelog-expand svg.is-open {
   transform: rotate(180deg);
 }
+
+/* syntax tokens inside doc code blocks — a muted GitHub-dark palette so
+   keywords, strings, comments, and numbers read at a glance */
+.doc-code .tok-kw {
+  color: #7eb6ff;
+  font-weight: 600;
+}
+
+.doc-code .tok-string {
+  color: #a5d6a7;
+}
+
+.doc-code .tok-comment {
+  color: #7d8a99;
+  font-style: italic;
+}
+
+.doc-code .tok-number {
+  color: #f2a96e;
+}
+
+/* "Was this helpful?" — a quiet yes/no row at the foot of each doc page */
+.doc-feedback {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 30px;
+  padding-top: 22px;
+  border-top: 1px solid var(--soft-line);
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.doc-feedback-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.doc-feedback-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 13px;
+  border: none;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--neu-muted);
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-out-sm);
+  cursor: pointer;
+  transition:
+    color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
+}
+
+.doc-feedback-btn:hover {
+  color: var(--neu-accent);
+  transform: translateY(-1px);
+  box-shadow: var(--neu-shadow-out);
+}
+
+.doc-feedback.is-voted {
+  color: var(--green);
+  font-weight: 600;
+}

@@ -18,6 +18,7 @@ import {
   setCachedQueryResult,
 } from "../utils/query-result-cache";
 import { getOrLoadTableColumns, getOrLoadTableStructure } from "../utils/schema-cache";
+import type { TableExportFormat } from "../utils/export-formats";
 import { useConnectionStore } from "./connectionStore";
 import { invokeAIWorkspaceToolWithTimeout } from "../utils/ai-tool-command-client";
 
@@ -124,7 +125,7 @@ export interface QueryState {
     request: {
       table: string;
       database?: string;
-      format: "csv" | "jsonl";
+      format: TableExportFormat;
       orderBy?: string;
       orderDir?: "ASC" | "DESC";
       filter?: string;

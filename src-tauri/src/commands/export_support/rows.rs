@@ -107,7 +107,7 @@ pub(super) fn row_to_object(
     object
 }
 
-pub(super) fn qualify_name(
+pub(crate) fn qualify_name(
     db_type: DatabaseType,
     raw_identifier: &str,
     database: Option<&str>,

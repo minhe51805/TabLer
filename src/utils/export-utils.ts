@@ -158,6 +158,78 @@ export function buildTsvContent(
 }
 
 /**
+ * Exports the loaded rows to a TSV file via the native save dialog.
+ * For full-table exports the streaming `tsv` path is used instead.
+ */
+export async function exportToTSV(
+  columns: string[],
+  rows: (string | number | boolean | null)[][],
+  filename?: string,
+): Promise<void> {
+  if (rows.length === 0) return;
+
+  await saveExportFile({
+    fileName: filename ?? buildExportFilename(columns[0], "tsv"),
+    content: buildTsvContent(columns, rows),
+    filters: [{ name: "TSV", extensions: ["tsv"] }],
+  });
+}
+
+/**
+ * Builds a minimal HTML document containing one `<table>` — header cells from
+ * `columns`, one `<tr>` per row, NULL cells empty. Matches the shape the
+ * streaming backend writes for `html` exports.
+ */
+export function buildHtmlContent(
+  columns: string[],
+  rows: (string | number | boolean | null)[][],
+): string {
+  const escapeHtml = (value: string): string =>
+    value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  const lines = [
+    "<!DOCTYPE html>",
+    "<html>",
+    '<head><meta charset="utf-8"></head>',
+    "<body>",
+    "<table>",
+    "<thead>",
+    `<tr>${columns.map((column) => `<th>${escapeHtml(column)}</th>`).join("")}</tr>`,
+    "</thead>",
+    "<tbody>",
+  ];
+  for (const row of rows) {
+    lines.push(
+      `<tr>${row
+        .map(
+          (value) =>
+            `<td>${value === null || value === undefined ? "" : escapeHtml(String(value))}</td>`,
+        )
+        .join("")}</tr>`,
+    );
+  }
+  lines.push("</tbody>", "</table>", "</body>", "</html>");
+  return lines.join("\n");
+}
+
+/**
+ * Exports the loaded rows to an HTML file via the native save dialog.
+ * For full-table exports the streaming `html` path is used instead.
+ */
+export async function exportToHtml(
+  columns: string[],
+  rows: (string | number | boolean | null)[][],
+  filename?: string,
+): Promise<void> {
+  if (rows.length === 0) return;
+
+  await saveExportFile({
+    fileName: filename ?? buildExportFilename(columns[0], "html"),
+    content: buildHtmlContent(columns, rows),
+    filters: [{ name: "HTML", extensions: ["html"] }],
+  });
+}
+
+/**
  * Builds a GitHub-flavored Markdown table. Pipe characters are escaped and
  * line breaks collapse to spaces so every row stays on one line; NULL cells
  * render empty, matching the CSV/TSV serializers.
@@ -233,7 +305,7 @@ export async function exportToNDJSON(
 
 /**
  * Exports row data to a Markdown table file via the native save dialog.
- * Frontend-only format: the streaming backend export supports csv/jsonl only.
+ * For full-table exports the streaming `markdown` path is used instead.
  */
 export async function exportToMarkdown(
   columns: string[],

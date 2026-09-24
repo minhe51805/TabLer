@@ -86,7 +86,7 @@ export function buildXmlContent(columns: string[], rows: CellValue[][]): string 
 
 /**
  * Exports row data to an XML file via the native save dialog.
- * Frontend-only format: the streaming backend export supports csv/jsonl only.
+ * For full-table exports the streaming `xml` path is used instead.
  */
 export async function exportToXML(
   columns: string[],

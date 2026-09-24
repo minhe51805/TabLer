@@ -836,3 +836,51 @@ export function BackToTop() {
   }, []);
   return null;
 }
+
+/**
+ * Animated counters for the signal strip — each <strong> holding a number
+ * counts up from 0 when the strip reveals. Non-numeric values (e.g. "24/7")
+ * are left alone. Respects reduced-motion by skipping the count.
+ */
+export function SignalCounters() {
+  useEffect(() => {
+    const strip = document.querySelector<HTMLElement>(".signal-strip");
+    if (!strip) return;
+    const numbers = Array.from(strip.querySelectorAll<HTMLElement>("strong"));
+    if (numbers.length === 0) return;
+
+    const reduced = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+    const animate = (el: HTMLElement) => {
+      const target = el.textContent ?? "";
+      const match = target.match(/^(\d+)(.*)$/);
+      if (!match) return;
+      const end = parseInt(match[1], 10);
+      const suffix = match[2];
+      if (reduced || end === 0) return;
+      const duration = 1100;
+      const start = performance.now();
+      const tick = (now: number) => {
+        const p = Math.min((now - start) / duration, 1);
+        // ease-out cubic so the count snaps fast then settles
+        const eased = 1 - Math.pow(1 - p, 3);
+        el.textContent = `${Math.round(end * eased)}${suffix}`;
+        if (p < 1) requestAnimationFrame(tick);
+      };
+      requestAnimationFrame(tick);
+    };
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          numbers.forEach(animate);
+          observer.disconnect();
+        }
+      },
+      { threshold: 0.4 },
+    );
+    observer.observe(strip);
+    return () => observer.disconnect();
+  }, []);
+  return null;
+}

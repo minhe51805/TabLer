@@ -40,6 +40,7 @@ import {
   HeadingReveal,
   WordStagger,
   BackToTop,
+  SignalCounters,
 } from "./Home3D";
 import { EngineMark } from "./engine-logos";
 import { SiteFooter } from "./SiteFooter";
@@ -125,6 +126,7 @@ export default async function Home() {
       <div className="scroll-progress" aria-hidden="true" />
       <ScrollProgress />
       <ScrollSpy />
+      <SignalCounters />
       <MagneticButtons />
       <CursorGlow />
       <HeadingReveal />

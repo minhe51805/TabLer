@@ -30,6 +30,7 @@ export function DocsSearch({
   const [open, setOpen] = useState(false);
   const [active, setActive] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   const results = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -62,6 +63,21 @@ export function DocsSearch({
     return () => document.removeEventListener("mousedown", onDown);
   }, []);
 
+  // "/" focuses the search from anywhere on the page — the docs-site
+  // convention (GitHub, Stripe, MDN). Skipped while typing in a field.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey) return;
+      const target = event.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)
+        return;
+      event.preventDefault();
+      inputRef.current?.focus();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
+
   const go = (slug: string) => {
     setOpen(false);
     setQuery("");
@@ -72,6 +88,7 @@ export function DocsSearch({
     <div className="docs-search" ref={rootRef}>
       <Search size={15} aria-hidden="true" className="docs-search-icon" />
       <input
+        ref={inputRef}
         type="search"
         className="docs-search-input"
         placeholder={placeholder}
@@ -97,6 +114,9 @@ export function DocsSearch({
           }
         }}
       />
+      <kbd className="docs-search-kbd" aria-hidden="true">
+        /
+      </kbd>
       {open && results.length > 0 ? (
         <ul className="docs-search-results" role="listbox">
           {results.map((item, i) => (

@@ -5195,3 +5195,120 @@ a {
     transition: none;
   }
 }
+
+/* ---------- deep polish pass 5 ---------- */
+
+/* scroll-spy: the nav link for the section under the header gets a
+   recessed pill so the floating bar reads as a position indicator */
+.neu .main-nav a.is-current {
+  color: var(--neu-accent);
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-in);
+}
+
+.neu .main-nav a.is-current .nav-icon {
+  color: var(--neu-accent);
+}
+/* status pages (404 / error) join the neumorphic system — soft canvas,
+   extruded buttons, the same ink scale */
+.neu.status-page,
+.status-page {
+  background: var(--neu-bg, var(--canvas));
+  color: var(--neu-ink, var(--ink));
+}
+
+.status-page h1 {
+  font-family: var(--font-display);
+  font-size: clamp(40px, 6vw, 64px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  color: var(--neu-ink, var(--ink-strong));
+}
+
+.status-page .button-primary {
+  background: var(--neu-accent, var(--blue));
+  box-shadow: 0 8px 20px rgba(8, 126, 252, 0.3);
+}
+
+.status-page .button-secondary {
+  background: var(--neu-surface, var(--paper));
+  box-shadow: var(--neu-shadow-out-sm, 0 2px 8px rgba(16, 24, 33, 0.08));
+}
+
+/* print: docs articles flatten to clean black-on-white — no shadows,
+   no nav chrome, links show their href, code blocks keep their border */
+@media print {
+  .site-header,
+  .docs-sidebar,
+  .docs-toc,
+  .scroll-progress,
+  .back-to-top,
+  .mobile-cta,
+  .doc-pager,
+  .site-footer,
+  .footer-wordmark {
+    display: none !important;
+  }
+
+  .neu,
+  .docs-page,
+  .docs-layout,
+  .docs-main,
+  .docs-content-layout {
+    display: block !important;
+    background: #fff !important;
+    box-shadow: none !important;
+  }
+
+  .doc-article,
+  .docs-article-shell {
+    max-width: 100% !important;
+    padding: 0 !important;
+  }
+
+  .doc-article h2,
+  .doc-article h3 {
+    page-break-after: avoid;
+  }
+
+  .doc-code,
+  .doc-table-wrap,
+  .doc-figure {
+    page-break-inside: avoid;
+    box-shadow: none !important;
+    border: 1px solid #ccc !important;
+  }
+
+  .doc-article a[href^="http"]::after {
+    content: " (" attr(href) ")";
+    font-size: 0.85em;
+    color: #555;
+  }
+}
+
+/* "/" hint inside the docs search box — a tiny recessed keycap that
+   disappears once the field has text or focus */
+.docs-search {
+  position: relative;
+}
+
+.docs-search-kbd {
+  position: absolute;
+  right: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  padding: 2px 7px;
+  border-radius: 6px;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11px;
+  color: var(--muted-soft);
+  background: var(--neu-bg-soft, #eef1f4);
+  box-shadow: var(--neu-shadow-in, inset 0 1px 3px rgba(16, 24, 33, 0.1));
+  pointer-events: none;
+  transition: opacity 0.2s ease;
+}
+
+.docs-search:focus-within .docs-search-kbd,
+.docs-search-input:not(:placeholder-shown) ~ .docs-search-kbd {
+  opacity: 0;
+}

@@ -275,7 +275,7 @@
       "explain": "supported",
       "schemaEdit": "supported",
       "backupRestore": "limited",
-      "administration": "limited"
+      "administration": "supported"
     },
     "limitations": [
       "Cancel kills the session from a second connection (TDS attention is not exposed by the driver), so the cancelled session is fully terminated rather than interrupted.",

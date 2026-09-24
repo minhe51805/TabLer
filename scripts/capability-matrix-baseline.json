@@ -162,7 +162,7 @@
     "explain": "S",
     "schema_edit": "S",
     "backup_restore": "L",
-    "administration": "L"
+    "administration": "S"
   },
   "redis": {
     "connect": "S",

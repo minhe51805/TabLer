@@ -85,13 +85,14 @@
       "atomicCsvImport": "supported",
       "dataExport": "supported",
       "explain": "supported",
-      "schemaEdit": "limited",
+      "schemaEdit": "supported",
       "backupRestore": "limited",
       "administration": "limited"
     },
     "limitations": [
       "CockroachDB shares the PostgreSQL wire driver; dialect-specific schema and administration coverage is incomplete.",
-      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.",
+      "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied."
     ]
   },
   {
@@ -111,13 +112,14 @@
       "atomicCsvImport": "supported",
       "dataExport": "supported",
       "explain": "supported",
-      "schemaEdit": "limited",
+      "schemaEdit": "supported",
       "backupRestore": "limited",
-      "administration": "limited"
+      "administration": "supported"
     },
     "limitations": [
       "Greenplum shares the PostgreSQL wire driver; distributed-operation coverage is incomplete.",
-      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.",
+      "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied."
     ]
   },
   {
@@ -137,13 +139,14 @@
       "atomicCsvImport": "supported",
       "dataExport": "supported",
       "explain": "limited",
-      "schemaEdit": "limited",
+      "schemaEdit": "supported",
       "backupRestore": "limited",
       "administration": "limited"
     },
     "limitations": [
       "Redshift shares the PostgreSQL wire driver; DDL, restore, and administration semantics require dedicated coverage.",
-      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.",
+      "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied."
     ]
   },
   {
@@ -189,14 +192,15 @@
       "atomicCsvImport": "unsupported",
       "dataExport": "supported",
       "explain": "supported",
-      "schemaEdit": "unsupported",
+      "schemaEdit": "supported",
       "backupRestore": "limited",
       "administration": "not_applicable"
     },
     "limitations": [
       "Atomic edit queues and CSV imports are not implemented.",
       "Restore is classified as transactional but is not yet pinned to one driver transaction.",
-      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.",
+      "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied."
     ]
   },
   {
@@ -349,13 +353,14 @@
       "atomicCsvImport": "supported",
       "dataExport": "supported",
       "explain": "limited",
-      "schemaEdit": "limited",
+      "schemaEdit": "supported",
       "backupRestore": "limited",
       "administration": "limited"
     },
     "limitations": [
       "Vertica shares the PostgreSQL wire driver; dialect-specific DDL and administration coverage is incomplete.",
-      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.",
+      "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied."
     ]
   },
   {
@@ -427,13 +432,14 @@
       "atomicCsvImport": "unsupported",
       "dataExport": "supported",
       "explain": "supported",
-      "schemaEdit": "unsupported",
+      "schemaEdit": "supported",
       "backupRestore": "limited",
       "administration": "not_applicable"
     },
     "limitations": [
       "Prepared parameters, atomic mutations/imports, and direct schema actions are not implemented.",
-      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.",
+      "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied."
     ]
   },
   {
@@ -453,13 +459,14 @@
       "atomicCsvImport": "unsupported",
       "dataExport": "supported",
       "explain": "supported",
-      "schemaEdit": "unsupported",
+      "schemaEdit": "supported",
       "backupRestore": "limited",
       "administration": "not_applicable"
     },
     "limitations": [
       "Prepared parameters, atomic mutations/imports, and direct schema actions are not implemented.",
-      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.",
+      "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied."
     ]
   },
   {

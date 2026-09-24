@@ -55,7 +55,7 @@
     "atomic_csv_import": "S",
     "data_export": "S",
     "explain": "S",
-    "schema_edit": "L",
+    "schema_edit": "S",
     "backup_restore": "L",
     "administration": "L"
   },
@@ -70,9 +70,9 @@
     "atomic_csv_import": "S",
     "data_export": "S",
     "explain": "S",
-    "schema_edit": "L",
+    "schema_edit": "S",
     "backup_restore": "L",
-    "administration": "L"
+    "administration": "S"
   },
   "redshift": {
     "connect": "S",
@@ -85,7 +85,7 @@
     "atomic_csv_import": "S",
     "data_export": "S",
     "explain": "L",
-    "schema_edit": "L",
+    "schema_edit": "S",
     "backup_restore": "L",
     "administration": "L"
   },
@@ -115,7 +115,7 @@
     "atomic_csv_import": "U",
     "data_export": "S",
     "explain": "S",
-    "schema_edit": "U",
+    "schema_edit": "S",
     "backup_restore": "L",
     "administration": "N"
   },
@@ -205,7 +205,7 @@
     "atomic_csv_import": "S",
     "data_export": "S",
     "explain": "L",
-    "schema_edit": "L",
+    "schema_edit": "S",
     "backup_restore": "L",
     "administration": "L"
   },
@@ -250,7 +250,7 @@
     "atomic_csv_import": "U",
     "data_export": "S",
     "explain": "S",
-    "schema_edit": "U",
+    "schema_edit": "S",
     "backup_restore": "L",
     "administration": "N"
   },
@@ -265,7 +265,7 @@
     "atomic_csv_import": "U",
     "data_export": "S",
     "explain": "S",
-    "schema_edit": "U",
+    "schema_edit": "S",
     "backup_restore": "L",
     "administration": "N"
   },

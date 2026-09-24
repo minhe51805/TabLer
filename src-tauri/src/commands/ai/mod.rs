@@ -174,6 +174,26 @@ pub async fn save_ai_configs(
     .await
 }
 
+/// AI request validation caps the backend enforces in `AIRequest::validate()`.
+/// Exposed at runtime (tech-debt audit D1) so the frontend reads the live
+/// source of truth instead of trusting its mirrored literals — if the backend
+/// caps ever change, the frontend clamps to the new values on the next launch
+/// rather than silently enforcing stale ones.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiLimits {
+    pub max_history_messages: usize,
+    pub max_history_chars: usize,
+}
+
+#[tauri::command]
+pub fn get_ai_limits() -> AiLimits {
+    AiLimits {
+        max_history_messages: crate::config::AI_MAX_HISTORY_MESSAGES,
+        max_history_chars: crate::config::AI_MAX_HISTORY_CHARS,
+    }
+}
+
 #[tauri::command]
 pub async fn ask_ai(
     request: AIRequest,

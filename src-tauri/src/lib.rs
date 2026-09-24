@@ -44,7 +44,7 @@ use ai_workspace_cache::{
 
 use ai_workspace_history::{get_ai_workspace_history, save_ai_workspace_history};
 use commands::ai::{
-    ask_ai, ask_ai_stream, cancel_ai_request, get_ai_configs, list_provider_models,
+    ask_ai, ask_ai_stream, cancel_ai_request, get_ai_configs, get_ai_limits, list_provider_models,
     save_agent_trace, save_ai_configs, AIRequestCancellationState,
 };
 use commands::ai_checkpoints::{
@@ -427,6 +427,7 @@ pub fn run() {
             ask_ai_stream,
             cancel_ai_request,
             get_ai_configs,
+            get_ai_limits,
             save_ai_configs,
             list_provider_models,
             // Query history commands

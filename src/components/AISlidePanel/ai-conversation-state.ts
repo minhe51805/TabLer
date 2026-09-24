@@ -5,6 +5,8 @@ import type {
 } from "./ai-workspace-types";
 import type { AIConversationMessage } from "../../types";
 import { AI_MAX_HISTORY_CHARS, AI_MAX_HISTORY_MESSAGES } from "../../config";
+import { invoke } from "@tauri-apps/api/core";
+import { isTauriDesktopWindow } from "../../hooks/useDesktopWindow";
 
 export const AI_WORKSPACE_HISTORY_VERSION = 1;
 export const AI_WORKSPACE_HISTORY_LEGACY_STORAGE_KEY = "tabler.ai.workspace.history.v1";
@@ -33,11 +35,36 @@ export const DEFAULT_HISTORY_BUDGET: HistoryBudget = {
 
 // Mirror of the backend AIRequest::validate() caps: exceed EITHER and the whole
 // request is rejected, so every budget is clamped to stay under them — a generous
-// window can never break a send. Sourced from `src/config` (tech-debt audit D1)
-// so the two sides can never silently drift; the cross-language contract test
-// binds `src/config/ai-limits.ts` to `src-tauri/src/config.rs`.
-export const BACKEND_MAX_HISTORY_MESSAGES = AI_MAX_HISTORY_MESSAGES;
-export const BACKEND_MAX_HISTORY_CHARS = AI_MAX_HISTORY_CHARS;
+// window can never break a send. Seeded from `src/config` (tech-debt audit D1)
+// and refreshed at runtime from the backend's `get_ai_limits` command, which is
+// the single source of truth; the mirrored literals remain as the fallback for
+// non-Tauri contexts (tests, web build) and the contract test keeps them honest.
+export let BACKEND_MAX_HISTORY_MESSAGES = AI_MAX_HISTORY_MESSAGES;
+export let BACKEND_MAX_HISTORY_CHARS = AI_MAX_HISTORY_CHARS;
+
+interface AiLimitsPayload {
+  maxHistoryMessages: number;
+  maxHistoryChars: number;
+}
+
+/**
+ * Pulls the live history caps from the backend so the frontend can never drift
+ * from what `AIRequest::validate()` actually enforces. Runs once on module load;
+ * failures (non-Tauri context, old backend) keep the mirrored fallback values.
+ */
+export async function initBackendAiLimits(): Promise<void> {
+  if (!isTauriDesktopWindow()) return;
+  try {
+    const limits = await invoke<AiLimitsPayload>("get_ai_limits");
+    if (limits.maxHistoryMessages > 0) BACKEND_MAX_HISTORY_MESSAGES = limits.maxHistoryMessages;
+    if (limits.maxHistoryChars > 0) BACKEND_MAX_HISTORY_CHARS = limits.maxHistoryChars;
+  } catch {
+    // Keep the mirrored fallback values.
+  }
+}
+
+void initBackendAiLimits();
+
 // The workspace digest rides along as a user/assistant pair on every send;
 // reserve its two slots + char budget so history windowing never crowds it out.
 const DIGEST_RESERVE_MESSAGES = 2;
@@ -66,9 +93,8 @@ export function clampHistoryBudget(budget: HistoryBudget): HistoryBudget {
  * rejected request or overflowing a small model's window.
  */
 export function resolveHistoryBudget(contextWindowTokens?: number | null): HistoryBudget {
-  const tokens = typeof contextWindowTokens === "number" && contextWindowTokens > 0
-    ? contextWindowTokens
-    : 0;
+  const tokens =
+    typeof contextWindowTokens === "number" && contextWindowTokens > 0 ? contextWindowTokens : 0;
   let budget = DEFAULT_HISTORY_BUDGET;
   if (tokens >= 200_000) {
     budget = { maxBubbles: 5, maxMessageChars: 2_000 };
@@ -96,7 +122,10 @@ export interface PersistedAIWorkspaceState {
 }
 
 function stripCodeFences(text: string) {
-  return text.replace(/```sql?/gi, "").replace(/```/g, "").trim();
+  return text
+    .replace(/```sql?/gi, "")
+    .replace(/```/g, "")
+    .trim();
 }
 
 export function summarizePromptForDisplay(text: string) {
@@ -151,7 +180,8 @@ export function estimateConversationFootprint(bubbles: AIWorkspaceBubbleData[]):
   return bubbles
     .filter((bubble) => bubble.status !== "loading" && !bubble.compactedAt)
     .reduce(
-      (sum, bubble) => sum + (bubble.prompt?.length ?? 0) + getBubbleConversationText(bubble).length,
+      (sum, bubble) =>
+        sum + (bubble.prompt?.length ?? 0) + getBubbleConversationText(bubble).length,
       0,
     );
 }
@@ -179,8 +209,10 @@ export function buildConversationHistoryMessages(
 }
 
 export function createAIWorkspaceId() {
-  return globalThis.crypto?.randomUUID?.()
-    ?? `bubble-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  return (
+    globalThis.crypto?.randomUUID?.() ??
+    `bubble-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+  );
 }
 
 export function buildThreadLabel(prompt: string, index: number) {
@@ -189,7 +221,11 @@ export function buildThreadLabel(prompt: string, index: number) {
   return summary.length > 24 ? `${summary.slice(0, 21).trimEnd()}...` : summary;
 }
 
-export function buildAIWorkspaceKey(connectionId: string | null, database: string | null, userWorkspaceId?: string | null) {
+export function buildAIWorkspaceKey(
+  connectionId: string | null,
+  database: string | null,
+  userWorkspaceId?: string | null,
+) {
   // An explicit user workspace ("player bao bên ngoài") fully scopes threads:
   // context lives with the workspace, not the raw connection/database pair.
   if (userWorkspaceId) return `uw:${userWorkspaceId}`;
@@ -201,9 +237,9 @@ export function formatThreadTimestamp(timestamp: number, language: string) {
   const targetDate = new Date(timestamp);
   const now = new Date();
   const isSameDay =
-    targetDate.getFullYear() === now.getFullYear()
-    && targetDate.getMonth() === now.getMonth()
-    && targetDate.getDate() === now.getDate();
+    targetDate.getFullYear() === now.getFullYear() &&
+    targetDate.getMonth() === now.getMonth() &&
+    targetDate.getDate() === now.getDate();
 
   const formatter = new Intl.DateTimeFormat(
     locale,
@@ -215,9 +251,7 @@ export function formatThreadTimestamp(timestamp: number, language: string) {
   return formatter.format(targetDate);
 }
 
-export function isAIWorkspaceInteractionMode(
-  value: unknown,
-): value is AIWorkspaceInteractionMode {
+export function isAIWorkspaceInteractionMode(value: unknown): value is AIWorkspaceInteractionMode {
   return value === "prompt" || value === "edit" || value === "agent";
 }
 
@@ -232,7 +266,9 @@ export function createEmptyPersistedAIWorkspaceState(): PersistedAIWorkspaceStat
 }
 
 export function loadLegacyPersistedAIWorkspaceState(
-  storage: Pick<Storage, "getItem"> | null = typeof window === "undefined" ? null : window.localStorage,
+  storage: Pick<Storage, "getItem"> | null = typeof window === "undefined"
+    ? null
+    : window.localStorage,
 ): PersistedAIWorkspaceState {
   if (!storage) return createEmptyPersistedAIWorkspaceState();
 
@@ -247,13 +283,14 @@ export function loadLegacyPersistedAIWorkspaceState(
 
     const threads = Array.isArray(parsed.threads)
       ? parsed.threads
-          .filter((thread): thread is AIChatThread => (
-            !!thread
-            && typeof thread.id === "string"
-            && typeof thread.workspaceKey === "string"
-            && typeof thread.label === "string"
-            && typeof thread.createdAt === "number"
-          ))
+          .filter(
+            (thread): thread is AIChatThread =>
+              !!thread &&
+              typeof thread.id === "string" &&
+              typeof thread.workspaceKey === "string" &&
+              typeof thread.label === "string" &&
+              typeof thread.createdAt === "number",
+          )
           .map((thread) => ({
             ...thread,
             updatedAt: typeof thread.updatedAt === "number" ? thread.updatedAt : thread.createdAt,
@@ -261,23 +298,19 @@ export function loadLegacyPersistedAIWorkspaceState(
           }))
       : [];
 
-    const bubbles = Array.isArray(parsed.bubbles)
-      ? parsed.bubbles.filter(isPersistedBubble)
-      : [];
+    const bubbles = Array.isArray(parsed.bubbles) ? parsed.bubbles.filter(isPersistedBubble) : [];
 
     const interactionModes = Object.fromEntries(
       Object.entries(parsed.interactionModes || {}).filter(
-        (entry): entry is [string, AIWorkspaceInteractionMode] => (
-          typeof entry[0] === "string" && isAIWorkspaceInteractionMode(entry[1])
-        ),
+        (entry): entry is [string, AIWorkspaceInteractionMode] =>
+          typeof entry[0] === "string" && isAIWorkspaceInteractionMode(entry[1]),
       ),
     );
 
     const activeThreadIds = Object.fromEntries(
       Object.entries(parsed.activeThreadIds || {}).filter(
-        (entry): entry is [string, string] => (
-          typeof entry[0] === "string" && typeof entry[1] === "string"
-        ),
+        (entry): entry is [string, string] =>
+          typeof entry[0] === "string" && typeof entry[1] === "string",
       ),
     );
 
@@ -304,12 +337,12 @@ export function sanitizeAIWorkspaceAttachments(
     if (!entry || typeof entry !== "object") return false;
     const candidate = entry as Partial<AIWorkspaceAttachment>;
     return (
-      typeof candidate.id === "string"
-      && (candidate.kind === "image" || candidate.kind === "text")
-      && typeof candidate.name === "string"
-      && typeof candidate.mimeType === "string"
-      && typeof candidate.size === "number"
-      && typeof candidate.createdAt === "number"
+      typeof candidate.id === "string" &&
+      (candidate.kind === "image" || candidate.kind === "text") &&
+      typeof candidate.name === "string" &&
+      typeof candidate.mimeType === "string" &&
+      typeof candidate.size === "number" &&
+      typeof candidate.createdAt === "number"
     );
   });
   return attachments.length > 0 ? attachments : undefined;
@@ -331,16 +364,17 @@ export function sanitizePersistedAIWorkspaceState(
   const sanitized = createEmptyPersistedAIWorkspaceState();
   if (!state || typeof state !== "object") return sanitized;
 
-  sanitized.version = typeof state.version === "number"
-    ? state.version
-    : AI_WORKSPACE_HISTORY_VERSION;
+  sanitized.version =
+    typeof state.version === "number" ? state.version : AI_WORKSPACE_HISTORY_VERSION;
   sanitized.threads = (Array.isArray(state.threads) ? state.threads : [])
-    .filter((thread): thread is AIChatThread =>
-      !!thread
-      && typeof thread.id === "string"
-      && typeof thread.workspaceKey === "string"
-      && typeof thread.label === "string"
-      && typeof thread.createdAt === "number")
+    .filter(
+      (thread): thread is AIChatThread =>
+        !!thread &&
+        typeof thread.id === "string" &&
+        typeof thread.workspaceKey === "string" &&
+        typeof thread.label === "string" &&
+        typeof thread.createdAt === "number",
+    )
     .map((thread) => ({
       ...thread,
       updatedAt: typeof thread.updatedAt === "number" ? thread.updatedAt : thread.createdAt,
@@ -352,24 +386,24 @@ export function sanitizePersistedAIWorkspaceState(
       ...bubble,
       attachments: sanitizeAIWorkspaceAttachments(bubble.attachments),
     }));
-  sanitized.interactionModes = state.interactionModes && typeof state.interactionModes === "object"
-    ? Object.fromEntries(
-        Object.entries(state.interactionModes).filter(
-          (entry): entry is [string, AIWorkspaceInteractionMode] => (
-            typeof entry[0] === "string" && isAIWorkspaceInteractionMode(entry[1])
+  sanitized.interactionModes =
+    state.interactionModes && typeof state.interactionModes === "object"
+      ? Object.fromEntries(
+          Object.entries(state.interactionModes).filter(
+            (entry): entry is [string, AIWorkspaceInteractionMode] =>
+              typeof entry[0] === "string" && isAIWorkspaceInteractionMode(entry[1]),
           ),
-        ),
-      )
-    : {};
-  sanitized.activeThreadIds = state.activeThreadIds && typeof state.activeThreadIds === "object"
-    ? Object.fromEntries(
-        Object.entries(state.activeThreadIds).filter(
-          (entry): entry is [string, string] => (
-            typeof entry[0] === "string" && typeof entry[1] === "string"
+        )
+      : {};
+  sanitized.activeThreadIds =
+    state.activeThreadIds && typeof state.activeThreadIds === "object"
+      ? Object.fromEntries(
+          Object.entries(state.activeThreadIds).filter(
+            (entry): entry is [string, string] =>
+              typeof entry[0] === "string" && typeof entry[1] === "string",
           ),
-        ),
-      )
-    : {};
+        )
+      : {};
 
   return sanitized;
 }
@@ -379,24 +413,24 @@ function isPersistedBubble(bubble: unknown): bubble is AIWorkspaceBubbleData {
   const candidate = bubble as Partial<AIWorkspaceBubbleData>;
 
   return (
-    typeof candidate.id === "string"
-    && typeof candidate.threadId === "string"
-    && typeof candidate.workspaceKey === "string"
-    && isAIWorkspaceInteractionMode(candidate.interactionMode)
-    && typeof candidate.kind === "string"
-    && typeof candidate.status === "string"
-    && typeof candidate.title === "string"
-    && typeof candidate.subtitle === "string"
-    && typeof candidate.prompt === "string"
-    && typeof candidate.preview === "string"
-    && typeof candidate.detail === "string"
-    && typeof candidate.createdAt === "number"
-    && typeof candidate.x === "number"
-    && typeof candidate.y === "number"
-    && !!candidate.pointer
-    && typeof candidate.pointer.x === "number"
-    && typeof candidate.pointer.y === "number"
-    && typeof candidate.pointer.visible === "boolean"
+    typeof candidate.id === "string" &&
+    typeof candidate.threadId === "string" &&
+    typeof candidate.workspaceKey === "string" &&
+    isAIWorkspaceInteractionMode(candidate.interactionMode) &&
+    typeof candidate.kind === "string" &&
+    typeof candidate.status === "string" &&
+    typeof candidate.title === "string" &&
+    typeof candidate.subtitle === "string" &&
+    typeof candidate.prompt === "string" &&
+    typeof candidate.preview === "string" &&
+    typeof candidate.detail === "string" &&
+    typeof candidate.createdAt === "number" &&
+    typeof candidate.x === "number" &&
+    typeof candidate.y === "number" &&
+    !!candidate.pointer &&
+    typeof candidate.pointer.x === "number" &&
+    typeof candidate.pointer.y === "number" &&
+    typeof candidate.pointer.visible === "boolean"
   );
 }
 
@@ -440,12 +474,15 @@ export function prunePersistedAIWorkspaceState(
     .sort((left, right) => left.createdAt - right.createdAt);
 
   const interactionModes = Object.fromEntries(
-    Object.entries(state.interactionModes).filter(([workspaceKey]) => keptWorkspaceKeys.has(workspaceKey)),
+    Object.entries(state.interactionModes).filter(([workspaceKey]) =>
+      keptWorkspaceKeys.has(workspaceKey),
+    ),
   );
   const activeThreadIds = Object.fromEntries(
-    Object.entries(state.activeThreadIds).filter(([workspaceKey, threadId]) => (
-      keptWorkspaceKeys.has(workspaceKey) && keptThreadIds.has(threadId)
-    )),
+    Object.entries(state.activeThreadIds).filter(
+      ([workspaceKey, threadId]) =>
+        keptWorkspaceKeys.has(workspaceKey) && keptThreadIds.has(threadId),
+    ),
   );
 
   return {
@@ -459,10 +496,10 @@ export function prunePersistedAIWorkspaceState(
 
 export function hasPersistedAIWorkspaceStateData(state: PersistedAIWorkspaceState) {
   return (
-    state.threads.length > 0
-    || state.bubbles.length > 0
-    || Object.keys(state.interactionModes).length > 0
-    || Object.keys(state.activeThreadIds).length > 0
+    state.threads.length > 0 ||
+    state.bubbles.length > 0 ||
+    Object.keys(state.interactionModes).length > 0 ||
+    Object.keys(state.activeThreadIds).length > 0
   );
 }
 
@@ -497,9 +534,10 @@ export function stripAskUserTrailingOptions(answer: string): string {
  *  option menu when it has at least two entries; the block is removed from
  *  the returned question so the list is not rendered twice (once as buttons,
  *  once as plain text). */
-export function extractAskUserOptionsFromQuestion(
-  question: string,
-): { question: string; options: string[] } {
+export function extractAskUserOptionsFromQuestion(question: string): {
+  question: string;
+  options: string[];
+} {
   const lines = question.replace(/\r\n/g, "\n").trimEnd().split("\n");
   const options: string[] = [];
   let blockStart = lines.length;

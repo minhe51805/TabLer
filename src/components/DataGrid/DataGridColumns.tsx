@@ -320,6 +320,13 @@ export function buildDataGridColumns({
               }}
               onDoubleClick={() => {
                 if (!isEditableColumn) {
+                  // Masked columns copy the masked value; while the async
+                  // anonymizer is still computing there is nothing safe to
+                  // copy, so the double-click is a no-op.
+                  if (isActivelyMasked) {
+                    if (!maskPending) handleCopyValue(maskedCell, cellKey);
+                    return;
+                  }
                   handleCopyValue(value, cellKey);
                 }
               }}

@@ -6,7 +6,30 @@ import {
   type AnonymizerValue,
 } from "../../../utils/anonymizer";
 import { columnMaskScopeKey, useColumnMaskStore } from "../../../stores/columnMaskStore";
-import type { GridCellValue, ResolvedColumn } from "./useDataGrid";
+import {
+  isNumericColumn,
+  isTextLikeColumn,
+  type GridCellValue,
+  type ResolvedColumn,
+} from "./useDataGrid";
+
+/**
+ * Sensible default strategy for a column: fake-* generators when the column
+ * name advertises PII, noise for numeric types, hash for text-like types and
+ * redact for everything else. The context menu uses this for the one-click
+ * "Mask column" action; the strategy submenu still allows any choice.
+ */
+export function defaultMaskStrategy(column: ResolvedColumn): AnonymizerStrategy {
+  const name = column.name.toLowerCase();
+  if (/e?-?mail/.test(name)) return "fake-email";
+  if (/(phone|mobile|tel|fax)(_|$|number|no\b)/.test(name) || /(^|_)tel(_|$)/.test(name))
+    return "fake-phone";
+  if (/(^|_)(first|last|full|middle|display|user|customer|contact|nick)?name$/.test(name))
+    return "fake-name";
+  if (isNumericColumn(column)) return "noise";
+  if (isTextLikeColumn(column)) return "hash";
+  return "redact";
+}
 
 export interface DataGridColumnMasks {
   /** Scope key (`connectionId|database|table`) — "" for query-result grids. */
@@ -34,6 +57,10 @@ export interface DataGridColumnMasks {
   maskRows: (rows: readonly (readonly AnonymizerValue[])[]) => Promise<AnonymizerValue[][]>;
   /** Column name → strategy for every masked column (revealed or not). */
   maskStrategies: Record<string, AnonymizerStrategy>;
+  /** Remove the mask rule for one column. */
+  unmaskColumn: (column: string) => void;
+  /** Remove every mask rule in this scope ("Unmask all"). */
+  unmaskAll: () => void;
 }
 
 /**
@@ -59,6 +86,8 @@ export function useDataGridColumnMasks(
   );
   const setRevealed = useColumnMaskStore((state) => state.setRevealed);
   const ensureSalt = useColumnMaskStore((state) => state.ensureSalt);
+  const clearColumnMask = useColumnMaskStore((state) => state.clearColumnMask);
+  const clearScopeMasks = useColumnMaskStore((state) => state.clearScopeMasks);
 
   const maskedColumnNames = useMemo(() => new Set(Object.keys(scopeMasks ?? {})), [scopeMasks]);
   const revealedSet = useMemo(() => new Set(revealedList ?? []), [revealedList]);
@@ -137,6 +166,17 @@ export function useDataGridColumnMasks(
     [hasActiveMasks, salt, activeStrategies],
   );
 
+  const unmaskColumn = useCallback(
+    (column: string) => {
+      if (scopeKey) clearColumnMask(scopeKey, column);
+    },
+    [scopeKey, clearColumnMask],
+  );
+
+  const unmaskAll = useCallback(() => {
+    if (scopeKey) clearScopeMasks(scopeKey);
+  }, [scopeKey, clearScopeMasks]);
+
   return {
     scopeKey,
     maskedColumnNames,
@@ -148,5 +188,7 @@ export function useDataGridColumnMasks(
     toggleRevealed,
     maskValue,
     maskRows,
+    unmaskColumn,
+    unmaskAll,
   };
 }

@@ -3,6 +3,7 @@ import { requestAppConfirmation } from "../../../stores/confirmStore";
 import type { TableFilterPlan } from "./useDataGrid";
 import { getCurrentAppLanguage } from "../../../i18n";
 import { getDataGridMaskingCopy } from "../datagrid-masking-copy";
+import type { TableExportFormat } from "../../../utils/export-formats";
 
 /** Error prefix the backend emits when the picked export path already exists. */
 const EXPORT_FILE_EXISTS_CODE = "TABLER_EXPORT_FILE_EXISTS";
@@ -24,7 +25,7 @@ interface DataGridTableExportParams {
     request: {
       table: string;
       database?: string;
-      format: "csv" | "jsonl";
+      format: TableExportFormat;
       orderBy?: string;
       orderDir?: "ASC" | "DESC";
       filter?: string;
@@ -39,8 +40,8 @@ interface DataGridTableExportParams {
 }
 
 /**
- * Full-table streaming export (CSV / JSONL) with progress and cancellation.
- * Handlers are moved verbatim from the grid component body.
+ * Full-table streaming export (every format the backend reports via
+ * `get_export_formats`) with progress and cancellation.
  */
 export function useDataGridTableExport({
   tableName,
@@ -59,7 +60,7 @@ export function useDataGridTableExport({
   masksActive,
 }: DataGridTableExportParams) {
   const handleFullTableExport = useCallback(
-    async (format: "csv" | "jsonl") => {
+    async (format: TableExportFormat) => {
       if (!tableName || isExportingFull) return;
       // A quick filter that can't compile to a server clause would silently
       // export unfiltered rows — refuse instead of producing a misleading file.

@@ -42,6 +42,9 @@ interface DataGridInlineEditingParams {
   stageChange: StageChangeFn;
   patchLoadedTableCell: (rowIndex: number, colIndex: number, value: GridCellValue) => void;
   ensureStructureLoaded: () => Promise<ColumnDetail[]>;
+  /** Columns actively masked — inline edit is refused so the editor never
+   *  seeds from (or stages over) a masked value. */
+  maskedColumnNames?: ReadonlySet<string>;
 
   editingDraftRef: { current: string };
   /** Set true by the editor's onChange — an untouched blur must not stage
@@ -76,7 +79,7 @@ export function useDataGridInlineEditing({
   stageChange,
   patchLoadedTableCell,
   ensureStructureLoaded,
-
+  maskedColumnNames,
   editingDraftRef,
   editingTouchedRef,
 }: DataGridInlineEditingParams) {
@@ -123,6 +126,13 @@ export function useDataGridInlineEditing({
         return;
       }
 
+      if (maskedColumnNames?.has(column.name)) {
+        setError(
+          `Column "${column.name}" is masked — remove the mask or reveal it before editing.`,
+        );
+        return;
+      }
+
       const seedValue = editorValueFromCell(rowValues[colIndex] as GridCellValue);
       setEditingSeedValue(seedValue);
       editingDraftRef.current = seedValue;
@@ -142,6 +152,7 @@ export function useDataGridInlineEditing({
       setEditingCell,
       ensureStructureLoaded,
       setError,
+      maskedColumnNames,
     ],
   );
 

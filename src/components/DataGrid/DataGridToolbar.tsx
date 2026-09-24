@@ -21,6 +21,7 @@ import {
   Dices,
   PanelRight,
 } from "lucide-react";
+import { DataGridMaskIndicator } from "./DataGridMaskIndicator";
 import { DataGridAnonymizerModal } from "./dialogs/DataGridAnonymizerModal";
 import { GenerateTestRowsDialog } from "../GenerateTestRows/GenerateTestRowsDialog";
 import { getSeedRowsCopy } from "../GenerateTestRows/seed-rows-copy";
@@ -37,10 +38,20 @@ import {
   exportToJSON,
   exportToMarkdown,
   exportToNDJSON,
+  exportToTSV,
+  exportToHtml,
 } from "../../utils/export-utils";
 import { exportToXML } from "../../utils/export-xml";
 import { exportXLSX } from "../../utils/export-xlsx";
 import { buildMqlContent, exportToMQL } from "../../utils/export-mql";
+import {
+  DEFAULT_EXPORT_FORMATS,
+  getCompiledExportFormats,
+  type ExportFormatInfo,
+  type TableExportFormat,
+} from "../../utils/export-formats";
+import { getExportFormatsCopy } from "../../utils/export-formats-copy";
+import { saveExportFile } from "../../utils/tauri-utils";
 import { generateInsertSql } from "../../utils/sql-generator";
 import { serializePluginFormat } from "../../utils/plugin-format-runtime";
 import { emitAppToast } from "../../utils/app-toast";
@@ -54,6 +65,7 @@ import {
 } from "../../utils/plugin-format-runtime";
 import type { QueryResult } from "../../types";
 import type { ResolvedColumn } from "./hooks/useDataGrid";
+import type { AnonymizerStrategy } from "../../utils/anonymizer";
 import type { DatabaseType } from "../../types/database";
 import { getDataGridPowerCopy } from "./datagrid-power-copy";
 import { ResultDiffControls } from "../ResultDiff/ResultDiffControls";
@@ -121,7 +133,7 @@ interface DataGridToolbarProps {
   /** True while the reload refetch is in flight — swaps the icon for a spinner */
   isReloadingData?: boolean;
   canImportCsv?: boolean;
-  onExportFull?: (format: "csv" | "jsonl") => void;
+  onExportFull?: (format: TableExportFormat) => void;
   isExportingFull?: boolean;
   exportedRowCount?: number;
   onCancelExport?: () => void;
@@ -143,6 +155,12 @@ interface DataGridToolbarProps {
   onToggleRowInspector?: () => void;
   /** True while the row inspector panel is open (button active state). */
   rowInspectorOpen?: boolean;
+  /** View-time masking: column name → strategy for masked columns. */
+  maskedColumns?: Record<string, AnonymizerStrategy>;
+  /** Remove the mask rule for one column. */
+  onUnmaskColumn?: (column: string) => void;
+  /** Remove every mask rule in the current table scope. */
+  onUnmaskAll?: () => void;
 }
 
 function buildExportFilename(tableName: string | undefined, extension: string): string {
@@ -207,6 +225,9 @@ export function DataGridToolbar({
   dbType,
   onToggleRowInspector,
   rowInspectorOpen = false,
+  maskedColumns,
+  onUnmaskColumn,
+  onUnmaskAll,
 }: DataGridToolbarProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
@@ -227,6 +248,19 @@ export function DataGridToolbar({
   const { settings, updateSettings } = useDataGridSettings();
   const { t, language } = useI18n();
   const chartCopy = getDataGridChartCopy(language);
+  const exportCopy = getExportFormatsCopy(language);
+  // Formats compiled into the backend; parquet is absent when the
+  // `parquet-export` cargo feature is off.
+  const [fullFormats, setFullFormats] = useState<ExportFormatInfo[]>(DEFAULT_EXPORT_FORMATS);
+  useEffect(() => {
+    let cancelled = false;
+    void getCompiledExportFormats().then((formats) => {
+      if (!cancelled) setFullFormats(formats);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   const powerCopy = getDataGridPowerCopy(language);
 
   /** True when at least one column can feed a numeric Y axis. */
@@ -371,13 +405,8 @@ export function DataGridToolbar({
         .split(".")
         .pop() || tableName
     : "table_export";
-
   const handleExportCSV = useCallback(() => {
     if (!canExport) return;
-    if (tableName && onExportFull) {
-      onExportFull("csv");
-      return;
-    }
     const cols = resolvedColumns.map((c) => c.name);
     exportToCSV(cols, dataRows, buildExportFilename(exportFilenameBase, "csv")).catch((error) => {
       emitAppToast({
@@ -386,14 +415,21 @@ export function DataGridToolbar({
         tone: "error",
       });
     });
-  }, [canExport, dataRows, exportFilenameBase, onExportFull, resolvedColumns, tableName, t]);
+  }, [canExport, dataRows, exportFilenameBase, resolvedColumns, t]);
 
+  const handleExportTSV = useCallback(() => {
+    if (!canExport) return;
+    const cols = resolvedColumns.map((c) => c.name);
+    exportToTSV(cols, dataRows, buildExportFilename(exportFilenameBase, "tsv")).catch((error) => {
+      emitAppToast({
+        title: t("datagrid.exportFailed"),
+        description: String(error),
+        tone: "error",
+      });
+    });
+  }, [canExport, dataRows, exportFilenameBase, resolvedColumns, t]);
   const handleExportJSON = useCallback(() => {
     if (!canExport) return;
-    if (tableName && onExportFull) {
-      onExportFull("jsonl");
-      return;
-    }
     const cols = resolvedColumns.map((c) => c.name);
     exportToJSON(cols, dataRows, buildExportFilename(exportFilenameBase, "json")).catch((error) => {
       emitAppToast({
@@ -402,7 +438,7 @@ export function DataGridToolbar({
         tone: "error",
       });
     });
-  }, [canExport, dataRows, exportFilenameBase, onExportFull, resolvedColumns, tableName, t]);
+  }, [canExport, dataRows, exportFilenameBase, resolvedColumns, t]);
 
   const handleExportXLSX = useCallback(async () => {
     if (!canExport) return;
@@ -460,6 +496,33 @@ export function DataGridToolbar({
     );
   }, [canExport, dataRows, exportFilenameBase, resolvedColumns, t]);
 
+  const handleExportHtml = useCallback(() => {
+    if (!canExport) return;
+    const cols = resolvedColumns.map((c) => c.name);
+    exportToHtml(cols, dataRows, buildExportFilename(exportFilenameBase, "html")).catch((error) => {
+      emitAppToast({
+        title: t("datagrid.exportFailed"),
+        description: String(error),
+        tone: "error",
+      });
+    });
+  }, [canExport, dataRows, exportFilenameBase, resolvedColumns, t]);
+
+  const handleExportSQL = useCallback(() => {
+    if (!canExport || !tableName) return;
+    const cols = resolvedColumns.map((c) => c.name);
+    saveExportFile({
+      fileName: buildExportFilename(exportFilenameBase, "sql"),
+      content: generateInsertSql(tableName, cols, dataRows, dbType),
+      filters: [{ name: "SQL", extensions: ["sql"] }],
+    }).catch((error) => {
+      emitAppToast({
+        title: t("datagrid.exportFailed"),
+        description: String(error),
+        tone: "error",
+      });
+    });
+  }, [canExport, dataRows, dbType, exportFilenameBase, resolvedColumns, tableName, t]);
   const handleExportMQL = useCallback(async () => {
     if (!canExport) return;
     const cols = resolvedColumns.map((c) => c.name);
@@ -723,6 +786,14 @@ export function DataGridToolbar({
             </span>
           )}
 
+          {maskedColumns && onUnmaskColumn && onUnmaskAll && (
+            <DataGridMaskIndicator
+              maskedColumns={maskedColumns}
+              onUnmaskColumn={onUnmaskColumn}
+              onUnmaskAll={onUnmaskAll}
+            />
+          )}
+
           <DataGridSqlMenu
             open={showSqlMenu}
             anchorRef={sqlBtnRef}
@@ -914,15 +985,20 @@ export function DataGridToolbar({
             anchorRef={exportBtnRef}
             tableName={tableName}
             onExportFull={onExportFull}
+            fullFormats={fullFormats}
+            exportCopy={exportCopy}
             pluginFormats={pluginFormats}
             powerCopy={powerCopy}
             t={t}
             onExportCSV={handleExportCSV}
+            onExportTSV={handleExportTSV}
             onExportJSON={handleExportJSON}
             onExportXLSX={handleExportXLSX}
             onExportMarkdown={handleExportMarkdown}
             onExportXML={handleExportXML}
+            onExportHtml={handleExportHtml}
             onExportNDJSON={handleExportNDJSON}
+            onExportSQL={handleExportSQL}
             onExportMQL={handleExportMQL}
             onPluginExport={handlePluginExport}
             onClose={() => setShowExportMenu(false)}

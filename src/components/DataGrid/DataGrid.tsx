@@ -1198,16 +1198,20 @@ export function DataGrid({
       pkEntries.forEach((entry) => {
         pkValues[entry.column] = entry.value;
       });
-      EventCenter.emit("row-inspector-open", {
-        rowIndex: absoluteRowNumber,
-        row,
-        columns: resolvedColumns,
-        primaryKeyValues: pkValues,
-        tableName,
-        database,
+      // Masked columns must not leak into the inspector — mask the row before
+      // emitting so the panel shows exactly what the grid shows.
+      void columnMasks.maskRows([row]).then(([maskedRow]) => {
+        EventCenter.emit("row-inspector-open", {
+          rowIndex: absoluteRowNumber,
+          row: maskedRow ?? row,
+          columns: resolvedColumns,
+          primaryKeyValues: pkValues,
+          tableName,
+          database,
+        });
       });
     },
-    [data, resolvedColumns, primaryKeyColumns, tableName, database],
+    [data, resolvedColumns, primaryKeyColumns, tableName, database, columnMasks],
   );
 
   const rowInspectorOpen = useAppLayoutStore((state) => state.showRowInspector);
@@ -1329,6 +1333,7 @@ export function DataGrid({
     stageChange,
     patchLoadedTableCell,
     ensureStructureLoaded,
+    maskedColumnNames: columnMasks.activeMaskedNames,
     editingDraftRef,
     editingTouchedRef,
   });
@@ -1994,6 +1999,11 @@ export function DataGrid({
           dbType={dbType}
           onToggleRowInspector={data && data.rows.length > 0 ? handleToggleRowInspector : undefined}
           rowInspectorOpen={rowInspectorOpen}
+          maskedColumns={
+            columnMasks.maskedColumnNames.size > 0 ? columnMasks.maskStrategies : undefined
+          }
+          onUnmaskColumn={columnMasks.unmaskColumn}
+          onUnmaskAll={columnMasks.unmaskAll}
         />
 
         <div

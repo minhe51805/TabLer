@@ -399,7 +399,7 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "duckdb",
             "DuckDB",
             DriverTier::Extended,
-            S, S, S, L, S, S, S, U, S, S, S, L, N,
+            S, S, S, L, S, S, S, S, S, S, S, L, N,
             &["Atomic edit queues and CSV imports are not implemented.", "Restore is classified as transactional but is not yet pinned to one driver transaction.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.", "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied."]),
         DatabaseType::Cassandra => profile(
             database_type,
@@ -469,7 +469,7 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "libsql",
             "LibSQL",
             DriverTier::Specialized,
-            S, S, S, L, S, S, S, U, S, S, S, L, N,
+            S, S, S, L, S, S, S, S, S, S, S, L, N,
             &["Prepared parameters, atomic mutations/imports, and direct schema actions are not implemented.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.", "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied."]),
         DatabaseType::CloudflareD1 => profile(
             database_type,

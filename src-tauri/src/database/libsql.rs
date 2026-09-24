@@ -12,6 +12,7 @@ use libsql::{
     Builder, Connection as LibSqlConnection, Database as LibSqlDatabase, Rows as LibSqlRows,
     TransactionBehavior, Value as LibSqlValue, ValueType,
 };
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
@@ -144,6 +145,32 @@ impl LibSqlDriver {
                 "Only string, number, boolean, and null values are supported"
             )),
         }
+    }
+
+    fn build_insert_statement(
+        request: &TableRowInsertRequest,
+    ) -> Result<(String, Vec<LibSqlValue>)> {
+        let mut sql = format!("INSERT INTO {} (", quote_sqlite_identifier(&request.table)?);
+        let mut params: Vec<LibSqlValue> = Vec::new();
+
+        for (index, (column, _)) in request.values.iter().enumerate() {
+            if index > 0 {
+                sql.push_str(", ");
+            }
+            sql.push_str(&quote_sqlite_identifier(column)?);
+        }
+
+        sql.push_str(") VALUES (");
+        for (index, (_, value)) in request.values.iter().enumerate() {
+            if index > 0 {
+                sql.push_str(", ");
+            }
+            sql.push('?');
+            params.push(Self::serde_to_libsql_value(value)?);
+        }
+        sql.push(')');
+
+        Ok((sql, params))
     }
 
     fn parameter_to_libsql_value(parameter: &QueryParameter) -> Result<LibSqlValue> {
@@ -876,38 +903,83 @@ impl DatabaseDriver for LibSqlDriver {
             return Err(anyhow!("Insert requires at least one column value"));
         }
 
-        let mut sql = format!("INSERT INTO {} (", quote_sqlite_identifier(&request.table)?);
-        let mut params: Vec<LibSqlValue> = Vec::new();
-
-        let mut first = true;
-        for (col, _) in &request.values {
-            if !first {
-                sql.push_str(", ");
-            }
-            first = false;
-            sql.push_str(&quote_sqlite_identifier(col)?);
-        }
-
-        sql.push_str(") VALUES (");
-
-        first = true;
-        for (_, value) in &request.values {
-            if !first {
-                sql.push_str(", ");
-            }
-            first = false;
-            sql.push('?');
-            params.push(Self::serde_to_libsql_value(value)?);
-        }
-
-        sql.push(')');
-
+        let (sql, params) = Self::build_insert_statement(request)?;
         let rows_affected = self
             .connection
             .execute(&sql, params)
             .await
             .with_context(|| format!("Failed to insert row into LibSQL table {}", request.table))?;
         Ok(rows_affected as u64)
+    }
+
+    async fn insert_table_rows_atomically(
+        &self,
+        requests: &[TableRowInsertRequest],
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        if requests.is_empty() {
+            return Err(anyhow!("CSV import requires at least one row"));
+        }
+
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await
+            .context("Failed to begin LibSQL insert transaction")?;
+
+        let mut affected_rows = 0u64;
+        for request in requests {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+            }
+            if request.values.is_empty() {
+                return Err(anyhow!("Each CSV row requires at least one column value"));
+            }
+            let (sql, params) = Self::build_insert_statement(request)?;
+            affected_rows += tx.execute(&sql, params).await.with_context(|| {
+                format!("Failed to insert row into LibSQL table {}", request.table)
+            })?;
+        }
+
+        tx.commit()
+            .await
+            .context("Failed to commit LibSQL insert transaction")?;
+        Ok(affected_rows)
+    }
+
+    async fn insert_table_row_stream_atomically(
+        &self,
+        mut rows: tokio::sync::mpsc::Receiver<crate::database::models::CsvImportRow>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await
+            .context("Failed to begin LibSQL insert transaction")?;
+
+        let mut affected_rows = 0u64;
+        while let Some(request) = rows.recv().await {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+            }
+            let request = request.map_err(anyhow::Error::msg)?;
+            if request.values.is_empty() {
+                return Err(anyhow!("Each CSV row requires at least one column value"));
+            }
+            let (sql, params) = Self::build_insert_statement(&request)?;
+            affected_rows += tx.execute(&sql, params).await.with_context(|| {
+                format!("Failed to insert row into LibSQL table {}", request.table)
+            })?;
+        }
+
+        if affected_rows == 0 {
+            return Err(anyhow!("CSV import did not contain any data rows"));
+        }
+        tx.commit()
+            .await
+            .context("Failed to commit LibSQL insert transaction")?;
+        Ok(affected_rows)
     }
 
     fn driver_name(&self) -> &str {

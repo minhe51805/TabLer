@@ -111,7 +111,7 @@
     "query_cancellation": "L",
     "pagination": "S",
     "inline_edit": "S",
-    "atomic_edit_queue": "U",
+    "atomic_edit_queue": "S",
     "atomic_csv_import": "U",
     "data_export": "S",
     "explain": "S",
@@ -122,7 +122,7 @@
   "cassandra": {
     "connect": "S",
     "query": "S",
-    "prepared_parameters": "U",
+    "prepared_parameters": "S",
     "query_cancellation": "L",
     "pagination": "S",
     "inline_edit": "S",
@@ -137,7 +137,7 @@
   "snowflake": {
     "connect": "S",
     "query": "S",
-    "prepared_parameters": "U",
+    "prepared_parameters": "S",
     "query_cancellation": "L",
     "pagination": "S",
     "inline_edit": "S",
@@ -212,7 +212,7 @@
   "clickhouse": {
     "connect": "S",
     "query": "S",
-    "prepared_parameters": "U",
+    "prepared_parameters": "S",
     "query_cancellation": "L",
     "pagination": "S",
     "inline_edit": "S",
@@ -227,7 +227,7 @@
   "bigquery": {
     "connect": "S",
     "query": "S",
-    "prepared_parameters": "U",
+    "prepared_parameters": "S",
     "query_cancellation": "L",
     "pagination": "S",
     "inline_edit": "S",
@@ -242,11 +242,11 @@
   "libsql": {
     "connect": "S",
     "query": "S",
-    "prepared_parameters": "U",
+    "prepared_parameters": "S",
     "query_cancellation": "L",
     "pagination": "S",
     "inline_edit": "S",
-    "atomic_edit_queue": "U",
+    "atomic_edit_queue": "S",
     "atomic_csv_import": "U",
     "data_export": "S",
     "explain": "S",
@@ -257,7 +257,7 @@
   "cloudflare_d1": {
     "connect": "S",
     "query": "S",
-    "prepared_parameters": "U",
+    "prepared_parameters": "S",
     "query_cancellation": "L",
     "pagination": "S",
     "inline_edit": "S",
@@ -287,7 +287,7 @@
   "oracle": {
     "connect": "S",
     "query": "S",
-    "prepared_parameters": "U",
+    "prepared_parameters": "S",
     "query_cancellation": "L",
     "pagination": "S",
     "inline_edit": "U",

@@ -155,6 +155,30 @@ pub(super) struct BigQueryQueryRequest {
     pub(super) default_dataset: Option<BigQueryDatasetReference>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) location: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) parameter_mode: Option<&'static str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub(super) query_parameters: Vec<BigQueryQueryParameter>,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct BigQueryQueryParameterType {
+    #[serde(rename = "type")]
+    pub(super) data_type: &'static str,
+}
+
+#[derive(Debug, Serialize)]
+pub(super) struct BigQueryQueryParameterValue {
+    /// BigQuery represents a NULL parameter by omitting `value`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) value: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub(super) struct BigQueryQueryParameter {
+    pub(super) parameter_type: BigQueryQueryParameterType,
+    pub(super) parameter_value: BigQueryQueryParameterValue,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -454,6 +478,17 @@ impl BigQueryDriver {
         dataset_override: Option<&str>,
         preserve_query_text: &str,
     ) -> Result<QueryResult> {
+        self.execute_parameterized_single_query(sql, dataset_override, preserve_query_text, &[])
+            .await
+    }
+
+    pub(super) async fn execute_parameterized_single_query(
+        &self,
+        sql: &str,
+        dataset_override: Option<&str>,
+        preserve_query_text: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
         let trimmed_sql = sql.trim();
         if trimmed_sql.is_empty() {
             return Err(anyhow!("BigQuery query cannot be empty"));
@@ -485,6 +520,11 @@ impl BigQueryDriver {
                     timeout_ms: BIGQUERY_QUERY_TIMEOUT_MS,
                     default_dataset,
                     location: self.location.clone(),
+                    parameter_mode: (!parameters.is_empty()).then_some("POSITIONAL"),
+                    query_parameters: parameters
+                        .iter()
+                        .map(Self::query_parameter_binding)
+                        .collect::<Result<Vec<_>>>()?,
                 },
             )
             .await?;
@@ -556,6 +596,65 @@ impl BigQueryDriver {
             query: preserve_query_text.to_string(),
             sandboxed: false,
             truncated,
+        })
+    }
+
+    /// Maps a prepared-statement parameter to the BigQuery REST
+    /// `queryParameters` shape. Values travel as bound parameters, never as
+    /// interpolated SQL text.
+    pub(super) fn query_parameter_binding(
+        parameter: &QueryParameter,
+    ) -> Result<BigQueryQueryParameter> {
+        let (data_type, value) = match parameter.data_type {
+            QueryParameterType::Text => (
+                "STRING",
+                Some(
+                    parameter
+                        .value
+                        .as_str()
+                        .ok_or_else(|| anyhow!("Parameter '{}' must be a string.", parameter.name))?
+                        .to_string(),
+                ),
+            ),
+            QueryParameterType::Integer => (
+                "INT64",
+                Some(
+                    parameter
+                        .value
+                        .as_i64()
+                        .ok_or_else(|| {
+                            anyhow!("Parameter '{}' must be an integer.", parameter.name)
+                        })?
+                        .to_string(),
+                ),
+            ),
+            QueryParameterType::Decimal => (
+                "NUMERIC",
+                Some(
+                    parameter
+                        .value
+                        .as_f64()
+                        .ok_or_else(|| anyhow!("Parameter '{}' must be a number.", parameter.name))?
+                        .to_string(),
+                ),
+            ),
+            QueryParameterType::Boolean => (
+                "BOOL",
+                Some(
+                    parameter
+                        .value
+                        .as_bool()
+                        .ok_or_else(|| anyhow!("Parameter '{}' must be boolean.", parameter.name))?
+                        .to_string(),
+                ),
+            ),
+            QueryParameterType::Json => ("STRING", Some(parameter.value.to_string())),
+            QueryParameterType::Null => ("STRING", None),
+        };
+
+        Ok(BigQueryQueryParameter {
+            parameter_type: BigQueryQueryParameterType { data_type },
+            parameter_value: BigQueryQueryParameterValue { value },
         })
     }
 

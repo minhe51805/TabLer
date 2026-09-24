@@ -63,6 +63,8 @@ struct D1StatementResult {
 #[derive(Debug, Serialize)]
 struct D1SingleQueryPayload<'a> {
     sql: &'a str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    params: Option<&'a [JsonValue]>,
 }
 
 pub struct CloudflareD1Driver {
@@ -167,11 +169,25 @@ impl CloudflareD1Driver {
     }
 
     async fn execute_raw_statement(&self, sql: &str) -> Result<D1StatementResult> {
+        self.execute_raw_statement_params(sql, &[]).await
+    }
+
+    /// `execute_raw_statement` with positional binds. `params[i]` supplies
+    /// the (i+1)-th `?` marker in `sql`; values travel in the request body,
+    /// never in the statement text.
+    async fn execute_raw_statement_params(
+        &self,
+        sql: &str,
+        params: &[JsonValue],
+    ) -> Result<D1StatementResult> {
         let response = self
             .client
             .post(&self.raw_url)
             .bearer_auth(&self.api_token)
-            .json(&D1SingleQueryPayload { sql })
+            .json(&D1SingleQueryPayload {
+                sql,
+                params: (!params.is_empty()).then_some(params),
+            })
             .send()
             .await
             .with_context(|| format!("Failed to reach Cloudflare D1 for query: {sql}"))?;
@@ -283,6 +299,20 @@ impl CloudflareD1Driver {
             sandboxed: false,
             truncated,
         }
+    }
+
+    /// Map ordered `QueryParameter`s to the D1 `params` array — one JSON
+    /// value per `?` marker, in order. D1 accepts null, number, string, and
+    /// boolean natively; Json travels as a serialized string, matching the
+    /// other drivers' convention.
+    fn parameters_to_bind_values(parameters: &[QueryParameter]) -> Vec<JsonValue> {
+        parameters
+            .iter()
+            .map(|parameter| match parameter.data_type {
+                QueryParameterType::Json => JsonValue::String(parameter.value.to_string()),
+                _ => parameter.value.clone(),
+            })
+            .collect()
     }
 
     async fn raw_rows_to_objects(&self, sql: &str) -> Result<Vec<JsonMap<String, JsonValue>>> {
@@ -632,6 +662,21 @@ impl DatabaseDriver for CloudflareD1Driver {
         })
     }
 
+    async fn execute_parameterized_query(
+        &self,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        let started_at = Instant::now();
+        let params = Self::parameters_to_bind_values(parameters);
+        let statement = self.execute_raw_statement_params(sql, &params).await?;
+        Ok(Self::statement_to_query_result(
+            statement,
+            sql.to_string(),
+            started_at.elapsed().as_millis(),
+        ))
+    }
+
     async fn get_table_data(
         &self,
         table: &str,
@@ -890,6 +935,50 @@ mod tests {
         assert_eq!(
             CloudflareD1Driver::sqlite_literal(&json!({"id": 1})).unwrap(),
             "'{\"id\":1}'"
+        );
+    }
+
+    #[test]
+    fn parameters_map_to_positional_d1_params() {
+        use crate::database::models::{QueryParameter, QueryParameterType};
+
+        let parameters = vec![
+            QueryParameter {
+                name: "name".to_string(),
+                value: json!("O'Reilly"),
+                data_type: QueryParameterType::Text,
+            },
+            QueryParameter {
+                name: "count".to_string(),
+                value: json!(42),
+                data_type: QueryParameterType::Integer,
+            },
+            QueryParameter {
+                name: "active".to_string(),
+                value: json!(true),
+                data_type: QueryParameterType::Boolean,
+            },
+            QueryParameter {
+                name: "payload".to_string(),
+                value: json!({"id": 1}),
+                data_type: QueryParameterType::Json,
+            },
+            QueryParameter {
+                name: "missing".to_string(),
+                value: json!(null),
+                data_type: QueryParameterType::Null,
+            },
+        ];
+
+        assert_eq!(
+            CloudflareD1Driver::parameters_to_bind_values(&parameters),
+            vec![
+                json!("O'Reilly"),
+                json!(42),
+                json!(true),
+                json!("{\"id\":1}"),
+                json!(null),
+            ]
         );
     }
 }

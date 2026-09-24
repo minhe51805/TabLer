@@ -189,7 +189,7 @@
       "queryCancellation": "limited",
       "pagination": "supported",
       "inlineEdit": "supported",
-      "atomicEditQueue": "unsupported",
+      "atomicEditQueue": "supported",
       "atomicCsvImport": "unsupported",
       "dataExport": "supported",
       "explain": "supported",
@@ -213,7 +213,7 @@
     "capabilities": {
       "connect": "supported",
       "query": "supported",
-      "preparedParameters": "unsupported",
+      "preparedParameters": "supported",
       "queryCancellation": "limited",
       "pagination": "supported",
       "inlineEdit": "supported",
@@ -239,7 +239,7 @@
     "capabilities": {
       "connect": "supported",
       "query": "supported",
-      "preparedParameters": "unsupported",
+      "preparedParameters": "supported",
       "queryCancellation": "limited",
       "pagination": "supported",
       "inlineEdit": "supported",
@@ -375,7 +375,7 @@
     "capabilities": {
       "connect": "supported",
       "query": "supported",
-      "preparedParameters": "unsupported",
+      "preparedParameters": "supported",
       "queryCancellation": "limited",
       "pagination": "supported",
       "inlineEdit": "supported",
@@ -401,7 +401,7 @@
     "capabilities": {
       "connect": "supported",
       "query": "supported",
-      "preparedParameters": "unsupported",
+      "preparedParameters": "supported",
       "queryCancellation": "limited",
       "pagination": "supported",
       "inlineEdit": "supported",
@@ -427,11 +427,11 @@
     "capabilities": {
       "connect": "supported",
       "query": "supported",
-      "preparedParameters": "unsupported",
+      "preparedParameters": "supported",
       "queryCancellation": "limited",
       "pagination": "supported",
       "inlineEdit": "supported",
-      "atomicEditQueue": "unsupported",
+      "atomicEditQueue": "supported",
       "atomicCsvImport": "unsupported",
       "dataExport": "supported",
       "explain": "supported",
@@ -454,7 +454,7 @@
     "capabilities": {
       "connect": "supported",
       "query": "supported",
-      "preparedParameters": "unsupported",
+      "preparedParameters": "supported",
       "queryCancellation": "limited",
       "pagination": "supported",
       "inlineEdit": "supported",
@@ -508,7 +508,7 @@
     "capabilities": {
       "connect": "supported",
       "query": "supported",
-      "preparedParameters": "unsupported",
+      "preparedParameters": "supported",
       "queryCancellation": "limited",
       "pagination": "supported",
       "inlineEdit": "unsupported",

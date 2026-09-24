@@ -137,6 +137,7 @@ impl SnowflakeDriver {
             schema: context.schema,
             warehouse: context.warehouse,
             role: context.role,
+            bindings: None,
             parameters: SnowflakeStatementParameters {
                 rows_per_resultset: MAX_QUERY_RESULT_ROWS + 1,
                 date_output_format: "YYYY-MM-DD",
@@ -578,6 +579,16 @@ impl DatabaseDriver for SnowflakeDriver {
         })
     }
 
+    async fn execute_parameterized_query(
+        &self,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        let bindings = Self::statement_bindings(parameters)?;
+        self.execute_bound_query(sql, None, sql, Some(bindings))
+            .await
+    }
+
     async fn get_table_data(
         &self,
         table: &str,
@@ -811,6 +822,7 @@ impl DatabaseDriver for SnowflakeDriver {
 
 #[cfg(test)]
 mod tests {
+    use super::super::models::{QueryParameter, QueryParameterType};
     use super::SnowflakeDriver;
     use serde_json::json;
 
@@ -832,5 +844,44 @@ mod tests {
             SnowflakeDriver::quote_sql_literal(&json!({"id": 1})).unwrap(),
             "PARSE_JSON('{\"id\":1}')"
         );
+    }
+
+    fn parameter(value: serde_json::Value, data_type: QueryParameterType) -> QueryParameter {
+        QueryParameter {
+            name: "p".to_string(),
+            value,
+            data_type,
+        }
+    }
+
+    #[test]
+    fn builds_positional_statement_bindings() {
+        let bindings = SnowflakeDriver::statement_bindings(&[
+            parameter(json!("O'Reilly"), QueryParameterType::Text),
+            parameter(json!(42), QueryParameterType::Integer),
+            parameter(json!(2.5), QueryParameterType::Decimal),
+            parameter(json!(true), QueryParameterType::Boolean),
+            parameter(json!({"id": 1}), QueryParameterType::Json),
+            parameter(json!(null), QueryParameterType::Null),
+        ])
+        .unwrap();
+
+        assert_eq!(
+            serde_json::to_value(&bindings).unwrap(),
+            json!({
+                "1": { "type": "TEXT", "value": "O'Reilly" },
+                "2": { "type": "FIXED", "value": "42" },
+                "3": { "type": "REAL", "value": "2.5" },
+                "4": { "type": "BOOLEAN", "value": "true" },
+                "5": { "type": "TEXT", "value": "{\"id\":1}" },
+                "6": { "type": "TEXT", "value": null }
+            })
+        );
+
+        assert!(SnowflakeDriver::statement_bindings(&[parameter(
+            json!("nope"),
+            QueryParameterType::Integer,
+        )])
+        .is_err());
     }
 }

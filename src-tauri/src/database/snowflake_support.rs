@@ -6,6 +6,7 @@ use anyhow::{anyhow, bail, Context, Result};
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::{Number as JsonNumber, Value as JsonValue};
+use std::collections::BTreeMap;
 use std::time::Instant;
 use tokio::time::{sleep, Duration};
 
@@ -93,7 +94,17 @@ pub(super) struct SnowflakeStatementRequest {
     pub(super) warehouse: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) role: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) bindings: Option<BTreeMap<String, SnowflakeStatementBinding>>,
     pub(super) parameters: SnowflakeStatementParameters,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct SnowflakeStatementBinding {
+    #[serde(rename = "type")]
+    pub(super) data_type: &'static str,
+    /// Snowflake encodes a NULL binding as a JSON null `value`.
+    pub(super) value: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -237,8 +248,10 @@ impl SnowflakeDriver {
         &self,
         statement: &str,
         database_override: Option<&str>,
+        bindings: Option<BTreeMap<String, SnowflakeStatementBinding>>,
     ) -> Result<SnowflakeApiResponse> {
-        let request = self.build_statement_request(statement, database_override);
+        let mut request = self.build_statement_request(statement, database_override);
+        request.bindings = bindings;
         let response = self
             .apply_common_headers(self.client.post(&self.statements_url))
             .json(&request)
@@ -466,6 +479,17 @@ impl SnowflakeDriver {
         database_override: Option<&str>,
         preserve_query_text: &str,
     ) -> Result<QueryResult> {
+        self.execute_bound_query(sql, database_override, preserve_query_text, None)
+            .await
+    }
+
+    pub(super) async fn execute_bound_query(
+        &self,
+        sql: &str,
+        database_override: Option<&str>,
+        preserve_query_text: &str,
+        bindings: Option<BTreeMap<String, SnowflakeStatementBinding>>,
+    ) -> Result<QueryResult> {
         let trimmed_sql = sql.trim();
         if trimmed_sql.is_empty() {
             return Err(anyhow!("Snowflake query cannot be empty"));
@@ -473,7 +497,10 @@ impl SnowflakeDriver {
 
         let started_at = Instant::now();
         let result_set = self
-            .await_result_set(self.post_statement(trimmed_sql, database_override).await?)
+            .await_result_set(
+                self.post_statement(trimmed_sql, database_override, bindings)
+                    .await?,
+            )
             .await?;
         let row_types = Self::row_types_from_result_set(&result_set);
         let mut raw_rows = result_set.data.clone();
@@ -535,6 +562,77 @@ impl SnowflakeDriver {
             sandboxed: false,
             truncated,
         })
+    }
+
+    /// Maps prepared-statement parameters to the Snowflake SQL API `bindings`
+    /// object: 1-based positional keys matching `?` markers. Values travel as
+    /// bound parameters, never as interpolated SQL text.
+    pub(super) fn statement_bindings(
+        parameters: &[QueryParameter],
+    ) -> Result<BTreeMap<String, SnowflakeStatementBinding>> {
+        parameters
+            .iter()
+            .enumerate()
+            .map(|(index, parameter)| {
+                let (data_type, value) = match parameter.data_type {
+                    QueryParameterType::Text => (
+                        "TEXT",
+                        Some(
+                            parameter
+                                .value
+                                .as_str()
+                                .ok_or_else(|| {
+                                    anyhow!("Parameter '{}' must be a string.", parameter.name)
+                                })?
+                                .to_string(),
+                        ),
+                    ),
+                    QueryParameterType::Integer => (
+                        "FIXED",
+                        Some(
+                            parameter
+                                .value
+                                .as_i64()
+                                .ok_or_else(|| {
+                                    anyhow!("Parameter '{}' must be an integer.", parameter.name)
+                                })?
+                                .to_string(),
+                        ),
+                    ),
+                    QueryParameterType::Decimal => (
+                        "REAL",
+                        Some(
+                            parameter
+                                .value
+                                .as_f64()
+                                .ok_or_else(|| {
+                                    anyhow!("Parameter '{}' must be a number.", parameter.name)
+                                })?
+                                .to_string(),
+                        ),
+                    ),
+                    QueryParameterType::Boolean => (
+                        "BOOLEAN",
+                        Some(
+                            parameter
+                                .value
+                                .as_bool()
+                                .ok_or_else(|| {
+                                    anyhow!("Parameter '{}' must be boolean.", parameter.name)
+                                })?
+                                .to_string(),
+                        ),
+                    ),
+                    QueryParameterType::Json => ("TEXT", Some(parameter.value.to_string())),
+                    QueryParameterType::Null => ("TEXT", None),
+                };
+
+                Ok((
+                    (index + 1).to_string(),
+                    SnowflakeStatementBinding { data_type, value },
+                ))
+            })
+            .collect()
     }
 
     pub(super) fn info_schema_relation(database: &str, relation: &str) -> Result<String> {

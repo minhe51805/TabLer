@@ -27,6 +27,18 @@ struct OrdsSqlPayload<'a> {
     statement_text: &'a str,
     offset: u64,
     limit: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    binds: Option<&'a [OrdsSqlBind]>,
+}
+
+/// One positional bind in the ORDS `binds` array. ORDS requires each entry
+/// to carry `index` (1-based, matching `?` markers left to right),
+/// `data_type` (an Oracle type name), and `value`.
+#[derive(Debug, Serialize)]
+struct OrdsSqlBind {
+    index: u64,
+    data_type: &'static str,
+    value: JsonValue,
 }
 
 /// Success envelope: `{"items": [row objects], "hasMore": bool, ...}`.
@@ -231,6 +243,18 @@ impl OracleDriver {
         sql: &str,
         max_rows: usize,
     ) -> Result<(Vec<JsonMap<String, JsonValue>>, bool)> {
+        self.execute_statement_binds(sql, &[], max_rows).await
+    }
+
+    /// `execute_statement` with positional binds. `binds[i]` supplies the
+    /// (i+1)-th `?` marker in `sql`; values travel in the request body, never
+    /// in the statement text.
+    async fn execute_statement_binds(
+        &self,
+        sql: &str,
+        binds: &[OrdsSqlBind],
+        max_rows: usize,
+    ) -> Result<(Vec<JsonMap<String, JsonValue>>, bool)> {
         let endpoint = self.sql_endpoint();
         let mut rows: Vec<JsonMap<String, JsonValue>> = Vec::new();
         let mut offset = 0u64;
@@ -245,6 +269,7 @@ impl OracleDriver {
                     statement_text: sql,
                     offset,
                     limit: ORDS_PAGE_LIMIT,
+                    binds: (!binds.is_empty()).then_some(binds),
                 })
                 .send()
                 .await
@@ -277,6 +302,50 @@ impl OracleDriver {
         }
 
         Ok((rows, truncated))
+    }
+
+    /// Map ordered `QueryParameter`s to ORDS positional binds. `index` is
+    /// 1-based to match the `?` markers left to right; `data_type` is the
+    /// Oracle type ORDS binds as. Oracle has no portable BOOLEAN bind type
+    /// (pre-23c), so booleans travel as NUMBER 1/0; Json travels as a
+    /// VARCHAR2 string, matching the other drivers' convention.
+    fn parameters_to_binds(parameters: &[QueryParameter]) -> Vec<OrdsSqlBind> {
+        parameters
+            .iter()
+            .enumerate()
+            .map(|(position, parameter)| {
+                let (data_type, value) = match parameter.data_type {
+                    QueryParameterType::Text => (
+                        "VARCHAR2",
+                        parameter
+                            .value
+                            .as_str()
+                            .map(|text| JsonValue::String(text.to_string()))
+                            .unwrap_or_else(|| JsonValue::String(parameter.value.to_string())),
+                    ),
+                    QueryParameterType::Integer | QueryParameterType::Decimal => {
+                        ("NUMBER", parameter.value.clone())
+                    }
+                    QueryParameterType::Boolean => (
+                        "NUMBER",
+                        JsonValue::from(if parameter.value.as_bool().unwrap_or(false) {
+                            1
+                        } else {
+                            0
+                        }),
+                    ),
+                    QueryParameterType::Json => {
+                        ("VARCHAR2", JsonValue::String(parameter.value.to_string()))
+                    }
+                    QueryParameterType::Null => ("VARCHAR2", JsonValue::Null),
+                };
+                OrdsSqlBind {
+                    index: position as u64 + 1,
+                    data_type,
+                    value,
+                }
+            })
+            .collect()
     }
 
     /// Map ORDS row objects to a `QueryResult`. Column order comes from the
@@ -689,6 +758,24 @@ impl DatabaseDriver for OracleDriver {
         })
     }
 
+    async fn execute_parameterized_query(
+        &self,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        let started_at = Instant::now();
+        let binds = Self::parameters_to_binds(parameters);
+        let (rows, truncated) = self
+            .execute_statement_binds(sql, &binds, MAX_QUERY_RESULT_ROWS)
+            .await?;
+        Ok(Self::rows_to_query_result(
+            rows,
+            sql.to_string(),
+            started_at.elapsed().as_millis(),
+            truncated,
+        ))
+    }
+
     async fn get_table_data(
         &self,
         table: &str,
@@ -1001,5 +1088,52 @@ mod tests {
         );
         assert!(fallback.contains("500"));
         assert!(fallback.contains("gateway exploded"));
+    }
+
+    #[test]
+    fn parameters_map_to_positional_ords_binds() {
+        use crate::database::models::{QueryParameter, QueryParameterType};
+
+        let parameters = vec![
+            QueryParameter {
+                name: "name".to_string(),
+                value: json!("O'Reilly"),
+                data_type: QueryParameterType::Text,
+            },
+            QueryParameter {
+                name: "count".to_string(),
+                value: json!(42),
+                data_type: QueryParameterType::Integer,
+            },
+            QueryParameter {
+                name: "active".to_string(),
+                value: json!(true),
+                data_type: QueryParameterType::Boolean,
+            },
+            QueryParameter {
+                name: "payload".to_string(),
+                value: json!({"id": 1}),
+                data_type: QueryParameterType::Json,
+            },
+            QueryParameter {
+                name: "missing".to_string(),
+                value: json!(null),
+                data_type: QueryParameterType::Null,
+            },
+        ];
+
+        let binds = serde_json::to_value(OracleDriver::parameters_to_binds(&parameters))
+            .expect("binds serialize");
+
+        assert_eq!(
+            binds,
+            json!([
+                {"index": 1, "data_type": "VARCHAR2", "value": "O'Reilly"},
+                {"index": 2, "data_type": "NUMBER", "value": 42},
+                {"index": 3, "data_type": "NUMBER", "value": 1},
+                {"index": 4, "data_type": "VARCHAR2", "value": "{\"id\":1}"},
+                {"index": 5, "data_type": "VARCHAR2", "value": null},
+            ])
+        );
     }
 }

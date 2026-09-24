@@ -12,6 +12,7 @@ use futures_util::{stream, Stream, StreamExt, TryStreamExt};
 use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::metadata::{ColumnKind, Table};
+use scylla::response::query_result::QueryResult as ScyllaQueryResult;
 use scylla::statement::Statement;
 use scylla::value::{CqlValue, Row as ScyllaRow};
 use serde_json::{Map as JsonMap, Value as JsonValue};
@@ -162,6 +163,14 @@ impl CassandraDriver {
             .await
             .with_context(|| format!("Cassandra query failed: {cql}"))?;
 
+        Self::query_response_to_result(response, original_query, started_at)
+    }
+
+    fn query_response_to_result(
+        response: ScyllaQueryResult,
+        original_query: &str,
+        started_at: Instant,
+    ) -> Result<QueryResult> {
         let rows_result = match response.into_rows_result() {
             Ok(rows) => rows,
             Err(_) => {
@@ -223,6 +232,35 @@ impl CassandraDriver {
             sandboxed: false,
             truncated,
         })
+    }
+
+    /// Map a bound parameter to a CQL value. `None` serializes as NULL, so
+    /// values travel through the binary protocol — never into the CQL text.
+    fn json_to_cql_value(parameter: &QueryParameter) -> Result<Option<CqlValue>> {
+        match parameter.data_type {
+            QueryParameterType::Text => parameter
+                .value
+                .as_str()
+                .map(|value| Some(CqlValue::Text(value.to_string())))
+                .ok_or_else(|| anyhow!("Parameter '{}' must be a string.", parameter.name)),
+            QueryParameterType::Integer => parameter
+                .value
+                .as_i64()
+                .map(|value| Some(CqlValue::BigInt(value)))
+                .ok_or_else(|| anyhow!("Parameter '{}' must be an integer.", parameter.name)),
+            QueryParameterType::Decimal => parameter
+                .value
+                .as_f64()
+                .map(|value| Some(CqlValue::Double(value)))
+                .ok_or_else(|| anyhow!("Parameter '{}' must be a number.", parameter.name)),
+            QueryParameterType::Boolean => parameter
+                .value
+                .as_bool()
+                .map(|value| Some(CqlValue::Boolean(value)))
+                .ok_or_else(|| anyhow!("Parameter '{}' must be boolean.", parameter.name)),
+            QueryParameterType::Json => Ok(Some(CqlValue::Text(parameter.value.to_string()))),
+            QueryParameterType::Null => Ok(None),
+        }
     }
 
     async fn query_to_objects(&self, cql: &str) -> Result<Vec<JsonMap<String, JsonValue>>> {
@@ -627,6 +665,32 @@ impl DatabaseDriver for CassandraDriver {
             sandboxed: false,
             truncated: false,
         })
+    }
+
+    async fn execute_parameterized_query(
+        &self,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        let started_at = Instant::now();
+        // CQL uses `?` markers natively; the compiled SQL is prepared as-is and
+        // values are bound through the binary protocol.
+        let prepared = self
+            .session
+            .prepare(sql)
+            .await
+            .with_context(|| format!("Failed to prepare Cassandra query: {sql}"))?;
+        let values = parameters
+            .iter()
+            .map(Self::json_to_cql_value)
+            .collect::<Result<Vec<_>>>()?;
+        let response = self
+            .session
+            .execute_unpaged(&prepared, values)
+            .await
+            .with_context(|| format!("Cassandra query failed: {sql}"))?;
+
+        Self::query_response_to_result(response, sql, started_at)
     }
 
     async fn get_table_data(

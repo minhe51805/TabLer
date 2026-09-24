@@ -1,6 +1,26 @@
 /* Agent memory manager modal — per-feature styles (see ai-workspace copy
    constraint: feature CSS lives next to the component, not app-components). */
 
+/* The memory manager is a flat list, not a master-detail editor — it gets a
+   compact dialog instead of the skills manager's fixed 700x500 frame. */
+.ai-memory-manager-modal {
+  display: flex;
+  flex-direction: column;
+  width: min(460px, calc(100vw - 36px));
+  height: auto;
+  max-height: min(420px, calc(100vh - 132px));
+  overflow: hidden;
+}
+
+.ai-memory-manager-modal .ai-workspace-modal-header {
+  padding: 14px 18px 10px;
+}
+
+.ai-memory-manager-modal .ai-skills-manager-body {
+  padding: 0 18px 14px;
+  overflow-y: auto;
+}
+
 .ai-memory-manager-list {
   display: flex;
   flex-direction: column;

@@ -149,7 +149,7 @@ export function AIMemoryManagerModal({
   return (
     <div className="ai-workspace-modal-layer">
       <div
-        className="ai-workspace-modal ai-skills-manager-modal"
+        className="ai-workspace-modal ai-memory-manager-modal"
         role="dialog"
         aria-modal="true"
         aria-label={copy.title}

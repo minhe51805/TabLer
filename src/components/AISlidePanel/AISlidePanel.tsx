@@ -25,7 +25,7 @@ import {
 import type { AIConversationMessage, MetricsWidgetType } from "../../types";
 import type { AIMetricsWidgetSpec } from "../../utils/metrics-board-templates";
 import { normalizeAIProviderConfigs } from "../../utils/ai-provider-registry";
-import { invokeMutation, invokeWithTimeout } from "../../utils/tauri-utils";
+import { invokeMutation } from "../../utils/tauri-utils";
 import { getLinkedWorkspaceDir } from "../../hooks/useLinkedFolders";
 import {
   buildComposerCommandContext,
@@ -34,17 +34,8 @@ import {
   findFileCommandName,
   isBackupCommand,
   isRollbackCommand,
-  matchSlashCommands,
-  mergeSlashCommands,
-  runsSlashCommandImmediately,
-  slashCommandDraft,
-  type AIDatabaseCheckpoint,
-  type AISlashCommand,
-  type AgentFileCommand,
   type ResolvedFileCommand,
 } from "./ai-slash-commands";
-import { useCommandPrefsStore } from "../../stores/commandPrefsStore";
-import { requestAICheckpointPick } from "./ai-checkpoint-picker";
 import { formatAgentSql } from "../../utils/ai-sql-format";
 import { AIWorkspacePanelView } from "./AIWorkspacePanelView";
 import { useAIAssistantGeneration } from "./hooks/use-ai-assistant-generation";
@@ -56,6 +47,7 @@ import { resolveEditorAssistPrompt, useAISlidePanel } from "./hooks/use-ai-slide
 import { useAgentScheduleRunner } from "./hooks/use-agent-schedule-runner";
 import { useAIChatWorkspaces } from "./hooks/use-ai-chat-workspaces";
 import { useAIConsentGates } from "./hooks/use-ai-consent-gates";
+import { useAISlashMenu } from "./hooks/use-ai-slash-menu";
 import { isDataReadApproved } from "./ai-data-read-approvals";
 import {
   aiModeAllowsInsert,
@@ -261,11 +253,6 @@ export function AISlidePanel({
   });
 
   const [promptDraft, setPromptDraft] = useState(initialPrompt);
-  // Composer "/" command menu: open while the draft is exactly "/<letters>",
-  // dismissed by Escape until the draft changes again.
-  const [slashActiveIndex, setSlashActiveIndex] = useState(0);
-  const [slashDismissed, setSlashDismissed] = useState(false);
-  const [isBackingUp, setIsBackingUp] = useState(false);
   const [bubbles, setBubbles] = useState<AIWorkspaceBubbleData[]>([]);
   // Mirror for drain-time lookups: a queued edit-rerun resolves its bubble
   // after the current run settles, when the `bubbles` closure is already stale.
@@ -1132,257 +1119,28 @@ export function AISlidePanel({
     setComposerAttachments((current) => current.filter((draft) => draft.id !== id));
   }, []);
 
-  // --- Composer "/" slash commands (/backup, /rollback, /compact + runbooks) ---
-  // The file-backed registry lives in Rust (`agent_commands.rs`). It is fetched
-  // once per panel mount and merged *under* the native commands, so a command
-  // file dropped into the commands directory appears without a restart, while
-  // `/backup` and friends keep their built-in behaviour.
-  const [fileCommands, setFileCommands] = useState<AgentFileCommand[]>([]);
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      try {
-        const registry = await invokeMutation<{
-          commands: AgentFileCommand[];
-          report?: { errors?: { path: string; reason: string }[] };
-        }>("list_user_slash_commands", {
-          // Linked-folder commands only load when the workspace dir is passed;
-          // without it the registry silently sees builtin/global commands only.
-          workspaceDir: await getLinkedWorkspaceDir(),
-        });
-        if (cancelled) return;
-        setFileCommands(registry.commands ?? []);
-        // A file that failed to parse is skipped by the loader; surface it so
-        // "the command is not in the menu" is diagnosable instead of silent.
-        const loadErrors = registry.report?.errors ?? [];
-        for (const error of loadErrors) {
-          console.warn(`[AIWorkspace] skipped slash command ${error.path}: ${error.reason}`);
-        }
-        if (loadErrors.length > 0) {
-          emitAppToast({
-            tone: "error",
-            title: "Some slash commands failed to load",
-            description: loadErrors
-              .slice(0, 3)
-              .map((error) => `${error.path}: ${error.reason}`)
-              .join("\n"),
-            durationMs: 8_000,
-          });
-        }
-      } catch (error) {
-        // A missing registry must never break the composer: the native commands
-        // still work and plain prompts still go through untouched.
-        console.warn("[AIWorkspace] command registry unavailable:", error);
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const slashCommands = useMemo<AISlashCommand[]>(
-    () =>
-      mergeSlashCommands(
-        [
-          { name: "backup", description: aiCopy.composer.slashBackupDescription },
-          { name: "rollback", description: aiCopy.composer.slashRollbackDescription },
-          { name: "compact", description: aiCopy.composer.slashCompactDescription },
-          { name: "explain", description: aiCopy.composer.slashExplainDescription },
-          { name: "optimize", description: aiCopy.composer.slashOptimizeDescription },
-          { name: "fix", description: aiCopy.composer.slashFixDescription },
-        ],
-        fileCommands,
-        (name) => useCommandPrefsStore.getState().isEnabled(name),
-        aiCopy.composer.slashCustomBadge,
-      ),
-    [aiCopy, fileCommands],
-  );
-  // Menu opens only while the draft is exactly "/<name chars>" — plain typing,
-  // not mid-sentence slashes, so normal prompts are never interrupted. Command
-  // names allow letters, digits, dashes and underscores (review-sql etc.).
-  const slashQueryMatch = /^\/([a-zA-Z0-9_-]*)$/.exec(promptDraft.trim());
-  const slashMatches = useMemo(
-    () => (slashQueryMatch ? matchSlashCommands(slashQueryMatch[1], slashCommands) : []),
-    [slashCommands, slashQueryMatch],
-  );
-  const slashMenuOpen = slashQueryMatch !== null && slashMatches.length > 0 && !slashDismissed;
-
-  const handleBackupCommand = useCallback(async () => {
-    if (isBackingUp) return;
-    if (!connectionId || !activeConnectionDbType) {
-      setError(aiCopy.composer.noDatabaseSelected);
-      return;
-    }
-    setIsBackingUp(true);
-    try {
-      // "/backup <note>" — the trailing note becomes the checkpoint label.
-      const noteMatch = /^\/backup\s+(.+)$/i.exec(promptDraft.trim());
-      const result = await invokeWithTimeout<{
-        fileName: string;
-        label: string;
-        createdAt: number;
-        engine: string;
-        database: string | null;
-        tableCount: number;
-        rowCount: number;
-        sizeBytes: number;
-      }>(
-        "create_database_checkpoint",
-        {
-          connectionId,
-          database: currentDatabase || null,
-          dbType: activeConnectionDbType,
-          label: noteMatch?.[1]?.trim() || null,
-        },
-        120_000,
-        "Creating checkpoint",
-      );
-      emitAppToast({
-        tone: "success",
-        title: language === "vi" ? "Đã tạo điểm khôi phục" : "Restore checkpoint created",
-        description:
-          language === "vi"
-            ? `${result.tableCount} bảng · ${result.rowCount} dòng — dùng /rollback để khôi phục khi cần.`
-            : `${result.tableCount} tables · ${result.rowCount} rows — use /rollback to restore when needed.`,
-        durationMs: 10_000,
-      });
-    } catch (errorValue) {
-      const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
-      emitAppToast({
-        tone: "error",
-        title: language === "vi" ? "Tạo checkpoint thất bại" : "Checkpoint failed",
-        description: message,
-        durationMs: 10_000,
-      });
-    } finally {
-      setIsBackingUp(false);
-    }
-  }, [
-    activeConnectionDbType,
-    aiCopy.composer.noDatabaseSelected,
-    connectionId,
-    currentDatabase,
-    isBackingUp,
-    language,
+  const {
+    commitSlashCommand,
+    fileCommands,
+    handleBackupCommand,
+    handleComposerPromptChange,
+    handleRollbackCommand,
+    setSlashActiveIndex,
+    setSlashDismissed,
+    slashActiveIndex,
+    slashMatches,
+    slashMenuOpen,
+  } = useAISlashMenu({
     promptDraft,
-    setError,
-  ]);
-
-  const handleRollbackCommand = useCallback(async () => {
-    if (!connectionId || !activeConnectionDbType) {
-      setError(aiCopy.composer.noDatabaseSelected);
-      return;
-    }
-    try {
-      const checkpoints = await invokeWithTimeout<AIDatabaseCheckpoint[]>(
-        "list_database_checkpoints",
-        { connectionId },
-        60_000,
-        "Listing checkpoints",
-      );
-      const fileName = await requestAICheckpointPick(
-        checkpoints ?? [],
-        language,
-        connectionId,
-        activeConnectionDbType,
-      );
-      if (!fileName) return;
-      const restoreResult = await invokeWithTimeout<{
-        warning?: string | null;
-      }>(
-        "restore_database_checkpoint",
-        {
-          connectionId,
-          fileName,
-          dbType: activeConnectionDbType,
-        },
-        120_000,
-        "Restoring checkpoint",
-      );
-      if (restoreResult?.warning) {
-        emitAppToast({
-          tone: "error",
-          title:
-            language === "vi" ? "Snapshot pre-restore thất bại" : "Pre-restore snapshot failed",
-          description: restoreResult.warning,
-          durationMs: 10_000,
-        });
-      }
-      // Schema caches across the app must not keep serving pre-rollback data.
-      window.dispatchEvent(
-        new CustomEvent("table-data-updated", {
-          detail: { connectionId, invalidateStructure: true },
-        }),
-      );
-      emitAppToast({
-        tone: "success",
-        title: language === "vi" ? "Đã rollback database" : "Database restored",
-        description:
-          language === "vi"
-            ? "Database đã quay về điểm checkpoint. Hãy refresh explorer nếu cần."
-            : "The database was restored to the checkpoint. Refresh the explorer if needed.",
-        durationMs: 10_000,
-      });
-    } catch (errorValue) {
-      const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
-      emitAppToast({
-        tone: "error",
-        title: language === "vi" ? "Rollback thất bại" : "Rollback failed",
-        description: message,
-        durationMs: 10_000,
-      });
-    }
-  }, [
-    activeConnectionDbType,
-    aiCopy.composer.noDatabaseSelected,
+    setPromptDraft,
     connectionId,
+    activeConnectionDbType,
+    currentDatabase,
     language,
+    aiCopy,
     setError,
-  ]);
-
-  /**
-   * A command picked from the "/" menu lands in the composer, it does not run:
-   * the draft becomes `/name`, the caret follows it, and the user runs it with an
-   * ordinary Enter through `handleGenerate` — the one path that expands
-   * file-backed runbooks and handles `/backup`, `/compact` and `/rollback`. That
-   * keeps arguments reachable (`/backup nightly`, `/profile orders`) and stops a
-   * mis-click from starting work the user never confirmed.
-   *
-   * `/rollback` is the exception: it opens the checkpoint picker, which is itself
-   * the confirmation step (`runsSlashCommandImmediately`).
-   */
-  const commitSlashCommand = useCallback(
-    (name: string) => {
-      // Dismissed for the same keystroke, or the freshly inserted `/help` would be
-      // read as a search prefix and immediately re-open the menu over the caret.
-      setSlashDismissed(true);
-      setSlashActiveIndex(0);
-      if (runsSlashCommandImmediately(name)) {
-        setPromptDraft("");
-        void handleRollbackCommand();
-        return;
-      }
-      const draft = slashCommandDraft(name);
-      setPromptDraft(draft);
-      // Same idiom as the panel's initial prompt: the caret must sit after the
-      // inserted command, so the next keystroke types an argument instead of
-      // being swallowed before the text.
-      window.requestAnimationFrame(() => {
-        const composer = composerTextareaRef.current;
-        if (!composer) return;
-        composer.focus();
-        composer.setSelectionRange(draft.length, draft.length);
-      });
-    },
-    [handleRollbackCommand],
-  );
-
-  // Composer edits re-arm the "/" menu (Escape dismissal lasts one keystroke).
-  const handleComposerPromptChange = useCallback((value: string) => {
-    setSlashDismissed(false);
-    setSlashActiveIndex(0);
-    setPromptDraft(value);
-  }, []);
+    composerTextareaRef,
+  });
 
   /** Re-fetch a finished bubble's persisted attachment bytes into drafts so a
    *  re-run sends the same files the original turn carried. */
@@ -1932,7 +1690,15 @@ export function AISlidePanel({
         void handleGenerate();
       }
     },
-    [commitSlashCommand, handleGenerate, slashActiveIndex, slashMatches, slashMenuOpen],
+    [
+      commitSlashCommand,
+      handleGenerate,
+      setSlashActiveIndex,
+      setSlashDismissed,
+      slashActiveIndex,
+      slashMatches,
+      slashMenuOpen,
+    ],
   );
 
   const handleCopyBubble = useCallback(

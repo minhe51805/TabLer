@@ -388,7 +388,7 @@ pub async fn apply_user_role_change(
                 .map_err(|error| error.to_string())?;
         }
     }
-    Ok(get_user_role_snapshot(connection_id, db_manager).await?)
+    get_user_role_snapshot(connection_id, db_manager).await
 }
 
 fn build_review(

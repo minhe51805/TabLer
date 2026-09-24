@@ -48,6 +48,7 @@ import { useAgentScheduleRunner } from "./hooks/use-agent-schedule-runner";
 import { useAIChatWorkspaces } from "./hooks/use-ai-chat-workspaces";
 import { useAIConsentGates } from "./hooks/use-ai-consent-gates";
 import { useAISlashMenu } from "./hooks/use-ai-slash-menu";
+import { useAIChatThreads } from "./hooks/use-ai-chat-threads";
 import { isDataReadApproved } from "./ai-data-read-approvals";
 import {
   aiModeAllowsInsert,
@@ -82,10 +83,8 @@ import {
   buildConversationHistoryMessages,
   getBubbleConversationText,
   createAIWorkspaceId,
-  createChatThread,
   prunePersistedAIWorkspaceState,
   resolveHistoryBudget,
-  sanitizePersistedAIWorkspaceState,
   summarizePromptForDisplay,
   type AIChatThread,
   type PersistedAIWorkspaceState,
@@ -296,7 +295,6 @@ export function AISlidePanel({
   // picks and automatic failovers — either way the active provider is moving.
   const isProviderSwitching = isSwitchingProvider || isProviderFailingOver;
   const [attachedSelection, setAttachedSelection] = useState<SelectionContextState | null>(null);
-  const [deleteThreadPending, setDeleteThreadPending] = useState<string | null>(null);
   const [composerAttachments, setComposerAttachments] = useState<AIAttachmentDraft[]>([]);
   // Messages sent while a run is in flight wait here instead of being dropped:
   // the send path is single-slot (requestIdRef/streamingText are shared), so
@@ -1953,246 +1951,47 @@ export function AISlidePanel({
     ],
   );
 
-  const handleSelectThread = useCallback(
-    (threadId: string) => {
-      setActiveThreadId(threadId);
-      setActiveThreadIdsByWorkspace((current) => ({
-        ...current,
-        [currentWorkspaceKey]: threadId,
-      }));
-      setIsHistoryOpen(false);
-      setAttachedSelection(null);
-    },
-    [currentWorkspaceKey],
-  );
-
-  const handleRequestDeleteThread = useCallback((threadId: string, event: React.MouseEvent) => {
-    event.stopPropagation();
-    setDeleteThreadPending(threadId);
-  }, []);
-
-  const handleConfirmDeleteThread = useCallback(() => {
-    const threadId = deleteThreadPending;
-    if (!threadId) return;
-
-    setDeleteThreadPending(null);
-
-    const updatedThreads = chatThreads.filter((thread) => thread.id !== threadId);
-    const updatedBubbles = bubbles.filter((bubble) => bubble.threadId !== threadId);
-    const remainingWorkspaceThreads = updatedThreads.filter(
-      (thread) => thread.workspaceKey === currentWorkspaceKey,
-    );
-    const nextActiveThreadId =
-      activeThreadIdsByWorkspace[currentWorkspaceKey] === threadId
-        ? (remainingWorkspaceThreads[0]?.id ?? null)
-        : (activeThreadIdsByWorkspace[currentWorkspaceKey] ?? activeThreadId);
-
-    setChatThreads(updatedThreads);
-    setBubbles(updatedBubbles);
-    setThreadMemories((current) => {
-      if (!current[threadId]) return current;
-      const next = { ...current };
-      delete next[threadId];
-      return next;
-    });
-    invokeMutation("delete_thread_memory_for_thread", { threadId }).catch((error: unknown) =>
-      console.error("[AIWorkspace] Failed to delete thread memory:", error),
-    );
-    invokeMutation("delete_ai_attachments_for_thread", { threadId }).catch((error: unknown) =>
-      console.error("[AIWorkspace] Failed to delete thread attachments:", error),
-    );
-    setActiveThreadIdsByWorkspace((current) => {
-      const next = { ...current };
-      if (nextActiveThreadId) {
-        next[currentWorkspaceKey] = nextActiveThreadId;
-      } else {
-        delete next[currentWorkspaceKey];
-      }
-      return next;
-    });
-    setActiveThreadId(nextActiveThreadId ?? initialThreadRef.current?.id ?? createAIWorkspaceId());
-  }, [
-    activeThreadId,
-    activeThreadIdsByWorkspace,
+  const {
+    deleteThreadPending,
+    handleCancelDeleteThread,
+    handleConfirmDeleteThread,
+    handleCreateChatThread,
+    handleImportChatThreads,
+    handleReloadChat,
+    handleRenameChatThread,
+    handleRequestDeleteThread,
+    handleResetStage,
+    handleSelectThread,
+    importableChatThreads,
+  } = useAIChatThreads({
     bubbles,
     chatThreads,
+    workspaceThreads,
     currentWorkspaceKey,
-    deleteThreadPending,
+    activeThreadId,
+    activeThreadIdsByWorkspace,
+    activeChatWorkspace,
+    threadMemories,
     initialThreadRef,
-    setThreadMemories,
-  ]);
-
-  const handleRenameChatThread = useCallback(
-    (threadId: string, label: string) => {
-      const trimmed = label.trim();
-      if (!trimmed) return;
-      setChatThreads((current) =>
-        current.map((thread) =>
-          thread.id === threadId ? { ...thread, label: trimmed, updatedAt: Date.now() } : thread,
-        ),
-      );
-      // A compacted thread displays its memory title; keep both in sync so the
-      // rename survives the next compact too.
-      const memory = threadMemories[threadId];
-      if (memory && activeChatWorkspace) {
-        setThreadMemories((current) => ({
-          ...current,
-          [threadId]: { ...memory, title: trimmed },
-        }));
-        invokeMutation("upsert_thread_memory", {
-          workspaceId: activeChatWorkspace.id,
-          threadId,
-          title: trimmed,
-          summary: memory.summary,
-          keywords: memory.keywords,
-        }).catch((error: unknown) => {
-          console.error("[AIWorkspace] Failed to rename thread memory:", error);
-          emitAppToast({
-            tone: "error",
-            title: language === "vi" ? "Không lưu được ghi nhớ thread" : "Thread memory not saved",
-            durationMs: 4000,
-          });
-        });
-      }
-    },
-    [activeChatWorkspace, setThreadMemories, threadMemories, language],
-  );
-
-  const handleCancelDeleteThread = useCallback(() => {
-    setDeleteThreadPending(null);
-  }, []);
-
-  const handleCreateChatThread = useCallback(() => {
-    const nextThread = createChatThread(workspaceThreads.length + 1, currentWorkspaceKey);
-    setChatThreads((current) => [...current, nextThread]);
-    setActiveThreadId(nextThread.id);
-    // Update the per-workspace active map in the same tick: the workspace
-    // effects re-derive activeThreadId from this map, so leaving it on the
-    // old thread makes two effects ping-pong the view between the new empty
-    // chat and the in-progress one forever (constant visible jitter).
-    setActiveThreadIdsByWorkspace((current) => ({
-      ...current,
-      [currentWorkspaceKey]: nextThread.id,
-    }));
-    setIsHistoryOpen(false);
-    setPromptDraft(initialPrompt);
-    setAttachedSelection(null);
-    setError(null);
-    window.requestAnimationFrame(() => {
-      composerTextareaRef.current?.focus();
-      if (initialPrompt.trim()) {
-        composerTextareaRef.current?.setSelectionRange(initialPrompt.length, initialPrompt.length);
-      }
-    });
-  }, [currentWorkspaceKey, initialPrompt, setError, workspaceThreads.length]);
-
-  const handleResetStage = useCallback(() => {
-    // Starting a fresh thread must also stop any in-flight generation: the
-    // background run keeps publishing progress (provider failover retries)
-    // and re-rendering the panel while the user looks at the new empty
-    // thread, which reads as constant jitter.
-    const activeBubbleId = activeGenerationBubbleIdRef.current;
-    if (activeBubbleId) {
-      cancelledGenerationBubbleIdsRef.current.add(activeBubbleId);
-    }
-    cancelGeneration();
-    handleCreateChatThread();
-  }, [cancelGeneration, handleCreateChatThread]);
-
-  /** Reloads the current conversation from the persisted SQLite history so a
-   *  stale-looking chat can be refreshed without touching live generations. */
-  const handleReloadChat = useCallback(async () => {
-    if (isGenerating || isRunning) return;
-    try {
-      const persistedState = sanitizePersistedAIWorkspaceState(
-        await invokeMutation<PersistedAIWorkspaceState>("get_ai_workspace_history", {}),
-      );
-      const threads = persistedState.threads;
-      const loadedBubbles = persistedState.bubbles.filter((bubble) => bubble.status !== "loading");
-      setChatThreads(threads);
-      setBubbles(loadedBubbles);
-      setWorkspaceInteractionModes(persistedState.interactionModes);
-      const activeMap = persistedState.activeThreadIds;
-      setActiveThreadIdsByWorkspace(activeMap);
-      const workspaceThreadsForCurrentKey = threads.filter(
-        (thread) => thread.workspaceKey === currentWorkspaceKey,
-      );
-      const preferredThreadId = activeMap[currentWorkspaceKey];
-      const nextThreadId =
-        workspaceThreadsForCurrentKey.find((thread) => thread.id === preferredThreadId)?.id ??
-        [...workspaceThreadsForCurrentKey].sort(
-          (left, right) => right.updatedAt - left.updatedAt,
-        )[0]?.id ??
-        workspaceThreadsForCurrentKey[0]?.id;
-      if (nextThreadId) setActiveThreadId(nextThreadId);
-      setError(null);
-    } catch (error) {
-      console.error("[AIWorkspace] Failed to reload chat:", error);
-    }
-  }, [
-    currentWorkspaceKey,
+    composerTextareaRef,
+    activeGenerationBubbleIdRef,
+    cancelledGenerationBubbleIdsRef,
+    initialPrompt,
     isGenerating,
     isRunning,
+    language,
+    cancelGeneration,
     setActiveThreadId,
     setActiveThreadIdsByWorkspace,
+    setAttachedSelection,
     setBubbles,
     setChatThreads,
     setError,
+    setIsHistoryOpen,
+    setPromptDraft,
+    setThreadMemories,
     setWorkspaceInteractionModes,
-  ]);
-
-  const importableChatThreads = useMemo(
-    () =>
-      chatThreads
-        .filter((thread) => thread.workspaceKey !== currentWorkspaceKey)
-        .sort((left, right) => right.updatedAt - left.updatedAt),
-    [chatThreads, currentWorkspaceKey],
-  );
-
-  /** Copies threads (and their bubbles) from other workspaces/scopes into the
-   *  current one — "import các đoạn chat liên quan" into this workspace. */
-  const handleImportChatThreads = useCallback(
-    (threadIds: string[]) => {
-      if (threadIds.length === 0) return;
-      const selectedIds = new Set(threadIds);
-      const sourceThreads = chatThreads.filter((thread) => selectedIds.has(thread.id));
-      if (sourceThreads.length === 0) return;
-      const now = Date.now();
-      const importedThreads: AIChatThread[] = [];
-      const importedBubbles: AIWorkspaceBubbleData[] = [];
-      sourceThreads.forEach((sourceThread) => {
-        const importedThread: AIChatThread = {
-          ...sourceThread,
-          id: createAIWorkspaceId(),
-          workspaceKey: currentWorkspaceKey,
-          createdAt: now,
-          updatedAt: now,
-        };
-        importedThreads.push(importedThread);
-        bubbles
-          .filter((bubble) => bubble.threadId === sourceThread.id && bubble.status !== "loading")
-          .forEach((bubble) => {
-            importedBubbles.push({
-              ...bubble,
-              id: createAIWorkspaceId(),
-              threadId: importedThread.id,
-              workspaceKey: currentWorkspaceKey,
-              pointer: { ...bubble.pointer },
-            });
-          });
-      });
-      const lastImportedThreadId = importedThreads[importedThreads.length - 1].id;
-      setChatThreads((current) => [...current, ...importedThreads]);
-      setBubbles((current) => [...current, ...importedBubbles]);
-      setActiveThreadIdsByWorkspace((current) => ({
-        ...current,
-        [currentWorkspaceKey]: lastImportedThreadId,
-      }));
-      setActiveThreadId(lastImportedThreadId);
-      setIsHistoryOpen(false);
-    },
-    [bubbles, chatThreads, currentWorkspaceKey],
-  );
+  });
 
   const {
     activateProvider: handleActivateProvider,

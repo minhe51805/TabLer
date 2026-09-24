@@ -45,6 +45,13 @@ export function DocsSearch({
       .slice(0, 8);
   }, [items, query]);
 
+  // keep the highlighted option inside the dropdown's scrollport while
+  // arrowing through results
+  useEffect(() => {
+    if (!open) return;
+    document.getElementById(`docs-search-result-${active}`)?.scrollIntoView({ block: "nearest" });
+  }, [active, open]);
+
   // reset the highlighted result whenever the query changes
   const updateQuery = (value: string) => {
     setQuery(value);
@@ -149,6 +156,9 @@ export function DocsSearch({
           ))}
         </ul>
       ) : null}
+      <span className="sr-only" role="status" aria-live="polite">
+        {query.trim() && open ? `${results.length} result${results.length === 1 ? "" : "s"}` : ""}
+      </span>
     </div>
   );
 }

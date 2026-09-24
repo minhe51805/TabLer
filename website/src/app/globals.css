@@ -6000,3 +6000,16 @@ a {
     color: #666;
   }
 }
+
+/* global reduced-motion safety net - anything still animating after the
+ per-component blocks above gets a near-instant transition instead */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

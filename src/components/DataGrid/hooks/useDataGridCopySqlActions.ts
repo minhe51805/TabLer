@@ -9,6 +9,7 @@ import {
   generateUpdateSql,
 } from "../../../utils/sql-generator";
 import type { ResolvedColumn } from "./useDataGrid";
+import type { AnonymizerValue } from "../../../utils/anonymizer";
 
 interface DataGridCopySqlActionsParams {
   selectedRows: Set<number>;
@@ -19,6 +20,8 @@ interface DataGridCopySqlActionsParams {
   connections: ConnectionConfig[];
   connectionId?: string;
   setError: (message: string) => void;
+  /** Masks a row matrix for clipboard output (view masks apply to copies). */
+  maskRowsForCopy?: (rows: readonly (readonly AnonymizerValue[])[]) => Promise<AnonymizerValue[][]>;
 }
 
 /**
@@ -34,15 +37,20 @@ export function useDataGridCopySqlActions({
   connections,
   connectionId,
   setError,
+  maskRowsForCopy,
 }: DataGridCopySqlActionsParams) {
   const handleCopyAsInsert = useCallback(async () => {
     if (selectedRows.size === 0 || !data || !tableName || resolvedColumns.length === 0) return;
     const connection = connections.find((c: ConnectionConfig) => c.id === connectionId);
     const dbType = connection?.db_type;
     const cols: string[] = resolvedColumns.map((c) => c.name);
-    const rows = Array.from(selectedRows)
+    const rawRows = Array.from(selectedRows)
       .sort((a, b) => a - b)
       .map((i) => data.rows[i] as (string | number | boolean | null)[]);
+    // Masked columns must copy masked values — never the raw cell text.
+    const rows = maskRowsForCopy
+      ? ((await maskRowsForCopy(rawRows)) as (string | number | boolean | null)[][])
+      : rawRows;
     const sql = generateInsertSql(tableName, cols, rows, dbType);
     const ok = await copyToClipboard(sql);
     if (!ok) setError("Failed to copy SQL to clipboard.");
@@ -54,6 +62,7 @@ export function useDataGridCopySqlActions({
     connections,
     connectionId,
     setError,
+    maskRowsForCopy,
   ]);
 
   const handleCopyAsUpdate = useCallback(async () => {
@@ -68,10 +77,19 @@ export function useDataGridCopySqlActions({
     const connection = connections.find((c: ConnectionConfig) => c.id === connectionId);
     const dbType = connection?.db_type;
     const cols: string[] = resolvedColumns.map((c) => c.name);
-    const rows = Array.from(selectedRows)
+    const rawRows = Array.from(selectedRows)
       .sort((a, b) => a - b)
       .map((i) => data.rows[i] as (string | number | boolean | null)[]);
-    const sql = generateUpdateSql(tableName, cols, rows, primaryKeyColumns.map((c) => c.name), dbType);
+    const rows = maskRowsForCopy
+      ? ((await maskRowsForCopy(rawRows)) as (string | number | boolean | null)[][])
+      : rawRows;
+    const sql = generateUpdateSql(
+      tableName,
+      cols,
+      rows,
+      primaryKeyColumns.map((c) => c.name),
+      dbType,
+    );
     const ok = await copyToClipboard(sql);
     if (!ok) setError("Failed to copy SQL to clipboard.");
   }, [
@@ -83,6 +101,7 @@ export function useDataGridCopySqlActions({
     connections,
     connectionId,
     setError,
+    maskRowsForCopy,
   ]);
 
   const handleCopyAsInsertParam = useCallback(async () => {

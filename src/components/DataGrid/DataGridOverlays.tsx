@@ -13,6 +13,7 @@ import { PasteRowsDialog } from "./dialogs/PasteRowsDialog";
 import { SetRangeValueDialog } from "./dialogs/SetRangeValueDialog";
 import { ChangeTrackingPreviewModal } from "./components/ChangeTrackingPreviewModal";
 import type { ColumnOrderState, VisibilityState, ColumnPinningState } from "@tanstack/react-table";
+import type { DataGridColumnMasks } from "./hooks/useDataGridColumnMasks";
 
 /** Everything the floating overlays (context menu, popovers, dialogs) need
  *  from the grid — bundled so DataGrid's render stays readable. */
@@ -31,6 +32,8 @@ export interface DataGridOverlaysProps {
   isLoading: boolean;
   stagedChangeCount: number;
   canAttemptInlineEdit: boolean;
+  /** View-time column masking state for the header context menu + copies. */
+  columnMasks?: DataGridColumnMasks;
   selectedRangeCellCount: number;
   contextMenu: {
     x: number;
@@ -117,6 +120,7 @@ export function DataGridOverlays(props: DataGridOverlaysProps) {
     isLoading,
     stagedChangeCount,
     canAttemptInlineEdit,
+    columnMasks,
     selectedRangeCellCount,
     contextMenu,
     fkPreview,
@@ -180,6 +184,7 @@ export function DataGridOverlays(props: DataGridOverlaysProps) {
             selectedRows={selectedRows}
             sourceRows={data?.rows ?? []}
             resolvedColumns={resolvedColumns}
+            columnMasks={columnMasks}
             onColumnStats={tableName && !externalResult ? onColumnStats : undefined}
             onClose={onCloseContextMenu}
             onSortAsc={onSortAsc}

@@ -27,6 +27,7 @@ import {
   type GridCellValue,
   type ResolvedColumn,
 } from "./useDataGrid";
+import type { AnonymizerValue } from "../../../utils/anonymizer";
 
 interface DataGridRangeOperationsParams {
   /**
@@ -53,6 +54,10 @@ interface DataGridRangeOperationsParams {
   setStagedRowIndices: Dispatch<SetStateAction<Set<number>>>;
   patchLoadedTableCell: (rowIndex: number, colIndex: number, value: GridCellValue) => void;
   setError: (message: string) => void;
+  /** Columns actively masked — treated as protected so range edits skip them. */
+  maskedColumnNames?: ReadonlySet<string>;
+  /** Masks a row matrix for clipboard output (view masks apply to copies). */
+  maskRowsForCopy?: (rows: readonly (readonly AnonymizerValue[])[]) => Promise<AnonymizerValue[][]>;
 }
 
 /**
@@ -79,13 +84,17 @@ export function useDataGridRangeOperations({
   setStagedRowIndices,
   patchLoadedTableCell,
   setError,
+  maskedColumnNames,
+  maskRowsForCopy,
 }: DataGridRangeOperationsParams) {
   const buildContext = useCallback((): RangeUpdateContext | null => {
     if (!data) return null;
     return {
       // Plans walk the VISIBLE rows only — hidden rows are unreachable.
       rows: displayedRows as RangeCellValue[][],
-      columns: resolvedColumns,
+      columns: resolvedColumns.map((column) =>
+        maskedColumnNames?.has(column.name) ? { ...column, is_primary_key: true } : column,
+      ),
       // The walker feeds back columns from context.columns, which are the
       // same ResolvedColumn instances — the narrowing cast is safe.
       parseValue: (raw: string, column: RangeColumnLike) =>
@@ -97,7 +106,7 @@ export function useDataGridRangeOperations({
         return buildStableRowIdentity(row, resolvedColumns) !== null;
       },
     };
-  }, [data, displayedRows, primaryKeyColumns, resolvedColumns]);
+  }, [data, displayedRows, maskedColumnNames, primaryKeyColumns, resolvedColumns]);
 
   /** Stage + optimistic-apply a planned batch. Returns false when nothing was staged. */
   const commitUpdates = useCallback(
@@ -183,18 +192,23 @@ export function useDataGridRangeOperations({
       columnCount: resolvedColumns.length,
     });
     if (!range) return false;
-    const tsv = buildRangeTsv(displayedRows as RangeCellValue[][], range);
-    if (!tsv) return false;
-    navigator.clipboard
-      .writeText(tsv)
-      .then(() => {
+    void (async () => {
+      // Masked columns must copy masked values — mask the matrix before
+      // serializing so the clipboard never sees raw data.
+      const rows = maskRowsForCopy
+        ? ((await maskRowsForCopy(displayedRows)) as RangeCellValue[][])
+        : (displayedRows as RangeCellValue[][]);
+      const tsv = buildRangeTsv(rows, range);
+      if (!tsv) return;
+      try {
+        await navigator.clipboard.writeText(tsv);
         emitAppToast({ title: translateCurrent("datagrid.rangeCopySuccess"), tone: "success" });
-      })
-      .catch(() => {
+      } catch {
         setError("Could not write to the clipboard.");
-      });
+      }
+    })();
     return true;
-  }, [data, displayedRows, gridSelection, resolvedColumns, setError]);
+  }, [data, displayedRows, gridSelection, maskRowsForCopy, resolvedColumns, setError]);
 
   /**
    * Paste a TSV/CSV matrix at the active cell as ONE staged batch.

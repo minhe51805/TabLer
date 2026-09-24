@@ -21,6 +21,10 @@ import { getCurrentAppLanguage, translateCurrent } from "../../../i18n";
 import { getDataGridPowerCopy } from "../datagrid-power-copy";
 import type { ResolvedColumn } from "../hooks/useDataGrid";
 import type { DatabaseType } from "../../../types/database";
+import { getDataGridMaskingCopy } from "../datagrid-masking-copy";
+import { useColumnMaskStore } from "../../../stores/columnMaskStore";
+import type { DataGridColumnMasks } from "../hooks/useDataGridColumnMasks";
+import type { AnonymizerStrategy } from "../../../utils/anonymizer";
 
 /** Normalizes a raw cell value for text formats: objects become JSON text so
  *  row/column copies never render "[object Object]". */
@@ -99,6 +103,8 @@ interface DataGridContextMenuProps {
   setSortColumn: Dispatch<SetStateAction<string | null>>;
   setSortDir: Dispatch<SetStateAction<"ASC" | "DESC">>;
   setColumnDisplayFormats: Dispatch<SetStateAction<Record<string, ColumnDisplayFormat>>>;
+  /** View-time column masking state; absent on query-result grids. */
+  columnMasks?: DataGridColumnMasks;
 }
 
 /** Positioned right-click menu for cells, headers and rows. */
@@ -135,16 +141,24 @@ export function DataGridContextMenu({
   setSortColumn,
   setSortDir,
   setColumnDisplayFormats,
+  columnMasks,
 }: DataGridContextMenuProps) {
   const contextMenu = menu;
 
   const powerCopy = getDataGridPowerCopy(getCurrentAppLanguage());
+  const maskingCopy = getDataGridMaskingCopy(getCurrentAppLanguage());
+  const setColumnMask = useColumnMaskStore((state) => state.setColumnMask);
+  const clearColumnMask = useColumnMaskStore((state) => state.clearColumnMask);
+  const setMaskRevealed = useColumnMaskStore((state) => state.setRevealed);
+  const maskScopeKey = columnMasks?.scopeKey ?? "";
+  const contextColumnIsPk =
+    resolvedColumns.find((column) => column.name === contextMenu.colName)?.is_primary_key === true;
 
   /** Copies the right-clicked row — or the whole row selection when the
    *  clicked row is part of it — in the chosen text format. Values come from
    *  sourceRows because contextMenu.rowIndex is a data.rows index (the table
    *  row model can be filtered/sorted differently). */
-  const copyRowAs = (format: "csv" | "tsv" | "json" | "mql" | "markdown" | "insert") => {
+  const copyRowAs = async (format: "csv" | "tsv" | "json" | "mql" | "markdown" | "insert") => {
     const columns = table
       .getAllLeafColumns()
       .filter((column) => column.getIsVisible() && column.id !== "_row_num");
@@ -159,7 +173,9 @@ export function DataGridContextMenu({
       .map((index) => sourceRows[index])
       .filter((row): row is (string | number | boolean | null)[] => row !== undefined);
     if (rows.length === 0) return;
-    const values = rows.map((row) =>
+    // Masked columns must copy masked values — mask before serializing.
+    const maskedRows = columnMasks ? await columnMasks.maskRows(rows) : rows;
+    const values = maskedRows.map((row) =>
       names.map((name) => normalizeCellValue(row[indexByName.get(name) ?? -1])),
     );
     const label = rows.length > 1 ? `${rows.length} rows` : "row";
@@ -201,19 +217,23 @@ export function DataGridContextMenu({
     const columnId = contextMenu.colName;
     const row = table.getRowModel().rows[contextMenu.rowIndex ?? 0];
     if (!columnId || !row) return;
-    const value = normalizeCellValue(row.getValue(columnId));
-    void navigator.clipboard
-      .writeText(value === null ? "NULL" : String(value))
-      .then(() =>
-        emitAppToast({ title: translateCurrent("datagrid.ctxCellValueCopied"), tone: "success" }),
-      )
-      .catch((error) => {
+    const raw = normalizeCellValue(row.getValue(columnId));
+    void (async () => {
+      const value = columnMasks ? await columnMasks.maskValue(columnId, raw) : raw;
+      try {
+        await navigator.clipboard.writeText(value === null ? "NULL" : String(value));
+        emitAppToast({
+          title: translateCurrent("datagrid.ctxCellValueCopied"),
+          tone: "success",
+        });
+      } catch (error) {
         emitAppToast({
           title: translateCurrent("datagrid.copyFailed"),
           description: String(error),
           tone: "error",
         });
-      });
+      }
+    })();
     onClose();
   };
 
@@ -221,21 +241,33 @@ export function DataGridContextMenu({
    *  menu (icon + label + hint per format). */
   const copyAsSubmenu = (scope: "row" | "cell") => (
     <div className="datagrid-context-menu datagrid-context-submenu">
-      <button type="button" className="datagrid-export-menu-item" onClick={() => copyRowAs("csv")}>
+      <button
+        type="button"
+        className="datagrid-export-menu-item"
+        onClick={() => void copyRowAs("csv")}
+      >
         <FileSpreadsheet className="!w-3.5 !h-3.5" />
         <span className="datagrid-export-menu-copy">
           <strong>CSV</strong>
           <span>{translateCurrent("datagrid.copyHintCsv")}</span>
         </span>
       </button>
-      <button type="button" className="datagrid-export-menu-item" onClick={() => copyRowAs("tsv")}>
+      <button
+        type="button"
+        className="datagrid-export-menu-item"
+        onClick={() => void copyRowAs("tsv")}
+      >
         <FileSpreadsheet className="!w-3.5 !h-3.5" />
         <span className="datagrid-export-menu-copy">
           <strong>TSV</strong>
           <span>{translateCurrent("datagrid.copyHintTsv")}</span>
         </span>
       </button>
-      <button type="button" className="datagrid-export-menu-item" onClick={() => copyRowAs("json")}>
+      <button
+        type="button"
+        className="datagrid-export-menu-item"
+        onClick={() => void copyRowAs("json")}
+      >
         <FileJson className="!w-3.5 !h-3.5" />
         <span className="datagrid-export-menu-copy">
           <strong>JSON</strong>
@@ -249,7 +281,7 @@ export function DataGridContextMenu({
       <button
         type="button"
         className="datagrid-export-menu-item"
-        onClick={() => copyRowAs("markdown")}
+        onClick={() => void copyRowAs("markdown")}
       >
         <Table2 className="!w-3.5 !h-3.5" />
         <span className="datagrid-export-menu-copy">
@@ -261,7 +293,7 @@ export function DataGridContextMenu({
         <button
           type="button"
           className="datagrid-export-menu-item"
-          onClick={() => copyRowAs("insert")}
+          onClick={() => void copyRowAs("insert")}
         >
           <FileCode className="!w-3.5 !h-3.5" />
           <span className="datagrid-export-menu-copy">
@@ -274,7 +306,7 @@ export function DataGridContextMenu({
         <button
           type="button"
           className="datagrid-export-menu-item"
-          onClick={() => copyRowAs("mql")}
+          onClick={() => void copyRowAs("mql")}
         >
           <FileCode className="!w-3.5 !h-3.5" />
           <span className="datagrid-export-menu-copy">
@@ -288,22 +320,25 @@ export function DataGridContextMenu({
 
   /** Copies every loaded value of the right-clicked column (current view
    *  order) as a one-column CSV/TSV or a plain JSON array. */
-  const copyColumnAs = (format: "csv" | "tsv" | "json") => {
+  const copyColumnAs = async (format: "csv" | "tsv" | "json") => {
     const columnId = contextMenu.colName!;
     const rows = table.getRowModel().rows;
+    const rawValues = rows.map((row) => normalizeCellValue(row.getValue(columnId)));
+    const values = columnMasks
+      ? await Promise.all(rawValues.map((value) => columnMasks.maskValue(columnId, value)))
+      : rawValues;
     if (format === "json") {
-      const values = rows.map((row) => normalizeCellValue(row.getValue(columnId)));
       void copyWithToast(JSON.stringify(values, null, 2), "column as JSON");
     } else {
       const content =
         format === "csv"
           ? buildCsvContent(
               [columnId],
-              rows.map((row) => [normalizeCellValue(row.getValue(columnId))]),
+              values.map((value) => [value]),
             )
           : buildTsvContent(
               [columnId],
-              rows.map((row) => [normalizeCellValue(row.getValue(columnId))]),
+              values.map((value) => [value]),
             );
       void copyWithToast(content, `column as ${format.toUpperCase()}`);
     }
@@ -360,13 +395,13 @@ export function DataGridContextMenu({
           >
             {translateCurrent("datagrid.ctxCopyAsSelect")}
           </button>
-          <button className="datagrid-context-menu-item" onClick={() => copyColumnAs("csv")}>
+          <button className="datagrid-context-menu-item" onClick={() => void copyColumnAs("csv")}>
             {translateCurrent("datagrid.ctxCopyColumnCsv")}
           </button>
-          <button className="datagrid-context-menu-item" onClick={() => copyColumnAs("tsv")}>
+          <button className="datagrid-context-menu-item" onClick={() => void copyColumnAs("tsv")}>
             {translateCurrent("datagrid.ctxCopyColumnTsv")}
           </button>
-          <button className="datagrid-context-menu-item" onClick={() => copyColumnAs("json")}>
+          <button className="datagrid-context-menu-item" onClick={() => void copyColumnAs("json")}>
             {translateCurrent("datagrid.ctxCopyColumnJson")}
           </button>
           {onColumnStats && contextMenu.colName !== "_row_num" && (
@@ -545,6 +580,90 @@ export function DataGridContextMenu({
               )}
             </button>
           ))}
+          {maskScopeKey && contextMenu.colName !== "_row_num" && columnMasks && (
+            <>
+              <div className="datagrid-context-menu-separator" />
+              {contextColumnIsPk ? (
+                <button
+                  type="button"
+                  className="datagrid-context-menu-item"
+                  disabled
+                  title={maskingCopy.pkBlocked}
+                >
+                  {maskingCopy.maskColumn}
+                </button>
+              ) : (
+                <div className="datagrid-context-menu-item has-submenu" tabIndex={0}>
+                  <span>{maskingCopy.maskColumn}</span>
+                  <ChevronRight className="w-3 h-3 submenu-chevron" />
+                  <div className="datagrid-context-menu datagrid-context-submenu">
+                    {(
+                      [
+                        "hash",
+                        "redact",
+                        "null",
+                        "fake-email",
+                        "fake-name",
+                        "fake-phone",
+                        "noise",
+                      ] as AnonymizerStrategy[]
+                    ).map((strategy) => (
+                      <button
+                        key={strategy}
+                        type="button"
+                        className="datagrid-context-menu-item"
+                        style={{
+                          display: "flex",
+                          justifyContent: "space-between",
+                          alignItems: "center",
+                        }}
+                        onClick={() => {
+                          setColumnMask(maskScopeKey, contextMenu.colName!, strategy);
+                          onClose();
+                        }}
+                      >
+                        <span>{maskingCopy.strategies[strategy]}</span>
+                        {columnMasks.maskStrategies[contextMenu.colName!] === strategy && (
+                          <span style={{ color: "var(--accent)" }}>✓</span>
+                        )}
+                      </button>
+                    ))}
+                    {columnMasks.maskedColumnNames.has(contextMenu.colName!) && (
+                      <>
+                        <div className="datagrid-context-menu-separator" />
+                        <button
+                          type="button"
+                          className="datagrid-context-menu-item"
+                          onClick={() => {
+                            setMaskRevealed(
+                              maskScopeKey,
+                              contextMenu.colName!,
+                              !columnMasks.activeMaskedNames.has(contextMenu.colName!),
+                            );
+                            onClose();
+                          }}
+                        >
+                          {columnMasks.activeMaskedNames.has(contextMenu.colName!)
+                            ? maskingCopy.reveal
+                            : maskingCopy.hide}
+                        </button>
+                        <button
+                          type="button"
+                          className="datagrid-context-menu-item"
+                          onClick={() => {
+                            clearColumnMask(maskScopeKey, contextMenu.colName!);
+                            onClose();
+                          }}
+                        >
+                          {maskingCopy.unmask}
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              )}
+            </>
+          )}
         </>
       )}
       {contextMenu.type === "row" && (

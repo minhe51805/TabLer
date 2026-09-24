@@ -36,7 +36,9 @@ import {
   exportToCSV,
   exportToJSON,
   exportToMarkdown,
+  exportToNDJSON,
 } from "../../utils/export-utils";
+import { exportToXML } from "../../utils/export-xml";
 import { exportXLSX } from "../../utils/export-xlsx";
 import { buildMqlContent, exportToMQL } from "../../utils/export-mql";
 import { generateInsertSql } from "../../utils/sql-generator";
@@ -87,6 +89,9 @@ interface DataGridToolbarProps {
   primaryKeyColumns?: ResolvedColumn[];
   /** Raw row data to export (uses same row order as displayed in grid) */
   dataRows?: (string | number | boolean | null)[][];
+  /** Raw rows for the anonymizer modal — it applies its own salt, so it must
+   *  never receive the already-masked view matrix. */
+  anonymizerRows?: (string | number | boolean | null)[][];
   /** Number of pending undoable changes */
   undoableChanges?: number;
   /** Multi-column sort state */
@@ -173,6 +178,7 @@ export function DataGridToolbar({
   resolvedColumns = [],
   primaryKeyColumns = [],
   dataRows = [],
+  anonymizerRows,
   undoableChanges = 0,
   stagedChangeCount = 0,
   onApplyChanges,
@@ -418,6 +424,32 @@ export function DataGridToolbar({
     if (!canExport) return;
     const cols = resolvedColumns.map((c) => c.name);
     exportToMarkdown(cols, dataRows, buildExportFilename(exportFilenameBase, "md")).catch(
+      (error) => {
+        emitAppToast({
+          title: t("datagrid.exportFailed"),
+          description: String(error),
+          tone: "error",
+        });
+      },
+    );
+  }, [canExport, dataRows, exportFilenameBase, resolvedColumns, t]);
+
+  const handleExportXML = useCallback(() => {
+    if (!canExport) return;
+    const cols = resolvedColumns.map((c) => c.name);
+    exportToXML(cols, dataRows, buildExportFilename(exportFilenameBase, "xml")).catch((error) => {
+      emitAppToast({
+        title: t("datagrid.exportFailed"),
+        description: String(error),
+        tone: "error",
+      });
+    });
+  }, [canExport, dataRows, exportFilenameBase, resolvedColumns, t]);
+
+  const handleExportNDJSON = useCallback(() => {
+    if (!canExport) return;
+    const cols = resolvedColumns.map((c) => c.name);
+    exportToNDJSON(cols, dataRows, buildExportFilename(exportFilenameBase, "ndjson")).catch(
       (error) => {
         emitAppToast({
           title: t("datagrid.exportFailed"),
@@ -889,6 +921,8 @@ export function DataGridToolbar({
             onExportJSON={handleExportJSON}
             onExportXLSX={handleExportXLSX}
             onExportMarkdown={handleExportMarkdown}
+            onExportXML={handleExportXML}
+            onExportNDJSON={handleExportNDJSON}
             onExportMQL={handleExportMQL}
             onPluginExport={handlePluginExport}
             onClose={() => setShowExportMenu(false)}
@@ -1009,7 +1043,7 @@ export function DataGridToolbar({
       {showAnonymizer && (
         <DataGridAnonymizerModal
           columns={resolvedColumns}
-          dataRows={dataRows}
+          dataRows={anonymizerRows ?? dataRows}
           onClose={() => setShowAnonymizer(false)}
         />
       )}

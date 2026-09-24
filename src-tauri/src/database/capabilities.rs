@@ -422,7 +422,7 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "mssql",
             "SQL Server",
             DriverTier::Extended,
-            S, S, S, S, S, S, S, S, S, S, S, L, L,
+            S, S, S, S, S, S, S, S, S, S, S, L, S,
             &["Cancel kills the session from a second connection (TDS attention is not exposed by the driver), so the cancelled session is fully terminated rather than interrupted.", "Explain runs SHOWPLAN_TEXT/XML around the statement on the shared session.", "Reviewed schema changes run in one transaction; statements SQL Server forbids inside transactions (ALTER DATABASE, CREATE/DROP DATABASE, BACKUP/RESTORE, RECONFIGURE, full-text index DDL) are rejected and rolled back.", "Stored procedures are listed with definitions but there is no dedicated proc editor/executor surface."],
         ),
         DatabaseType::Redis => profile(

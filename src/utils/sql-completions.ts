@@ -6,7 +6,6 @@ export interface SqlCompletionSet {
   readonly operators: readonly string[];
 }
 
-
 import {
   BASE_KEYWORDS,
   COMMON_FUNCTIONS,
@@ -19,9 +18,25 @@ import {
  * Database types supported by the completion engine.
  */
 const DATABASE_TYPES: readonly DatabaseType[] = [
-  "mysql", "mariadb", "sqlite", "duckdb", "cassandra", "cockroachdb",
-  "snowflake", "postgresql", "greenplum", "redshift", "mssql", "redis",
-  "mongodb", "vertica", "clickhouse", "bigquery", "libsql", "cloudflare_d1",
+  "mysql",
+  "mariadb",
+  "sqlite",
+  "duckdb",
+  "cassandra",
+  "cockroachdb",
+  "snowflake",
+  "postgresql",
+  "greenplum",
+  "redshift",
+  "mssql",
+  "redis",
+  "mongodb",
+  "vertica",
+  "clickhouse",
+  "bigquery",
+  "libsql",
+  "cloudflare_d1",
+  "oracle",
 ];
 
 function uniqueFrozen(items: readonly string[]): readonly string[] {

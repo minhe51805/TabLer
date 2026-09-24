@@ -83,7 +83,8 @@ pub const fn driver_distribution(database_type: DatabaseType) -> DriverDistribut
         | DatabaseType::BigQuery
         | DatabaseType::Snowflake
         | DatabaseType::CloudflareD1
-        | DatabaseType::OpenSearch => DriverDistribution::PluginHttp,
+        | DatabaseType::OpenSearch
+        | DatabaseType::Oracle => DriverDistribution::PluginHttp,
         DatabaseType::DuckDB
         | DatabaseType::Cassandra
         | DatabaseType::Redis
@@ -259,7 +260,7 @@ impl DriverCapabilityProfile {
     }
 }
 
-pub const ALL_DATABASE_TYPES: [DatabaseType; 19] = [
+pub const ALL_DATABASE_TYPES: [DatabaseType; 20] = [
     DatabaseType::MySQL,
     DatabaseType::MariaDB,
     DatabaseType::PostgreSQL,
@@ -279,6 +280,7 @@ pub const ALL_DATABASE_TYPES: [DatabaseType; 19] = [
     DatabaseType::LibSQL,
     DatabaseType::CloudflareD1,
     DatabaseType::OpenSearch,
+    DatabaseType::Oracle,
 ];
 
 const S: CapabilitySupport = CapabilitySupport::Supported;
@@ -491,6 +493,14 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             S, S, N, L, S, U, N, U, S, U, N, U, U,
             &["The declarative OpenSearch plugin driver is read-only.", "SQL restore and server administration are unavailable."],
         ),
+        DatabaseType::Oracle => profile(
+            database_type,
+            "oracle",
+            "Oracle (ORDS)",
+            DriverTier::Extended,
+            S, S, U, L, S, U, U, U, S, U, U, U, U,
+            &["Requires ORDS (Oracle REST Data Services) enabled on the database; write operations are not supported over the REST endpoint.", "Prepared parameters, inline edits, atomic imports, explain plans, schema actions, and backup/restore are not available through the ORDS SQL endpoint."],
+        ),
     }
 }
 
@@ -634,7 +644,11 @@ mod tests {
 
     #[test]
     fn read_only_projection_drivers_do_not_advertise_edits() {
-        for database_type in [DatabaseType::Redis, DatabaseType::OpenSearch] {
+        for database_type in [
+            DatabaseType::Redis,
+            DatabaseType::OpenSearch,
+            DatabaseType::Oracle,
+        ] {
             let profile = driver_capabilities(database_type);
             assert_ne!(profile.capabilities.inline_edit, S);
             assert_ne!(profile.capabilities.atomic_edit_queue, S);
@@ -752,7 +766,8 @@ mod tests {
                 | DatabaseType::BigQuery
                 | DatabaseType::Snowflake
                 | DatabaseType::CloudflareD1
-                | DatabaseType::OpenSearch => PluginHttp,
+                | DatabaseType::OpenSearch
+                | DatabaseType::Oracle => PluginHttp,
                 DatabaseType::DuckDB
                 | DatabaseType::Cassandra
                 | DatabaseType::Redis
@@ -816,6 +831,7 @@ mod tests {
             "snowflake",
             "cloudflare_d1",
             "opensearch",
+            "oracle",
         ] {
             assert!(
                 !builtin.contains(key),

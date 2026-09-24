@@ -35,6 +35,7 @@ const FALLBACK_ICONS: Record<string, LucideIcon> = {
   bigquery: Cloud,
   libsql: Database,
   cloudflare_d1: Cloud,
+  oracle: Database,
 };
 
 interface Props {

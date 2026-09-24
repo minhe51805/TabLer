@@ -474,5 +474,31 @@
       "The declarative OpenSearch plugin driver is read-only.",
       "SQL restore and server administration are unavailable."
     ]
+  },
+  {
+    "key": "oracle",
+    "label": "Oracle (ORDS)",
+    "tier": "extended",
+    "queryModel": "sql",
+    "distribution": "plugin_http",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "unsupported",
+      "queryCancellation": "limited",
+      "pagination": "supported",
+      "inlineEdit": "unsupported",
+      "atomicEditQueue": "unsupported",
+      "atomicCsvImport": "unsupported",
+      "dataExport": "supported",
+      "explain": "unsupported",
+      "schemaEdit": "unsupported",
+      "backupRestore": "unsupported",
+      "administration": "unsupported"
+    },
+    "limitations": [
+      "Requires ORDS (Oracle REST Data Services) enabled on the database; write operations are not supported over the REST endpoint.",
+      "Prepared parameters, inline edits, atomic imports, explain plans, schema actions, and backup/restore are not available through the ORDS SQL endpoint."
+    ]
   }
 ]

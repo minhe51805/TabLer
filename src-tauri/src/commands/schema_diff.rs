@@ -276,6 +276,7 @@ pub(crate) fn parse_dialect(dialect: &str) -> anyhow::Result<DatabaseType> {
         "snowflake" => DatabaseType::Snowflake,
         "bigquery" => DatabaseType::BigQuery,
         "cassandra" => DatabaseType::Cassandra,
+        "oracle" | "ords" => DatabaseType::Oracle,
         other => return Err(anyhow::anyhow!("Unsupported migration dialect: {other}")),
     };
     Ok(parsed)

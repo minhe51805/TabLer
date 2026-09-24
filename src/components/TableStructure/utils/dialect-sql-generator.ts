@@ -51,6 +51,9 @@ export function resolveSqlDialect(dbType: DatabaseType): SqlDialectFamily {
     case "libsql":
     case "cloudflare_d1":
       return "sqlite";
+    case "oracle":
+      // ANSI double-quoted identifiers, same as the postgresql family.
+      return "postgresql";
     default:
       return "postgresql";
   }
@@ -61,7 +64,7 @@ export function quoteIdentifier(dbType: DatabaseType, value: string) {
   if (resolveSqlDialect(dbType) === "mysql") {
     return `\`${normalized.replace(/`/g, "``")}\``;
   }
-  return `"${normalized.replace(/"/g, "\"\"")}"`;
+  return `"${normalized.replace(/"/g, '""')}"`;
 }
 
 export function qualifyTableName(dbType: DatabaseType, tableName: string, database?: string) {
@@ -97,7 +100,7 @@ export function referencesColumnInSql(sql: string | undefined, columnName: strin
   if (!sql) return false;
   const pattern = new RegExp(
     `(^|[^a-zA-Z0-9_])(?:${escapeRegex(columnName)}|"${escapeRegex(columnName)}"|\`${escapeRegex(columnName)}\`)(?=$|[^a-zA-Z0-9_])`,
-    "i"
+    "i",
   );
   return pattern.test(sql);
 }
@@ -111,7 +114,7 @@ export function buildColumnAlterStatements(
   tableName: string,
   database: string | undefined,
   original: ColumnDetail,
-  editor: ColumnEditorState
+  editor: ColumnEditorState,
 ): BuildColumnSqlResult {
   const dialect = resolveSqlDialect(dbType);
 
@@ -142,7 +145,7 @@ export function buildColumnAlterStatements(
 
   if (nextName !== original.name) {
     statements.push(
-      `ALTER TABLE ${tableRef} RENAME COLUMN ${quoteIdentifier(dbType, original.name)} TO ${quoteIdentifier(dbType, nextName)}`
+      `ALTER TABLE ${tableRef} RENAME COLUMN ${quoteIdentifier(dbType, original.name)} TO ${quoteIdentifier(dbType, nextName)}`,
     );
     currentName = nextName;
   }
@@ -150,13 +153,13 @@ export function buildColumnAlterStatements(
   if (dialect === "postgresql") {
     if (nextType !== originalType) {
       statements.push(
-        `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} TYPE ${nextType}`
+        `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} TYPE ${nextType}`,
       );
     }
 
     if (!original.is_primary_key && editor.nullable !== original.is_nullable) {
       statements.push(
-        `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} ${editor.nullable ? "DROP" : "SET"} NOT NULL`
+        `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} ${editor.nullable ? "DROP" : "SET"} NOT NULL`,
       );
     }
 
@@ -166,14 +169,14 @@ export function buildColumnAlterStatements(
       }
       if (nextDefault !== originalDefault) {
         statements.push(
-          `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} SET DEFAULT ${nextDefault}`
+          `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} SET DEFAULT ${nextDefault}`,
         );
       }
     }
 
     if (editor.defaultMode === "drop" && originalDefault) {
       statements.push(
-        `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} DROP DEFAULT`
+        `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} DROP DEFAULT`,
       );
     }
 
@@ -212,14 +215,14 @@ export function buildColumnAlterStatements(
     }
     if (nextDefault !== originalDefault) {
       statements.push(
-        `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} SET DEFAULT ${nextDefault}`
+        `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} SET DEFAULT ${nextDefault}`,
       );
     }
   }
 
   if (editor.defaultMode === "drop" && originalDefault) {
     statements.push(
-      `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} DROP DEFAULT`
+      `ALTER TABLE ${tableRef} ALTER COLUMN ${quoteIdentifier(dbType, currentName)} DROP DEFAULT`,
     );
   }
 
@@ -233,7 +236,7 @@ export function buildDropColumnStatements(
   original: ColumnDetail,
   indexes: IndexInfo[],
   foreignKeys: ForeignKeyInfo[],
-  triggers: TriggerInfo[]
+  triggers: TriggerInfo[],
 ): BuildColumnSqlResult {
   if (original.is_primary_key) {
     return {
@@ -250,7 +253,9 @@ export function buildDropColumnStatements(
     };
   }
 
-  const referencedByForeignKey = foreignKeys.find((foreignKey) => foreignKey.column === original.name);
+  const referencedByForeignKey = foreignKeys.find(
+    (foreignKey) => foreignKey.column === original.name,
+  );
   if (referencedByForeignKey) {
     return {
       statements: [],
@@ -259,7 +264,7 @@ export function buildDropColumnStatements(
   }
 
   const dependentTriggers = triggers.filter((trigger) =>
-    referencesColumnInSql(trigger.definition, original.name)
+    referencesColumnInSql(trigger.definition, original.name),
   );
   if (dependentTriggers.length > 0) {
     return {
@@ -272,9 +277,7 @@ export function buildDropColumnStatements(
 
   const tableRef = qualifyTableName(dbType, tableName, database);
   return {
-    statements: [
-      `ALTER TABLE ${tableRef} DROP COLUMN ${quoteIdentifier(dbType, original.name)}`,
-    ],
+    statements: [`ALTER TABLE ${tableRef} DROP COLUMN ${quoteIdentifier(dbType, original.name)}`],
   };
 }
 
@@ -282,7 +285,10 @@ export function buildDropColumnStatements(
 // Editor State Helpers
 // ---------------------------------------------------------------------------
 
-export function createEditorState(column: ColumnDetail, draft?: ColumnEditorState): ColumnEditorState {
+export function createEditorState(
+  column: ColumnDetail,
+  draft?: ColumnEditorState,
+): ColumnEditorState {
   if (draft) {
     return { ...draft };
   }

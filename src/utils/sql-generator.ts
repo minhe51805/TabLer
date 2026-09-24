@@ -34,6 +34,7 @@ function getQuoteFn(dbType: DatabaseType | undefined): QuoteFn {
     case "greenplum":
     case "redshift":
     case "cockroachdb":
+    case "oracle":
       return quotePostgres;
     case "mysql":
     case "mariadb":

@@ -28,6 +28,7 @@ export const PLUGIN_HTTP_PROTOCOLS = [
   "bigquery",
   "snowflake",
   "cloudflare_d1",
+  "oracle",
 ] as const;
 
 export type PluginHttpProtocol = (typeof PLUGIN_HTTP_PROTOCOLS)[number];

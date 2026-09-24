@@ -339,6 +339,25 @@ export const ENGINE_EXTRA_FIELDS = {
       placeholder: "cloudflare_database_id",
     },
   ] satisfies EngineExtraField[],
+  oracle: [
+    {
+      key: "ords_schema",
+      label: "ORDS schema alias",
+      labelVi: "Schema alias ORDS",
+      placeholder: "schema_alias",
+      hint: "The {schema} segment in /ords/{schema}/_/sql. Defaults to the Database field, then the username.",
+      hintVi:
+        "Doan {schema} trong /ords/{schema}/_/sql. Mac dinh dung truong Database, sau do username.",
+    },
+    {
+      key: "ords_base_path",
+      label: "ORDS base path",
+      labelVi: "Base path ORDS",
+      placeholder: "ords",
+      hint: 'Optional. Single path segment; defaults to "ords".',
+      hintVi: 'Tuy chon. Mot doan path duy nhat; mac dinh la "ords".',
+    },
+  ] satisfies EngineExtraField[],
 } as const;
 
 export function buildDbEntry({ fieldProfile, extraFields, ...entry }: DbEntryInput): DbEntry {

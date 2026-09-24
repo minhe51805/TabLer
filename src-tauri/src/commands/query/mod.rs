@@ -741,6 +741,9 @@ pub async fn explain_agent_statement(
         DatabaseType::SQLite | DatabaseType::LibSQL | DatabaseType::CloudflareD1 => {
             format!("EXPLAIN QUERY PLAN {}", statements[0])
         }
+        // Oracle plans go through EXPLAIN PLAN FOR + PLAN_TABLE; the agent
+        // explain path stays a single statement, so emit the canonical form.
+        DatabaseType::Oracle => format!("EXPLAIN PLAN FOR {}", statements[0]),
         _ => format!("EXPLAIN {}", statements[0]),
     };
     run_sandboxed_statements(

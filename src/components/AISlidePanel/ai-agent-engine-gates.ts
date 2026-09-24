@@ -26,6 +26,7 @@ export const AGENT_QUERY_MODEL_BY_ENGINE: Record<DatabaseType, QueryModel> = {
   redis: "kv",
   mongodb: "document",
   opensearch: "search",
+  oracle: "sql",
 };
 
 const ENGINE_LABEL: Record<DatabaseType, string> = {
@@ -48,6 +49,7 @@ const ENGINE_LABEL: Record<DatabaseType, string> = {
   redis: "Redis",
   mongodb: "MongoDB",
   opensearch: "OpenSearch",
+  oracle: "Oracle (ORDS)",
 };
 
 export interface AgentToolAvailability {
@@ -227,6 +229,13 @@ const AGENT_ENGINE_TOOL_FLAGS: Record<
     parameterizedRead: false,
     previewWrite: false,
     schemaObjects: false,
+    presets: false,
+    checkpointRestore: false,
+  },
+  oracle: {
+    parameterizedRead: false,
+    previewWrite: false,
+    schemaObjects: true,
     presets: false,
     checkpointRestore: false,
   },

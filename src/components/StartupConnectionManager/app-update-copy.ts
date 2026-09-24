@@ -19,6 +19,10 @@ export interface AppUpdateCopy {
   retry: string;
   /** Tooltip describing the failed check; `{error}` is the backend message. */
   checkFailed: (error: string) => string;
+  /** Icon-button tooltip for the manual "check for updates" affordance. */
+  checkNow: string;
+  /** Icon-button label while a check is running. */
+  checking: string;
 }
 
 const EN_COPY: AppUpdateCopy = {
@@ -32,6 +36,8 @@ const EN_COPY: AppUpdateCopy = {
   skip: "Skip this version",
   retry: "Retry update check",
   checkFailed: (error) => `Update check failed — click to retry. ${error}`,
+  checkNow: "Check for updates",
+  checking: "Checking…",
 };
 
 const VI_COPY: AppUpdateCopy = {
@@ -45,6 +51,8 @@ const VI_COPY: AppUpdateCopy = {
   skip: "Bỏ qua bản này",
   retry: "Thử kiểm tra lại",
   checkFailed: (error) => `Kiểm tra cập nhật thất bại — nhấn để thử lại. ${error}`,
+  checkNow: "Kiểm tra cập nhật",
+  checking: "Đang kiểm tra…",
 };
 
 const ZH_COPY: AppUpdateCopy = {
@@ -58,6 +66,8 @@ const ZH_COPY: AppUpdateCopy = {
   skip: "跳过此版本",
   retry: "重试检查更新",
   checkFailed: (error) => `检查更新失败 — 点击重试。${error}`,
+  checkNow: "检查更新",
+  checking: "正在检查…",
 };
 
 const TR_COPY: AppUpdateCopy = {
@@ -71,6 +81,8 @@ const TR_COPY: AppUpdateCopy = {
   skip: "Bu sürümü atla",
   retry: "Güncelleme kontrolünü tekrarla",
   checkFailed: (error) => `Güncelleme kontrolü başarısız — tekrar denemek için tıklayın. ${error}`,
+  checkNow: "Güncellemeleri denetle",
+  checking: "Denetleniyor…",
 };
 
 const KO_COPY: AppUpdateCopy = {
@@ -84,6 +96,8 @@ const KO_COPY: AppUpdateCopy = {
   skip: "이 버전 건너뛰기",
   retry: "업데이트 확인 재시도",
   checkFailed: (error) => `업데이트 확인 실패 — 클릭하여 재시도. ${error}`,
+  checkNow: "업데이트 확인",
+  checking: "확인 중…",
 };
 
 const COPY: Record<AppLanguage, AppUpdateCopy> = {

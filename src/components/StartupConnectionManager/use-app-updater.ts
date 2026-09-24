@@ -171,3 +171,14 @@ export function useAppUpdater() {
     dismiss,
   };
 }
+
+/**
+ * Version string shown to the user. The updater manifest `version` is the
+ * semver bundle version (0.1.6) while releases carry a letter-suffixed label
+ * (v0.1.6b); the release notes' first heading carries that label, so prefer it
+ * when present and fall back to the manifest version otherwise.
+ */
+export function updateDisplayVersion(update: AppUpdateInfo): string {
+  const match = update.notes.match(/v(\d+\.\d+\.\d+[0-9A-Za-z.-]*)/);
+  return match?.[1] ?? update.version;
+}

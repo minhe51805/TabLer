@@ -18,6 +18,13 @@ import { useConnectionCapabilities } from "./useConnectionCapabilities";
 import { isCapabilitySupported } from "../types";
 import { getWindowMenuCopy } from "./window-menu-copy";
 import { openExternalUrl } from "../utils/tauri-utils";
+import { useChangeTrackingStore } from "../stores/change-tracking-store";
+import { useStructureReviewRegistry } from "../components/ReviewCenter/structure-review-registry";
+import { getReviewCenterCopy } from "../components/ReviewCenter/review-center-copy";
+import {
+  getReviewCenterShortcutLabel,
+  OPEN_REVIEW_CENTER_EVENT,
+} from "../components/ReviewCenter/review-center-store";
 
 /** GitHub targets for the Help menu's outbound links. */
 const ISSUES_NEW_URL = "https://github.com/minhe51805/TabLer/issues/new";
@@ -100,6 +107,17 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
   const canExport = isCapabilitySupported(capabilityProfile?.capabilities.dataExport);
   const canRestore = isCapabilitySupported(capabilityProfile?.capabilities.backupRestore);
   const canAdminister = isCapabilitySupported(capabilityProfile?.capabilities.administration);
+  const pendingEditCount = useChangeTrackingStore((s) => s.stagedChanges.length);
+  const pendingStructureCount = Object.values(useStructureReviewRegistry((s) => s.entries)).reduce(
+    (total, entry) => total + entry.pendingCount,
+    0,
+  );
+  const pendingReviewCount = pendingEditCount + pendingStructureCount;
+  const reviewCenterCopy = getReviewCenterCopy(language);
+  const reviewCenterLabel =
+    pendingReviewCount > 0
+      ? `${reviewCenterCopy.menuItem} (${pendingReviewCount})`
+      : reviewCenterCopy.menuItem;
 
   const closeMenu = actions.onWindowMenuClose;
 
@@ -384,6 +402,15 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
             },
             disabled: !isConnected,
           },
+          {
+            key: "review-center",
+            label: reviewCenterLabel,
+            action: () => {
+              window.dispatchEvent(new CustomEvent(OPEN_REVIEW_CENTER_EVENT));
+              closeMenu();
+            },
+            shortcut: getReviewCenterShortcutLabel(),
+          },
           { divider: true },
           {
             label: t("menu.item.refreshWorkspace"),
@@ -586,6 +613,7 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
       canExport,
       canRestore,
       canAdminister,
+      reviewCenterLabel,
     ],
   );
 

@@ -26,7 +26,8 @@ export type ShortcutAction =
   | "paste"
   | "undo"
   | "redo"
-  | "duplicate-row";
+  | "duplicate-row"
+  | "open-review-center";
 
 export interface ShortcutBinding {
   action: ShortcutAction;
@@ -173,6 +174,13 @@ const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     currentKey: "Ctrl+D",
     category: "editing",
   },
+  {
+    action: "open-review-center",
+    label: "Review changes",
+    defaultKey: "Ctrl+Shift+R",
+    currentKey: "Ctrl+Shift+R",
+    category: "general",
+  },
 ];
 
 // Singleton state
@@ -196,6 +204,20 @@ function normalizeKey(key: string): string {
     .replace(/Command/gi, "Cmd")
     .replace(/Option/gi, "Alt")
     .toUpperCase();
+}
+
+/** Convert a KeyboardEvent into the same combo string the shortcuts modal
+ *  records ("Ctrl+Shift+R"), so callers can resolve it via resolveShortcut. */
+export function keyboardEventToShortcutKey(event: KeyboardEvent): string | null {
+  const parts: string[] = [];
+  if (event.ctrlKey) parts.push("Ctrl");
+  if (event.altKey) parts.push("Alt");
+  if (event.shiftKey) parts.push("Shift");
+  if (event.metaKey) parts.push("Cmd");
+  const key = event.key;
+  if (key === "Control" || key === "Alt" || key === "Shift" || key === "Meta") return null;
+  parts.push(key.length === 1 ? key.toUpperCase() : key);
+  return parts.join("+");
 }
 
 function loadAllShortcuts(): ShortcutBinding[] {

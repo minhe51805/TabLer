@@ -16,6 +16,7 @@ export interface AIMemoryCopy {
   scopeLabel: string;
   updatedLabel: string;
   viewAction: string;
+  hideAction: string;
   deleteAction: string;
   clearAllAction: string;
   closeAction: string;
@@ -49,6 +50,7 @@ const EN: AIMemoryCopy = {
   scopeLabel: "Scope",
   updatedLabel: "Updated",
   viewAction: "View",
+  hideAction: "Hide",
   deleteAction: "Delete",
   clearAllAction: "Clear all",
   closeAction: "Close",
@@ -81,6 +83,7 @@ const VI: AIMemoryCopy = {
   scopeLabel: "Phạm vi",
   updatedLabel: "Cập nhật",
   viewAction: "Xem",
+  hideAction: "Ẩn",
   deleteAction: "Xóa",
   clearAllAction: "Xóa tất cả",
   closeAction: "Đóng",
@@ -113,6 +116,7 @@ const KO: AIMemoryCopy = {
   scopeLabel: "범위",
   updatedLabel: "업데이트",
   viewAction: "보기",
+  hideAction: "숨기기",
   deleteAction: "삭제",
   clearAllAction: "모두 삭제",
   closeAction: "닫기",
@@ -145,6 +149,7 @@ const TR: AIMemoryCopy = {
   scopeLabel: "Kapsam",
   updatedLabel: "Güncellendi",
   viewAction: "Görüntüle",
+  hideAction: "Gizle",
   deleteAction: "Sil",
   clearAllAction: "Tümünü sil",
   closeAction: "Kapat",
@@ -177,6 +182,7 @@ const ZH: AIMemoryCopy = {
   scopeLabel: "范围",
   updatedLabel: "更新时间",
   viewAction: "查看",
+  hideAction: "隐藏",
   deleteAction: "删除",
   clearAllAction: "全部清除",
   closeAction: "关闭",

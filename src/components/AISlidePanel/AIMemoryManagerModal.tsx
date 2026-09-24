@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Brain, Loader2, RefreshCw, Trash2, X } from "lucide-react";
+import { Brain, Eye, EyeOff, Loader2, RefreshCw, Trash2, X } from "lucide-react";
 import { invokeMutation } from "../../utils/tauri-utils";
 import { ConfirmDialog } from "../ConfirmDialog";
 import { formatMemoryCopy, getAIMemoryCopy } from "./ai-memory-copy";
@@ -22,6 +22,20 @@ interface AIMemoryManagerModalProps {
  * in the current scope, shows bodies on demand, and deletes with the same
  * explicit confirm the tools require.
  */
+
+/** ISO timestamps like "2026-09-23T15:47:09.299144+00:00" render as a short
+ *  local date+time; unparseable values pass through trimmed. */
+function formatMemoryTimestamp(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso.split(".")[0] ?? iso;
+  return date.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
 export function AIMemoryManagerModal({
   open,
   language,
@@ -199,7 +213,7 @@ export function AIMemoryManagerModal({
                       <span className="ai-memory-manager-row-desc">{entry.description}</span>
                     ) : null}
                     <span className="ai-memory-manager-row-meta">
-                      {copy.updatedLabel}: {entry.updatedAt}
+                      {formatMemoryTimestamp(entry.updatedAt)}
                     </span>
                     {bodies[entry.name] !== undefined ? (
                       <pre className="ai-memory-manager-body-text">{bodies[entry.name]}</pre>
@@ -208,18 +222,28 @@ export function AIMemoryManagerModal({
                   <div className="ai-memory-manager-row-actions">
                     <button
                       type="button"
-                      className="ai-skills-manager-btn is-ghost is-small"
+                      className="ai-skills-manager-btn is-icon"
                       onClick={() => void viewBody(entry.name)}
+                      title={bodies[entry.name] !== undefined ? copy.hideAction : copy.viewAction}
+                      aria-label={
+                        bodies[entry.name] !== undefined ? copy.hideAction : copy.viewAction
+                      }
                     >
-                      {copy.viewAction}
+                      {bodies[entry.name] !== undefined ? (
+                        <EyeOff className="w-3.5 h-3.5" />
+                      ) : (
+                        <Eye className="w-3.5 h-3.5" />
+                      )}
                     </button>
                     <button
                       type="button"
-                      className="ai-skills-manager-btn is-ghost is-small"
+                      className="ai-skills-manager-btn is-icon is-danger"
                       onClick={() => setDeleteTarget(entry.name)}
                       disabled={busy}
+                      title={copy.deleteAction}
+                      aria-label={copy.deleteAction}
                     >
-                      <Trash2 className="w-3.5 h-3.5" /> {copy.deleteAction}
+                      <Trash2 className="w-3.5 h-3.5" />
                     </button>
                   </div>
                 </li>

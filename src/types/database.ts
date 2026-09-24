@@ -141,6 +141,24 @@ export interface SchemaObjectInfo {
   create_date?: string | null;
 }
 
+export interface RoutineInfo {
+  name: string;
+  /** "procedure" or "function". */
+  kind: string;
+  schema?: string;
+  language?: string;
+  /** Human-readable argument list, e.g. "IN p_id int, OUT p_total decimal(10,2)". */
+  arg_signature?: string;
+  /** Raw engine object type (e.g. "SQL_STORED_PROCEDURE"). */
+  engine_type?: string;
+}
+
+export interface RoutineDefinition {
+  name: string;
+  kind: string;
+  definition: string;
+}
+
 export interface DatabaseInfo {
   name: string;
   size?: string;

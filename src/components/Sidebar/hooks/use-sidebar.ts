@@ -34,6 +34,13 @@ import {
 } from "../../../types/filter-presets";
 import { useFilterPresetsStore } from "../../../stores/filterPresetsStore";
 import { useDbVisibilityStore, filterVisibleDatabases } from "../../../stores/dbVisibilityStore";
+import {
+  DEFAULT_EXPORT_FORMATS,
+  getCompiledExportFormats,
+  type ExportFormatInfo,
+  type TableExportFormat,
+} from "../../../utils/export-formats";
+import { useRoutineEditorStore } from "../../RoutineEditor/routineEditorStore";
 import { useTableFilterActions } from "./useTableFilterActions";
 import { requestAppConfirmation } from "../../../stores/confirmStore";
 
@@ -301,6 +308,17 @@ export function useSidebar() {
       });
     },
     [activeConnectionId, currentDatabase, addTab],
+  );
+
+  const handleRoutineClick = useCallback(
+    (object: SchemaObjectInfo) => {
+      if (!activeConnectionId) return;
+      useRoutineEditorStore.getState().open(activeConnectionId, {
+        name: object.name,
+        schema: object.schema,
+      });
+    },
+    [activeConnectionId],
   );
 
   const openQueryDraft = useCallback(
@@ -732,7 +750,7 @@ export function useSidebar() {
   );
 
   const handleBulkExport = useCallback(
-    async (format: "csv" | "jsonl") => {
+    async (format: TableExportFormat) => {
       if (!activeConnectionId || selectedTables.length === 0 || isBulkExporting) return;
       const directory = await openDirectoryDialog({ directory: true, multiple: false });
       if (typeof directory !== "string" || !directory) return;
@@ -895,6 +913,18 @@ export function useSidebar() {
   // --- SQL keyword autocomplete suggestions ---
   const autocompleteItems = useMemo<string[]>(() => getSidebarAutocompleteItems(search), [search]);
 
+  // Export formats compiled into the backend (`parquet` is absent when the
+  // cargo feature is off); fetched once — the set cannot change at runtime.
+  const [exportFormats, setExportFormats] = useState<ExportFormatInfo[]>(DEFAULT_EXPORT_FORMATS);
+  useEffect(() => {
+    let cancelled = false;
+    void getCompiledExportFormats().then((formats) => {
+      if (!cancelled) setExportFormats(formats);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
   // --- Context menu ---
   const tableContextMenuItems = useMemo<ExplorerContextMenuItem[]>(
     () =>
@@ -912,6 +942,7 @@ export function useSidebar() {
         onCopyTableName: handleCopyTableName,
         onCopyAsCode: handleCopyAsCode,
         onGenerateTableDocs: handleGenerateTableDocs,
+        exportFormats,
         onOpenQueryBuilder: handleOpenQueryBuilder,
         onGenerateTestRows: handleGenerateTestRows,
         onTogglePinnedTable: togglePinnedTable,
@@ -932,6 +963,7 @@ export function useSidebar() {
       openQueryDraft,
       handleCopyTableName,
       handleCopyAsCode,
+      exportFormats,
       handleGenerateTableDocs,
       handleOpenQueryBuilder,
       handleGenerateTestRows,
@@ -1121,6 +1153,7 @@ export function useSidebar() {
     handleTableDoubleClick,
     handleStructureClick,
     handleObjectSqlClick,
+    handleRoutineClick,
     handleTableContextMenu,
     handleRefresh,
     handleDisconnect,

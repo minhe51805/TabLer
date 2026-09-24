@@ -17,6 +17,7 @@ mod plugins_support;
 pub mod profiler;
 pub mod query;
 pub mod restore;
+pub mod routines;
 pub mod safe_mode;
 pub mod sample_db;
 pub mod schedule;

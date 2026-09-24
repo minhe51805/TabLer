@@ -65,6 +65,33 @@ impl MssqlDriver {
         }
     }
 
+    /// @@SPID of the primary client, resolved once and cached — it is constant
+    /// for the connection's lifetime. Used by `cancel_query_request` to KILL
+    /// this session from a second connection.
+    pub(super) async fn ensure_session_id(&self) -> Result<i32> {
+        if let Ok(guard) = self.session_id.read() {
+            if let Some(spid) = *guard {
+                return Ok(spid);
+            }
+        }
+        let mut client = self.acquire_client().await?;
+        let row = client
+            .simple_query("SELECT @@SPID AS spid")
+            .await?
+            .into_first_result()
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| anyhow!("@@SPID lookup returned no rows"))?;
+        let spid: i32 = row
+            .get::<i32, _>(0)
+            .ok_or_else(|| anyhow!("@@SPID lookup returned NULL"))?;
+        if let Ok(mut guard) = self.session_id.write() {
+            *guard = Some(spid);
+        }
+        Ok(spid)
+    }
+
     pub(super) async fn query_rows(&self, sql: &str) -> Result<(Vec<Row>, bool)> {
         self.query_rows_with_limit(sql, MAX_QUERY_RESULT_ROWS).await
     }

@@ -39,7 +39,7 @@ export const EN_COPY: PluginManagerCopy = {
   updateFromRegistry: "Update",
   registryInstalled: "Installed from registry",
   noPlugins:
-    "No local plugin bundles installed yet. Engine drivers (DuckDB, Cassandra, Redis, libSQL, Snowflake, ClickHouse, BigQuery, D1, OpenSearch) ship as .tableplugin bundles — fetch them from the registry or install a downloaded bundle from a local file.",
+    "No local plugin bundles installed yet. Engine drivers (DuckDB, Cassandra, Redis, libSQL, Snowflake, ClickHouse, BigQuery, D1, OpenSearch, Oracle) ship as .tableplugin bundles — fetch them from the registry or install a downloaded bundle from a local file.",
   note: "Format plugins and the read-only OpenSearch driver run through declarative runtimes without native code execution. Other WASM drivers remain experimental and disabled.",
   close: "Close",
   installSuccess: "Plugin installed",

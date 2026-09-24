@@ -18,7 +18,8 @@ export type DatabaseType =
   | "bigquery"
   | "libsql"
   | "cloudflare_d1"
-  | "opensearch";
+  | "opensearch"
+  | "oracle";
 
 export interface ConnectionConfig {
   id: string;

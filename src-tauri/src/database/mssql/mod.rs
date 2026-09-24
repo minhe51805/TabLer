@@ -20,11 +20,20 @@ pub(crate) struct MssqlServerAddress {
 
 pub struct MssqlDriver {
     client: Arc<Mutex<MssqlClient>>,
+    /// Kept so `cancel_query_request` can open a second connection and KILL
+    /// the session — the primary client is busy running the query being
+    /// cancelled, so it cannot issue the KILL itself.
+    config: ConnectionConfig,
     current_db: Arc<RwLock<Option<String>>>,
     /// Set when a transaction rollback fails on this connection: the session
     /// is left inside an open transaction, so every further statement is
     /// refused until the user reconnects.
     poisoned: Arc<RwLock<Option<String>>>,
+    /// request_id → session id (@@SPID) so cancel can reach the server.
+    cancel_registry: Arc<RwLock<crate::database::query_cancel::QueryCancelRegistry>>,
+    /// @@SPID of the primary client, fetched lazily once — it is constant for
+    /// the connection's lifetime.
+    session_id: Arc<RwLock<Option<i32>>>,
 }
 
 mod connect;

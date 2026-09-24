@@ -749,6 +749,61 @@ impl DatabaseDriver for DuckDbDriver {
         .await
     }
 
+    async fn apply_table_updates_atomically(
+        &self,
+        updates: &[TableCellUpdateRequest],
+    ) -> Result<u64> {
+        let updates = updates.to_vec();
+        self.with_connection(move |conn| {
+            let tx = conn.transaction()?;
+            let mut affected_rows = 0u64;
+
+            for request in &updates {
+                if request.primary_keys.is_empty() {
+                    return Err(anyhow!(
+                        "Inline update requires at least one primary key column"
+                    ));
+                }
+
+                let qualified_table = qualify_postgres_table_name(&request.table, "main")?;
+                let target_column = quote_postgres_order_by(&request.target_column)?;
+                let mut sql = format!("UPDATE {qualified_table} SET {target_column} = ?");
+                let mut params = vec![Self::json_to_duck_value(&request.value)?];
+
+                sql.push_str(" WHERE ");
+                for (index, primary_key) in request.primary_keys.iter().enumerate() {
+                    if index > 0 {
+                        sql.push_str(" AND ");
+                    }
+
+                    sql.push_str(&quote_postgres_order_by(&primary_key.column)?);
+                    if primary_key.value.is_null() {
+                        sql.push_str(" IS NULL");
+                    } else {
+                        sql.push_str(" = ?");
+                        params.push(Self::json_to_duck_value(&primary_key.value)?);
+                    }
+                }
+
+                let param_refs = params
+                    .iter()
+                    .map(|value| value as &dyn ToSql)
+                    .collect::<Vec<_>>();
+                let rows_affected = tx.execute(&sql, param_refs.as_slice())? as u64;
+                if rows_affected == 0 {
+                    return Err(anyhow!(
+                        "An edit queue row no longer matches its primary-key selector"
+                    ));
+                }
+                affected_rows += rows_affected;
+            }
+
+            tx.commit()?;
+            Ok(affected_rows)
+        })
+        .await
+    }
+
     async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64> {
         if request.rows.is_empty() {
             return Err(anyhow!("Deleting rows requires at least one selected row"));

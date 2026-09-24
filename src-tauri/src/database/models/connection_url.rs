@@ -52,6 +52,7 @@ impl ParsedConnectionUrl {
             "redis" | "rediss" => DatabaseType::Redis,
             "mongodb" => DatabaseType::MongoDB,
             "opensearch" | "elasticsearch" => DatabaseType::OpenSearch,
+            "oracle" | "ords" => DatabaseType::Oracle,
             _ => return Err(format!("Unsupported database scheme: {}", scheme)),
         };
 
@@ -201,6 +202,7 @@ impl ParsedConnectionUrl {
             DatabaseType::LibSQL => Some(8080),
             DatabaseType::CloudflareD1 => None,
             DatabaseType::OpenSearch => Some(9200),
+            DatabaseType::Oracle => Some(443),
         });
 
         Ok(Self {
@@ -367,6 +369,7 @@ impl ConnectionConfig {
             DatabaseType::LibSQL => 8080,
             DatabaseType::CloudflareD1 => 0,
             DatabaseType::OpenSearch => 9200,
+            DatabaseType::Oracle => 443,
         }
     }
 

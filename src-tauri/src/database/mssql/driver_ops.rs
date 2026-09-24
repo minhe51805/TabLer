@@ -1,13 +1,14 @@
 use super::MssqlDriver;
 use crate::database::driver::DatabaseDriver;
 use crate::database::models::*;
+use crate::database::query_cancel::{request_cancel, CancelLookup, CancelScopeGuard};
 use crate::database::query_common::METADATA_QUERY_ROW_LIMIT;
 use crate::database::safety::{
     normalize_order_dir, qualify_mssql_table_name, quote_mssql_identifier, quote_mssql_order_by,
     sanitize_mssql_filter_clause,
 };
 use crate::utils::sql::split_sql_statements;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -286,6 +287,45 @@ impl DatabaseDriver for MssqlDriver {
             sandboxed: false,
             truncated: false,
         })
+    }
+
+    /// Registers the request and resolves this connection's @@SPID so
+    /// `cancel_query_request` can KILL it from a second connection. The SPID
+    /// is constant for the session, so it is fetched once and cached.
+    async fn execute_query_for_request(&self, request_id: &str, sql: &str) -> Result<QueryResult> {
+        if request_id.trim().is_empty() {
+            return self.execute_query(sql).await;
+        }
+        let guard = CancelScopeGuard::begin(&self.cancel_registry, request_id);
+        let spid = self.ensure_session_id().await?;
+        if guard.register_backend(spid as i64) {
+            return Err(anyhow!("Query cancelled."));
+        }
+        let result = self.execute_query(sql).await;
+        drop(guard);
+        result
+    }
+
+    /// Cancels by opening a fresh connection and issuing `KILL <spid>` — the
+    /// primary client is blocked inside the running query and cannot run the
+    /// KILL itself. Tiberius does not expose the TDS attention signal, so a
+    /// second session is the only server-side cancel path.
+    async fn cancel_query_request(&self, request_id: &str) -> Result<bool> {
+        match request_cancel(&self.cancel_registry, request_id) {
+            CancelLookup::NotRunning => Ok(false),
+            CancelLookup::Pending => Ok(true),
+            CancelLookup::Backend(spid) => {
+                let database = self.current_database_name(None);
+                let mut killer = Self::open_mssql_client(&self.config, &database)
+                    .await
+                    .context("MSSQL cancel: could not open a second connection")?;
+                killer
+                    .simple_query(format!("KILL {spid}"))
+                    .await
+                    .context("MSSQL KILL failed")?;
+                Ok(true)
+            }
+        }
     }
 
     /// Checkpoint restore, atomic: every statement runs inside one explicit

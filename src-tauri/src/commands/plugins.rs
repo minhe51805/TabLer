@@ -557,6 +557,7 @@ mod tests {
             "snowflake",
             "cloudflare_d1",
             "opensearch",
+            "oracle",
         ] {
             let mut value = manifest();
             value.kind = "adapter".to_string();
@@ -594,11 +595,11 @@ mod tests {
         validate_registry(&registry).unwrap();
         assert_eq!(registry.schema_version, 1);
         // Built-in registry packages: portable-formats + one driver plugin per
-        // non-builtin engine. That is the five declarative-http-v1 PluginHttp
-        // drivers (opensearch, clickhouse, bigquery, snowflake, cloudflare-d1)
-        // and the four driver-sidecar-v1 PluginNative drivers (cassandra,
-        // duckdb, libsql, redis), for ten packages total.
-        assert_eq!(registry.packages.len(), 10);
+        // non-builtin engine. That is the six declarative-http-v1 PluginHttp
+        // drivers (opensearch, clickhouse, bigquery, snowflake, cloudflare-d1,
+        // oracle) and the four driver-sidecar-v1 PluginNative drivers
+        // (cassandra, duckdb, libsql, redis), for eleven packages total.
+        assert_eq!(registry.packages.len(), 11);
     }
 
     #[test]

@@ -1,4 +1,5 @@
 use crate::commands::safe_mode::SafeModeState;
+use crate::database::capabilities::{CapabilitySupport, DriverCapability};
 use crate::database::manager::DatabaseManager;
 use crate::database::models::DatabaseType;
 use crate::utils::sql::split_sql_statements;
@@ -141,15 +142,28 @@ pub(super) async fn run_sql_restore(
             .assert_sql_allowed(connection_id, sql, Some(db_type))
             .await?;
     }
-    // The capability gate targets native backup/restore tooling. Checkpoint
-    // rollback is plain SQL re-execution confirmed through a 3-step human
-    // dialog, so it runs without that contract (OpenSearch stays blocked).
+    // The capability gate targets engines whose driver cannot carry a SQL
+    // restore at all (read-only drivers: OpenSearch, Oracle/ORDS). Limited
+    // and NotApplicable still pass — for those engines plain SQL
+    // re-execution IS the restore path, so blocking them would remove the
+    // feature entirely rather than gate a native tool.
     if db_type == DatabaseType::OpenSearch {
         return Err(
             "SQL restore is not supported by the read-only OpenSearch plugin driver.".to_string(),
         );
     }
-    let _ = require_backup_restore_capability;
+    if require_backup_restore_capability {
+        let profile = db_manager
+            .get_connection_capabilities(connection_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        if profile.support(DriverCapability::BackupRestore) == CapabilitySupport::Unsupported {
+            return Err(format!(
+                "{} does not support SQL restore in TableR.",
+                profile.label
+            ));
+        }
+    }
     let statements = split_sql_statements(sql);
     if statements.is_empty() {
         return Err("The restore file does not contain any SQL statements.".to_string());

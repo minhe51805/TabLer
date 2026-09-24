@@ -120,8 +120,27 @@ export default async function Home() {
   const releases = await getTableRReleases();
   const latestVersion = releases[0]?.tag ?? "latest";
 
+  const jsonLd = {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    name: "TableR",
+    applicationCategory: "DeveloperApplication",
+    operatingSystem: "Windows, macOS, Linux",
+    offers: { "@type": "Offer", price: "0", priceCurrency: "USD" },
+    description:
+      "Query, explore, visualize, and understand your databases from one focused open-source desktop workspace.",
+    url: repositoryUrl,
+    downloadUrl: `${repositoryUrl}/releases`,
+    softwareVersion: latestVersion,
+    license: "https://www.gnu.org/licenses/gpl-3.0.html",
+  };
+
   return (
     <main id="main" className="neu">
+      <script
+        type="application/ld+json"
+        dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }}
+      />
       <ScrollReveal />
       <HeroScrollFX phases={t.hero.phases} />
       <div className="scroll-progress" aria-hidden="true" />

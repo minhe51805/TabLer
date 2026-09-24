@@ -5404,3 +5404,106 @@ a {
 .download-help code.copyable.is-copied {
   color: var(--green);
 }
+
+/* ---------- deep polish pass 7 ---------- */
+
+/* hero product frame gets a slow glare sweep — a diagonal light band
+   that crosses the glass every few seconds, like a screen catching a
+   window. Pure CSS; the frame already clips via border-radius. */
+.neu .product-frame {
+  position: relative;
+  overflow: hidden;
+}
+
+.neu .product-frame::before {
+  content: "";
+  position: absolute;
+  top: -60%;
+  left: -80%;
+  width: 55%;
+  height: 220%;
+  transform: rotate(18deg);
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.14) 45%,
+    rgba(255, 255, 255, 0.22) 50%,
+    rgba(255, 255, 255, 0.14) 55%,
+    transparent
+  );
+  animation: frame-glare 7s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  pointer-events: none;
+  z-index: 3;
+}
+
+@keyframes frame-glare {
+  0%,
+  55% {
+    left: -80%;
+  }
+  85%,
+  100% {
+    left: 130%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .neu .product-frame::before {
+    animation: none;
+    display: none;
+  }
+}
+
+/* footer wordmark drifts up slightly as the footer enters — a quiet
+   parallax so the giant type doesn't sit dead static */
+.neu .footer-wordmark {
+  transform: translateY(18%);
+  transition: transform 1.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.neu .is-revealed .footer-wordmark,
+.neu .site-footer.is-revealed .footer-wordmark {
+  transform: translateY(0);
+}
+
+/* docs external links carry a small ↗ so readers know they leave the
+   site — only on real external hrefs, not anchors or internal links */
+.doc-article a[href^="http"]::after {
+  content: "↗";
+  font-size: 0.72em;
+  margin-left: 2px;
+  vertical-align: super;
+  color: var(--muted-soft);
+}
+
+/* docs "copy page" affordance — a quiet button in the article head that
+   copies the page's plain-text body for pasting into an LLM or notes */
+.docs-copy-page {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  padding: 7px 13px;
+  border: none;
+  border-radius: 10px;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--neu-muted);
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-out-sm);
+  cursor: pointer;
+  transition:
+    color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
+}
+
+.docs-copy-page:hover {
+  color: var(--neu-accent);
+  transform: translateY(-1px);
+  box-shadow: var(--neu-shadow-out);
+}
+
+.docs-copy-page.is-copied {
+  color: var(--green);
+}

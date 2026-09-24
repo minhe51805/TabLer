@@ -3,6 +3,8 @@
 /* eslint-disable react-hooks/exhaustive-deps */
 import { useEffect } from "react";
 import { invokeMutation } from "../../../utils/tauri-utils";
+import { emitAppToast } from "../../../utils/app-toast";
+import { getCurrentAppLanguage } from "../../../i18n";
 import { denyPendingAIFailoverConsent } from "../../../utils/ai-failover-consent";
 import {
   AI_WORKSPACE_HISTORY_SAVE_DEBOUNCE_MS,
@@ -18,6 +20,10 @@ import {
 /** Attachment rows were created up to moments before their chat bubble; allow
  *  small clock/serialization skew when matching them back together. */
 const ATTACHMENT_RECOVERY_SKEW_MS = 1500;
+
+/** Persist failures toast once per session — a dead backend would otherwise
+ *  re-toast on every debounced save. */
+let persistFailureNotified = false;
 
 interface OrphanAttachmentRow {
   id: string;
@@ -472,6 +478,19 @@ export function useAIWorkspaceEffects(options: Record<string, any>) {
       historySaveTimerRef.current = null;
       persistHistoryState(nextState).catch((error: unknown) => {
         console.error("[AIWorkspace] Failed to persist workspace state:", error);
+        // A silent persist failure loses the whole conversation on restart —
+        // say so once instead of letting the history quietly go stale.
+        if (persistFailureNotified) return;
+        persistFailureNotified = true;
+        emitAppToast({
+          tone: "error",
+          title:
+            getCurrentAppLanguage() === "vi"
+              ? "Không lưu được lịch sử hội thoại"
+              : "Conversation history not saved",
+          description: error instanceof Error ? error.message : String(error),
+          durationMs: 6000,
+        });
       });
     }, AI_WORKSPACE_HISTORY_SAVE_DEBOUNCE_MS);
 

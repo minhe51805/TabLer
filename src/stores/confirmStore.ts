@@ -48,9 +48,13 @@ export function setAppConfirmHostMounted(mounted: boolean) {
  */
 export function requestAppConfirmation(request: AppConfirmRequest): Promise<boolean> {
   if (!isHostMounted) {
-    // No dialog host (tests, detached shells): keep the native confirm so the
-    // action is never silently approved or left hanging.
-    return Promise.resolve(window.confirm(`${request.title}\n\n${request.message}`));
+    // No dialog host (tests, detached shells, or a WebView where the native
+    // confirm is a no-op — macOS WKWebView silently returns undefined).
+    // Fail closed: an unanswerable confirmation must never approve.
+    console.warn(
+      `[ConfirmDialog] No dialog host mounted — denying "${request.title}" without asking.`,
+    );
+    return Promise.resolve(false);
   }
 
   return new Promise<boolean>((resolve) => {

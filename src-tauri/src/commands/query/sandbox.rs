@@ -55,6 +55,17 @@ pub(super) fn log_sandbox_denial(connection_id: &str, statements_count: usize, r
     );
 }
 
+/// Error-code prefix stamped on every sandbox validation rejection. The
+/// frontend's progressive-fallback path retries generic runtime failures on
+/// the unrestricted `execute_query` boundary; a `SANDBOX_DENIED:` error is a
+/// policy verdict, not a transient failure, so callers must NOT retry it on
+/// a weaker boundary.
+pub(super) const SANDBOX_DENIED_PREFIX: &str = "SANDBOX_DENIED:";
+
+fn sandbox_denied(message: impl Into<String>) -> String {
+    format!("{SANDBOX_DENIED_PREFIX} {}", message.into())
+}
+
 /// Fail-closed capability guard: filesystem/network/OS-command SQL
 /// (pg_read_file, DuckDB read_csv, INTO OUTFILE, COPY ... TO PROGRAM, …)
 /// exfiltrates data or runs code even when it parses as a plain read, so it
@@ -65,9 +76,9 @@ pub(super) fn reject_dangerous_capability(
     database_type: Option<crate::database::models::DatabaseType>,
 ) -> Result<(), String> {
     if let Some(reason) = detect_dangerous_capability(sql, database_type) {
-        return Err(format!(
+        return Err(sandbox_denied(format!(
             "Sandbox gateway blocks SQL that {reason}. This filesystem/network/OS capability is not allowed inside the sandbox."
-        ));
+        )));
     }
     Ok(())
 }
@@ -79,22 +90,23 @@ pub(super) fn validate_sandbox_statement(
     reject_dangerous_capability(statement, database_type)?;
     let decision = classify_sql_with_dialect(statement, database_type);
     if let Some(error) = decision.parse_error {
-        return Err(format!("Sandbox gateway could not parse SQL: {error}"));
+        return Err(sandbox_denied(format!(
+            "Sandbox gateway could not parse SQL: {error}"
+        )));
     }
     if decision.statements.len() != 1 {
-        return Err(
-            "Sandbox gateway requires exactly one SQL statement per execution item.".to_string(),
-        );
+        return Err(sandbox_denied(
+            "Sandbox gateway requires exactly one SQL statement per execution item.",
+        ));
     }
     let statement = &decision.statements[0];
     if matches!(
         statement.kind,
         SqlStatementKind::Session | SqlStatementKind::Transaction | SqlStatementKind::Unknown
     ) {
-        return Err(
-            "Sandbox gateway blocks session-control and access-control statements such as USE, ATTACH, SET search_path, transaction commands, and GRANT/REVOKE."
-                .to_string(),
-        );
+        return Err(sandbox_denied(
+            "Sandbox gateway blocks session-control and access-control statements such as USE, ATTACH, SET search_path, transaction commands, and GRANT/REVOKE.",
+        ));
     }
 
     Ok(())
@@ -106,7 +118,9 @@ pub(super) fn validate_sandbox_batch(
     database_type: Option<crate::database::models::DatabaseType>,
 ) -> Result<(), String> {
     if statements.is_empty() {
-        return Err("Sandbox execution requires at least one SQL statement.".to_string());
+        return Err(sandbox_denied(
+            "Sandbox execution requires at least one SQL statement.",
+        ));
     }
     for statement in statements {
         validate_sandbox_statement(statement, database_type)?;
@@ -115,12 +129,13 @@ pub(super) fn validate_sandbox_batch(
         let combined = statements.join(";\n");
         let decision = classify_sql_with_dialect(&combined, database_type);
         if decision.parse_error.is_some() || !decision.read_only {
-            return Err("This execution boundary only permits read-only SQL.".to_string());
+            return Err(sandbox_denied(
+                "This execution boundary only permits read-only SQL.",
+            ));
         }
     }
     Ok(())
 }
-
 pub(super) fn timeout_for_statements<'a>(
     statements: impl Iterator<Item = &'a str>,
     database_type: Option<crate::database::models::DatabaseType>,

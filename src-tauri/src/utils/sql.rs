@@ -246,12 +246,6 @@ fn ast_set_expr_kind(body: &sqlparser::ast::SetExpr) -> SqlStatementKind {
     }
 }
 
-/// Parse once at the backend boundary and provide the canonical safety decision used by
-/// the editor, AI tools, MCP, timeouts, and schema-cache invalidation.
-pub fn classify_sql(sql: &str) -> SqlSafetyDecision {
-    classify_sql_with_dialect(sql, None)
-}
-
 /// Names of SQL functions that read/write LOCAL FILES, reach the NETWORK, or
 /// run OS COMMANDS. Any of these turns an otherwise "read-only" SELECT into a
 /// data-exfiltration or code-execution vector, so the sandbox boundary must
@@ -905,11 +899,17 @@ pub fn split_sql_statements(sql: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_sql, classify_sql_with_dialect, detect_dangerous_capability, split_sql_statements,
-        SqlStatementKind,
+        classify_sql_with_dialect, detect_dangerous_capability, split_sql_statements,
+        SqlSafetyDecision, SqlStatementKind,
     };
     use crate::database::models::DatabaseType;
     use serde::Deserialize;
+
+    /// Tests classify under the generic dialect — the same decision the old
+    /// `classify_sql` wrapper produced.
+    fn classify_sql(sql: &str) -> SqlSafetyDecision {
+        classify_sql_with_dialect(sql, None)
+    }
 
     #[derive(Debug, Deserialize)]
     struct SqlSplitterFixture {
@@ -1115,6 +1115,10 @@ mod tests {
             "DO $$ BEGIN DELETE FROM users; END $$",
             "LOCK TABLE users IN EXCLUSIVE MODE",
             "PRAGMA journal_mode = WAL",
+            "REINDEX TABLE users",
+            "CHECKPOINT",
+            // Call-form PRAGMA with a non-whitelisted argument is not a read.
+            "PRAGMA cache_size(2000)",
         ] {
             let decision = classify_sql(sql);
             assert!(!decision.read_only, "utility write leaked as read: {sql}");
@@ -1123,6 +1127,17 @@ mod tests {
         // arg does not parse under sqlparser and falls back to Unknown — the
         // same fail-closed outcome as before this change.
         assert!(classify_sql("PRAGMA table_info").read_only);
+    }
+
+    #[test]
+    fn classifier_rejects_explain_options_analyze() {
+        // Postgres option-list form: EXPLAIN (ANALYZE, BUFFERS) <write>
+        // executes the statement just like EXPLAIN ANALYZE.
+        let decision = classify_sql("EXPLAIN (ANALYZE, BUFFERS) DELETE FROM users");
+        assert!(
+            !decision.read_only,
+            "EXPLAIN (ANALYZE) of a write leaked as read"
+        );
     }
 
     #[test]

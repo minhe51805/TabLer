@@ -33,6 +33,8 @@ export interface CellEditorParams {
   connectionId?: string;
   editingSeedValue: string;
   editingDraftRef: { current: string };
+  /** Set true by onChange — distinguishes untouched blur from a retyped seed. */
+  editingTouchedRef: { current: boolean };
   commitEditingCell: (committed?: GridCellValue) => Promise<void>;
   cancelEditingCell: () => void;
   dateFormat?: string;
@@ -51,6 +53,7 @@ export function renderCellEditor({
   connectionId,
   editingSeedValue,
   editingDraftRef,
+  editingTouchedRef,
   commitEditingCell,
   cancelEditingCell,
   dateFormat,
@@ -77,6 +80,7 @@ export function renderCellEditor({
     onCancel: cancelEditingCell,
     onChange: (draft) => {
       editingDraftRef.current = draft;
+      editingTouchedRef.current = true;
     },
     inputRef: { current: null } as React.MutableRefObject<
       HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement | null

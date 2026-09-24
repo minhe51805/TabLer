@@ -185,10 +185,12 @@ export function DataGrid({
   const [lookupValuesCache, setLookupValuesCache] = useState<
     Map<string, Array<{ value: string | number; label: string }>>
   >(new Map());
+  const [isLoading, setIsLoading] = useState(false);
+  /** True while the grid shows a cached page (see grid-cache-policy TTLs). */
+  const [dataFromCache, setDataFromCache] = useState(false);
   const [totalRows, setTotalRows] = useState(0);
   const [currentPage, setCurrentPage] = useState(0);
   const [hasMoreTableRows, setHasMoreTableRows] = useState(true);
-  const [isLoading, setIsLoading] = useState(false);
   const [structureStatus, setStructureStatus] = useState<StructureStatus>(
     externalResult ? "ready" : "idle",
   );
@@ -311,6 +313,9 @@ export function DataGrid({
   const columnNamesRef = useRef<string[]>([]);
   /** Per-grid inline-edit draft — a ref, never a module singleton. */
   const editingDraftRef = useRef("");
+  /** True once the user actually typed in the editor — distinguishes an
+   *  untouched blur (no-op) from deliberately typing the seed text back. */
+  const editingTouchedRef = useRef(false);
   const tableWrapRef = useRef<HTMLDivElement>(null);
   const requestIdRef = useRef(0);
   const dataScopeRef = useRef("");
@@ -524,6 +529,7 @@ export function DataGrid({
       setForeignKeys,
       setStructureStatus,
       setError,
+      setDataFromCache,
       refs: {
         loadedTablePagesRef,
         dataScopeRef,
@@ -624,6 +630,7 @@ export function DataGrid({
       setStructureColumns([]);
       setTotalRows(externalResult.rows.length);
       setIsLoading(false);
+      setDataFromCache(false);
       setStructureStatus("ready");
       structurePromiseRef.current = null;
       structureRetryAttemptRef.current = 0;
@@ -640,6 +647,7 @@ export function DataGrid({
     setHasMoreTableRows(true);
     setStructureColumns([]);
     setTotalRows(0);
+    setDataFromCache(false);
     setCurrentPage(0);
     const persistedLayout = getColumnLayout(connectionId, tableName ?? "", database);
     setFilterDraft(persistedLayout.filter);
@@ -987,6 +995,7 @@ export function DataGrid({
     setEditingCell(null);
     setEditingSeedValue("");
     editingDraftRef.current = "";
+    editingTouchedRef.current = false;
     setSavingCell(null);
   }, [tableName, currentPage, sortColumn, sortDir, externalResult]);
 
@@ -1321,6 +1330,7 @@ export function DataGrid({
     patchLoadedTableCell,
     ensureStructureLoaded,
     editingDraftRef,
+    editingTouchedRef,
   });
 
   const {
@@ -1656,6 +1666,7 @@ export function DataGrid({
       rowIndexMap: displayedRowIndices,
       copiedCell,
       editingDraftRef,
+      editingTouchedRef,
       handleSort,
       handleRowSelection,
       handleToggleSelectAllRows,
@@ -1910,12 +1921,13 @@ export function DataGrid({
       sortColumn={sortColumn}
       sortDir={sortDir}
       multiSort={multiSort}
-      tableName={tableName}
+      dataFromCache={dataFromCache}
       isTableEditable={isTableEditable}
       structureStatus={structureStatus}
       selectedRowCount={selectedRowCount}
       language={language}
       t={t}
+      tableName={tableName}
       onClearMultiSort={handleMultiSortClear}
     />
   );

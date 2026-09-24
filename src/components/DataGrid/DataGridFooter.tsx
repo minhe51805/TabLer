@@ -12,6 +12,7 @@ export function DataGridFooter({
   visibleRowCount,
   totalRows,
   clientSideOnly,
+  dataFromCache,
   tableFilter,
   sortColumn,
   sortDir,
@@ -28,6 +29,8 @@ export function DataGridFooter({
   visibleRowCount: number;
   totalRows: number;
   clientSideOnly: boolean;
+  /** True while the grid renders a cached page — shown as a subtle pill. */
+  dataFromCache?: boolean;
   tableFilter: string;
   sortColumn: string | null;
   sortDir: "ASC" | "DESC";
@@ -54,6 +57,14 @@ export function DataGridFooter({
             {clientSideOnly && tableFilter.trim() !== "" && (
               <span className="datagrid-footer-pill warning">
                 {getDataGridCopy(language).grid.filterLoadedOnly}
+              </span>
+            )}
+            {dataFromCache && (
+              <span
+                className="datagrid-footer-pill"
+                title={getDataGridCopy(language).grid.cachedTitle}
+              >
+                {getDataGridCopy(language).grid.cached}
               </span>
             )}
             <span

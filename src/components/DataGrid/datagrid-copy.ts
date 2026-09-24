@@ -15,6 +15,9 @@ export interface DataGridCopy {
     noRows: string;
     copied: string;
     filterLoadedOnly: string;
+    /** Pill shown while the grid renders a cached page instead of fresh data. */
+    cached: string;
+    cachedTitle: string;
   };
   rowHeader: {
     clearSelectedRows: string;
@@ -50,6 +53,28 @@ export interface DataGridCopy {
     noMatches: string;
     valueCount: (count: number) => string;
   };
+  /** Inline cell editors: explicit NULL gesture + editor hints. */
+  editor: {
+    setNull: string;
+    setNullTitle: string;
+    textPlaceholder: string;
+    jsonCommitHint: string;
+    jsonInvalid: string;
+    hexInvalidChars: string;
+    hexOddDigits: string;
+    hexTooLarge: (maxBytes: number) => string;
+  };
+  /** parseEditorValue validation failures, surfaced via the grid error banner. */
+  validation: {
+    boolean: string;
+    numeric: string;
+    json: string;
+    hex: string;
+  };
+  /** Staged-change queue errors. */
+  stagedChanges: {
+    deleteNotCommittable: string;
+  };
 }
 
 const EN_COPY: DataGridCopy = {
@@ -60,6 +85,9 @@ const EN_COPY: DataGridCopy = {
     noRows: "No rows to display",
     copied: "Copied",
     filterLoadedOnly: "Filtering loaded rows only",
+    cached: "Cached",
+    cachedTitle:
+      "Showing a cached page (up to 2 minutes old). Use the reload button for fresh data.",
   },
   rowHeader: {
     clearSelectedRows: "Clear selected rows",
@@ -91,6 +119,26 @@ const EN_COPY: DataGridCopy = {
     searchPlaceholder: (table) => `Search ${table}...`,
     noMatches: "No matches",
     valueCount: (count) => `${count} values`,
+  },
+  editor: {
+    setNull: "NULL",
+    setNullTitle: "Set this cell to NULL",
+    textPlaceholder: "Type a value",
+    jsonCommitHint: "Press Ctrl+Enter to commit",
+    jsonInvalid: "Invalid JSON",
+    hexInvalidChars: "Invalid hex: use only 0-9, a-f",
+    hexOddDigits: "Hex must have an even number of digits",
+    hexTooLarge: (maxBytes) => `Max ${Math.round(maxBytes / 1024)} KB (${maxBytes * 2} hex chars)`,
+  },
+  validation: {
+    boolean: "Boolean values must be true or false.",
+    numeric: "Numeric columns only accept valid numbers.",
+    json: "Invalid JSON format.",
+    hex: "Invalid hex format. Use space-separated bytes (e.g. '48 65 6c 6c 6f').",
+  },
+  stagedChanges: {
+    deleteNotCommittable:
+      "The queue contains a staged row deletion, which cannot be committed through the atomic apply path. Discard it and delete the row directly instead.",
   },
 };
 

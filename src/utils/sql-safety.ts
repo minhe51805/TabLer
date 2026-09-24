@@ -87,3 +87,71 @@ export function explainAnalyzeInnerStatement(normalized: string): string | null 
   if (!/^ANALYZE\b/.test(rest) || /^ANALYZE\s+(?:OFF|FALSE|0)\b/.test(rest)) return null;
   return rest.replace(/^ANALYZE\b/, "").trim() || null;
 }
+
+/** Option words that may appear between `EXPLAIN` and the wrapped verb
+    (Postgres option list, MySQL `FORMAT=`, SQL Server `PLAN FOR`, …).
+    Mirrors the skip list in the backend classifier (agent_rules/parse.rs) so
+    the frontend agrees on which statement an EXPLAIN actually wraps. */
+const EXPLAIN_OPTION_WORDS: Record<string, true> = {
+  EXPLAIN: true,
+  ANALYZE: true,
+  ANALYSE: true,
+  VERBOSE: true,
+  FORMAT: true,
+  BUFFERS: true,
+  WAL: true,
+  TIMING: true,
+  SUMMARY: true,
+  MEMORY: true,
+  SERIALIZE: true,
+  SETTINGS: true,
+  GENERIC_PLAN: true,
+  TRUE: true,
+  FALSE: true,
+  ON: true,
+  OFF: true,
+  TEXT: true,
+  XML: true,
+  JSON: true,
+  YAML: true,
+  QUERY: true,
+  PLAN: true,
+  FOR: true,
+  COSTS: true,
+};
+
+/** Returns the statement wrapped by `EXPLAIN <stmt>` — with or without
+    ANALYZE — or null when the statement is not an EXPLAIN. Unlike
+    `explainAnalyzeInnerStatement` this also matches the planning-only form:
+    the backend classifier treats `EXPLAIN <write>` as non-read either way
+    (a read-only surface must not plan mutations), so callers that mirror it
+    need the inner statement for both forms.
+    Operates on already-normalized text (uppercased, whitespace-collapsed). */
+export function explainInnerStatement(normalized: string): string | null {
+  if (!normalized.startsWith("EXPLAIN")) return null;
+  let rest = normalized.slice("EXPLAIN".length).trimStart();
+  // Parenthesized option list: `EXPLAIN (ANALYZE, COSTS, FORMAT JSON) <stmt>`.
+  if (rest.startsWith("(")) {
+    const closeIndex = rest.indexOf(")");
+    if (closeIndex === -1) return null;
+    rest = rest.slice(closeIndex + 1).trimStart();
+    return rest || null;
+  }
+  // Bare-keyword options (`EXPLAIN ANALYZE`, `EXPLAIN QUERY PLAN`,
+  // `EXPLAIN PLAN FOR`, `EXPLAIN FORMAT=JSON`): skip option words until the
+  // wrapped verb. A non-word character (`=`, `(`, quote) ends the option run.
+  while (rest) {
+    const match = rest.match(/^([A-Z_]+)\b/);
+    if (!match) break;
+    const word = match[1];
+    if (!EXPLAIN_OPTION_WORDS[word]) break;
+    rest = rest.slice(word.length).trimStart();
+    // `FORMAT=JSON` style: the option word is followed by `=VALUE`.
+    if (rest.startsWith("=")) {
+      const valueEnd = rest.search(/\s/);
+      if (valueEnd === -1) return null;
+      rest = rest.slice(valueEnd).trimStart();
+    }
+  }
+  return rest || null;
+}

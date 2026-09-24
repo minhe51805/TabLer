@@ -13,6 +13,10 @@ import { useI18n } from "../../i18n";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useModalStore } from "../../stores/modalStore";
 import { emitAppToast } from "../../utils/app-toast";
+import { invokeWithTimeout } from "../../utils/tauri-utils";
+import { usePluginStore } from "../../stores/pluginStore";
+import { applyEngineRuntimeAvailability } from "../../utils/plugin-driver-runtime";
+import { ALL_DATABASES, getDatabaseEngine } from "../ConnectionForm/engine-registry";
 import {
   assignConnectionToGroup,
   changeGroupColor,
@@ -122,6 +126,48 @@ export function StartupConnectionManager({
   const [isPingingAll, setIsPingingAll] = useState(false);
   const [pendingDeleteConnection, setPendingDeleteConnection] = useState<ConnectionConfig | null>(
     null,
+  );
+
+  // Plugin-gated engines need the same availability check the connection
+  // picker applies: a saved profile for an HTTP/sidecar engine must not
+  // dead-end in a raw backend rejection when its driver plugin is missing.
+  const installedPlugins = usePluginStore((state) => state.plugins);
+  const pluginsHaveLoaded = usePluginStore((state) => state.hasLoaded);
+  const loadPlugins = usePluginStore((state) => state.loadPlugins);
+  const [nativeDriverAvailability, setNativeDriverAvailability] = useState<
+    Record<string, boolean> | undefined
+  >(undefined);
+  useEffect(() => {
+    if (!pluginsHaveLoaded) void loadPlugins();
+  }, [loadPlugins, pluginsHaveLoaded]);
+  useEffect(() => {
+    let cancelled = false;
+    void invokeWithTimeout<Record<string, boolean>>(
+      "get_native_driver_availability",
+      {},
+      5_000,
+      "Checking installed database engines",
+    )
+      .then((availability) => {
+        if (!cancelled && availability) setNativeDriverAvailability(availability);
+      })
+      .catch(() => {
+        // Fail closed, same as the connection picker.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+  const engineAvailability = useMemo(
+    () =>
+      Object.fromEntries(
+        applyEngineRuntimeAvailability(
+          ALL_DATABASES,
+          installedPlugins,
+          nativeDriverAvailability,
+        ).map((engine) => [engine.key, engine]),
+      ),
+    [installedPlugins, nativeDriverAvailability],
   );
   const listRef = useRef<HTMLDivElement | null>(null);
 
@@ -304,6 +350,24 @@ export function StartupConnectionManager({
       if (targetDatabase) {
         void fetchTables(connection.id, targetDatabase);
       }
+      return;
+    }
+
+    // Same availability gate the connection picker applies: a saved profile
+    // for a plugin-gated engine whose driver is missing must fail here with a
+    // clear message instead of a raw backend rejection. Unknown engines fall
+    // through to the backend's own gate.
+    const engineEntry = engineAvailability[connection.db_type];
+    if (engineEntry && !engineEntry.supported) {
+      const engineLabel = getDatabaseEngine(connection.db_type)?.label ?? connection.db_type;
+      emitAppToast({
+        tone: "error",
+        title: language === "vi" ? `${engineLabel} chưa sẵn sàng` : `${engineLabel} is not ready`,
+        description:
+          language === "vi"
+            ? "Engine này cần plugin driver trước khi kết nối. Cài hoặc bật nó trong Trình quản lý plugin."
+            : "This engine needs its driver plugin before connecting. Install or enable it in Plugin Manager.",
+      });
       return;
     }
     await connectSavedConnection(connection.id);

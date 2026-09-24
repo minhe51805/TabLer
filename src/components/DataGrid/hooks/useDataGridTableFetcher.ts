@@ -81,6 +81,9 @@ interface DataGridTableFetcherParams {
   setForeignKeys: Dispatch<SetStateAction<ForeignKeyInfo[]>>;
   setStructureStatus: Dispatch<SetStateAction<"idle" | "loading" | "ready" | "failed">>;
   setError: (message: string) => void;
+  /** True while the grid renders a page served from the local cache — the
+   *  footer shows a "Cached" pill so stale data is never invisible. */
+  setDataFromCache: Dispatch<SetStateAction<boolean>>;
 
   // Shared refs (named bundle prevents mix-ups at the call site)
   refs: {
@@ -134,6 +137,7 @@ export function useDataGridTableFetcher({
   setForeignKeys,
   setStructureStatus,
   setError,
+  setDataFromCache,
   refs,
 }: DataGridTableFetcherParams) {
   const {
@@ -269,6 +273,8 @@ export function useDataGridTableFetcher({
         Boolean(cachedCount && isFreshCacheEntry(cachedCount.cachedAt, TABLE_COUNT_CACHE_TTL_MS));
 
       if (cachedPage && isFreshCacheEntry(cachedPage.cachedAt, 120_000)) {
+        // Served entirely from cache — mark it so the footer can say so.
+        setDataFromCache(true);
         setLoadedTablePage(page, cachedPage.result);
         setTotalRows(cachedPage.totalRows);
         setIsLoading(false);
@@ -276,6 +282,8 @@ export function useDataGridTableFetcher({
       }
 
       if (cachedPage) {
+        // Stale-while-revalidate: cached rows render now, fresh data follows.
+        setDataFromCache(true);
         setLoadedTablePage(page, cachedPage.result);
         setTotalRows(cachedPage.totalRows);
       } else if (cachedCount && isFreshCacheEntry(cachedCount.cachedAt, TABLE_COUNT_CACHE_TTL_MS)) {
@@ -297,6 +305,7 @@ export function useDataGridTableFetcher({
         if (!isMountedRef.current || requestId !== requestIdRef.current) return;
 
         setLoadedTablePage(page, result);
+        setDataFromCache(false);
         setIsLoading(false);
 
         if (result.execution_time_ms >= 0) {
@@ -413,6 +422,7 @@ export function useDataGridTableFetcher({
       countTimeoutRef,
       countRows,
       setError,
+      setDataFromCache,
     ],
   );
 

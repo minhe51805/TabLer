@@ -54,6 +54,9 @@ interface DataGridColumnsProps {
   rowIndexMap?: number[];
   copiedCell: string | null;
   editingDraftRef: EditingDraft;
+  /** Set true by editor onChange — distinguishes an untouched blur from a
+   *  deliberate retype of the seed text (e.g. literal "NULL"). */
+  editingTouchedRef: { current: boolean };
   handleSort: (colName: string, event?: MouseEvent) => void;
   handleRowSelection: (
     rowIndex: number,
@@ -125,6 +128,7 @@ export function buildDataGridColumns({
   rowIndexMap,
   copiedCell,
   editingDraftRef,
+  editingTouchedRef,
   handleSort,
   handleRowSelection,
   handleToggleSelectAllRows,
@@ -336,6 +340,7 @@ export function buildDataGridColumns({
                   connectionId,
                   editingSeedValue,
                   editingDraftRef,
+                  editingTouchedRef,
                   commitEditingCell,
                   cancelEditingCell,
                   dateFormat,

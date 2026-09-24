@@ -60,7 +60,7 @@ describe("queryStore", () => {
   });
 
   it("sends the active connection id when cancelling a query", async () => {
-    invokeMutationMock.mockResolvedValue(true);
+    invokeMutationMock.mockResolvedValue({ cancelled: true, serverConfirmed: true });
     useQueryStore.setState({
       isExecutingQuery: true,
       activeQueryRequestId: "req-1",

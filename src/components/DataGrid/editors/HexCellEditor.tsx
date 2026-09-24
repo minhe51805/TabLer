@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import type { ICellEditorProps } from "./types";
+import { getDataGridCopy } from "../datagrid-copy";
+import { getCurrentAppLanguage } from "../../../i18n";
 
 const MAX_HEX_SIZE = 10 * 1024; // 10KB limit
 
 export function HexCellEditor({
   seedValue,
   inputRef,
-  isNullable: _isNullable,
+  isNullable,
   onChange,
   onCommit,
   onCancel,
@@ -20,6 +22,7 @@ export function HexCellEditor({
   const [isValid, setIsValid] = useState(true);
   const [errorMsg, setErrorMsg] = useState("");
   const [asciiPreview, setAsciiPreview] = useState("");
+  const copy = getDataGridCopy(getCurrentAppLanguage()).editor;
 
   useEffect(() => {
     const textarea = (inputRef as React.MutableRefObject<HTMLTextAreaElement | null>)?.current;
@@ -28,7 +31,9 @@ export function HexCellEditor({
 
   useEffect(() => {
     const validateHex = (hex: string) => {
-      if (!hex.trim() || /^null$/i.test(hex)) {
+      // Empty input is the NULL gesture for nullable columns; the literal
+      // text "null" is not hex and must fail validation below, not commit NULL.
+      if (!hex.trim()) {
         setIsValid(true);
         setErrorMsg("");
         setAsciiPreview("");
@@ -37,19 +42,19 @@ export function HexCellEditor({
       const normalized = hex.replace(/\s+/g, "").toLowerCase();
       if (!/^[0-9a-f]*$/i.test(normalized)) {
         setIsValid(false);
-        setErrorMsg("Invalid hex: use only 0-9, a-f");
+        setErrorMsg(copy.hexInvalidChars);
         setAsciiPreview("");
         return;
       }
       if (normalized.length % 2 !== 0) {
         setIsValid(false);
-        setErrorMsg("Hex must have even number of digits");
+        setErrorMsg(copy.hexOddDigits);
         setAsciiPreview("");
         return;
       }
       if (normalized.length > MAX_HEX_SIZE) {
         setIsValid(false);
-        setErrorMsg(`Max ${MAX_HEX_SIZE} bytes (${MAX_HEX_SIZE * 2} hex chars)`);
+        setErrorMsg(copy.hexTooLarge(MAX_HEX_SIZE));
         setAsciiPreview("");
         return;
       }
@@ -70,7 +75,7 @@ export function HexCellEditor({
       }
     };
     validateHex(localValue);
-  }, [localValue]);
+  }, [localValue, copy]);
 
   const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
     const val = e.target.value;
@@ -104,8 +109,8 @@ export function HexCellEditor({
         onChange={handleChange}
         onBlur={() => {
           // Always commit on blur — let DB validate hex format
-          if (!localValue.trim() || /^null$/i.test(localValue)) {
-            onCommit(null);
+          if (!localValue.trim()) {
+            onCommit(isNullable ? null : "");
           } else {
             onCommit(localValue.replace(/\s+/g, ""));
           }
@@ -123,9 +128,7 @@ export function HexCellEditor({
           ASCII: {asciiPreview}
         </span>
       )}
-      {!isValid && (
-        <span className="text-xs text-red-500">{errorMsg}</span>
-      )}
+      {!isValid && <span className="text-xs text-red-500">{errorMsg}</span>}
     </div>
   );
 }

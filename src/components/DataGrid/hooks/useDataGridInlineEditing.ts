@@ -44,6 +44,9 @@ interface DataGridInlineEditingParams {
   ensureStructureLoaded: () => Promise<ColumnDetail[]>;
 
   editingDraftRef: { current: string };
+  /** Set true by the editor's onChange — an untouched blur must not stage
+   *  the seed text (e.g. "NULL" shown for a null cell) as a real edit. */
+  editingTouchedRef: { current: boolean };
 }
 
 /**
@@ -75,6 +78,7 @@ export function useDataGridInlineEditing({
   ensureStructureLoaded,
 
   editingDraftRef,
+  editingTouchedRef,
 }: DataGridInlineEditingParams) {
   const startEditingCell = useCallback(
     async (rowIndex: number, colIndex: number) => {
@@ -122,6 +126,7 @@ export function useDataGridInlineEditing({
       const seedValue = editorValueFromCell(rowValues[colIndex] as GridCellValue);
       setEditingSeedValue(seedValue);
       editingDraftRef.current = seedValue;
+      editingTouchedRef.current = false;
       setEditingCell({ row: rowIndex, col: colIndex });
     },
     [
@@ -133,6 +138,7 @@ export function useDataGridInlineEditing({
       structureStatus,
       setEditingSeedValue,
       editingDraftRef,
+      editingTouchedRef,
       setEditingCell,
       ensureStructureLoaded,
       setError,
@@ -143,8 +149,8 @@ export function useDataGridInlineEditing({
     setEditingCell(null);
     setEditingSeedValue("");
     editingDraftRef.current = "";
-  }, [editingDraftRef, setEditingCell, setEditingSeedValue]);
-
+    editingTouchedRef.current = false;
+  }, [editingDraftRef, editingTouchedRef, setEditingCell, setEditingSeedValue]);
   const commitEditingCell = useCallback(
     async (committed?: GridCellValue) => {
       if (!editingCell || !data || !tableName) return;
@@ -173,11 +179,16 @@ export function useDataGridInlineEditing({
 
       // Unedited commit (e.g. blur right after opening): the draft still holds
       // the seed — including the "NULL" placeholder shown for null cells — so
-      // nothing was typed and nothing should be staged. Explicit editor commits
-      // (select options, NULL gesture) always count as a user action.
+      // nothing was typed and nothing should be staged. The touched flag is
+      // what separates this from deliberately typing the seed text back:
+      // typing "NULL" into a null cell MUST stage the literal string.
+      // Explicit editor commits (select options, NULL button) always count as
+      // a user action.
+      const seed = editorValueFromCell(currentValue);
       if (
-        committed === undefined &&
-        editingDraftRef.current === editorValueFromCell(currentValue)
+        !editingTouchedRef.current &&
+        (committed === undefined || committed === seed) &&
+        editingDraftRef.current === seed
       ) {
         cancelEditingCell();
         return;
@@ -253,6 +264,7 @@ export function useDataGridInlineEditing({
       database,
       editingCell,
       editingDraftRef,
+      editingTouchedRef,
       patchLoadedTableCell,
       primaryKeyColumns,
       resolvedColumns,

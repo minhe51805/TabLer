@@ -302,7 +302,22 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     const connectionId = get().activeQueryConnectionId;
     if (!requestId) return false;
     try {
-      return await invokeMutation<boolean>("cancel_query", { requestId, connectionId });
+      // cancel_query returns { cancelled, serverConfirmed }: `cancelled` only
+      // means a registered request was signalled — without serverConfirmed the
+      // backend may still be running the statement, so say so honestly.
+      const outcome = await invokeMutation<{ cancelled: boolean; serverConfirmed: boolean }>(
+        "cancel_query",
+        { requestId, connectionId },
+      );
+      if (outcome.cancelled && !outcome.serverConfirmed) {
+        emitAppToast({
+          title: "Cancel requested",
+          description:
+            "The cancel signal was sent, but this engine has no server-side cancel — the query may still be running.",
+          tone: "info",
+        });
+      }
+      return outcome.cancelled;
     } catch (error) {
       // Callers `void` this promise — a failed cancel must surface or the UI
       // keeps a spinner for a query that is still running server-side.

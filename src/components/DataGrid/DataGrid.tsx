@@ -3,7 +3,6 @@ import { createPortal } from "react-dom";
 import {
   useReactTable,
   getCoreRowModel,
-  flexRender,
   type ColumnDef,
   type ColumnOrderState,
   type VisibilityState,
@@ -12,7 +11,7 @@ import {
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { useI18n, translateCurrent, getCurrentAppLanguage } from "../../i18n";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { Copy, Loader2, X } from "lucide-react";
+import { Copy, Loader2 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useDataGridSettings } from "../../stores/datagrid-settings-store";
 import {
@@ -76,7 +75,6 @@ import { useAppLayoutStore } from "../../stores/appLayoutStore";
 import { isCapabilitySupported } from "../../types";
 
 import { DataGridToolbar } from "./DataGridToolbar";
-import { ChangeTrackingPreviewModal } from "./components/ChangeTrackingPreviewModal";
 import { buildDataGridColumns } from "./DataGridColumns";
 import { useDataGridCopySqlActions } from "./hooks/useDataGridCopySqlActions";
 import { useDataGridInlineEditing } from "./hooks/useDataGridInlineEditing";
@@ -88,15 +86,14 @@ import { useDataGridDragReorder } from "./hooks/useDataGridDragReorder";
 import { useDataGridTableFetcher } from "./hooks/useDataGridTableFetcher";
 import { useDataGridRowMutations } from "./hooks/useDataGridRowMutations";
 import { useDataGridTableExport } from "./hooks/useDataGridTableExport";
-import { PasteRowsDialog } from "./dialogs/PasteRowsDialog";
 import { buildRowFocusFilter } from "./row-focus";
 import { InsertRowDialog } from "./dialogs/InsertRowDialog";
-import { SetRangeValueDialog } from "./dialogs/SetRangeValueDialog";
-import { FkPreviewPopover } from "./dialogs/FkPreviewPopover";
-import { DataGridContextMenu } from "./dialogs/DataGridContextMenu";
-import { ColumnStatsPopover, type ColumnStats } from "./dialogs/ColumnStatsPopover";
+import { type ColumnStats } from "./dialogs/ColumnStatsPopover";
 import { hasNumericValues } from "./chart-utils";
 import type { ColumnDisplayFormat } from "./editors";
+import { DataGridOverlays } from "./DataGridOverlays";
+import { DataGridTableView } from "./DataGridTableView";
+import { DataGridFooter } from "./DataGridFooter";
 
 /** Minimum width that must remain for scrollable (unpinned) columns. Pinning
  *  that would leave less than this is refused so the grid never becomes a
@@ -1803,36 +1800,6 @@ export function DataGrid({
     rightPinnedColumns.length +
     Number(virtualPaddingLeft > 0) +
     Number(virtualPaddingRight > 0);
-  const getVirtualSpacerStyle = (width: number) => ({
-    width,
-    minWidth: width,
-    maxWidth: width,
-  });
-  const pinnedColumnStyle = (column: (typeof leftPinnedColumns)[number]) => {
-    const pinned = column.getIsPinned();
-    if (!pinned) return undefined;
-    return {
-      position: "sticky" as const,
-      left: pinned === "left" ? column.getStart("left") : undefined,
-      right: pinned === "right" ? column.getAfter("right") : undefined,
-      zIndex: 3,
-      background: "var(--bg-primary)",
-    };
-  };
-  /** Class list for a pinned column cell: marks the pinned side and flags the
-   *  outermost pinned column so CSS can draw the freeze divider/shadow. */
-  const pinnedColumnClasses = (column: (typeof leftPinnedColumns)[number]) => {
-    const pinned = column.getIsPinned();
-    if (!pinned) return [] as string[];
-    const classes = ["datagrid-pinned", `datagrid-pinned-${pinned}`];
-    if (pinned === "left" && leftPinnedColumns[leftPinnedColumns.length - 1]?.id === column.id) {
-      classes.push("datagrid-pinned-boundary");
-    }
-    if (pinned === "right" && rightPinnedColumns[0]?.id === column.id) {
-      classes.push("datagrid-pinned-boundary");
-    }
-    return classes;
-  };
   /** Remaining pin budget in px: viewport minus already-pinned columns minus
    *  the reserved scrollable sliver. Non-positive disables further pinning. */
   const pinBudgetPx =
@@ -1911,59 +1878,23 @@ export function DataGrid({
   }
 
   const gridFooter = (
-    <div className="datagrid-footer">
-      <div className="datagrid-footer-meta">
-        {data && (
-          <>
-            <span className="datagrid-footer-pill strong">
-              {visibleRowCount} row{visibleRowCount !== 1 ? "s" : ""}
-            </span>
-            {totalRows > 0 && (
-              <span className="datagrid-footer-pill">of {totalRows.toLocaleString()} total</span>
-            )}
-            {filterPlan.clientSideOnly && tableFilter.trim() !== "" && (
-              <span className="datagrid-footer-pill warning">
-                {getDataGridCopy(language).grid.filterLoadedOnly}
-              </span>
-            )}
-            <span
-              className={`datagrid-footer-pill${sortColumn || multiSort.length > 0 ? " info" : ""}`}
-              title={t("datagrid.rowSortOrderTitle")}
-            >
-              {sortColumn
-                ? `${sortColumn} ${sortDir}`
-                : multiSort.length > 0
-                  ? multiSort.map((s) => `${s.priority}.${s.column} ${s.direction}`).join(", ")
-                  : "Natural order"}
-            </span>
-            {multiSort.length > 0 && (
-              <button
-                type="button"
-                className="datagrid-sort-clear-btn"
-                onClick={handleMultiSortClear}
-                title={t("datagrid.clearAllSorts")}
-              >
-                <X className="w-3! h-3!" />
-              </button>
-            )}
-            {tableName && (
-              <span className={`datagrid-footer-pill ${isTableEditable ? "info" : ""}`}>
-                {isTableEditable
-                  ? "Inline edit ready"
-                  : structureStatus === "loading"
-                    ? t("datagrid.loadingEditMeta")
-                    : structureStatus === "idle"
-                      ? "Edit on demand"
-                      : "Retry edit load"}
-              </span>
-            )}
-            {selectedRowCount > 0 && (
-              <span className="datagrid-footer-pill warning">{selectedRowCount} selected</span>
-            )}
-          </>
-        )}
-      </div>
-    </div>
+    <DataGridFooter
+      data={data}
+      visibleRowCount={visibleRowCount}
+      totalRows={totalRows}
+      clientSideOnly={filterPlan.clientSideOnly}
+      tableFilter={tableFilter}
+      sortColumn={sortColumn}
+      sortDir={sortDir}
+      multiSort={multiSort}
+      tableName={tableName}
+      isTableEditable={isTableEditable}
+      structureStatus={structureStatus}
+      selectedRowCount={selectedRowCount}
+      language={language}
+      t={t}
+      onClearMultiSort={handleMultiSortClear}
+    />
   );
 
   return (
@@ -2069,400 +2000,109 @@ export function DataGrid({
               </Suspense>
             </div>
           ) : (
-            <table
-              className="datagrid-table"
-              style={{ minWidth: tableMinWidth, tableLayout: "fixed" }}
-            >
-              <thead
-                className="datagrid-head"
-                onContextMenu={(event) => {
-                  const header = (event.target as HTMLElement).closest("th.datagrid-th");
-                  const columnId = header?.getAttribute("data-col-id") ?? undefined;
-                  if (!columnId) return;
-                  event.preventDefault();
-                  handleContextMenu(event, "header", columnId);
-                }}
-              >
-                {table.getHeaderGroups().map((hg) => (
-                  <tr key={hg.id}>
-                    {leftPinnedColumns.map((column) => {
-                      const header = hg.headers.find(
-                        (candidate) => candidate.column.id === column.id,
-                      );
-                      if (!header) return null;
-                      const width = columnSizes[column.id] ?? column.getSize();
-                      return (
-                        <th
-                          className={[
-                            "datagrid-th",
-                            column.id === "_row_num" ? "datagrid-th-index" : "",
-                            ...pinnedColumnClasses(column),
-                          ].join(" ")}
-                          data-col-id={column.id}
-                          style={{ width, minWidth: width, ...pinnedColumnStyle(column) }}
-                        >
-                          <div className="datagrid-th-inner">
-                            {header.isPlaceholder
-                              ? null
-                              : flexRender(header.column.columnDef.header, header.getContext())}
-                          </div>
-                        </th>
-                      );
-                    })}
-                    {virtualPaddingLeft > 0 && (
-                      <th
-                        aria-hidden="true"
-                        className="datagrid-virtual-column-spacer"
-                        style={getVirtualSpacerStyle(virtualPaddingLeft)}
-                      />
-                    )}
-                    {virtualColumns.map((virtualColumn) => {
-                      const column = virtualizableColumns[virtualColumn.index];
-                      const header = hg.headers.find(
-                        (candidate) => candidate.column.id === column.id,
-                      );
-                      if (!header) return null;
-                      const width = columnSizes[header.column.id] ?? header.getSize();
-                      return (
-                        <th
-                          key={header.id}
-                          className="datagrid-th"
-                          data-col-id={header.column.id}
-                          style={{ width, minWidth: width }}
-                        >
-                          <div className="datagrid-th-inner">
-                            {header.isPlaceholder
-                              ? null
-                              : flexRender(header.column.columnDef.header, header.getContext())}
-                          </div>
-                          {/* Direct child of the th so absolute right:0 lands on the
-                          real column boundary, not inside the header padding. */}
-                          <div
-                            className="datagrid-col-resize-handle"
-                            onMouseDown={header.getResizeHandler()}
-                            onDoubleClick={() => handleColumnAutoFit(header.column.id)}
-                            title={t("datagrid.resizeHint")}
-                          />
-                        </th>
-                      );
-                    })}
-                    {virtualPaddingRight > 0 && (
-                      <th
-                        aria-hidden="true"
-                        className="datagrid-virtual-column-spacer"
-                        style={getVirtualSpacerStyle(virtualPaddingRight)}
-                      />
-                    )}
-                    {rightPinnedColumns.map((column) => {
-                      const header = hg.headers.find(
-                        (candidate) => candidate.column.id === column.id,
-                      );
-                      if (!header) return null;
-                      const width = columnSizes[column.id] ?? column.getSize();
-                      return (
-                        <th
-                          className={["datagrid-th", ...pinnedColumnClasses(column)].join(" ")}
-                          data-col-id={column.id}
-                          style={{ width, minWidth: width, ...pinnedColumnStyle(column) }}
-                        >
-                          <div className="datagrid-th-inner">
-                            {header.isPlaceholder
-                              ? null
-                              : flexRender(header.column.columnDef.header, header.getContext())}
-                          </div>
-                        </th>
-                      );
-                    })}
-                  </tr>
-                ))}
-              </thead>
-              <tbody
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  const target = e.target as HTMLElement;
-                  const thEl = target.closest("th.datagrid-th");
-                  const rowEl = target.closest("tr.datagrid-row");
-                  if (thEl) {
-                    const colId = thEl.getAttribute("data-col-id") || undefined;
-                    handleContextMenu(e, "header", colId);
-                    return;
-                  }
-                  if (rowEl) {
-                    // Always open a menu on a row: prefer cell-scoped actions when
-                    // the click lands on a data cell, otherwise row-scoped ones.
-                    // Never fall through silently — that read as "no context menu".
-                    const cellEl = target.closest("td[data-col-id]");
-                    const indexEl = rowEl.querySelector(
-                      ".datagrid-index-selectable, .datagrid-index-value",
-                    );
-                    // <tr data-index> carries the 0-based source row index already;
-                    // only the visible 1-based number inside the index cell needs -1.
-                    const dataIndexAttr = rowEl.getAttribute("data-index");
-                    let rowIndex = -1;
-                    if (dataIndexAttr !== null) {
-                      rowIndex = Number(dataIndexAttr);
-                    } else {
-                      const shown = Number(indexEl?.textContent?.trim() ?? NaN);
-                      if (Number.isFinite(shown) && shown >= 1) rowIndex = shown - 1;
-                    }
-                    const colId = cellEl?.getAttribute("data-col-id") || undefined;
-                    if (colId && colId !== "_row_num") {
-                      handleContextMenu(e, "cell", colId, rowIndex >= 0 ? rowIndex : undefined);
-                    } else {
-                      handleContextMenu(e, "row", undefined, rowIndex >= 0 ? rowIndex : undefined);
-                    }
-                    return;
-                  }
-                  handleContextMenu(e, "cell");
-                }}
-              >
-                {virtualPaddingTop > 0 && (
-                  <tr aria-hidden="true" className="datagrid-virtual-spacer">
-                    <td
-                      colSpan={renderedColumnCount}
-                      style={{ height: virtualPaddingTop, padding: 0 }}
-                    />
-                  </tr>
-                )}
-                {virtualRows.map((virtualRow) => {
-                  const row = table.getRowModel().rows[virtualRow.index];
-                  const rowIdx = virtualRow.index;
-                  const sourceRowIndex = displayedRowIndices[rowIdx] ?? rowIdx;
-                  return (
-                    <tr
-                      key={row.id}
-                      data-index={sourceRowIndex}
-                      className={[
-                        "datagrid-row",
-                        rowIdx % 2 !== 0 ? "alt" : "",
-                        selectedRows.has(sourceRowIndex) ? "selected" : "",
-                        dragSourceIndex === sourceRowIndex ? "dragging" : "",
-                        dropTargetIndex === sourceRowIndex ? "drop-target" : "",
-                        isTableEditable && orderColumn ? "datagrid-row-draggable" : "",
-                        stagedRowIndices.has(sourceRowIndex) ? "staged-change" : "",
-                      ].join(" ")}
-                      draggable={isTableEditable && !!orderColumn}
-                      onDragStart={() => handleDragStart(sourceRowIndex)}
-                      onDragOver={(e) => handleDragOver(e, sourceRowIndex)}
-                      onDrop={(e) => handleDrop(e, sourceRowIndex)}
-                      onDragEnd={handleDragEnd}
-                    >
-                      {leftPinnedColumns.map((column) => {
-                        const cell = row
-                          .getVisibleCells()
-                          .find((candidate) => candidate.column.id === column.id);
-                        if (!cell) return null;
-                        const width = columnSizes[column.id] ?? column.getSize();
-                        return (
-                          <td
-                            key={cell.id}
-                            className={[
-                              "datagrid-td",
-                              column.id === "_row_num" ? "datagrid-td-index" : "",
-                              ...pinnedColumnClasses(column),
-                              stagedRowIndices.has(sourceRowIndex) ? "staged-cell" : "",
-                            ].join(" ")}
-                            data-col-id={column.id}
-                            style={{ width, minWidth: width, ...pinnedColumnStyle(column) }}
-                          >
-                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                          </td>
-                        );
-                      })}
-                      {virtualPaddingLeft > 0 && (
-                        <td
-                          aria-hidden="true"
-                          className="datagrid-virtual-column-spacer"
-                          style={getVirtualSpacerStyle(virtualPaddingLeft)}
-                        />
-                      )}
-                      {virtualColumns.map((virtualColumn) => {
-                        const column = virtualizableColumns[virtualColumn.index];
-                        const cell = row
-                          .getVisibleCells()
-                          .find((candidate) => candidate.column.id === column.id);
-                        if (!cell) return null;
-                        const width = columnSizes[cell.column.id] ?? cell.column.getSize();
-                        return (
-                          <td
-                            key={cell.id}
-                            className={[
-                              "datagrid-td",
-                              stagedRowIndices.has(sourceRowIndex) ? "staged-cell" : "",
-                            ].join(" ")}
-                            data-col-id={column.id}
-                            style={{ width, minWidth: width }}
-                          >
-                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                          </td>
-                        );
-                      })}
-                      {virtualPaddingRight > 0 && (
-                        <td
-                          aria-hidden="true"
-                          className="datagrid-virtual-column-spacer"
-                          style={getVirtualSpacerStyle(virtualPaddingRight)}
-                        />
-                      )}
-                      {rightPinnedColumns.map((column) => {
-                        const cell = row
-                          .getVisibleCells()
-                          .find((candidate) => candidate.column.id === column.id);
-                        if (!cell) return null;
-                        const width = columnSizes[column.id] ?? column.getSize();
-                        return (
-                          <td
-                            key={cell.id}
-                            className={[
-                              "datagrid-td",
-                              ...pinnedColumnClasses(column),
-                              stagedRowIndices.has(sourceRowIndex) ? "staged-cell" : "",
-                            ].join(" ")}
-                            style={{ width, minWidth: width, ...pinnedColumnStyle(column) }}
-                          >
-                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                          </td>
-                        );
-                      })}
-                    </tr>
-                  );
-                })}
-                {virtualPaddingBottom > 0 && (
-                  <tr aria-hidden="true" className="datagrid-virtual-spacer">
-                    <td
-                      colSpan={renderedColumnCount}
-                      style={{ height: virtualPaddingBottom, padding: 0 }}
-                    />
-                  </tr>
-                )}
-                {dropTargetIndex !== null && (
-                  <tr className="datagrid-row drop-indicator">
-                    <td colSpan={renderedColumnCount}>
-                      <div className="datagrid-drop-indicator-line" />
-                    </td>
-                  </tr>
-                )}
-              </tbody>
-            </table>
+            <DataGridTableView
+              table={table}
+              tableMinWidth={tableMinWidth}
+              renderedColumnCount={renderedColumnCount}
+              leftPinnedColumns={leftPinnedColumns}
+              virtualizableColumns={virtualizableColumns}
+              rightPinnedColumns={rightPinnedColumns}
+              virtualColumns={virtualColumns}
+              virtualRows={virtualRows}
+              virtualPaddingTop={virtualPaddingTop}
+              virtualPaddingBottom={virtualPaddingBottom}
+              virtualPaddingLeft={virtualPaddingLeft}
+              virtualPaddingRight={virtualPaddingRight}
+              columnSizes={columnSizes}
+              displayedRowIndices={displayedRowIndices}
+              selectedRows={selectedRows}
+              stagedRowIndices={stagedRowIndices}
+              dragSourceIndex={dragSourceIndex}
+              dropTargetIndex={dropTargetIndex}
+              isTableEditable={isTableEditable}
+              orderColumn={orderColumn}
+              t={t}
+              onContextMenu={handleContextMenu}
+              onColumnAutoFit={handleColumnAutoFit}
+              onDragStart={handleDragStart}
+              onDragOver={handleDragOver}
+              onDrop={handleDrop}
+              onDragEnd={handleDragEnd}
+            />
           )}
-
           {data && data.rows.length === 0 && (
             <div className="datagrid-empty">{getDataGridCopy(language).grid.noRows}</div>
           )}
+          {!externalResult &&
+            (footerPortalTarget ? createPortal(gridFooter, footerPortalTarget) : gridFooter)}
         </div>
 
-        {/* Context Menu — portaled to document.body: ancestors like .main-content
-          keep an animated transform applied, which turns them into the containing
-          block for position:fixed and offsets the menu away from the cursor. */}
-        {contextMenu &&
-          createPortal(
-            <DataGridContextMenu
-              menu={contextMenu}
-              connectionId={connectionId}
-              database={database}
-              tableName={tableName}
-              columnDisplayFormats={columnDisplayFormats}
-              table={table}
-              dbType={dbType}
-              selectedRows={selectedRows}
-              sourceRows={data?.rows ?? []}
-              resolvedColumns={resolvedColumns}
-              onColumnStats={tableName && !externalResult ? handleColumnStats : undefined}
-              onClose={() => setContextMenu(null)}
-              onSortAsc={handleSortAsc}
-              onSortDesc={handleSortDesc}
-              onInsertRow={handleInsertRow}
-              onDuplicateRowByIndex={handleDuplicateRowByIndex}
-              onOpenRowInspector={handleOpenRowInspector}
-              onColumnAutoFit={handleColumnAutoFit}
-              selectedRangeCellCount={selectedRangeCellCount}
-              onSetRangeValue={canAttemptInlineEdit ? handleOpenSetRangeDialog : undefined}
-              setColumnOrder={setColumnOrder}
-              setColumnPinning={setColumnPinning}
-              setColumnSizes={setColumnSizes}
-              setColumnVisibility={setColumnVisibility}
-              setFilterDraft={setFilterDraft}
-              pinBudgetPx={pinBudgetPx}
-              setTableFilter={setTableFilter}
-              setSortColumn={setSortColumn}
-              setSortDir={setSortDir}
-              setColumnDisplayFormats={setColumnDisplayFormats}
-            />,
-            document.body,
-          )}
-
-        {/* FK Preview Popover */}
-        {fkPreview && (
-          <FkPreviewPopover
-            fkPreview={fkPreview}
-            isLoadingFkPreview={isLoadingFkPreview}
-            fkPreviewData={fkPreviewData}
-            onClose={() => setFkPreview(null)}
-          />
-        )}
-        {columnStats && (
-          <ColumnStatsPopover
-            columnName={columnStats.column}
-            stats={columnStats.stats}
-            isLoading={isLoadingColumnStats}
-            error={columnStatsError}
-            onClose={() => setColumnStats(null)}
-          />
-        )}
-        {!externalResult &&
-          (footerPortalTarget ? createPortal(gridFooter, footerPortalTarget) : gridFooter)}
+        <DataGridOverlays
+          connectionId={connectionId}
+          database={database}
+          tableName={tableName}
+          externalResult={externalResult}
+          dbType={dbType}
+          data={data}
+          resolvedColumns={resolvedColumns}
+          table={table}
+          selectedRows={selectedRows}
+          columnDisplayFormats={columnDisplayFormats}
+          pinBudgetPx={pinBudgetPx}
+          isLoading={isLoading}
+          stagedChangeCount={stagedChangeCount}
+          canAttemptInlineEdit={canAttemptInlineEdit}
+          selectedRangeCellCount={selectedRangeCellCount}
+          contextMenu={contextMenu}
+          fkPreview={fkPreview}
+          fkPreviewData={fkPreviewData}
+          isLoadingFkPreview={isLoadingFkPreview}
+          columnStats={columnStats}
+          columnStatsError={columnStatsError}
+          isLoadingColumnStats={isLoadingColumnStats}
+          setRangeDialog={setRangeDialog}
+          isPasteDialogOpen={isPasteDialogOpen}
+          pastePreview={pastePreview}
+          pasteSourceLabel={pasteSourceLabel}
+          csvFileSelection={csvFileSelection}
+          isSubmittingPaste={isSubmittingPaste}
+          isCancellingPaste={isCancellingPaste}
+          csvImportProgress={csvImportProgress}
+          onCloseContextMenu={() => setContextMenu(null)}
+          onColumnStats={handleColumnStats}
+          onSortAsc={handleSortAsc}
+          onSortDesc={handleSortDesc}
+          onInsertRow={handleInsertRow}
+          onDuplicateRowByIndex={handleDuplicateRowByIndex}
+          onOpenRowInspector={handleOpenRowInspector}
+          onColumnAutoFit={handleColumnAutoFit}
+          onSetRangeValue={handleOpenSetRangeDialog}
+          setColumnOrder={setColumnOrder}
+          setColumnPinning={setColumnPinning}
+          setColumnSizes={setColumnSizes}
+          setColumnVisibility={setColumnVisibility}
+          setFilterDraft={setFilterDraft}
+          setTableFilter={setTableFilter}
+          setSortColumn={setSortColumn}
+          setSortDir={setSortDir}
+          setColumnDisplayFormats={setColumnDisplayFormats}
+          onCloseFkPreview={() => setFkPreview(null)}
+          onCloseColumnStats={() => setColumnStats(null)}
+          onCloseSetRangeDialog={() =>
+            setSetRangeDialog((previous) => ({ ...previous, open: false }))
+          }
+          onSetRangeSubmit={handleRangeSetValue}
+          onSetRangeError={(message) =>
+            setSetRangeDialog((previous) => ({ ...previous, error: message }))
+          }
+          onApplyStagedChanges={applyStagedChanges}
+          onDiscardStagedChanges={discardStagedChanges}
+          onClosePasteDialog={closePasteDialog}
+          onSubmitPasteDialog={() => void handleSubmitPasteDialog()}
+          onCancelPasteImport={() => void handleCancelPasteImport()}
+        />
       </div>
       {insertDialogModal}
-
-      {/* "Set selected cells to…" bulk-edit dialog */}
-      {setRangeDialog.open && typeof document !== "undefined"
-        ? createPortal(
-            <SetRangeValueDialog
-              cellCount={setRangeDialog.cellCount}
-              error={setRangeDialog.error}
-              onClose={() => setSetRangeDialog((previous) => ({ ...previous, open: false }))}
-              onSubmit={handleRangeSetValue}
-              onError={(message) =>
-                setSetRangeDialog((previous) => ({ ...previous, error: message }))
-              }
-            />,
-            document.body,
-          )
-        : null}
-
-      {/* Change Tracking Preview Modal */}
-      {stagedChangeCount > 0 && typeof document !== "undefined"
-        ? createPortal(
-            <ChangeTrackingPreviewModal
-              connectionId={connectionId}
-              tableName={tableName}
-              database={database}
-              onApply={applyStagedChanges}
-              onDiscard={discardStagedChanges}
-              isApplying={isLoading}
-            />,
-            document.body,
-          )
-        : null}
-
-      {/* Paste Rows Dialog */}
-      {isPasteDialogOpen && pastePreview && typeof document !== "undefined"
-        ? createPortal(
-            <PasteRowsDialog
-              tableName={tableName}
-              pasteSourceLabel={pasteSourceLabel}
-              csvFileSelection={csvFileSelection}
-              isSubmittingPaste={isSubmittingPaste}
-              isCancellingPaste={isCancellingPaste}
-              csvImportProgress={csvImportProgress}
-              pastePreview={pastePreview}
-              onClose={() => closePasteDialog()}
-              onSubmit={() => void handleSubmitPasteDialog()}
-              onCancel={() => void handleCancelPasteImport()}
-            />,
-            document.body,
-          )
-        : null}
     </>
   );
 }

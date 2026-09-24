@@ -35,6 +35,7 @@ const SQL_ENGINES_WITHOUT_PREVIEW: DatabaseType[] = [
   "bigquery",
   "libsql",
   "cloudflare_d1",
+  "oracle",
 ];
 
 const SQL_ENGINES: DatabaseType[] = [...SQL_ENGINES_WITH_PREVIEW, ...SQL_ENGINES_WITHOUT_PREVIEW];

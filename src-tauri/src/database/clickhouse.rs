@@ -16,6 +16,11 @@ use std::pin::Pin;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
+/// Server-side query cap sent as the `max_execution_time` URL param — the
+/// outer tokio timeout only aborts the HTTP wait; without this ClickHouse
+/// keeps running the statement after the client gives up.
+const CLICKHOUSE_MAX_EXECUTION_TIME_SECS: u64 = 120;
+
 #[derive(Debug, Deserialize)]
 struct ClickHouseMetaColumn {
     name: String,
@@ -170,10 +175,13 @@ impl ClickHouseDriver {
     }
 
     async fn post_query(&self, sql: &str, database: Option<&str>) -> Result<String> {
+        // Server-side execution cap: the outer tokio timeout aborts the HTTP
+        // wait, but ClickHouse would keep running the query without this.
         let mut request = self
             .client
             .post(&self.base_url)
             .basic_auth(&self.username, Some(&self.password))
+            .query(&[("max_execution_time", CLICKHOUSE_MAX_EXECUTION_TIME_SECS)])
             .body(sql.to_string());
 
         if let Some(database_name) = database.map(str::trim).filter(|value| !value.is_empty()) {

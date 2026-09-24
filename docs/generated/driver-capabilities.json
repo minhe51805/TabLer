@@ -90,7 +90,8 @@
       "administration": "limited"
     },
     "limitations": [
-      "CockroachDB shares the PostgreSQL wire driver; dialect-specific schema and administration coverage is incomplete."
+      "CockroachDB shares the PostgreSQL wire driver; dialect-specific schema and administration coverage is incomplete.",
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
     ]
   },
   {
@@ -115,7 +116,8 @@
       "administration": "limited"
     },
     "limitations": [
-      "Greenplum shares the PostgreSQL wire driver; distributed-operation coverage is incomplete."
+      "Greenplum shares the PostgreSQL wire driver; distributed-operation coverage is incomplete.",
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
     ]
   },
   {
@@ -140,7 +142,8 @@
       "administration": "limited"
     },
     "limitations": [
-      "Redshift shares the PostgreSQL wire driver; DDL, restore, and administration semantics require dedicated coverage."
+      "Redshift shares the PostgreSQL wire driver; DDL, restore, and administration semantics require dedicated coverage.",
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
     ]
   },
   {
@@ -192,7 +195,8 @@
     },
     "limitations": [
       "Atomic edit queues and CSV imports are not implemented.",
-      "Restore is classified as transactional but is not yet pinned to one driver transaction."
+      "Restore is classified as transactional but is not yet pinned to one driver transaction.",
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
     ]
   },
   {
@@ -217,7 +221,8 @@
       "administration": "limited"
     },
     "limitations": [
-      "CQL prepared parameters, tracing plans, atomic imports, and schema actions are not integrated."
+      "CQL prepared parameters, tracing plans, atomic imports, and schema actions are not integrated.",
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
     ]
   },
   {
@@ -242,7 +247,8 @@
       "administration": "limited"
     },
     "limitations": [
-      "Prepared parameters, atomic edits/imports, and reviewed schema actions are not implemented."
+      "Prepared parameters, atomic edits/imports, and reviewed schema actions are not implemented.",
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
     ]
   },
   {
@@ -255,7 +261,7 @@
       "connect": "supported",
       "query": "supported",
       "preparedParameters": "supported",
-      "queryCancellation": "limited",
+      "queryCancellation": "supported",
       "pagination": "supported",
       "inlineEdit": "supported",
       "atomicEditQueue": "supported",
@@ -267,7 +273,7 @@
       "administration": "limited"
     },
     "limitations": [
-      "Server-side cancellation is not wired.",
+      "Cancel kills the session from a second connection (TDS attention is not exposed by the driver), so the cancelled session is fully terminated rather than interrupted.",
       "Reviewed schema changes run in one transaction; statements SQL Server forbids inside transactions (ALTER DATABASE, CREATE/DROP DATABASE, BACKUP/RESTORE, RECONFIGURE, full-text index DDL) are rejected and rolled back.",
       "Stored procedures are listed with definitions but there is no dedicated proc editor/executor surface."
     ]
@@ -295,7 +301,8 @@
     },
     "limitations": [
       "Redis key projections are read-only; mutations require the CLI tab.",
-      "Backup/export uses a TableR JSON snapshot rather than a native Redis backup."
+      "Backup/export uses a TableR JSON snapshot rather than a native Redis backup.",
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
     ]
   },
   {
@@ -321,7 +328,8 @@
     },
     "limitations": [
       "Atomic edit/import queues and explain integration are not implemented.",
-      "Backup/export uses a TableR JSON snapshot."
+      "Backup/export uses a TableR JSON snapshot.",
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
     ]
   },
   {
@@ -346,7 +354,8 @@
       "administration": "limited"
     },
     "limitations": [
-      "Vertica shares the PostgreSQL wire driver; dialect-specific DDL and administration coverage is incomplete."
+      "Vertica shares the PostgreSQL wire driver; dialect-specific DDL and administration coverage is incomplete.",
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
     ]
   },
   {
@@ -371,7 +380,8 @@
       "administration": "limited"
     },
     "limitations": [
-      "Prepared parameters, atomic mutations/imports, and reviewed schema actions are not implemented."
+      "Prepared parameters, atomic mutations/imports, and reviewed schema actions are not implemented.",
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
     ]
   },
   {
@@ -396,7 +406,8 @@
       "administration": "unsupported"
     },
     "limitations": [
-      "Prepared parameters, atomic mutations/imports, explain plans, and administration are not integrated."
+      "Prepared parameters, atomic mutations/imports, explain plans, and administration are not integrated.",
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
     ]
   },
   {
@@ -421,7 +432,8 @@
       "administration": "not_applicable"
     },
     "limitations": [
-      "Prepared parameters, atomic mutations/imports, and direct schema actions are not implemented."
+      "Prepared parameters, atomic mutations/imports, and direct schema actions are not implemented.",
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
     ]
   },
   {
@@ -446,7 +458,8 @@
       "administration": "not_applicable"
     },
     "limitations": [
-      "Prepared parameters, atomic mutations/imports, and direct schema actions are not implemented."
+      "Prepared parameters, atomic mutations/imports, and direct schema actions are not implemented.",
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
     ]
   },
   {
@@ -472,7 +485,8 @@
     },
     "limitations": [
       "The declarative OpenSearch plugin driver is read-only.",
-      "SQL restore and server administration are unavailable."
+      "SQL restore and server administration are unavailable.",
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
     ]
   },
   {
@@ -498,7 +512,8 @@
     },
     "limitations": [
       "Requires ORDS (Oracle REST Data Services) enabled on the database; write operations are not supported over the REST endpoint.",
-      "Prepared parameters, inline edits, atomic imports, explain plans, schema actions, and backup/restore are not available through the ORDS SQL endpoint."
+      "Prepared parameters, inline edits, atomic imports, explain plans, schema actions, and backup/restore are not available through the ORDS SQL endpoint.",
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
     ]
   }
 ]

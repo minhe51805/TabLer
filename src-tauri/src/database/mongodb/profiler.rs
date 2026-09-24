@@ -60,6 +60,37 @@ impl MongoDbDriver {
             .context("Failed to sample MongoDB active operations via $currentOp")
     }
 
+    /// Open a `$currentOp` cursor filtered to ops whose `command.comment`
+    /// (or `command.originatingCommand.comment` for getMore continuations)
+    /// equals `tag`. Shares the `allUsers` fallback with the profiler sampler.
+    pub(super) async fn tagged_op_cursor(&self, tag: &str) -> Result<Cursor<Document>> {
+        let admin = self.client.database("admin");
+        let tagged_pipeline = |all_users: bool| {
+            let mut pipeline = Self::current_op_pipeline(all_users);
+            pipeline.push(doc! { "$match": { "$or": [
+                { "command.comment": tag },
+                { "command.originatingCommand.comment": tag },
+            ] } });
+            pipeline
+        };
+        if self.current_op_all_users.load(Ordering::Relaxed) {
+            match admin.aggregate(tagged_pipeline(true)).await {
+                Ok(cursor) => return Ok(cursor),
+                Err(error) if Self::is_all_users_rejected(&error) => {
+                    self.current_op_all_users.store(false, Ordering::Relaxed);
+                }
+                Err(error) => {
+                    return Err(error)
+                        .context("Failed to locate the tagged MongoDB operation via $currentOp");
+                }
+            }
+        }
+        admin
+            .aggregate(tagged_pipeline(false))
+            .await
+            .context("Failed to locate the tagged MongoDB operation via $currentOp")
+    }
+
     /// Report whether database profiling is active for `database`. MongoDB's
     /// `{ profile: -1 }` command returns `{ was: <level> }` where level 0 means
     /// profiling is off (so `system.profile` is never populated) and 1/2 record

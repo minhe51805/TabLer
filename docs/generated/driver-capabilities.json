@@ -78,7 +78,7 @@
       "connect": "supported",
       "query": "supported",
       "preparedParameters": "supported",
-      "queryCancellation": "limited",
+      "queryCancellation": "supported",
       "pagination": "supported",
       "inlineEdit": "supported",
       "atomicEditQueue": "supported",
@@ -91,7 +91,7 @@
     },
     "limitations": [
       "CockroachDB shares the PostgreSQL wire driver; dialect-specific schema and administration coverage is incomplete.",
-      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.",
+      "Cancel issues pg_cancel_backend from a second pooled connection to abort the running statement.",
       "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied."
     ]
   },
@@ -105,7 +105,7 @@
       "connect": "supported",
       "query": "supported",
       "preparedParameters": "supported",
-      "queryCancellation": "limited",
+      "queryCancellation": "supported",
       "pagination": "supported",
       "inlineEdit": "supported",
       "atomicEditQueue": "supported",
@@ -118,7 +118,7 @@
     },
     "limitations": [
       "Greenplum shares the PostgreSQL wire driver; distributed-operation coverage is incomplete.",
-      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.",
+      "Cancel issues pg_cancel_backend from a second pooled connection to abort the running statement.",
       "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied."
     ]
   },
@@ -145,7 +145,7 @@
     },
     "limitations": [
       "Redshift shares the PostgreSQL wire driver; DDL, restore, and administration semantics require dedicated coverage.",
-      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.",
+      "Cancel attempts pg_cancel_backend from a second connection, but Redshift may not honor the PostgreSQL cancel function; the statement may keep running.",
       "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied.",
       "Explain returns a text plan; the JSON plan format is not supported."
     ]
@@ -160,7 +160,7 @@
       "connect": "supported",
       "query": "supported",
       "preparedParameters": "supported",
-      "queryCancellation": "limited",
+      "queryCancellation": "supported",
       "pagination": "supported",
       "inlineEdit": "supported",
       "atomicEditQueue": "supported",
@@ -172,7 +172,7 @@
       "administration": "not_applicable"
     },
     "limitations": [
-      "Local engine: cancel stops waiting; the embedded engine finishes the statement in the background.",
+      "Cancel interrupts the running statement through a SQLite progress handler installed on the query's connection.",
       "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied."
     ]
   },
@@ -294,7 +294,7 @@
       "connect": "supported",
       "query": "supported",
       "preparedParameters": "not_applicable",
-      "queryCancellation": "limited",
+      "queryCancellation": "supported",
       "pagination": "supported",
       "inlineEdit": "unsupported",
       "atomicEditQueue": "not_applicable",
@@ -308,7 +308,7 @@
     "limitations": [
       "Redis key projections are read-only; mutations require the CLI tab.",
       "Backup/export uses a TableR JSON snapshot rather than a native Redis backup.",
-      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
+      "Cancel kills the client session with CLIENT KILL ID from a second connection (Redis has no per-command kill), so the cancelled session is replaced rather than interrupted; requires Redis 5+ for CLIENT ID."
     ]
   },
   {
@@ -321,7 +321,7 @@
       "connect": "supported",
       "query": "supported",
       "preparedParameters": "not_applicable",
-      "queryCancellation": "limited",
+      "queryCancellation": "supported",
       "pagination": "supported",
       "inlineEdit": "supported",
       "atomicEditQueue": "unsupported",
@@ -335,7 +335,7 @@
     "limitations": [
       "Atomic edit/import queues and explain integration are not implemented.",
       "Backup/export uses a TableR JSON snapshot.",
-      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
+      "Cancel tags each command with a comment and kills the matching op via killOp; deployments without killOp privilege (e.g. shared Atlas tiers) get UI-only cancel."
     ]
   },
   {
@@ -361,7 +361,7 @@
     },
     "limitations": [
       "Vertica shares the PostgreSQL wire driver; dialect-specific DDL and administration coverage is incomplete.",
-      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.",
+      "Cancel attempts pg_cancel_backend from a second connection, but Vertica does not honor the PostgreSQL cancel function; the statement may keep running.",
       "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied.",
       "Explain returns a text plan; the JSON plan format is not supported."
     ]
@@ -376,7 +376,7 @@
       "connect": "supported",
       "query": "supported",
       "preparedParameters": "supported",
-      "queryCancellation": "limited",
+      "queryCancellation": "supported",
       "pagination": "supported",
       "inlineEdit": "supported",
       "atomicEditQueue": "unsupported",
@@ -389,7 +389,7 @@
     },
     "limitations": [
       "Prepared parameters, atomic mutations/imports, and reviewed schema actions are not implemented.",
-      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
+      "Cancel issues KILL QUERY over a second HTTP request against the request's tagged query_id."
     ]
   },
   {

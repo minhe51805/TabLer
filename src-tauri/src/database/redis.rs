@@ -1,5 +1,6 @@
 use super::driver::DatabaseDriver;
 use super::models::*;
+use super::query_cancel::{request_cancel, CancelLookup, CancelScopeGuard, QueryCancelRegistry};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures_util::{stream, Stream, StreamExt, TryStreamExt};
@@ -10,7 +11,7 @@ use redis::{
 use serde_json::Value as JsonValue;
 use std::collections::HashSet;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock as StdRwLock};
 use std::time::Instant;
 use tokio::task;
 
@@ -31,8 +32,15 @@ enum RedisExportState {
 }
 
 pub struct RedisDriver {
+    /// Kept so `cancel_query_request` can open a second connection and issue
+    /// `CLIENT KILL ID` against the busy one — Redis has no per-command kill.
+    client: Client,
     connection: Arc<Mutex<RedisConnection>>,
     current_db: Arc<Mutex<i64>>,
+    /// Database index the client connects to; restored on the replacement
+    /// connection after a kill so `current_db` bookkeeping stays honest.
+    default_db: i64,
+    cancel_registry: Arc<StdRwLock<QueryCancelRegistry>>,
 }
 
 impl RedisDriver {
@@ -76,10 +84,10 @@ impl RedisDriver {
             .context("Failed to prepare Redis connection info")?
             .set_redis_settings(redis_settings);
 
+        let client = Client::open(connection_info).context("Failed to initialize Redis client")?;
+        let connect_client = client.clone();
         let connection = task::spawn_blocking(move || -> Result<RedisConnection> {
-            let client =
-                Client::open(connection_info).context("Failed to initialize Redis client")?;
-            let mut connection = client
+            let mut connection = connect_client
                 .get_connection()
                 .context("Failed to open the Redis connection")?;
             let _: String = cmd("PING")
@@ -91,8 +99,11 @@ impl RedisDriver {
         .map_err(|_| anyhow!("Redis connection task failed unexpectedly"))??;
 
         Ok(Self {
+            client,
             connection: Arc::new(Mutex::new(connection)),
             current_db: Arc::new(Mutex::new(db_index)),
+            default_db: db_index,
+            cancel_registry: Arc::new(StdRwLock::new(QueryCancelRegistry::new())),
         })
     }
 
@@ -192,6 +203,62 @@ impl RedisDriver {
 
     fn database_label(db_index: i64) -> String {
         format!("db{db_index}")
+    }
+
+    /// Shared body of `execute_query`/`execute_query_for_request`: runs the
+    /// parsed command lines on the given connection, tracking SELECT so the
+    /// shared `current_db` bookkeeping stays in sync.
+    fn run_command_script(
+        connection: &mut RedisConnection,
+        current_db: &mut i64,
+        commands: Vec<Vec<String>>,
+        raw_script: &str,
+    ) -> Result<QueryResult> {
+        let start = Instant::now();
+        let mut last_result = Self::build_query_result(
+            vec![Self::column("result", "TEXT")],
+            Vec::new(),
+            0,
+            raw_script.to_string(),
+            0,
+        );
+        let mut total_affected = 0u64;
+
+        for tokens in commands {
+            let command_name = tokens
+                .first()
+                .cloned()
+                .ok_or_else(|| anyhow!("Redis command cannot be empty"))?;
+            let mut redis_command = cmd(&command_name);
+            for argument in tokens.iter().skip(1) {
+                redis_command.arg(argument);
+            }
+
+            let value = redis_command
+                .query::<RedisValue>(connection)
+                .with_context(|| format!("Redis command failed: {}", tokens.join(" ")))?;
+
+            if command_name.eq_ignore_ascii_case("SELECT") {
+                if let Some(target_db) = tokens.get(1) {
+                    *current_db = Self::parse_database_index(target_db)?;
+                }
+            }
+
+            let affected_rows = Self::affected_rows_for_command(&command_name, &value);
+            total_affected += affected_rows;
+            last_result = Self::build_command_query_result(
+                &command_name,
+                &tokens,
+                value,
+                start.elapsed().as_millis(),
+                raw_script.to_string(),
+                affected_rows,
+            );
+        }
+
+        last_result.affected_rows = total_affected;
+        last_result.execution_time_ms = start.elapsed().as_millis();
+        Ok(last_result)
     }
 }
 
@@ -652,57 +719,103 @@ impl DatabaseDriver for RedisDriver {
     }
 
     async fn execute_query(&self, sql: &str) -> Result<QueryResult> {
-        let raw_script = sql.to_string();
         let commands = Self::parse_command_lines(sql)?;
-
+        let raw_script = sql.to_string();
         self.with_connection(move |connection, current_db| {
-            let start = Instant::now();
-            let mut last_result = Self::build_query_result(
-                vec![Self::column("result", "TEXT")],
-                Vec::new(),
-                0,
-                raw_script.clone(),
-                0,
-            );
-            let mut total_affected = 0u64;
-
-            for tokens in commands {
-                let command_name = tokens
-                    .first()
-                    .cloned()
-                    .ok_or_else(|| anyhow!("Redis command cannot be empty"))?;
-                let mut redis_command = cmd(&command_name);
-                for argument in tokens.iter().skip(1) {
-                    redis_command.arg(argument);
-                }
-
-                let value = redis_command
-                    .query::<RedisValue>(connection)
-                    .with_context(|| format!("Redis command failed: {}", tokens.join(" ")))?;
-
-                if command_name.eq_ignore_ascii_case("SELECT") {
-                    if let Some(target_db) = tokens.get(1) {
-                        *current_db = Self::parse_database_index(target_db)?;
-                    }
-                }
-
-                let affected_rows = Self::affected_rows_for_command(&command_name, &value);
-                total_affected += affected_rows;
-                last_result = Self::build_command_query_result(
-                    &command_name,
-                    &tokens,
-                    value,
-                    start.elapsed().as_millis(),
-                    raw_script.clone(),
-                    affected_rows,
-                );
-            }
-
-            last_result.affected_rows = total_affected;
-            last_result.execution_time_ms = start.elapsed().as_millis();
-            Ok(last_result)
+            Self::run_command_script(connection, current_db, commands, &raw_script)
         })
         .await
+    }
+
+    /// Request-scoped execution: registers the request, then resolves this
+    /// connection's `CLIENT ID` inside the worker so `cancel_query_request`
+    /// can `CLIENT KILL ID` it from a second connection.
+    async fn execute_query_for_request(&self, request_id: &str, sql: &str) -> Result<QueryResult> {
+        if request_id.trim().is_empty() {
+            return self.execute_query(sql).await;
+        }
+        let commands = Self::parse_command_lines(sql)?;
+        let raw_script = sql.to_string();
+        let request_id = request_id.to_string();
+        let registry = self.cancel_registry.clone();
+        let connection = self.connection.clone();
+        let current_db = self.current_db.clone();
+        // The guard lives in the async caller so the slot stays open for the
+        // whole spawn_blocking lifetime; the worker only registers its id.
+        let guard = CancelScopeGuard::begin(&self.cancel_registry, &request_id);
+        let result = task::spawn_blocking(move || {
+            let mut connection_guard = connection
+                .lock()
+                .map_err(|_| anyhow!("Redis connection lock was poisoned"))?;
+            let mut db_guard = current_db
+                .lock()
+                .map_err(|_| anyhow!("Redis database state lock was poisoned"))?;
+            // CLIENT ID (Redis 5+) names this connection for CLIENT KILL. On
+            // older servers the lookup fails: run anyway — cancel then only
+            // releases the UI without a server-side kill.
+            match cmd("CLIENT").arg("ID").query::<i64>(&mut connection_guard) {
+                Ok(client_id) => {
+                    let cancelled = registry
+                        .write()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .register_backend(&request_id, client_id);
+                    if cancelled {
+                        return Err(anyhow!("Query cancelled."));
+                    }
+                }
+                Err(error) => {
+                    log::warn!("Redis CLIENT ID unavailable; cancel will be UI-only: {error}");
+                }
+            }
+            Self::run_command_script(&mut connection_guard, &mut db_guard, commands, &raw_script)
+        })
+        .await
+        .map_err(|_| anyhow!("Redis background task failed unexpectedly"))?;
+        drop(guard);
+        result
+    }
+
+    /// Cancels by issuing `CLIENT KILL ID <id>` on a second connection —
+    /// Redis has no per-command kill, so the whole session is dropped and the
+    /// shared connection is swapped for the fresh killer connection.
+    async fn cancel_query_request(&self, request_id: &str) -> Result<bool> {
+        match request_cancel(&self.cancel_registry, request_id) {
+            CancelLookup::NotRunning => Ok(false),
+            CancelLookup::Pending => Ok(true),
+            CancelLookup::Backend(client_id) => {
+                let client = self.client.clone();
+                let connection = self.connection.clone();
+                let current_db = self.current_db.clone();
+                let default_db = self.default_db;
+                task::spawn_blocking(move || -> Result<()> {
+                    let mut killer = client
+                        .get_connection()
+                        .context("Redis cancel: could not open a second connection")?;
+                    let killed: i64 = cmd("CLIENT")
+                        .arg("KILL")
+                        .arg("ID")
+                        .arg(client_id)
+                        .query(&mut killer)
+                        .context("Redis CLIENT KILL failed")?;
+                    if killed > 0 {
+                        // The killed connection is dead; adopt the killer so
+                        // the next command does not reuse a closed socket.
+                        let mut connection_guard = connection
+                            .lock()
+                            .map_err(|_| anyhow!("Redis connection lock was poisoned"))?;
+                        *connection_guard = killer;
+                        let mut db_guard = current_db
+                            .lock()
+                            .map_err(|_| anyhow!("Redis database state lock was poisoned"))?;
+                        *db_guard = default_db;
+                    }
+                    Ok(())
+                })
+                .await
+                .map_err(|_| anyhow!("Redis cancel task failed unexpectedly"))??;
+                Ok(true)
+            }
+        }
     }
 
     async fn get_table_data(
@@ -839,14 +952,16 @@ impl DatabaseDriver for RedisDriver {
         if order_by.is_some() {
             log::warn!("Redis export of '{table_name}' ignores ORDER BY (no server-side ordering)");
         }
+        let setup_table_name = table_name.clone();
         let setup = async move {
             let (key_type, columns) = self
                 .with_selected_database(database, move |connection, _| {
-                    let key_type = Self::key_type(connection, &table_name)?;
+                    let key_type = Self::key_type(connection, &setup_table_name)?;
                     if key_type == "none" {
-                        return Err(anyhow!("Redis key '{}' was not found", table_name));
+                        return Err(anyhow!("Redis key '{}' was not found", setup_table_name));
                     }
-                    Ok((key_type, Self::export_columns(&key_type, &table_name)))
+                    let columns = Self::export_columns(&key_type, &setup_table_name);
+                    Ok((key_type, columns))
                 })
                 .await?;
             let state = match key_type.as_str() {
@@ -868,6 +983,8 @@ impl DatabaseDriver for RedisDriver {
 
         stream::once(setup)
             .map_ok(move |(key_type, columns, state)| {
+                let table_name = table_name.clone();
+                let filter = filter.clone();
                 stream::try_unfold(
                     (key_type, columns, state),
                     move |(key_type, columns, state)| {

@@ -2,6 +2,7 @@ use super::{strip_database_prefix, MongoDbDriver, MongoQueryCommand, MongoUpdate
 use crate::commands::profiler::{PROBE_ROW_LIMIT, PROFILER_COLUMNS, TOP_QUERY_COLUMNS};
 use crate::database::driver::DatabaseDriver;
 use crate::database::models::*;
+use crate::database::query_cancel::{request_cancel, CancelLookup, CancelScopeGuard};
 use crate::database::query_common::MAX_QUERY_RESULT_ROWS;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -10,6 +11,339 @@ use mongodb::bson::{doc, Bson, Document};
 use serde_json::Value as JsonValue;
 use std::pin::Pin;
 use std::time::Instant;
+
+impl MongoDbDriver {
+    /// Shared body of `execute_query`/`execute_query_for_request`. `comment`
+    /// tags the server-side op so a cancel can locate it in `$currentOp`.
+    async fn execute_command(&self, sql: &str, comment: Option<Bson>) -> Result<QueryResult> {
+        let started_at = Instant::now();
+        let command = Self::parse_command(sql)?;
+        let active_database = self.current_db.read().await.clone();
+
+        let result = match command {
+            MongoQueryCommand::RunCommand(mut command) => {
+                // The comment rides inside the command document so $currentOp
+                // exposes it under `command.comment` for killOp matching.
+                if let Some(comment) = comment {
+                    command.insert("comment", comment);
+                }
+                let response = self
+                    .client
+                    .database(&active_database)
+                    .run_command(command)
+                    .await
+                    .with_context(|| {
+                        format!("Failed to run MongoDB command against {active_database}")
+                    })?;
+                Self::documents_to_result(
+                    vec![response],
+                    started_at.elapsed().as_millis(),
+                    sql.to_string(),
+                    0,
+                    false,
+                )
+            }
+            MongoQueryCommand::Find {
+                collection,
+                filter,
+                projection,
+                sort,
+                limit,
+                skip,
+            } => {
+                let collection_name = strip_database_prefix(&collection, &active_database);
+                let effective_limit = limit
+                    .unwrap_or(MAX_QUERY_RESULT_ROWS as i64)
+                    .clamp(0, MAX_QUERY_RESULT_ROWS as i64);
+                let database = self.client.database(&active_database);
+                let collection_handle = database.collection::<Document>(collection_name);
+                let mut find_action = collection_handle.find(filter);
+                if let Some(comment) = comment {
+                    find_action = find_action.comment(comment);
+                }
+                if let Some(projection) = projection {
+                    find_action = find_action.projection(projection);
+                }
+                if let Some(sort) = sort {
+                    find_action = find_action.sort(sort);
+                }
+                if let Some(skip) = skip {
+                    find_action = find_action.skip(skip);
+                }
+                find_action = find_action.limit(effective_limit);
+                let cursor = find_action
+                    .await
+                    .with_context(|| format!("Failed to query MongoDB collection {collection}"))?;
+                let (documents, truncated) = Self::collect_cursor_limited(cursor).await?;
+                Self::documents_to_result(
+                    documents,
+                    started_at.elapsed().as_millis(),
+                    sql.to_string(),
+                    0,
+                    truncated,
+                )
+            }
+            MongoQueryCommand::FindOne { collection, filter } => {
+                let collection_name = strip_database_prefix(&collection, &active_database);
+                let collection_handle = self
+                    .client
+                    .database(&active_database)
+                    .collection::<Document>(collection_name);
+                let mut find_one_action = collection_handle.find_one(filter);
+                if let Some(comment) = comment {
+                    find_one_action = find_one_action.comment(comment);
+                }
+                let document = find_one_action
+                    .await
+                    .with_context(|| format!("Failed to query MongoDB collection {collection}"))?;
+                Self::documents_to_result(
+                    document.into_iter().collect(),
+                    started_at.elapsed().as_millis(),
+                    sql.to_string(),
+                    0,
+                    false,
+                )
+            }
+            MongoQueryCommand::Aggregate {
+                collection,
+                pipeline,
+            } => {
+                let collection_handle = self
+                    .client
+                    .database(&active_database)
+                    .collection::<Document>(&collection);
+                let mut aggregate_action = collection_handle.aggregate(pipeline);
+                if let Some(comment) = comment {
+                    aggregate_action = aggregate_action.comment(comment);
+                }
+                let cursor = aggregate_action.await.with_context(|| {
+                    format!("Failed to aggregate MongoDB collection {collection}")
+                })?;
+                let (documents, truncated) = Self::collect_cursor_limited(cursor).await?;
+                Self::documents_to_result(
+                    documents,
+                    started_at.elapsed().as_millis(),
+                    sql.to_string(),
+                    0,
+                    truncated,
+                )
+            }
+            MongoQueryCommand::CountDocuments { collection, filter } => {
+                let collection_handle = self
+                    .client
+                    .database(&active_database)
+                    .collection::<Document>(&collection);
+                let mut count_action = collection_handle.count_documents(filter);
+                if let Some(comment) = comment {
+                    count_action = count_action.comment(comment);
+                }
+                let count = count_action.await.with_context(|| {
+                    format!("Failed to count MongoDB documents in {collection}")
+                })?;
+                Self::scalar_result(
+                    "count",
+                    JsonValue::from(count),
+                    started_at.elapsed().as_millis(),
+                    sql.to_string(),
+                    0,
+                )
+            }
+            MongoQueryCommand::InsertOne {
+                collection,
+                document,
+            } => {
+                let collection_handle = self
+                    .client
+                    .database(&active_database)
+                    .collection::<Document>(&collection);
+                let mut insert_action = collection_handle.insert_one(document);
+                if let Some(comment) = comment {
+                    insert_action = insert_action.comment(comment);
+                }
+                let insert = insert_action.await.with_context(|| {
+                    format!("Failed to insert into MongoDB collection {collection}")
+                })?;
+                Self::scalar_result(
+                    "inserted_id",
+                    Self::bson_to_json(insert.inserted_id),
+                    started_at.elapsed().as_millis(),
+                    sql.to_string(),
+                    1,
+                )
+            }
+            MongoQueryCommand::InsertMany {
+                collection,
+                documents,
+            } => {
+                let inserted_count = documents.len() as u64;
+                let collection_handle = self
+                    .client
+                    .database(&active_database)
+                    .collection::<Document>(&collection);
+                let mut insert_action = collection_handle.insert_many(documents);
+                if let Some(comment) = comment {
+                    insert_action = insert_action.comment(comment);
+                }
+                insert_action.await.with_context(|| {
+                    format!("Failed to insert into MongoDB collection {collection}")
+                })?;
+                Self::scalar_result(
+                    "inserted_count",
+                    JsonValue::from(inserted_count),
+                    started_at.elapsed().as_millis(),
+                    sql.to_string(),
+                    inserted_count,
+                )
+            }
+            MongoQueryCommand::UpdateOne {
+                collection,
+                filter,
+                update,
+            } => {
+                let modified_count = match update {
+                    MongoUpdatePayload::Document(update_document) => {
+                        let collection_handle = self
+                            .client
+                            .database(&active_database)
+                            .collection::<Document>(&collection);
+                        let mut update_action =
+                            collection_handle.update_one(filter, update_document);
+                        if let Some(comment) = comment {
+                            update_action = update_action.comment(comment);
+                        }
+                        update_action
+                            .await
+                            .with_context(|| {
+                                format!("Failed to update MongoDB collection {collection}")
+                            })?
+                            .modified_count
+                    }
+                    MongoUpdatePayload::Pipeline(update_pipeline) => {
+                        let collection_handle = self
+                            .client
+                            .database(&active_database)
+                            .collection::<Document>(&collection);
+                        let mut update_action =
+                            collection_handle.update_one(filter, update_pipeline);
+                        if let Some(comment) = comment {
+                            update_action = update_action.comment(comment);
+                        }
+                        update_action
+                            .await
+                            .with_context(|| {
+                                format!("Failed to update MongoDB collection {collection}")
+                            })?
+                            .modified_count
+                    }
+                };
+                Self::scalar_result(
+                    "modified_count",
+                    JsonValue::from(modified_count),
+                    started_at.elapsed().as_millis(),
+                    sql.to_string(),
+                    modified_count,
+                )
+            }
+            MongoQueryCommand::UpdateMany {
+                collection,
+                filter,
+                update,
+            } => {
+                let modified_count = match update {
+                    MongoUpdatePayload::Document(update_document) => {
+                        let collection_handle = self
+                            .client
+                            .database(&active_database)
+                            .collection::<Document>(&collection);
+                        let mut update_action =
+                            collection_handle.update_many(filter, update_document);
+                        if let Some(comment) = comment {
+                            update_action = update_action.comment(comment);
+                        }
+                        update_action
+                            .await
+                            .with_context(|| {
+                                format!("Failed to update MongoDB collection {collection}")
+                            })?
+                            .modified_count
+                    }
+                    MongoUpdatePayload::Pipeline(update_pipeline) => {
+                        let collection_handle = self
+                            .client
+                            .database(&active_database)
+                            .collection::<Document>(&collection);
+                        let mut update_action =
+                            collection_handle.update_many(filter, update_pipeline);
+                        if let Some(comment) = comment {
+                            update_action = update_action.comment(comment);
+                        }
+                        update_action
+                            .await
+                            .with_context(|| {
+                                format!("Failed to update MongoDB collection {collection}")
+                            })?
+                            .modified_count
+                    }
+                };
+                Self::scalar_result(
+                    "modified_count",
+                    JsonValue::from(modified_count),
+                    started_at.elapsed().as_millis(),
+                    sql.to_string(),
+                    modified_count,
+                )
+            }
+            MongoQueryCommand::DeleteOne { collection, filter } => {
+                let collection_handle = self
+                    .client
+                    .database(&active_database)
+                    .collection::<Document>(&collection);
+                let mut delete_action = collection_handle.delete_one(filter);
+                if let Some(comment) = comment {
+                    delete_action = delete_action.comment(comment);
+                }
+                let deleted_count = delete_action
+                    .await
+                    .with_context(|| {
+                        format!("Failed to delete from MongoDB collection {collection}")
+                    })?
+                    .deleted_count;
+                Self::scalar_result(
+                    "deleted_count",
+                    JsonValue::from(deleted_count),
+                    started_at.elapsed().as_millis(),
+                    sql.to_string(),
+                    deleted_count,
+                )
+            }
+            MongoQueryCommand::DeleteMany { collection, filter } => {
+                let collection_handle = self
+                    .client
+                    .database(&active_database)
+                    .collection::<Document>(&collection);
+                let mut delete_action = collection_handle.delete_many(filter);
+                if let Some(comment) = comment {
+                    delete_action = delete_action.comment(comment);
+                }
+                let deleted_count = delete_action
+                    .await
+                    .with_context(|| {
+                        format!("Failed to delete from MongoDB collection {collection}")
+                    })?
+                    .deleted_count;
+                Self::scalar_result(
+                    "deleted_count",
+                    JsonValue::from(deleted_count),
+                    started_at.elapsed().as_millis(),
+                    sql.to_string(),
+                    deleted_count,
+                )
+            }
+        };
+
+        Ok(result)
+    }
+}
 
 #[async_trait]
 impl DatabaseDriver for MongoDbDriver {
@@ -152,279 +486,51 @@ impl DatabaseDriver for MongoDbDriver {
     }
 
     async fn execute_query(&self, sql: &str) -> Result<QueryResult> {
-        let started_at = Instant::now();
-        let command = Self::parse_command(sql)?;
-        let active_database = self.current_db.read().await.clone();
+        self.execute_command(sql, None).await
+    }
 
-        let result = match command {
-            MongoQueryCommand::RunCommand(command) => {
-                let response = self
-                    .client
-                    .database(&active_database)
-                    .run_command(command)
-                    .await
-                    .with_context(|| {
-                        format!("Failed to run MongoDB command against {active_database}")
-                    })?;
-                Self::documents_to_result(
-                    vec![response],
-                    started_at.elapsed().as_millis(),
-                    sql.to_string(),
-                    0,
-                    false,
-                )
-            }
-            MongoQueryCommand::Find {
-                collection,
-                filter,
-                projection,
-                sort,
-                limit,
-                skip,
-            } => {
-                let collection_name = strip_database_prefix(&collection, &active_database);
-                let effective_limit = limit
-                    .unwrap_or(MAX_QUERY_RESULT_ROWS as i64)
-                    .clamp(0, MAX_QUERY_RESULT_ROWS as i64);
-                let database = self.client.database(&active_database);
-                let collection_handle = database.collection::<Document>(collection_name);
-                let mut find_action = collection_handle.find(filter);
-                if let Some(projection) = projection {
-                    find_action = find_action.projection(projection);
-                }
-                if let Some(sort) = sort {
-                    find_action = find_action.sort(sort);
-                }
-                if let Some(skip) = skip {
-                    find_action = find_action.skip(skip);
-                }
-                find_action = find_action.limit(effective_limit);
-                let cursor = find_action
-                    .await
-                    .with_context(|| format!("Failed to query MongoDB collection {collection}"))?;
-                let (documents, truncated) = Self::collect_cursor_limited(cursor).await?;
-                Self::documents_to_result(
-                    documents,
-                    started_at.elapsed().as_millis(),
-                    sql.to_string(),
-                    0,
-                    truncated,
-                )
-            }
-            MongoQueryCommand::FindOne { collection, filter } => {
-                let collection_name = strip_database_prefix(&collection, &active_database);
-                let document = self
-                    .client
-                    .database(&active_database)
-                    .collection::<Document>(collection_name)
-                    .find_one(filter)
-                    .await
-                    .with_context(|| format!("Failed to query MongoDB collection {collection}"))?;
-                Self::documents_to_result(
-                    document.into_iter().collect(),
-                    started_at.elapsed().as_millis(),
-                    sql.to_string(),
-                    0,
-                    false,
-                )
-            }
-            MongoQueryCommand::Aggregate {
-                collection,
-                pipeline,
-            } => {
-                let cursor = self
-                    .client
-                    .database(&active_database)
-                    .collection::<Document>(&collection)
-                    .aggregate(pipeline)
-                    .await
-                    .with_context(|| {
-                        format!("Failed to aggregate MongoDB collection {collection}")
-                    })?;
-                let (documents, truncated) = Self::collect_cursor_limited(cursor).await?;
-                Self::documents_to_result(
-                    documents,
-                    started_at.elapsed().as_millis(),
-                    sql.to_string(),
-                    0,
-                    truncated,
-                )
-            }
-            MongoQueryCommand::CountDocuments { collection, filter } => {
-                let count = self
-                    .client
-                    .database(&active_database)
-                    .collection::<Document>(&collection)
-                    .count_documents(filter)
-                    .await
-                    .with_context(|| {
-                        format!("Failed to count MongoDB documents in {collection}")
-                    })?;
-                Self::scalar_result(
-                    "count",
-                    JsonValue::from(count),
-                    started_at.elapsed().as_millis(),
-                    sql.to_string(),
-                    0,
-                )
-            }
-            MongoQueryCommand::InsertOne {
-                collection,
-                document,
-            } => {
-                let insert = self
-                    .client
-                    .database(&active_database)
-                    .collection::<Document>(&collection)
-                    .insert_one(document)
-                    .await
-                    .with_context(|| {
-                        format!("Failed to insert into MongoDB collection {collection}")
-                    })?;
-                Self::scalar_result(
-                    "inserted_id",
-                    Self::bson_to_json(insert.inserted_id),
-                    started_at.elapsed().as_millis(),
-                    sql.to_string(),
-                    1,
-                )
-            }
-            MongoQueryCommand::InsertMany {
-                collection,
-                documents,
-            } => {
-                let inserted_count = documents.len() as u64;
+    /// Request-scoped execution: the parsed command is tagged with a
+    /// `tabler-cancel:<request_id>` comment so `cancel_query_request` can find
+    /// the live op via `$currentOp` and kill it with `killOp`.
+    async fn execute_query_for_request(&self, request_id: &str, sql: &str) -> Result<QueryResult> {
+        if request_id.trim().is_empty() {
+            return self.execute_query(sql).await;
+        }
+        let guard = CancelScopeGuard::begin(&self.cancel_registry, request_id);
+        // The op is located by its comment tag, not a backend id — registering
+        // a marker only resolves the pending-cancel race.
+        if guard.register_backend(0) {
+            return Err(anyhow!("Query cancelled."));
+        }
+        let comment = Bson::String(format!("tabler-cancel:{request_id}"));
+        let result = self.execute_command(sql, Some(comment)).await;
+        drop(guard);
+        result
+    }
+
+    /// Cancels by locating the op whose `command.comment` carries the request
+    /// tag in `$currentOp` and issuing `killOp` on admin. A vanished op means
+    /// the server already finished it, which still confirms nothing is running.
+    async fn cancel_query_request(&self, request_id: &str) -> Result<bool> {
+        match request_cancel(&self.cancel_registry, request_id) {
+            CancelLookup::NotRunning => Ok(false),
+            CancelLookup::Pending => Ok(true),
+            CancelLookup::Backend(_) => {
+                let tag = format!("tabler-cancel:{request_id}");
+                let cursor = self.tagged_op_cursor(&tag).await?;
+                let (ops, _) = Self::collect_cursor_limited(cursor).await?;
+                let Some(opid) = ops.iter().find_map(|op| op.get("opid").cloned()) else {
+                    // No live op carries the tag: it already finished.
+                    return Ok(true);
+                };
                 self.client
-                    .database(&active_database)
-                    .collection::<Document>(&collection)
-                    .insert_many(documents)
+                    .database("admin")
+                    .run_command(doc! { "killOp": 1, "op": opid })
                     .await
-                    .with_context(|| {
-                        format!("Failed to insert into MongoDB collection {collection}")
-                    })?;
-                Self::scalar_result(
-                    "inserted_count",
-                    JsonValue::from(inserted_count),
-                    started_at.elapsed().as_millis(),
-                    sql.to_string(),
-                    inserted_count,
-                )
+                    .context("MongoDB killOp failed")?;
+                Ok(true)
             }
-            MongoQueryCommand::UpdateOne {
-                collection,
-                filter,
-                update,
-            } => {
-                let modified_count = match update {
-                    MongoUpdatePayload::Document(update_document) => {
-                        self.client
-                            .database(&active_database)
-                            .collection::<Document>(&collection)
-                            .update_one(filter, update_document)
-                            .await
-                            .with_context(|| {
-                                format!("Failed to update MongoDB collection {collection}")
-                            })?
-                            .modified_count
-                    }
-                    MongoUpdatePayload::Pipeline(update_pipeline) => {
-                        self.client
-                            .database(&active_database)
-                            .collection::<Document>(&collection)
-                            .update_one(filter, update_pipeline)
-                            .await
-                            .with_context(|| {
-                                format!("Failed to update MongoDB collection {collection}")
-                            })?
-                            .modified_count
-                    }
-                };
-                Self::scalar_result(
-                    "modified_count",
-                    JsonValue::from(modified_count),
-                    started_at.elapsed().as_millis(),
-                    sql.to_string(),
-                    modified_count,
-                )
-            }
-            MongoQueryCommand::UpdateMany {
-                collection,
-                filter,
-                update,
-            } => {
-                let modified_count = match update {
-                    MongoUpdatePayload::Document(update_document) => {
-                        self.client
-                            .database(&active_database)
-                            .collection::<Document>(&collection)
-                            .update_many(filter, update_document)
-                            .await
-                            .with_context(|| {
-                                format!("Failed to update MongoDB collection {collection}")
-                            })?
-                            .modified_count
-                    }
-                    MongoUpdatePayload::Pipeline(update_pipeline) => {
-                        self.client
-                            .database(&active_database)
-                            .collection::<Document>(&collection)
-                            .update_many(filter, update_pipeline)
-                            .await
-                            .with_context(|| {
-                                format!("Failed to update MongoDB collection {collection}")
-                            })?
-                            .modified_count
-                    }
-                };
-                Self::scalar_result(
-                    "modified_count",
-                    JsonValue::from(modified_count),
-                    started_at.elapsed().as_millis(),
-                    sql.to_string(),
-                    modified_count,
-                )
-            }
-            MongoQueryCommand::DeleteOne { collection, filter } => {
-                let deleted_count = self
-                    .client
-                    .database(&active_database)
-                    .collection::<Document>(&collection)
-                    .delete_one(filter)
-                    .await
-                    .with_context(|| {
-                        format!("Failed to delete from MongoDB collection {collection}")
-                    })?
-                    .deleted_count;
-                Self::scalar_result(
-                    "deleted_count",
-                    JsonValue::from(deleted_count),
-                    started_at.elapsed().as_millis(),
-                    sql.to_string(),
-                    deleted_count,
-                )
-            }
-            MongoQueryCommand::DeleteMany { collection, filter } => {
-                let deleted_count = self
-                    .client
-                    .database(&active_database)
-                    .collection::<Document>(&collection)
-                    .delete_many(filter)
-                    .await
-                    .with_context(|| {
-                        format!("Failed to delete from MongoDB collection {collection}")
-                    })?
-                    .deleted_count;
-                Self::scalar_result(
-                    "deleted_count",
-                    JsonValue::from(deleted_count),
-                    started_at.elapsed().as_millis(),
-                    sql.to_string(),
-                    deleted_count,
-                )
-            }
-        };
-
-        Ok(result)
+        }
     }
 
     async fn get_table_data(

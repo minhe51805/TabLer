@@ -1,6 +1,8 @@
+use crate::database::query_cancel::QueryCancelRegistry;
 use mongodb::bson::Document;
 use mongodb::Client;
 use std::sync::atomic::AtomicBool;
+use std::sync::RwLock as StdRwLock;
 use tokio::sync::RwLock;
 
 pub struct MongoDbDriver {
@@ -12,6 +14,9 @@ pub struct MongoDbDriver {
     /// rejection we cache it and sample only the current user's operations
     /// instead of issuing a doomed cluster-wide request on every poll.
     current_op_all_users: AtomicBool,
+    /// request_id → running-operation scope so `cancel_query_request` can
+    /// find the tagged op via `$currentOp` and kill it with `killOp`.
+    cancel_registry: StdRwLock<QueryCancelRegistry>,
 }
 
 #[derive(Debug)]

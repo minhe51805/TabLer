@@ -8,7 +8,13 @@ import { getSiteLanguage } from "@/lib/language";
 import { getDictionary } from "@/lib/i18n";
 import { LanguageToggle } from "../LanguageToggle";
 import { SiteFooter } from "../SiteFooter";
-import { ScrollProgress, ScrollReveal, CursorGlow, MagneticButtons } from "../Home3D";
+import {
+  ScrollProgress,
+  ScrollReveal,
+  CursorGlow,
+  MagneticButtons,
+  CopyableCommands,
+} from "../Home3D";
 
 export const metadata: Metadata = {
   title: "Download TableR",
@@ -32,6 +38,7 @@ export default async function DownloadPage() {
       <ScrollReveal />
       <CursorGlow />
       <MagneticButtons />
+      <CopyableCommands />
       <header className="site-header">
         <div className="shell header-inner">
           <Link className="brand" href="/" aria-label="TableR home">
@@ -87,7 +94,10 @@ export default async function DownloadPage() {
         <aside className="download-help">
           <strong>{t.download.helpMacosTitle}</strong>
           <span>
-            {t.download.helpMacosCopyBefore} <code>{macosQuarantineCommand}</code>{" "}
+            {t.download.helpMacosCopyBefore}{" "}
+            <code className="copyable" role="button" tabIndex={0} title={t.download.copyCommand}>
+              {macosQuarantineCommand}
+            </code>{" "}
             {t.download.helpMacosCopyAfter}
           </span>
         </aside>

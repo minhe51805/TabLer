@@ -195,6 +195,7 @@ const en = {
       "Move TableR to Applications, try to open it once, then choose Open Anyway in System Settings > Privacy & Security. If Gatekeeper still blocks it, run",
     helpMacosCopyAfter:
       "and open it again. This override does not mean the app is Apple-notarized.",
+    copyCommand: "Click to copy",
     footerLicense: "TableR is open source and licensed under GPL-3.0.",
     allReleases: "All releases on GitHub",
     securityTitle: "Safe by default",
@@ -459,6 +460,7 @@ const vi: typeof en = {
     helpMacosCopyBefore:
       "Chuyển TableR vào Applications, thử mở một lần, rồi chọn Open Anyway trong System Settings > Privacy & Security. Nếu Gatekeeper vẫn chặn, chạy",
     helpMacosCopyAfter: "và mở lại. Việc này không đồng nghĩa ứng dụng đã được Apple notarize.",
+    copyCommand: "Nhấn để sao chép",
     footerLicense: "TableR là phần mềm mã nguồn mở theo giấy phép GPL-3.0.",
     allReleases: "Tất cả bản phát hành trên GitHub",
     securityTitle: "An toàn mặc định",

@@ -7,7 +7,15 @@ import { Check, ClipboardCopy } from "lucide-react";
  * "Copy page" button — copies the doc page's plain-text body so readers
  * can paste it into an LLM prompt or notes. Swaps to a check for ~1.6s.
  */
-export function DocCopyPage({ text, label }: { text: string; label: string }) {
+export function DocCopyPage({
+  text,
+  label,
+  copiedLabel,
+}: {
+  text: string;
+  label: string;
+  copiedLabel: string;
+}) {
   const [copied, setCopied] = useState(false);
 
   const copy = async () => {
@@ -32,7 +40,7 @@ export function DocCopyPage({ text, label }: { text: string; label: string }) {
       ) : (
         <ClipboardCopy size={14} aria-hidden="true" />
       )}
-      {copied ? "Copied" : label}
+      {copied ? copiedLabel : label}
     </button>
   );
 }

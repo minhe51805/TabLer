@@ -61,6 +61,8 @@ export type DocsBundle = {
   next: string;
   menu: string;
   searchPlaceholder: string;
+  copyPage: string;
+  copied: string;
   groups: DocGroup[];
   pages: DocPage[];
 };
@@ -3970,6 +3972,8 @@ const en: DocsBundle = {
   next: "Next",
   menu: "Documentation menu",
   searchPlaceholder: "Search docs",
+  copyPage: "Copy page",
+  copied: "Copied",
   groups: [
     { label: "Getting started", slugs: ["", "getting-started"] },
     {
@@ -5429,6 +5433,8 @@ const vi: DocsBundle = {
   next: "Tiếp",
   menu: "Mục lục tài liệu",
   searchPlaceholder: "Tìm trong tài liệu",
+  copyPage: "Sao chép trang",
+  copied: "Đã chép",
   groups: [
     { label: "Bắt đầu", slugs: ["", "getting-started"] },
     {

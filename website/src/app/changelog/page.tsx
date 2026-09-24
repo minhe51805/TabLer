@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Rss } from "lucide-react";
 import { getTableRReleases } from "@/lib/github-releases";
 import { getSiteLanguage } from "@/lib/language";
 import { getDictionary } from "@/lib/i18n";
@@ -13,6 +13,9 @@ import { ScrollProgress, ScrollReveal, CursorGlow } from "../Home3D";
 export const metadata: Metadata = {
   title: "TableR Changelog",
   description: "Every shipped TableR release with release notes, newest first.",
+  alternates: {
+    types: { "application/rss+xml": "/changelog/feed.xml" },
+  },
 };
 
 export const revalidate = 300;
@@ -59,6 +62,10 @@ export default async function ChangelogPage() {
             <p className="eyebrow">{t.changelog.eyebrow}</p>
             <h1>{t.changelog.heading}</h1>
             <p>{t.changelog.intro}</p>
+            <a className="changelog-rss" href="/changelog/feed.xml" title="RSS feed">
+              <Rss size={14} aria-hidden="true" />
+              RSS
+            </a>
           </div>
         </section>
 

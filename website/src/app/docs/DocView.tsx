@@ -19,6 +19,8 @@ export function DocView({ language, slug }: { language: SiteLanguage; slug: stri
   const previous = index > 0 ? docs.pages[index - 1] : null;
   const next = index < docs.pages.length - 1 ? docs.pages[index + 1] : null;
 
+  const group = docs.groups.find((g) => g.slugs.includes(page.slug));
+
   const { headings, idByIndex } = getDocHeadings(page);
   const hasToc = headings.length > 0;
 
@@ -26,12 +28,23 @@ export function DocView({ language, slug }: { language: SiteLanguage; slug: stri
     <div className={`docs-content-layout${hasToc ? "" : " docs-content-layout--full"}`}>
       <article className="docs-article-shell">
         <header className="docs-article-head">
-          <p className="eyebrow">{docs.label}</p>
+          <nav className="docs-breadcrumb" aria-label="Breadcrumb">
+            <Link href="/docs">{docs.label}</Link>
+            {group ? (
+              <>
+                <span aria-hidden="true">/</span>
+                <span>{group.label}</span>
+              </>
+            ) : null}
+            <span aria-hidden="true">/</span>
+            <span aria-current="page">{page.title}</span>
+          </nav>
           <h1>{page.title}</h1>
           <p className="docs-article-lede">{page.description}</p>
           <DocCopyPage
             text={`# ${page.title}\n\n${page.description}\n\n${docBodyText(page)}`}
-            label="Copy page"
+            label={docs.copyPage}
+            copiedLabel={docs.copied}
           />
         </header>
 

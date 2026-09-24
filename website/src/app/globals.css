@@ -5507,3 +5507,57 @@ a {
 .docs-copy-page.is-copied {
   color: var(--green);
 }
+
+/* docs breadcrumb — a quiet trail above the title: Docs / Group / Page.
+   The current page is plain text, earlier crumbs are links. */
+.docs-breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 18px;
+  font-size: 12.5px;
+  color: var(--muted-soft);
+}
+
+.docs-breadcrumb a {
+  color: var(--muted);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.docs-breadcrumb a:hover {
+  color: var(--neu-accent);
+}
+
+.docs-breadcrumb [aria-current="page"] {
+  color: var(--neu-ink);
+  font-weight: 600;
+}
+
+/* changelog RSS link — a small pill under the intro so feed readers can
+   subscribe without hunting the page source */
+.changelog-rss {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 14px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--neu-muted);
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-out-sm);
+  text-decoration: none;
+  transition:
+    color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
+}
+
+.changelog-rss:hover {
+  color: #e6a72e;
+  transform: translateY(-1px);
+  box-shadow: var(--neu-shadow-out);
+}

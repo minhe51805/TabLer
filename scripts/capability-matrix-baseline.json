@@ -11,7 +11,7 @@
     "data_export": "S",
     "explain": "S",
     "schema_edit": "S",
-    "backup_restore": "L",
+    "backup_restore": "S",
     "administration": "S"
   },
   "mariadb": {
@@ -26,7 +26,7 @@
     "data_export": "S",
     "explain": "S",
     "schema_edit": "S",
-    "backup_restore": "L",
+    "backup_restore": "S",
     "administration": "S"
   },
   "postgresql": {
@@ -56,7 +56,7 @@
     "data_export": "S",
     "explain": "S",
     "schema_edit": "S",
-    "backup_restore": "L",
+    "backup_restore": "S",
     "administration": "S"
   },
   "greenplum": {
@@ -71,7 +71,7 @@
     "data_export": "S",
     "explain": "S",
     "schema_edit": "S",
-    "backup_restore": "L",
+    "backup_restore": "S",
     "administration": "S"
   },
   "redshift": {
@@ -86,7 +86,7 @@
     "data_export": "S",
     "explain": "S",
     "schema_edit": "S",
-    "backup_restore": "L",
+    "backup_restore": "S",
     "administration": "S"
   },
   "sqlite": {
@@ -116,7 +116,7 @@
     "data_export": "S",
     "explain": "S",
     "schema_edit": "S",
-    "backup_restore": "L",
+    "backup_restore": "S",
     "administration": "N"
   },
   "cassandra": {
@@ -131,7 +131,7 @@
     "data_export": "S",
     "explain": "U",
     "schema_edit": "U",
-    "backup_restore": "L",
+    "backup_restore": "S",
     "administration": "S"
   },
   "snowflake": {
@@ -146,7 +146,7 @@
     "data_export": "S",
     "explain": "S",
     "schema_edit": "S",
-    "backup_restore": "L",
+    "backup_restore": "S",
     "administration": "S"
   },
   "mssql": {
@@ -161,7 +161,7 @@
     "data_export": "S",
     "explain": "S",
     "schema_edit": "S",
-    "backup_restore": "L",
+    "backup_restore": "S",
     "administration": "S"
   },
   "redis": {
@@ -191,7 +191,7 @@
     "data_export": "S",
     "explain": "U",
     "schema_edit": "N",
-    "backup_restore": "L",
+    "backup_restore": "S",
     "administration": "S"
   },
   "vertica": {
@@ -206,7 +206,7 @@
     "data_export": "S",
     "explain": "S",
     "schema_edit": "S",
-    "backup_restore": "L",
+    "backup_restore": "S",
     "administration": "S"
   },
   "clickhouse": {
@@ -221,7 +221,7 @@
     "data_export": "S",
     "explain": "S",
     "schema_edit": "S",
-    "backup_restore": "L",
+    "backup_restore": "S",
     "administration": "S"
   },
   "bigquery": {
@@ -236,7 +236,7 @@
     "data_export": "S",
     "explain": "U",
     "schema_edit": "S",
-    "backup_restore": "L",
+    "backup_restore": "S",
     "administration": "U"
   },
   "libsql": {
@@ -251,7 +251,7 @@
     "data_export": "S",
     "explain": "S",
     "schema_edit": "S",
-    "backup_restore": "L",
+    "backup_restore": "S",
     "administration": "N"
   },
   "cloudflare_d1": {
@@ -266,7 +266,7 @@
     "data_export": "S",
     "explain": "S",
     "schema_edit": "S",
-    "backup_restore": "L",
+    "backup_restore": "S",
     "administration": "N"
   },
   "opensearch": {

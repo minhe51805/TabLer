@@ -147,7 +147,10 @@ export const tool: AgentToolModule = {
         truncated: result.truncated || undefined,
       }));
       return stringifyAgentObservation(frame, {
-        rolledBack: true,
+        // Backend contract: rolledBack is always true — engines that cannot
+        // roll a statement back reject it up front. Report the field the
+        // backend returned rather than asserting it ourselves.
+        rolledBack: preview.rolledBack !== false,
         persisted: false,
         note: "Executed inside one transaction and ROLLED BACK. Nothing was saved. Report these effects as a PREVIEW and direct the user to apply the final SQL through the approval flow.",
         statementCount: statements.length,

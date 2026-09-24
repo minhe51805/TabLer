@@ -40,6 +40,8 @@ import { isCapabilitySupported } from "../../../types/capabilities";
 import { extractParams, type SqlParam } from "../../../utils/sql-params";
 import { stripMarkdownFence } from "../../../utils/markdown-fence";
 import { SafeModeCancelledError } from "../../../utils/safe-mode-query-guard";
+import { classifySqlSafety } from "../../../utils/sql-safety";
+import { requestAppConfirmation } from "../../../stores/confirmStore";
 
 export interface QueryChromeState {
   isRunning: boolean;
@@ -649,9 +651,38 @@ export function useSQLEditor({
 
       setIsRunningExplain(true);
       setExplainPlan(undefined);
+      // EXPLAIN ANALYZE EXECUTES the wrapped statement — `EXPLAIN ANALYZE
+      // DELETE` deletes. When the inner statement mutates, ask first; a
+      // declined answer falls back to the planning-only EXPLAIN instead of
+      // running the write. The backend classifier is authoritative (it sees
+      // disguised writes like SELECT ... INTO); on failure the frontend
+      // keyword guard decides.
+      let effectiveAnalyze = analyze;
+      if (analyze) {
+        let innerMutates = isMutatingStatement(sql.trim());
+        try {
+          const decision = await classifySqlSafety(sql.trim(), dbType);
+          if (!decision.readOnly) innerMutates = true;
+        } catch {
+          // Classifier unavailable: keep the frontend verdict.
+        }
+        if (innerMutates) {
+          const approved = await requestAppConfirmation({
+            title: "Run EXPLAIN ANALYZE on a write?",
+            message:
+              "EXPLAIN ANALYZE executes the statement it analyzes — this one changes data or schema. Run it anyway? Choose Cancel to get the planning-only EXPLAIN instead.",
+            confirmText: "Run ANALYZE",
+            cancelText: "Plan only",
+          });
+          if (!approved) {
+            effectiveAnalyze = false;
+            setNotice("Ran a planning-only EXPLAIN — ANALYZE would have executed the write.");
+          }
+        }
+      }
 
       try {
-        const explainQuery = buildExplainQuery(sql.trim(), dbType, analyze);
+        const explainQuery = buildExplainQuery(sql.trim(), dbType, effectiveAnalyze);
         const queryResult = await executeQuery(connectionId, explainQuery);
 
         // Parse the result — EXPLAIN returns rows with columns

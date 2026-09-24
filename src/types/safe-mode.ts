@@ -1,7 +1,11 @@
 /** Safe mode protection levels for query execution. */
 
 import { normalizedStatementIsDisguisedWrite } from "../utils/sqlStatements";
-import { explainAnalyzeInnerStatement, stripLeadingSqlNoise } from "../utils/sql-safety";
+import {
+  explainAnalyzeInnerStatement,
+  explainInnerStatement,
+  stripLeadingSqlNoise,
+} from "../utils/sql-safety";
 
 export type SafeModeLevel = 0 | 1 | 2 | 3 | 4 | 5;
 export type ConnectionEnvironment = "development" | "staging" | "production" | "unknown";
@@ -102,19 +106,19 @@ const EXPLAIN_ANALYZE_READ_PREFIXES = [
 
 /** True when a normalized (uppercased, whitespace-collapsed) statement
     mutates despite wearing a read-looking prefix: `SELECT ... INTO`,
-    data-modifying CTE bodies, `PRAGMA` writes, and `EXPLAIN ANALYZE <write>`
-    — the analyze form EXECUTES the wrapped statement, so it inherits the
-    inner statement's mutation. */
+    data-modifying CTE bodies, `PRAGMA` writes, and `EXPLAIN <write>` — the
+    ANALYZE form EXECUTES the wrapped statement, and the backend classifier
+    treats even the planning form as non-read (a read-only surface must not
+    plan mutations), so both inherit the inner statement's mutation. */
 function normalizedStatementMutates(normalized: string): boolean {
   if (normalizedStatementIsDisguisedWrite(normalized)) return true;
-  const inner = explainAnalyzeInnerStatement(normalized);
+  const inner = explainInnerStatement(normalized);
   if (!inner) return false;
   if (EXPLAIN_ANALYZE_READ_PREFIXES.some((prefix) => inner.startsWith(prefix))) {
     return normalizedStatementMutates(inner);
   }
   return true;
 }
-
 /** Determine the risk type of a SQL statement. */
 export function classifyStatement(sql: string): StatementRiskType {
   // Leading comments must not hide the real first keyword.

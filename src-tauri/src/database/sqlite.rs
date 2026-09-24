@@ -172,6 +172,118 @@ mod tests {
         let result = driver.execute_query("SELECT * FROM items").await.unwrap();
         assert!(result.rows.is_empty());
     }
+
+    fn temp_db_path(tag: &str) -> String {
+        let unique = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        std::env::temp_dir()
+            .join(format!(
+                "tabler-sqlite-structure-{tag}-{}-{unique}.db",
+                std::process::id()
+            ))
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    fn cleanup_db_file(path: &str) {
+        for suffix in ["", "-wal", "-shm"] {
+            let _ = fs::remove_file(format!("{path}{suffix}"));
+        }
+    }
+
+    #[tokio::test]
+    async fn structure_statements_apply_sqlite_ddl_verbs() {
+        let path = temp_db_path("ddl");
+        let driver = SqliteDriver::connect(&path).await.unwrap();
+
+        // The default DatabaseDriver::execute_structure_statements runs each
+        // statement through execute_query; SQLite DDL verbs are not classified
+        // as row-returning, so they execute directly against the pool.
+        driver
+            .execute_structure_statements(&[
+                "CREATE TABLE items (id INTEGER PRIMARY KEY, name TEXT)".into(),
+                "ALTER TABLE items ADD COLUMN qty INTEGER DEFAULT 0".into(),
+                "ALTER TABLE items RENAME COLUMN name TO label".into(),
+                "CREATE INDEX idx_items_label ON items (label)".into(),
+                "CREATE VIEW item_labels AS SELECT label FROM items".into(),
+                "DROP VIEW item_labels".into(),
+                "DROP INDEX idx_items_label".into(),
+                "ALTER TABLE items RENAME TO products".into(),
+            ])
+            .await
+            .unwrap();
+
+        // The table was renamed to `products` and carries the added and
+        // renamed columns.
+        let columns = driver
+            .execute_query("PRAGMA table_info(products)")
+            .await
+            .unwrap();
+        let names: Vec<String> = columns
+            .rows
+            .iter()
+            .map(|row| row[1].as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(names, vec!["id", "label", "qty"]);
+
+        // Index and view were dropped; only the renamed table remains.
+        let objects = driver
+            .execute_query(
+                "SELECT type, name FROM sqlite_master \
+                 WHERE name IN ('items', 'products', 'idx_items_label', 'item_labels') \
+                 ORDER BY name",
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            objects.rows,
+            vec![vec![
+                serde_json::Value::String("table".into()),
+                serde_json::Value::String("products".into())
+            ]]
+        );
+
+        driver.pool.close().await;
+        cleanup_db_file(&path);
+    }
+
+    #[tokio::test]
+    async fn structure_statements_surface_mid_batch_failure_without_atomicity() {
+        let path = temp_db_path("ddl-fail");
+        let driver = SqliteDriver::connect(&path).await.unwrap();
+
+        // SQLite DDL through this path is NOT transactional: statements run
+        // sequentially via execute_query with no surrounding transaction, so
+        // a mid-batch failure leaves earlier statements applied. The error
+        // must still surface to the caller.
+        let result = driver
+            .execute_structure_statements(&[
+                "CREATE TABLE kept (id INTEGER PRIMARY KEY)".into(),
+                "ALTER TABLE missing_table ADD COLUMN x INTEGER".into(),
+                "CREATE TABLE never_reached (id INTEGER PRIMARY KEY)".into(),
+            ])
+            .await;
+        assert!(result.is_err());
+
+        // The first statement committed; the statement after the failure
+        // never ran.
+        let objects = driver
+            .execute_query(
+                "SELECT name FROM sqlite_master \
+                 WHERE type = 'table' AND name IN ('kept', 'never_reached')",
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            objects.rows,
+            vec![vec![serde_json::Value::String("kept".into())]]
+        );
+
+        driver.pool.close().await;
+        cleanup_db_file(&path);
+    }
 }
 
 impl SqliteDriver {

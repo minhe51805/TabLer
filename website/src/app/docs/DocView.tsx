@@ -74,6 +74,15 @@ export function DocView({ language, slug }: { language: SiteLanguage; slug: stri
             <span />
           )}
         </nav>
+
+        <a
+          className="docs-edit-link"
+          href="https://github.com/minhe51805/TabLer/edit/main/website/src/lib/docs.ts"
+          target="_blank"
+          rel="noreferrer"
+        >
+          {docs.editPage}
+        </a>
       </article>
 
       {hasToc ? <DocToc headings={headings} label={docs.onThisSection} /> : null}

@@ -5567,3 +5567,20 @@ a {
 .neu .agent-mock {
   margin-top: 56px;
 }
+
+/* "Edit this page on GitHub" — a quiet text link under the pager, the
+   standard docs-site contribution affordance */
+.docs-edit-link {
+  display: inline-block;
+  margin-top: 26px;
+  font-size: 13px;
+  color: var(--muted-soft);
+  text-decoration: none;
+  transition: color 0.2s ease;
+}
+
+.docs-edit-link:hover {
+  color: var(--neu-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}

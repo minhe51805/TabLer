@@ -63,6 +63,7 @@ export type DocsBundle = {
   searchPlaceholder: string;
   copyPage: string;
   copied: string;
+  editPage: string;
   groups: DocGroup[];
   pages: DocPage[];
 };
@@ -3974,6 +3975,7 @@ const en: DocsBundle = {
   searchPlaceholder: "Search docs",
   copyPage: "Copy page",
   copied: "Copied",
+  editPage: "Edit this page on GitHub",
   groups: [
     { label: "Getting started", slugs: ["", "getting-started"] },
     {
@@ -5435,6 +5437,7 @@ const vi: DocsBundle = {
   searchPlaceholder: "Tìm trong tài liệu",
   copyPage: "Sao chép trang",
   copied: "Đã chép",
+  editPage: "Sửa trang này trên GitHub",
   groups: [
     { label: "Bắt đầu", slugs: ["", "getting-started"] },
     {

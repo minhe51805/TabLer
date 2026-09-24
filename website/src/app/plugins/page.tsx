@@ -199,6 +199,14 @@ function PluginCard({ plugin, labels }: { plugin: PluginCatalogEntry; labels: Pl
           <dt>{labels.size}</dt>
           <dd>{formatBundleSize(plugin.bundle.size)}</dd>
         </div>
+        <div>
+          <dt>SHA-256</dt>
+          <dd>
+            <code className="plugin-sha" title={plugin.bundle.sha256}>
+              {plugin.bundle.sha256.slice(0, 12)}…
+            </code>
+          </dd>
+        </div>
       </dl>
 
       {plugin.permissions.length > 0 ? (

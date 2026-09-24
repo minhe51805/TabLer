@@ -73,6 +73,7 @@ export const ko: Record<keyof typeof en, string> = {
   "menu.item.toggleBottomSidebar": "하단 사이드바 전환",
   "menu.item.toggleQueryResultsPane": "쿼리 결과 창 전환",
   "menu.item.toggleVimMode": "Vim 모드",
+  "menu.item.keepRunningInBackground": "창을 닫아도 백그라운드에서 실행",
   "menu.item.userManagement": "사용자 관리...",
   "menu.item.processList": "프로세스 목록...",
   "menu.item.searchInDatabase": "데이터베이스에서 검색...",

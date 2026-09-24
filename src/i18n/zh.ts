@@ -70,6 +70,7 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "menu.item.toggleBottomSidebar": "切换底部边栏",
   "menu.item.toggleQueryResultsPane": "切换查询结果面板",
   "menu.item.toggleVimMode": "Vim 模式",
+  "menu.item.keepRunningInBackground": "关闭窗口后保持后台运行",
   "menu.item.userManagement": "用户管理...",
   "menu.item.processList": "进程列表...",
   "menu.item.searchInDatabase": "在数据库中搜索...",

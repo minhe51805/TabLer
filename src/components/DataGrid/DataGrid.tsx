@@ -86,6 +86,7 @@ import { useDataGridDragReorder } from "./hooks/useDataGridDragReorder";
 import { useDataGridTableFetcher } from "./hooks/useDataGridTableFetcher";
 import { useDataGridRowMutations } from "./hooks/useDataGridRowMutations";
 import { useDataGridTableExport } from "./hooks/useDataGridTableExport";
+import { useDataGridColumnMasks } from "./hooks/useDataGridColumnMasks";
 import { buildRowFocusFilter } from "./row-focus";
 import { InsertRowDialog } from "./dialogs/InsertRowDialog";
 import { type ColumnStats } from "./dialogs/ColumnStatsPopover";
@@ -740,6 +741,16 @@ export function DataGrid({
     [resolvedColumns],
   );
 
+  // View-time column masking (A4): persisted per connection+table, masked
+  // matrix precomputed over the displayed window. Reveal is session-only.
+  const columnMasks = useDataGridColumnMasks(
+    connectionId,
+    database,
+    tableName,
+    resolvedColumns,
+    displayedRows,
+  );
+
   const rowIdentities = useMemo(
     () => (data?.rows ?? []).map((row) => buildStableRowIdentity(row, resolvedColumns)),
     [data?.rows, resolvedColumns],
@@ -1334,6 +1345,8 @@ export function DataGrid({
     setStagedRowIndices,
     patchLoadedTableCell,
     setError,
+    maskedColumnNames: columnMasks.activeMaskedNames,
+    maskRowsForCopy: columnMasks.maskRows,
   });
 
   /** Cells covered by the active selection — gates the bulk-edit menu item. */
@@ -1579,6 +1592,7 @@ export function DataGrid({
     exportTableData,
     cancelTableExport,
     tableExportOperationIdRef,
+    masksActive: columnMasks.hasActiveMasks,
   });
 
   const {
@@ -1596,6 +1610,7 @@ export function DataGrid({
     connections,
     connectionId: connectionId ?? undefined,
     setError,
+    maskRowsForCopy: columnMasks.maskRows,
   });
 
   // Table tabs are paginated — the banner only fires when a requested page
@@ -1665,6 +1680,10 @@ export function DataGrid({
       dateFormat,
       dbType,
       columnDisplayFormats,
+      maskedColumnNames: columnMasks.maskedColumnNames,
+      activeMaskedNames: columnMasks.activeMaskedNames,
+      maskedRows: columnMasks.maskedRows,
+      onToggleMaskReveal: columnMasks.toggleRevealed,
     });
   }, [
     data,
@@ -1703,6 +1722,10 @@ export function DataGrid({
     dateFormat,
     dbType,
     columnDisplayFormats,
+    columnMasks.maskedColumnNames,
+    columnMasks.activeMaskedNames,
+    columnMasks.maskedRows,
+    columnMasks.toggleRevealed,
     getForeignKeyLookupValues,
   ]);
 
@@ -1922,6 +1945,8 @@ export function DataGrid({
           handleCopyAsInsertParam={handleCopyAsInsertParam}
           handleCopyAsUpdateParam={handleCopyAsUpdateParam}
           handleCopyAsDeleteParam={handleCopyAsDeleteParam}
+          dataRows={columnMasks.hasActiveMasks ? (columnMasks.maskedRows ?? []) : tableData}
+          anonymizerRows={tableData}
           isTableEditable={isTableEditable}
           canExportData={allowsDataExport}
           onReloadData={tableName && !externalResult ? handleReloadData : undefined}
@@ -1933,7 +1958,6 @@ export function DataGrid({
           canImportCsv={allowsCsvImport}
           structureStatus={structureStatus}
           resolvedColumns={resolvedColumns}
-          dataRows={tableData}
           autoRefreshMs={autoRefreshMs}
           onAutoRefreshMsChange={canAutoRefresh ? setAutoRefreshMs : undefined}
           autoRefreshTick={canAutoRefresh ? handleAutoRefreshTick : undefined}
@@ -2040,6 +2064,7 @@ export function DataGrid({
         <DataGridOverlays
           connectionId={connectionId}
           database={database}
+          columnMasks={columnMasks}
           tableName={tableName}
           externalResult={externalResult}
           dbType={dbType}

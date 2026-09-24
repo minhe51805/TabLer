@@ -9,8 +9,8 @@ use crate::utils::sql::split_sql_statements;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use libsql::{
-    Builder, Connection as LibSqlConnection, Database as LibSqlDatabase, TransactionBehavior,
-    Value as LibSqlValue, ValueType,
+    Builder, Connection as LibSqlConnection, Database as LibSqlDatabase, Rows as LibSqlRows,
+    TransactionBehavior, Value as LibSqlValue, ValueType,
 };
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
@@ -150,12 +150,18 @@ impl LibSqlDriver {
         &self,
         sql: &str,
     ) -> Result<(Vec<ColumnInfo>, Vec<Vec<serde_json::Value>>, bool)> {
-        let mut rows = self
+        let rows = self
             .connection
             .query(sql, ())
             .await
             .with_context(|| format!("Failed to execute LibSQL query: {sql}"))?;
 
+        Self::collect_rows(rows).await
+    }
+
+    async fn collect_rows(
+        mut rows: LibSqlRows,
+    ) -> Result<(Vec<ColumnInfo>, Vec<Vec<serde_json::Value>>, bool)> {
         let columns = (0..rows.column_count())
             .map(|index| ColumnInfo {
                 name: rows
@@ -521,6 +527,72 @@ impl DatabaseDriver for LibSqlDriver {
             sandboxed: false,
             truncated: false,
         })
+    }
+
+    async fn preview_write_transaction(&self, statements: &[String]) -> Result<Vec<QueryResult>> {
+        let tx = self
+            .connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .await
+            .context("Failed to open LibSQL transaction for write preview")?;
+        let mut results = Vec::new();
+
+        // Every statement runs inside one transaction; any failure stops the
+        // loop and the unconditional rollback below discards partial work.
+        // LibSQL/SQLite transactions cover DDL as well, so no statement
+        // allowlist is needed.
+        let execution = async {
+            for statement in statements {
+                if statement.trim().is_empty() {
+                    continue;
+                }
+
+                let start = Instant::now();
+                if Self::query_returns_rows(statement) {
+                    let rows = tx
+                        .query(statement, ())
+                        .await
+                        .with_context(|| format!("Failed to execute LibSQL query: {statement}"))?;
+                    let (columns, rows, truncated) = Self::collect_rows(rows).await?;
+                    results.push(Self::build_result(
+                        columns,
+                        rows,
+                        start.elapsed().as_millis(),
+                        statement.clone(),
+                        0,
+                        false,
+                        truncated,
+                    ));
+                } else {
+                    let affected = tx.execute(statement, ()).await.with_context(|| {
+                        format!("Failed to execute LibSQL statement: {statement}")
+                    })?;
+                    results.push(QueryResult {
+                        columns: Vec::new(),
+                        rows: Vec::new(),
+                        affected_rows: affected,
+                        execution_time_ms: start.elapsed().as_millis(),
+                        query: statement.clone(),
+                        sandboxed: true,
+                        truncated: false,
+                    });
+                }
+            }
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+
+        let rollback = tx.rollback().await;
+        execution?;
+        if let Err(error) = rollback {
+            // A failed rollback can leave the preview's writes committed —
+            // never report a clean rollback that did not happen.
+            log::error!("write-preview rollback failed: {error}");
+            return Err(anyhow!(
+                "Write preview rollback failed; the previewed statements may have been committed: {error}"
+            ));
+        }
+        Ok(results)
     }
 
     async fn get_table_data(

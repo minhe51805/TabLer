@@ -73,6 +73,7 @@ export const vi: Record<keyof typeof en, string> = {
   "menu.item.toggleBottomSidebar": "Bật/tắt thanh dưới",
   "menu.item.toggleQueryResultsPane": "Bật/tắt vùng kết quả query",
   "menu.item.toggleVimMode": "Vim Mode",
+  "menu.item.keepRunningInBackground": "Chạy nền khi đóng cửa sổ",
   "menu.item.userManagement": "Quản lý người dùng...",
   "menu.item.processList": "Danh sách tiến trình...",
   "menu.item.searchInDatabase": "Tìm trong cơ sở dữ liệu...",

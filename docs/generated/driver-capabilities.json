@@ -20,9 +20,7 @@
       "backupRestore": "limited",
       "administration": "supported"
     },
-    "limitations": [
-      "Restore can retain earlier statements after a failure."
-    ]
+    "limitations": ["Restore can retain earlier statements after a failure."]
   },
   {
     "key": "mariadb",
@@ -45,9 +43,7 @@
       "backupRestore": "limited",
       "administration": "supported"
     },
-    "limitations": [
-      "MariaDB currently shares the MySQL driver and capability tests."
-    ]
+    "limitations": ["MariaDB currently shares the MySQL driver and capability tests."]
   },
   {
     "key": "postgresql",
@@ -164,13 +160,13 @@
       "atomicCsvImport": "supported",
       "dataExport": "supported",
       "explain": "supported",
-      "schemaEdit": "unsupported",
+      "schemaEdit": "supported",
       "backupRestore": "supported",
       "administration": "not_applicable"
     },
     "limitations": [
       "Local engine: cancel stops waiting; the embedded engine finishes the statement in the background.",
-      "Direct column schema changes are not wired into TableR actions yet."
+      "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied."
     ]
   },
   {
@@ -262,16 +258,18 @@
       "queryCancellation": "limited",
       "pagination": "supported",
       "inlineEdit": "supported",
-      "atomicEditQueue": "unsupported",
-      "atomicCsvImport": "unsupported",
+      "atomicEditQueue": "supported",
+      "atomicCsvImport": "supported",
       "dataExport": "supported",
       "explain": "limited",
-      "schemaEdit": "unsupported",
+      "schemaEdit": "supported",
       "backupRestore": "limited",
       "administration": "limited"
     },
     "limitations": [
-      "Server-side cancellation, atomic edit/import queues, and reviewed schema actions are incomplete."
+      "Server-side cancellation is not wired.",
+      "Reviewed schema changes run in one transaction; statements SQL Server forbids inside transactions (ALTER DATABASE, CREATE/DROP DATABASE, BACKUP/RESTORE, RECONFIGURE, full-text index DDL) are rejected and rolled back.",
+      "Stored procedures are listed with definitions but there is no dedicated proc editor/executor surface."
     ]
   },
   {

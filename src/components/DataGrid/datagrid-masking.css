@@ -1,0 +1,36 @@
+/* View-time column masking (A4). Per-feature stylesheet — do not move rules
+   into app-components.css (AGENTS.md §6). */
+
+/* Eye badge in the column header of a masked column. */
+.datagrid-mask-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--warning);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.datagrid-mask-badge:hover {
+  background: var(--bg-hover, rgba(128, 128, 128, 0.15));
+}
+
+.datagrid-mask-badge.revealed {
+  color: var(--accent);
+}
+
+/* Masked cell text: muted + slightly italic so masked data is visually
+   distinct from real values even before reading the content. */
+.datagrid-cell-value.masked {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+.datagrid-cell-value.masked-pending {
+  color: var(--text-muted);
+  letter-spacing: 0.1em;
+}

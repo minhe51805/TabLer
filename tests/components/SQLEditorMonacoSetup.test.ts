@@ -6,7 +6,11 @@ function createModel(sql: string) {
     getValue: () => sql,
     getOffsetAt: ({ lineNumber, column }: { lineNumber: number; column: number }) => {
       const lines = sql.split("\n");
-      return lines.slice(0, lineNumber - 1).reduce((total, line) => total + line.length + 1, 0) + column - 1;
+      return (
+        lines.slice(0, lineNumber - 1).reduce((total, line) => total + line.length + 1, 0) +
+        column -
+        1
+      );
     },
     getWordUntilPosition: ({ lineNumber, column }: { lineNumber: number; column: number }) => {
       const line = sql.split("\n")[lineNumber - 1] ?? "";
@@ -22,10 +26,25 @@ function createModel(sql: string) {
 }
 
 function createMonaco() {
-  let provider: { provideCompletionItems: (model: unknown, position: unknown) => Promise<{ suggestions: Array<{ insertText: string }> }> } | null = null;
+  let provider: {
+    provideCompletionItems: (
+      model: unknown,
+      position: unknown,
+    ) => Promise<{
+      suggestions: Array<{ insertText: string; sortText?: string; detail?: string }>;
+    }>;
+  } | null = null;
   const monaco = {
     languages: {
-      CompletionItemKind: { Class: 1, Field: 2, Keyword: 3, Operator: 4, Variable: 5, Function: 6, Snippet: 7 },
+      CompletionItemKind: {
+        Class: 1,
+        Field: 2,
+        Keyword: 3,
+        Operator: 4,
+        Variable: 5,
+        Function: 6,
+        Snippet: 7,
+      },
       CompletionItemInsertTextRule: { InsertAsSnippet: 4 },
       registerCompletionItemProvider: vi.fn((_language: string, nextProvider: typeof provider) => {
         provider = nextProvider;
@@ -51,20 +70,104 @@ describe("schema completion provider", () => {
     const { monaco, getProvider } = createMonaco();
     const getTableStructure = vi.fn().mockResolvedValue(ordersStructure);
     const sql = "SELECT o.id FROM orders o WHERE o.";
-    registerSchemaCompletionProvider(monaco, { getTables: () => [{ name: "orders" }], getTableStructure, dbType: "postgresql" });
+    registerSchemaCompletionProvider(monaco, {
+      getTables: () => [{ name: "orders" }],
+      getTableStructure,
+      dbType: "postgresql",
+    });
 
-    const result = await getProvider().provideCompletionItems(createModel(sql), { lineNumber: 1, column: sql.length + 1 });
+    const result = await getProvider().provideCompletionItems(createModel(sql), {
+      lineNumber: 1,
+      column: sql.length + 1,
+    });
     expect(result.suggestions.map((suggestion) => suggestion.insertText)).toContain("o.id");
   });
 
   it("completes CTE columns without loading a structure for the CTE name", async () => {
     const { monaco, getProvider } = createMonaco();
     const getTableStructure = vi.fn().mockResolvedValue(ordersStructure);
-    const sql = "WITH active_orders (id, total) AS (SELECT id, total FROM orders) SELECT * FROM active_orders ao WHERE ao.";
-    registerSchemaCompletionProvider(monaco, { getTables: () => [{ name: "orders" }], getTableStructure, dbType: "postgresql" });
+    const sql =
+      "WITH active_orders (id, total) AS (SELECT id, total FROM orders) SELECT * FROM active_orders ao WHERE ao.";
+    registerSchemaCompletionProvider(monaco, {
+      getTables: () => [{ name: "orders" }],
+      getTableStructure,
+      dbType: "postgresql",
+    });
 
-    const result = await getProvider().provideCompletionItems(createModel(sql), { lineNumber: 1, column: sql.length + 1 });
-    expect(result.suggestions.map((suggestion) => suggestion.insertText)).toEqual(expect.arrayContaining(["ao.id", "ao.total"]));
+    const result = await getProvider().provideCompletionItems(createModel(sql), {
+      lineNumber: 1,
+      column: sql.length + 1,
+    });
+    expect(result.suggestions.map((suggestion) => suggestion.insertText)).toEqual(
+      expect.arrayContaining(["ao.id", "ao.total"]),
+    );
     expect(getTableStructure).not.toHaveBeenCalledWith("active_orders");
+  });
+
+  it("suggests FK-derived join conditions in ON context, ranked above columns", async () => {
+    const { monaco, getProvider } = createMonaco();
+    const customersStructure = {
+      columns: [{ name: "id", data_type: "integer", is_nullable: false, is_primary_key: true }],
+      indexes: [],
+      foreign_keys: [],
+      triggers: [],
+    };
+    const ordersWithFk = {
+      columns: [
+        { name: "id", data_type: "integer", is_nullable: false, is_primary_key: true },
+        { name: "customer_id", data_type: "integer", is_nullable: false, is_primary_key: false },
+      ],
+      indexes: [],
+      foreign_keys: [
+        {
+          name: "fk_orders_customer",
+          column: "customer_id",
+          referenced_table: "customers",
+          referenced_column: "id",
+        },
+      ],
+      triggers: [],
+    };
+    const getTableStructure = vi.fn((table: string) =>
+      Promise.resolve(table === "orders" ? ordersWithFk : customersStructure),
+    );
+    const sql = "SELECT * FROM customers c JOIN orders o ON ";
+    registerSchemaCompletionProvider(monaco, {
+      getTables: () => [{ name: "customers" }, { name: "orders" }],
+      getTableStructure,
+      dbType: "postgresql",
+    });
+
+    const result = await getProvider().provideCompletionItems(createModel(sql), {
+      lineNumber: 1,
+      column: sql.length + 1,
+    });
+    const texts = result.suggestions.map((suggestion) => suggestion.insertText);
+    expect(texts).toContain("o.customer_id = c.id");
+    expect(texts).toContain("c.id = o.customer_id");
+    const fkSuggestion = result.suggestions.find(
+      (suggestion) => suggestion.insertText === "o.customer_id = c.id",
+    );
+    expect(fkSuggestion?.detail).toBe("FK: orders.customer_id → customers.id");
+    expect(fkSuggestion?.sortText).toMatch(/^0/);
+  });
+
+  it("degrades to plain column completions when no FK relates the scoped tables", async () => {
+    const { monaco, getProvider } = createMonaco();
+    const getTableStructure = vi.fn().mockResolvedValue(ordersStructure);
+    const sql = "SELECT * FROM orders o JOIN orders_archive a ON ";
+    registerSchemaCompletionProvider(monaco, {
+      getTables: () => [{ name: "orders" }, { name: "orders_archive" }],
+      getTableStructure,
+      dbType: "postgresql",
+    });
+
+    const result = await getProvider().provideCompletionItems(createModel(sql), {
+      lineNumber: 1,
+      column: sql.length + 1,
+    });
+    const texts = result.suggestions.map((suggestion) => suggestion.insertText);
+    expect(texts).toContain("o.id");
+    expect(texts).not.toContain("o.id = a.id");
   });
 });

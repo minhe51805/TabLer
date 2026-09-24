@@ -135,31 +135,59 @@ window.addEventListener("unhandledrejection", (event) => {
 document.addEventListener("contextmenu", (event) => {
   event.preventDefault();
 });
+// Boot timing: marks land in the performance timeline for devtools and are
+// mirrored to the Rust log so release builds can report startup latency.
+performance.mark("boot:start");
+
+function reportBootMark(name: string) {
+  performance.mark(name);
+  const entry = performance.getEntriesByName(name, "mark").pop();
+  if (!entry) return;
+  console.info(`[TableR boot] ${name} ${entry.startTime.toFixed(1)}ms`);
+  if ("__TAURI_INTERNALS__" in window) {
+    invoke("log_boot_timing", { mark: name, milliseconds: entry.startTime }).catch(() => {
+      // Timing telemetry must never break boot.
+    });
+  }
+}
+
+function reportFirstRender() {
+  // Double rAF lands after the first painted frame.
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => reportBootMark("boot:first-render"));
+  });
+}
 
 async function startApp() {
   try {
-    // Corrupt persisted workspace files used to surface as a generic load
-    // error (or a silent abort) long after boot. Probe them up front and gate
-    // the whole UI behind the recovery dialog instead.
-    if ("__TAURI_INTERNALS__" in window) {
-      try {
-        const report = await invoke<StorageHealthReport>("check_storage_health");
-        if (!report.healthy) {
-          (globalThis as TablerBootGlobal).__TABLER_HIDE_BOOT_SCREEN__?.();
-          root.render(<StorageRecoveryDialog report={report} />);
-          return;
-        }
-      } catch (healthError) {
-        // A failed probe must never block startup — the per-store load errors
-        // still surface through the normal error paths.
-        console.error("[TableR boot] storage health check failed", healthError);
-      }
-    }
+    // The storage probe only needs to gate the render, not the App chunk
+    // fetch/parse — run both concurrently and await the probe before render.
+    const healthProbe =
+      "__TAURI_INTERNALS__" in window
+        ? invoke<StorageHealthReport>("check_storage_health").catch((healthError) => {
+            // A failed probe must never block startup — the per-store load errors
+            // still surface through the normal error paths.
+            console.error("[TableR boot] storage health check failed", healthError);
+            return null;
+          })
+        : Promise.resolve(null);
     if (import.meta.env.MODE === "e2e") {
       await import("@wdio/tauri-plugin");
     }
     window.__TABLER_SET_BOOT_STATUS__?.("Loading application…");
-    const module = await import("./App");
+    // Dynamic import is the code-split boundary: a static import would fold
+    // the whole workspace into the entry chunk and remove the boot screen's
+    // ability to paint before the heavy modules parse.
+    const modulePromise = import("./App");
+    const report = await healthProbe;
+    reportBootMark("boot:health-done");
+    if (report && !report.healthy) {
+      (globalThis as TablerBootGlobal).__TABLER_HIDE_BOOT_SCREEN__?.();
+      root.render(<StorageRecoveryDialog report={report} />);
+      return;
+    }
+    const module = await modulePromise;
+    reportBootMark("boot:app-imported");
     clearPersistedBootFailure();
     (globalThis as TablerBootGlobal).__TABLER_HIDE_BOOT_SCREEN__?.();
     window.__TABLER_SET_BOOT_STATUS__?.("Rendering React tree...");
@@ -169,12 +197,33 @@ async function startApp() {
         <module.default />
       </React.StrictMode>,
     );
+    reportFirstRender();
+    prefetchHeavyChunks();
+
     // After 2 seconds, consider it successfully booted and prevent future errors from turning into boot failures
     setTimeout(() => {
       isAppBooted = true;
     }, 2000);
   } catch (error) {
     renderBootFailure("boot.import", error);
+  }
+}
+function prefetchHeavyChunks() {
+  // Monaco is the largest lazy chunk (~3.7 MB). Fetching it while the window
+  // is idle makes the first SQL tab open instantly without delaying first
+  // paint. The import goes through a shim so Vite keeps vendor-monaco out of
+  // index.html's modulepreload list.
+  const prefetch = () => {
+    import("./utils/monaco-prefetch")
+      .then((module) => module.prefetchMonacoBundle())
+      .catch(() => {
+        // Prefetch failure is harmless — the real import retries on demand.
+      });
+  };
+  if ("requestIdleCallback" in window) {
+    window.requestIdleCallback(prefetch, { timeout: 4000 });
+  } else {
+    setTimeout(prefetch, 1500);
   }
 }
 

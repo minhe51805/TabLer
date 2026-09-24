@@ -1,4 +1,5 @@
 import Image from "next/image";
+import Link from "next/link";
 import {
   ArrowRight,
   BookMarked,
@@ -162,10 +163,10 @@ export default async function Home() {
 
           <nav className="main-nav" aria-label="Main navigation">
             {navLinks(t).map(({ href, label, icon: NavIcon }) => (
-              <a href={href} key={href} aria-label={label} title={label}>
+              <Link href={href} key={href} aria-label={label} title={label}>
                 <NavIcon className="nav-icon" size={17} strokeWidth={1.9} aria-hidden="true" />
                 <span className="nav-label">{label}</span>
-              </a>
+              </Link>
             ))}
           </nav>
 
@@ -225,7 +226,7 @@ export default async function Home() {
                   <span />
                   <span />
                   <span />
-                  <strong className="frame-title">ant_language / Query workspace</strong>
+                  <strong className="frame-title">ant_language / Connection launcher</strong>
                 </div>
                 <div className="hero-phase-stack">
                   {workflowMedia.map((media, index) => (

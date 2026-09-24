@@ -73,6 +73,7 @@ export const tr: Record<keyof typeof en, string> = {
   "menu.item.toggleBottomSidebar": "Alt Kenar Cubugunu Ac/Kapa",
   "menu.item.toggleQueryResultsPane": "Sorgu Sonuc Bolmesini Ac/Kapa",
   "menu.item.toggleVimMode": "Vim Modu",
+  "menu.item.keepRunningInBackground": "Pencere kapaninca arka planda calis",
   "menu.item.userManagement": "Kullanici yonetimi...",
   "menu.item.processList": "Islem Listesi...",
   "menu.item.searchInDatabase": "Veritabaninda ara...",

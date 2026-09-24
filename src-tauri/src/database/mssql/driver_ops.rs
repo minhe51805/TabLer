@@ -10,6 +10,8 @@ use crate::utils::sql::split_sql_statements;
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 use tiberius::{ColumnData, Query as TiberiusQuery};
 
@@ -71,26 +73,31 @@ impl DatabaseDriver for MssqlDriver {
         // (DDL) triggers, assemblies, rules, standalone defaults, data types
         // (system categories / user-defined / table types / CLR) and XML
         // schema collections. System objects (is_ms_shipped = 1) are included
-        // on purpose — they surface under the `sys` schema section in the
-        // explorer, mirroring SSMS.
         let sql = format!(
             "SELECT s.name AS schema_name, o.name, \
                     CASE WHEN o.type = 'D' THEN N'DEFAULT' ELSE o.type_desc END, \
-                    CONVERT(varchar(10), o.create_date, 120) \
+                    CONVERT(varchar(10), o.create_date, 120), \
+                    sm.definition, \
+                    CASE WHEN o.type = 'TR' THEN po.name ELSE NULL END \
              FROM [{}].sys.all_objects o \
              JOIN [{}].sys.schemas s ON s.schema_id = o.schema_id \
              LEFT JOIN [{}].sys.triggers tt ON tt.object_id = o.object_id \
+             LEFT JOIN [{}].sys.objects po ON po.object_id = tt.parent_object_id \
+             LEFT JOIN [{}].sys.sql_modules sm ON sm.object_id = o.object_id \
              WHERE o.type IN ('V', 'TR', 'P', 'FN', 'TF', 'IF', 'SN', 'AF', 'PC', 'FS', 'FT', 'R', 'D') \
                AND (o.type <> 'TR' OR tt.parent_class <> 0) \
              UNION ALL \
              SELECT s.name AS schema_name, t.name, N'DATABASE_TRIGGER', \
-                    CONVERT(varchar(10), o.create_date, 120) \
+                    CONVERT(varchar(10), o.create_date, 120), \
+                    sm.definition, CAST(NULL AS nvarchar(128)) \
              FROM [{}].sys.triggers t \
              JOIN [{}].sys.objects o ON o.object_id = t.object_id \
              JOIN [{}].sys.schemas s ON s.schema_id = o.schema_id \
+             LEFT JOIN [{}].sys.sql_modules sm ON sm.object_id = t.object_id \
              WHERE t.parent_class = 0 \
              UNION ALL \
-             SELECT N'sys' AS schema_name, a.name, N'ASSEMBLY', CAST(NULL AS nvarchar(10)) \
+             SELECT N'sys' AS schema_name, a.name, N'ASSEMBLY', CAST(NULL AS nvarchar(10)), \
+                    CAST(NULL AS nvarchar(max)), CAST(NULL AS nvarchar(128)) \
              FROM [{}].sys.assemblies a \
              UNION ALL \
              SELECT s.name AS schema_name, t.name, \
@@ -119,20 +126,26 @@ impl DatabaseDriver for MssqlDriver {
                       WHEN t.is_table_type = 1 THEN N'USER_TABLE_TYPE' \
                       WHEN t.is_assembly_type = 1 THEN N'USER_CLR_TYPE' \
                       ELSE N'USER_DEFINED_TYPE' \
-                    END, CAST(NULL AS nvarchar(10)) \
+                    END, CAST(NULL AS nvarchar(10)), \
+                    CAST(NULL AS nvarchar(max)), CAST(NULL AS nvarchar(128)) \
              FROM [{}].sys.types t \
              JOIN [{}].sys.schemas s ON s.schema_id = t.schema_id \
              UNION ALL \
              SELECT s.name AS schema_name, q.name, N'SEQUENCE', \
-                    CONVERT(varchar(10), q.create_date, 120) \
+                    CONVERT(varchar(10), q.create_date, 120), \
+                    CAST(NULL AS nvarchar(max)), CAST(NULL AS nvarchar(128)) \
              FROM [{}].sys.sequences q \
              JOIN [{}].sys.schemas s ON s.schema_id = q.schema_id \
              UNION ALL \
              SELECT s.name AS schema_name, x.name, N'XML_SCHEMA_COLLECTION', \
-                    CONVERT(varchar(10), x.create_date, 120) \
+                    CONVERT(varchar(10), x.create_date, 120), \
+                    CAST(NULL AS nvarchar(max)), CAST(NULL AS nvarchar(128)) \
              FROM [{}].sys.xml_schema_collections x \
              JOIN [{}].sys.schemas s ON s.schema_id = x.schema_id \
              ORDER BY schema_name, name",
+            db.replace(']', "]]"),
+            db.replace(']', "]]"),
+            db.replace(']', "]]"),
             db.replace(']', "]]"),
             db.replace(']', "]]"),
             db.replace(']', "]]"),
@@ -157,9 +170,9 @@ impl DatabaseDriver for MssqlDriver {
                 schema: Self::row_value_string(row, 0),
                 name: Self::row_value_string(row, 1).unwrap_or_default(),
                 object_type: Self::row_value_string(row, 2).unwrap_or_else(|| "OBJECT".to_string()),
-                related_table: None,
-                definition: None,
                 create_date: Self::row_value_string(row, 3),
+                definition: Self::row_value_string(row, 4),
+                related_table: Self::row_value_string(row, 5),
             })
             .collect())
     }
@@ -282,58 +295,60 @@ impl DatabaseDriver for MssqlDriver {
     /// drop-recreate dump pipeline safe to abort mid-flight.
     async fn execute_restore_statements(&self, statements: &[String]) -> Result<u64> {
         let mut client = self.acquire_client().await?;
-        TiberiusQuery::new("BEGIN TRANSACTION;")
-            .execute(&mut *client)
-            .await?;
-
-        let mut total_affected = 0u64;
-        for statement in statements
-            .iter()
-            .filter(|statement| !statement.trim().is_empty())
-        {
-            let query = TiberiusQuery::new(statement);
-            match query.execute(&mut *client).await {
-                Ok(result) => total_affected += result.total(),
-                Err(error) => {
-                    // Undo everything executed so far: the restore either
-                    // completes fully or not at all.
-                    let rollback_result = TiberiusQuery::new("ROLLBACK TRANSACTION;")
-                        .execute(&mut *client)
-                        .await;
-                    let snippet: String = statement.chars().take(80).collect();
-                    return match rollback_result {
-                        Ok(_) => Err(anyhow!(
+        client.simple_query("BEGIN TRANSACTION").await?;
+        let outcome = async {
+            let mut total_affected = 0u64;
+            for statement in statements
+                .iter()
+                .filter(|statement| !statement.trim().is_empty())
+            {
+                match TiberiusQuery::new(statement).execute(&mut *client).await {
+                    Ok(result) => total_affected += result.total(),
+                    Err(error) => {
+                        let snippet: String = statement.chars().take(80).collect();
+                        return Err(anyhow!(
                             "Restore failed and was rolled back to the pre-restore state. Offending statement: {snippet} ({error})"
-                        )),
-                        Err(rollback_error) => {
-                            self.poison_connection(&format!(
-                                "restore rollback failed: {rollback_error}"
-                            ));
-                            Err(anyhow!(
-                                "Restore failed at '{snippet}' ({error}) AND the automatic rollback also failed ({rollback_error}). The connection is poisoned and requires a reconnect before any further statement."
-                            ))
-                        }
-                    };
+                        ));
+                    }
                 }
             }
+            Ok(total_affected)
         }
-
-        if let Err(error) = TiberiusQuery::new("COMMIT TRANSACTION;")
-            .execute(&mut *client)
+        .await;
+        self.finish_transaction(&mut client, "Restore", outcome)
             .await
-        {
-            // A failed COMMIT usually aborts the transaction server-side; try
-            // to unwind, and poison the connection if even ROLLBACK refuses.
-            if TiberiusQuery::new("ROLLBACK TRANSACTION;")
-                .execute(&mut *client)
-                .await
-                .is_err()
+    }
+
+    /// Reviewed schema changes, atomic: SQL Server runs ALTER/CREATE/DROP
+    /// inside a transaction, so the reviewed batch either applies fully or
+    /// rolls back. Statements SQL Server forbids inside transactions (e.g.
+    /// `ALTER DATABASE`, `CREATE/DROP DATABASE`, `BACKUP`, `RESTORE`,
+    /// `sp_configure RECONFIGURE`, full-text index DDL) surface as a server
+    /// error and roll the batch back — they are never half-applied.
+    async fn execute_structure_statements(&self, statements: &[String]) -> Result<u64> {
+        let mut client = self.acquire_client().await?;
+        client.simple_query("BEGIN TRANSACTION").await?;
+        let outcome = async {
+            let mut total_affected = 0u64;
+            for statement in statements
+                .iter()
+                .filter(|statement| !statement.trim().is_empty())
             {
-                self.poison_connection("restore commit failed and rollback refused");
+                match TiberiusQuery::new(statement).execute(&mut *client).await {
+                    Ok(result) => total_affected += result.total(),
+                    Err(error) => {
+                        let snippet: String = statement.chars().take(80).collect();
+                        return Err(anyhow!(
+                            "Schema change failed and was rolled back. Offending statement: {snippet} ({error})"
+                        ));
+                    }
+                }
             }
-            return Err(anyhow!("Restore commit failed: {error}"));
+            Ok(total_affected)
         }
-        Ok(total_affected)
+        .await;
+        self.finish_transaction(&mut client, "Schema change", outcome)
+            .await
     }
 
     async fn execute_parameterized_query(
@@ -494,37 +509,37 @@ impl DatabaseDriver for MssqlDriver {
     }
 
     async fn update_table_cell(&self, request: &TableCellUpdateRequest) -> Result<u64> {
-        if request.primary_keys.is_empty() {
-            return Err(anyhow!(
-                "Inline update requires at least one primary key column"
-            ));
-        }
-
-        let mut values = Vec::new();
-        values.push(request.value.clone());
-        let mut where_clause = String::new();
-        for (index, primary_key) in request.primary_keys.iter().enumerate() {
-            if index > 0 {
-                where_clause.push_str(" AND ");
-            }
-
-            where_clause.push_str(&quote_mssql_order_by(&primary_key.column)?);
-            if primary_key.value.is_null() {
-                where_clause.push_str(" IS NULL");
-            } else {
-                values.push(primary_key.value.clone());
-                where_clause.push_str(&format!(" = @P{}", values.len()));
-            }
-        }
-
-        let sql = format!(
-            "UPDATE {} SET {} = @P1 WHERE {}",
-            Self::qualify_table_name(&request.table, request.database.as_deref())?,
-            quote_mssql_order_by(&request.target_column)?,
-            where_clause
-        );
-
+        let (sql, values) = Self::build_cell_update_statement(request)?;
         self.execute_bound(&sql, &values).await
+    }
+
+    /// Edit queue, atomic: every cell update runs inside one explicit
+    /// transaction on the shared client, so a stale primary-key selector or
+    /// a mid-queue failure rolls the whole batch back instead of
+    /// half-applying it.
+    async fn apply_table_updates_atomically(
+        &self,
+        updates: &[TableCellUpdateRequest],
+    ) -> Result<u64> {
+        let mut client = self.acquire_client().await?;
+        client.simple_query("BEGIN TRANSACTION").await?;
+        let outcome = async {
+            let mut affected_rows = 0u64;
+            for request in updates {
+                let (sql, values) = Self::build_cell_update_statement(request)?;
+                let affected = Self::execute_bound_on(&mut client, &sql, &values).await?;
+                if affected == 0 {
+                    return Err(anyhow!(
+                        "An edit queue row no longer matches its primary-key selector"
+                    ));
+                }
+                affected_rows += affected;
+            }
+            Ok(affected_rows)
+        }
+        .await;
+        self.finish_transaction(&mut client, "Edit queue", outcome)
+            .await
     }
 
     async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64> {
@@ -588,27 +603,74 @@ impl DatabaseDriver for MssqlDriver {
     }
 
     async fn insert_table_row(&self, request: &TableRowInsertRequest) -> Result<u64> {
-        if request.values.is_empty() {
-            return Err(anyhow!("Insert requires at least one column value"));
-        }
-
-        let mut cols = Vec::new();
-        let mut placeholders = Vec::new();
-        let mut values = Vec::new();
-        for (col, value) in &request.values {
-            cols.push(quote_mssql_identifier(col)?.to_string());
-            values.push(value.clone());
-            placeholders.push(format!("@P{}", values.len()));
-        }
-
-        let sql = format!(
-            "INSERT INTO {} ({}) VALUES ({})",
-            Self::qualify_table_name(&request.table, request.database.as_deref())?,
-            cols.join(", "),
-            placeholders.join(", "),
-        );
-
+        let (sql, values) = Self::build_row_insert_statement(request)?;
         self.execute_bound(&sql, &values).await
+    }
+
+    /// CSV import, atomic: every row inserts inside one explicit transaction
+    /// on the shared client, so a bad row or a user cancel rolls the whole
+    /// file back instead of leaving a partial import behind.
+    async fn insert_table_rows_atomically(
+        &self,
+        requests: &[TableRowInsertRequest],
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        if requests.is_empty() {
+            return Err(anyhow!("CSV import requires at least one row"));
+        }
+
+        let mut client = self.acquire_client().await?;
+        client.simple_query("BEGIN TRANSACTION").await?;
+        let outcome = async {
+            let mut affected_rows = 0u64;
+            for request in requests {
+                if cancelled.load(Ordering::Relaxed) {
+                    return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+                }
+                if request.values.is_empty() {
+                    return Err(anyhow!("Each CSV row requires at least one column value"));
+                }
+                let (sql, values) = Self::build_row_insert_statement(request)?;
+                affected_rows += Self::execute_bound_on(&mut client, &sql, &values).await?;
+            }
+            Ok(affected_rows)
+        }
+        .await;
+        self.finish_transaction(&mut client, "CSV import", outcome)
+            .await
+    }
+
+    /// Streaming CSV import, atomic: rows arrive over the channel while the
+    /// transaction stays open on the shared client. A parse error, a cancel
+    /// request, or an empty stream rolls every inserted row back.
+    async fn insert_table_row_stream_atomically(
+        &self,
+        mut rows: tokio::sync::mpsc::Receiver<crate::database::models::CsvImportRow>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        let mut client = self.acquire_client().await?;
+        client.simple_query("BEGIN TRANSACTION").await?;
+        let outcome = async {
+            let mut affected_rows = 0u64;
+            while let Some(request) = rows.recv().await {
+                if cancelled.load(Ordering::Relaxed) {
+                    return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+                }
+                let request = request.map_err(anyhow::Error::msg)?;
+                if request.values.is_empty() {
+                    return Err(anyhow!("Each CSV row requires at least one column value"));
+                }
+                let (sql, values) = Self::build_row_insert_statement(&request)?;
+                affected_rows += Self::execute_bound_on(&mut client, &sql, &values).await?;
+            }
+            if affected_rows == 0 {
+                return Err(anyhow!("CSV import did not contain any data rows"));
+            }
+            Ok(affected_rows)
+        }
+        .await;
+        self.finish_transaction(&mut client, "CSV import", outcome)
+            .await
     }
 
     fn driver_name(&self) -> &str {

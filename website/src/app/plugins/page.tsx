@@ -21,6 +21,7 @@ import { getDictionary } from "@/lib/i18n";
 import { LanguageToggle } from "../LanguageToggle";
 import { SiteFooter } from "../SiteFooter";
 import { ScrollProgress, ScrollReveal, CursorGlow, MagneticButtons } from "../Home3D";
+import { PluginsSearch } from "./PluginsSearch";
 
 export const metadata: Metadata = {
   title: "TableR plugins",
@@ -87,6 +88,8 @@ export default async function PluginsPage() {
             </div>
           </div>
         </section>
+
+        <PluginsSearch placeholder={p.searchPlaceholder} />
 
         {catalog.plugins.length === 0 ? (
           <div className="plugins-empty">{p.empty}</div>
@@ -162,7 +165,10 @@ type PluginCardLabels = ReturnType<typeof getDictionary>["plugins"]["card"];
 function PluginCard({ plugin, labels }: { plugin: PluginCatalogEntry; labels: PluginCardLabels }) {
   const engineLabel = plugin.engine?.label ?? plugin.name;
   return (
-    <article className="plugin-card">
+    <article
+      className="plugin-card"
+      data-name={`${engineLabel} ${plugin.name} ${plugin.description}`.toLowerCase()}
+    >
       <div className="plugin-card-head">
         <div className="plugin-card-title">
           <h3>{engineLabel}</h3>
@@ -198,6 +204,14 @@ function PluginCard({ plugin, labels }: { plugin: PluginCatalogEntry; labels: Pl
         <div>
           <dt>{labels.size}</dt>
           <dd>{formatBundleSize(plugin.bundle.size)}</dd>
+        </div>
+        <div>
+          <dt>SHA-256</dt>
+          <dd>
+            <code className="plugin-sha" title={plugin.bundle.sha256}>
+              {plugin.bundle.sha256.slice(0, 12)}…
+            </code>
+          </dd>
         </div>
       </dl>
 

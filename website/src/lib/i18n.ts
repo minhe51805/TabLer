@@ -195,6 +195,7 @@ const en = {
       "Move TableR to Applications, try to open it once, then choose Open Anyway in System Settings > Privacy & Security. If Gatekeeper still blocks it, run",
     helpMacosCopyAfter:
       "and open it again. This override does not mean the app is Apple-notarized.",
+    copyCommand: "Click to copy",
     footerLicense: "TableR is open source and licensed under GPL-3.0.",
     allReleases: "All releases on GitHub",
     securityTitle: "Safe by default",
@@ -262,6 +263,7 @@ const en = {
       copy: "On install the app recomputes each bundle's SHA-256 digest and refuses to import it unless the digest matches the manifest. Credentials never touch this website.",
     },
     empty: "The plugin catalog is not available yet. Run the repository generator to publish it.",
+    searchPlaceholder: "Filter plugins",
   },
   changelog: {
     back: "Back to home",
@@ -270,6 +272,8 @@ const en = {
     intro:
       "Every shipped TableR release, newest first. Notes come straight from the GitHub release of each version.",
     empty: "No published releases yet. Notes will appear here as soon as a version ships.",
+    showMore: "Show more",
+    showLess: "Show less",
     viewOnGitHub: "View on GitHub",
   },
 };
@@ -459,6 +463,7 @@ const vi: typeof en = {
     helpMacosCopyBefore:
       "Chuyển TableR vào Applications, thử mở một lần, rồi chọn Open Anyway trong System Settings > Privacy & Security. Nếu Gatekeeper vẫn chặn, chạy",
     helpMacosCopyAfter: "và mở lại. Việc này không đồng nghĩa ứng dụng đã được Apple notarize.",
+    copyCommand: "Nhấn để sao chép",
     footerLicense: "TableR là phần mềm mã nguồn mở theo giấy phép GPL-3.0.",
     allReleases: "Tất cả bản phát hành trên GitHub",
     securityTitle: "An toàn mặc định",
@@ -527,6 +532,7 @@ const vi: typeof en = {
       copy: "Khi cài, app tính lại SHA-256 của từng bundle và từ chối nhập nếu digest không khớp manifest. Thông tin đăng nhập không bao giờ đi qua website.",
     },
     empty: "Danh mục plugin chưa sẵn sàng. Hãy chạy trình sinh repository để xuất bản.",
+    searchPlaceholder: "Lọc plugin",
   },
   changelog: {
     back: "Về trang chủ",
@@ -535,6 +541,8 @@ const vi: typeof en = {
     intro:
       "Mọi bản TableR đã phát hành, mới nhất đứng trước. Ghi chú lấy trực tiếp từ GitHub release của từng phiên bản.",
     empty: "Chưa có bản phát hành nào. Ghi chú sẽ xuất hiện ngay khi có phiên bản mới.",
+    showMore: "Xem thêm",
+    showLess: "Thu gọn",
     viewOnGitHub: "Xem trên GitHub",
   },
 };

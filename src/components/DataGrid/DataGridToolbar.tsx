@@ -1,17 +1,13 @@
 import {
-  FileJson,
-  FileSpreadsheet,
   Loader2,
   Trash2,
   Undo2,
   Redo2,
   Plus,
   Copy,
-  FilePen,
   Braces,
   Settings2,
   X,
-  FileCode,
   ClipboardPaste,
   FileUp,
   List,
@@ -22,10 +18,8 @@ import {
   RefreshCw,
   Timer,
   ArrowUpDown,
-  ShieldCheck,
   Dices,
   PanelRight,
-  Table2,
 } from "lucide-react";
 import { DataGridAnonymizerModal } from "./dialogs/DataGridAnonymizerModal";
 import { GenerateTestRowsDialog } from "../GenerateTestRows/GenerateTestRowsDialog";
@@ -34,7 +28,6 @@ import { DataGridChartModal } from "./DataGridChartModal";
 import { getDataGridChartCopy } from "./datagrid-chart-copy";
 import { isNumericColumn } from "./chart-utils";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { createPortal } from "react-dom";
 import {
   buildCsvContent,
   buildJsonContent,
@@ -62,6 +55,14 @@ import type { ResolvedColumn } from "./hooks/useDataGrid";
 import type { DatabaseType } from "../../types/database";
 import { getDataGridPowerCopy } from "./datagrid-power-copy";
 import { ResultDiffControls } from "../ResultDiff/ResultDiffControls";
+import {
+  DataGridCopyMenu,
+  DataGridExportMenu,
+  DataGridRefreshMenu,
+  DataGridSettingsMenu,
+  DataGridSortMenu,
+  DataGridSqlMenu,
+} from "./DataGridToolbarMenus";
 
 interface DataGridToolbarProps {
   viewMode?: "table" | "chart";
@@ -690,91 +691,18 @@ export function DataGridToolbar({
             </span>
           )}
 
-          {useMemo(() => {
-            if (!showSqlMenu || !sqlBtnRef.current) return null;
-            const rect = sqlBtnRef.current.getBoundingClientRect();
-            const top = rect.bottom + 6;
-            const right = window.innerWidth - rect.right;
-            const hasPk = (primaryKeyColumns?.length ?? 0) > 0;
-            const sqlOptions: Array<{
-              label: string;
-              hint: string;
-              icon: typeof Braces;
-              run: () => void;
-            }> = [
-              {
-                label: "INSERT",
-                hint: t("datagrid.sqlInsertHint"),
-                icon: Copy,
-                run: () => void handleCopyAsInsert(),
-              },
-              {
-                label: "UPDATE",
-                hint: t("datagrid.sqlInsertHint"),
-                icon: FilePen,
-                run: () => void handleCopyAsUpdate(),
-              },
-              {
-                label: "INSERT $.",
-                hint: t("datagrid.sqlParamHint"),
-                icon: Braces,
-                run: () => void handleCopyAsInsertParam(),
-              },
-              {
-                label: "UPDATE $.",
-                hint: t("datagrid.sqlParamHint"),
-                icon: Braces,
-                run: () => void handleCopyAsUpdateParam(),
-              },
-              ...(hasPk
-                ? [
-                    {
-                      label: "DELETE $.",
-                      hint: t("datagrid.sqlDeleteHint"),
-                      icon: Braces,
-                      run: () => void handleCopyAsDeleteParam(),
-                    },
-                  ]
-                : []),
-            ];
-            const sqlMenu = (
-              <div
-                className="datagrid-export-menu"
-                style={{ position: "fixed", top, right, zIndex: 9999 }}
-              >
-                {sqlOptions.map((opt) => {
-                  const OptIcon = opt.icon;
-                  return (
-                    <button
-                      key={opt.label}
-                      type="button"
-                      className="datagrid-export-menu-item"
-                      onClick={() => {
-                        opt.run();
-                        setShowSqlMenu(false);
-                      }}
-                    >
-                      <OptIcon className="!w-4 !h-4" />
-                      <span className="datagrid-export-menu-copy">
-                        <strong>{opt.label}</strong>
-                        <span>{opt.hint}</span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            );
-            return createPortal(sqlMenu, document.body);
-          }, [
-            showSqlMenu,
-            primaryKeyColumns,
-            handleCopyAsInsert,
-            handleCopyAsUpdate,
-            handleCopyAsInsertParam,
-            handleCopyAsUpdateParam,
-            handleCopyAsDeleteParam,
-            t,
-          ])}
+          <DataGridSqlMenu
+            open={showSqlMenu}
+            anchorRef={sqlBtnRef}
+            hasPk={(primaryKeyColumns?.length ?? 0) > 0}
+            t={t}
+            onCopyAsInsert={handleCopyAsInsert}
+            onCopyAsUpdate={handleCopyAsUpdate}
+            onCopyAsInsertParam={handleCopyAsInsertParam}
+            onCopyAsUpdateParam={handleCopyAsUpdateParam}
+            onCopyAsDeleteParam={handleCopyAsDeleteParam}
+            onClose={() => setShowSqlMenu(false)}
+          />
 
           <span
             ref={exportBtnRef}
@@ -919,38 +847,14 @@ export function DataGridToolbar({
               <PanelRight className="!w-3.5 !h-3.5" />
             </button>
           )}
-          {useMemo(() => {
-            if (!showRefreshMenu || !refreshBtnRef.current) return null;
-            const rect = refreshBtnRef.current.getBoundingClientRect();
-            const top = rect.bottom + 6;
-            const right = window.innerWidth - rect.right;
-            const refreshMenu = (
-              <div
-                className="datagrid-export-menu datagrid-sort-menu"
-                style={{ position: "fixed", top, right, zIndex: 9999 }}
-              >
-                {[0, 5000, 15000, 30000, 60000].map((ms) => (
-                  <button
-                    key={ms}
-                    type="button"
-                    className={`datagrid-sort-menu-item${autoRefreshMs === ms ? " active" : ""}`}
-                    onClick={() => {
-                      onAutoRefreshMsChange?.(ms);
-                      setShowRefreshMenu(false);
-                    }}
-                  >
-                    <Timer className="!w-3.5 !h-3.5" />
-                    <span>
-                      {ms === 0
-                        ? chartCopy.autoRefresh.off
-                        : chartCopy.autoRefresh.everySeconds(ms / 1000)}
-                    </span>
-                  </button>
-                ))}
-              </div>
-            );
-            return createPortal(refreshMenu, document.body);
-          }, [showRefreshMenu, autoRefreshMs, onAutoRefreshMsChange, chartCopy])}
+          <DataGridRefreshMenu
+            open={showRefreshMenu}
+            anchorRef={refreshBtnRef}
+            autoRefreshMs={autoRefreshMs}
+            chartCopy={chartCopy}
+            onAutoRefreshMsChange={onAutoRefreshMsChange}
+            onClose={() => setShowRefreshMenu(false)}
+          />
           {isExportingFull && onCancelExport && (
             <button
               type="button"
@@ -973,263 +877,53 @@ export function DataGridToolbar({
             </span>
           )}
 
-          {useMemo(() => {
-            if (!showExportMenu || !exportBtnRef.current) return null;
-            const rect = exportBtnRef.current.getBoundingClientRect();
-            const top = rect.bottom + 6;
-            const right = window.innerWidth - rect.right;
-            const exportOptions: Array<{
-              label: string;
-              hint: string;
-              icon: typeof FileSpreadsheet;
-              run: () => void;
-            }> = [
-              {
-                label: tableName && onExportFull ? t("datagrid.exportFullCsv") : "CSV",
-                hint: t("datagrid.exportHintCsv"),
-                icon: FileSpreadsheet,
-                run: handleExportCSV,
-              },
-              {
-                label: tableName && onExportFull ? t("datagrid.exportFullJsonl") : "JSON",
-                hint: t("datagrid.exportHintJson"),
-                icon: FileJson,
-                run: handleExportJSON,
-              },
-              {
-                label: "XLSX",
-                hint: t("datagrid.exportHintXlsx"),
-                icon: FileSpreadsheet,
-                run: handleExportXLSX,
-              },
-              {
-                label: powerCopy.copyAs.markdown,
-                hint: powerCopy.copyAs.markdownHint,
-                icon: Table2,
-                run: handleExportMarkdown,
-              },
-              {
-                label: "MQL",
-                hint: t("datagrid.exportHintMql"),
-                icon: FileCode,
-                run: () => void handleExportMQL(),
-              },
-              ...pluginFormats.map((format) => ({
-                label: format.label,
-                hint:
-                  format.description ||
-                  t("datagrid.exportHintPlugin", { plugin: format.pluginName }),
-                icon: FileCode,
-                run: () => handlePluginExport(format),
-              })),
-            ];
-            const menu = (
-              <div
-                className="datagrid-export-menu"
-                style={{ position: "fixed", top, right, zIndex: 9999 }}
-              >
-                {exportOptions.map((opt) => {
-                  const OptIcon = opt.icon;
-                  return (
-                    <button
-                      key={opt.label}
-                      type="button"
-                      className="datagrid-export-menu-item"
-                      onClick={() => {
-                        opt.run();
-                        setShowExportMenu(false);
-                      }}
-                    >
-                      <OptIcon className="!w-4 !h-4" />
-                      <span className="datagrid-export-menu-copy">
-                        <strong>{opt.label}</strong>
-                        <span>{opt.hint}</span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            );
-            return createPortal(menu, document.body);
-          }, [
-            showExportMenu,
-            pluginFormats,
-            handleExportCSV,
-            handleExportJSON,
-            handleExportXLSX,
-            handleExportMarkdown,
-            handleExportMQL,
-            handlePluginExport,
-            onExportFull,
-            powerCopy,
-            tableName,
-            t,
-          ])}
+          <DataGridExportMenu
+            open={showExportMenu}
+            anchorRef={exportBtnRef}
+            tableName={tableName}
+            onExportFull={onExportFull}
+            pluginFormats={pluginFormats}
+            powerCopy={powerCopy}
+            t={t}
+            onExportCSV={handleExportCSV}
+            onExportJSON={handleExportJSON}
+            onExportXLSX={handleExportXLSX}
+            onExportMarkdown={handleExportMarkdown}
+            onExportMQL={handleExportMQL}
+            onPluginExport={handlePluginExport}
+            onClose={() => setShowExportMenu(false)}
+          />
 
-          {useMemo(() => {
-            if (!showCopyMenu || !copyBtnRef.current) return null;
-            const rect = copyBtnRef.current.getBoundingClientRect();
-            const top = rect.bottom + 6;
-            const right = window.innerWidth - rect.right;
-            const copyOptions: Array<{
-              label: string;
-              hint: string;
-              icon: typeof FileSpreadsheet;
-              run: () => void;
-            }> = [
-              {
-                label: "CSV",
-                hint: t("datagrid.copyHintCsv"),
-                icon: FileSpreadsheet,
-                run: handleCopyCSV,
-              },
-              {
-                label: "TSV",
-                hint: t("datagrid.copyHintTsv"),
-                icon: FileSpreadsheet,
-                run: handleCopyTSV,
-              },
-              {
-                label: "JSON",
-                hint: t("datagrid.copyHintJson"),
-                icon: FileJson,
-                run: handleCopyJSON,
-              },
-              {
-                label: powerCopy.copyAs.markdown,
-                hint: powerCopy.copyAs.markdownHint,
-                icon: Table2,
-                run: handleCopyMarkdown,
-              },
-              ...(tableName
-                ? [
-                    {
-                      label: powerCopy.copyAs.insert,
-                      hint: powerCopy.copyAs.insertHint,
-                      icon: FileCode,
-                      run: handleCopyInsert,
-                    },
-                  ]
-                : []),
-              { label: "MQL", hint: t("datagrid.copyHintMql"), icon: FileCode, run: handleCopyMQL },
-              {
-                label: t("datagrid.anonymizer.title"),
-                hint: t("datagrid.anonymizer.saltHint"),
-                icon: ShieldCheck,
-                run: () => setShowAnonymizer(true),
-              },
-              ...pluginFormats.map((format) => ({
-                label: format.label,
-                hint:
-                  format.description ||
-                  t("datagrid.exportHintPlugin", { plugin: format.pluginName }),
-                icon: FileCode,
-                run: () => handleCopyPlugin(format),
-              })),
-            ];
-            const copyMenu = (
-              <div
-                className="datagrid-export-menu"
-                style={{ position: "fixed", top, right, zIndex: 9999 }}
-              >
-                {copyOptions.map((opt) => {
-                  const OptIcon = opt.icon;
-                  return (
-                    <button
-                      key={opt.label}
-                      type="button"
-                      className="datagrid-export-menu-item"
-                      onClick={() => {
-                        opt.run();
-                        setShowCopyMenu(false);
-                      }}
-                    >
-                      <OptIcon className="!w-4 !h-4" />
-                      <span className="datagrid-export-menu-copy">
-                        <strong>{opt.label}</strong>
-                        <span>{opt.hint}</span>
-                      </span>
-                    </button>
-                  );
-                })}
-              </div>
-            );
-            return createPortal(copyMenu, document.body);
-          }, [
-            showCopyMenu,
-            pluginFormats,
-            handleCopyCSV,
-            handleCopyTSV,
-            handleCopyJSON,
-            handleCopyMarkdown,
-            handleCopyInsert,
-            handleCopyMQL,
-            handleCopyPlugin,
-            powerCopy,
-            tableName,
-            t,
-          ])}
+          <DataGridCopyMenu
+            open={showCopyMenu}
+            anchorRef={copyBtnRef}
+            tableName={tableName}
+            pluginFormats={pluginFormats}
+            powerCopy={powerCopy}
+            t={t}
+            onCopyCSV={handleCopyCSV}
+            onCopyTSV={handleCopyTSV}
+            onCopyJSON={handleCopyJSON}
+            onCopyMarkdown={handleCopyMarkdown}
+            onCopyInsert={handleCopyInsert}
+            onCopyMQL={handleCopyMQL}
+            onOpenAnonymizer={() => setShowAnonymizer(true)}
+            onCopyPlugin={handleCopyPlugin}
+            onClose={() => setShowCopyMenu(false)}
+          />
 
-          {useMemo(() => {
-            if (!showSortMenu || !sortBtnRef.current || resolvedColumns.length === 0) return null;
-            const rect = sortBtnRef.current.getBoundingClientRect();
-            const top = rect.bottom + 6;
-            const right = window.innerWidth - rect.right;
-            const sortMenu = (
-              <div
-                className="datagrid-export-menu datagrid-sort-menu"
-                style={{ position: "fixed", top, right, zIndex: 9999 }}
-              >
-                {resolvedColumns.map((col) => {
-                  const entry = multiSort.find((item) => item.column === col.name);
-                  const isSingle = sortColumn === col.name;
-                  const label = entry
-                    ? `${col.name} ${entry.direction === "ASC" ? "↑" : "↓"}${entry.priority}`
-                    : isSingle
-                      ? `${col.name} ${sortDir === "ASC" ? "↑" : "↓"}`
-                      : col.name;
-                  return (
-                    <button
-                      key={col.name}
-                      type="button"
-                      className={`datagrid-sort-menu-item${entry || isSingle ? " active" : ""}`}
-                      onClick={() => {
-                        onSortColumn?.(col.name);
-                        setShowSortMenu(false);
-                      }}
-                    >
-                      <ArrowUpDown className="!w-3.5 !h-3.5" />
-                      <span>{label}</span>
-                    </button>
-                  );
-                })}
-                {(sortColumn || multiSort.length > 0) && (
-                  <button
-                    type="button"
-                    className="datagrid-sort-menu-item danger"
-                    onClick={() => {
-                      onClearMultiSort?.();
-                      onSortColumn?.("");
-                      setShowSortMenu(false);
-                    }}
-                  >
-                    <X className="!w-3.5 !h-3.5" />
-                    <span>{t("datagrid.clearSort")}</span>
-                  </button>
-                )}
-              </div>
-            );
-            return createPortal(sortMenu, document.body);
-          }, [
-            showSortMenu,
-            resolvedColumns,
-            sortColumn,
-            sortDir,
-            multiSort,
-            onSortColumn,
-            onClearMultiSort,
-            t,
-          ])}
+          <DataGridSortMenu
+            open={showSortMenu}
+            anchorRef={sortBtnRef}
+            resolvedColumns={resolvedColumns}
+            sortColumn={sortColumn}
+            sortDir={sortDir}
+            multiSort={multiSort}
+            t={t}
+            onSortColumn={onSortColumn}
+            onClearMultiSort={onClearMultiSort}
+            onClose={() => setShowSortMenu(false)}
+          />
 
           {selectedRowCount > 0 && tableName && (
             <span
@@ -1279,74 +973,14 @@ export function DataGridToolbar({
             </button>
           </span>
 
-          {useMemo(() => {
-            if (!showSettings || !settingsBtnRef.current) return null;
-            const rect = settingsBtnRef.current.getBoundingClientRect();
-            const top = rect.bottom + 6;
-            const right = window.innerWidth - rect.right;
-            const popoverContent = (
-              <div
-                className="datagrid-settings-popover"
-                style={{ position: "fixed", top, right, zIndex: 9999 }}
-              >
-                <div className="datagrid-settings-popover-header">
-                  <span className="datagrid-settings-popover-title">
-                    {t("datagrid.gridSettings")}
-                  </span>
-                  <button
-                    type="button"
-                    className="datagrid-settings-popover-close"
-                    onClick={() => setShowSettings(false)}
-                  >
-                    <X className="h-3 w-3" />
-                  </button>
-                </div>
-                <div className="datagrid-settings-section">
-                  <label className="datagrid-settings-label">{t("datagrid.nullDisplay")}</label>
-                  <input
-                    type="text"
-                    className="datagrid-settings-input"
-                    value={settings.nullPlaceholder}
-                    maxLength={20}
-                    onChange={(e) => updateSettings({ nullPlaceholder: e.target.value })}
-                    placeholder="NULL"
-                  />
-                </div>
-                <div className="datagrid-settings-section">
-                  <label className="datagrid-settings-label">{t("datagrid.rowHeight")}</label>
-                  <div className="datagrid-settings-row">
-                    {(["small", "medium", "large"] as const).map((size) => (
-                      <button
-                        key={size}
-                        type="button"
-                        className={`datagrid-settings-toggle ${settings.rowHeight === size ? "active" : ""}`}
-                        onClick={() => updateSettings({ rowHeight: size })}
-                      >
-                        {t(
-                          size === "small"
-                            ? "datagrid.sizeSmall"
-                            : size === "medium"
-                              ? "datagrid.sizeMedium"
-                              : "datagrid.sizeLarge",
-                        )}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-                <div className="datagrid-settings-section">
-                  <label className="datagrid-settings-label">{t("datagrid.alternatingRows")}</label>
-                  <button
-                    type="button"
-                    className={`datagrid-settings-toggle ${settings.alternatingRows ? "active" : ""}`}
-                    onClick={() => updateSettings({ alternatingRows: !settings.alternatingRows })}
-                  >
-                    {t(settings.alternatingRows ? "datagrid.on" : "datagrid.off")}
-                  </button>
-                </div>
-              </div>
-            );
-            return createPortal(popoverContent, document.body);
-          }, [showSettings, settings, updateSettings, t])}
+          <DataGridSettingsMenu
+            open={showSettings}
+            anchorRef={settingsBtnRef}
+            settings={settings}
+            updateSettings={updateSettings}
+            t={t}
+            onClose={() => setShowSettings(false)}
+          />
         </div>
 
         {/* View mode toggle: Table / Chart (after the action buttons) */}

@@ -395,7 +395,7 @@ pub fn builtin_skill_manifest() -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ai_skills::{MAX_SKILL_BODY_CHARS, MAX_SKILL_DESCRIPTION_CHARS};
+    use crate::ai_skills::types::{MAX_SKILL_BODY_CHARS, MAX_SKILL_DESCRIPTION_CHARS};
 
     /// Ephemeral skills root; the seeder is never pointed at the real data dir in
     /// tests so a test run cannot disturb the developer's own skills.

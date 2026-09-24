@@ -1,18 +1,22 @@
 import type { Metadata } from "next";
 import Image from "next/image";
 import Link from "next/link";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Rss } from "lucide-react";
 import { getTableRReleases } from "@/lib/github-releases";
 import { getSiteLanguage } from "@/lib/language";
 import { getDictionary } from "@/lib/i18n";
 import { LanguageToggle } from "../LanguageToggle";
 import { SiteFooter } from "../SiteFooter";
 import { ReleaseNotes } from "./ReleaseNotes";
+import { CollapsibleEntry } from "./CollapsibleEntry";
 import { ScrollProgress, ScrollReveal, CursorGlow } from "../Home3D";
 
 export const metadata: Metadata = {
   title: "TableR Changelog",
   description: "Every shipped TableR release with release notes, newest first.",
+  alternates: {
+    types: { "application/rss+xml": "/changelog/feed.xml" },
+  },
 };
 
 export const revalidate = 300;
@@ -59,40 +63,60 @@ export default async function ChangelogPage() {
             <p className="eyebrow">{t.changelog.eyebrow}</p>
             <h1>{t.changelog.heading}</h1>
             <p>{t.changelog.intro}</p>
+            <a className="changelog-rss" href="/changelog/feed.xml" title="RSS feed">
+              <Rss size={14} aria-hidden="true" />
+              RSS
+            </a>
           </div>
         </section>
 
         {releases.length === 0 ? (
           <div className="release-empty">{t.changelog.empty}</div>
         ) : (
-          <div className="release-stack">
-            {releases.map((release, index) => (
-              <article
-                className={`changelog-entry${index === 0 ? " is-latest" : ""}`}
-                key={release.id}
-              >
-                <div className="changelog-entry-head">
-                  <span className="release-version">
-                    {release.tag}
-                    {index === 0 ? (
-                      <em>{t.download.latest}</em>
-                    ) : release.prerelease ? (
-                      <em>{t.download.preRelease}</em>
-                    ) : null}
-                  </span>
-                  <span className="changelog-date">{formatDate(release.publishedAt)}</span>
-                </div>
-                {release.body ? <ReleaseNotes body={release.body} /> : null}
+          <div className="changelog-layout">
+            <nav className="changelog-nav" aria-label="Versions">
+              {releases.map((release, index) => (
                 <a
-                  className="release-notes-link"
-                  href={release.htmlUrl}
-                  target="_blank"
-                  rel="noreferrer"
+                  key={release.id}
+                  href={`#${release.tag}`}
+                  className={index === 0 ? "is-latest" : undefined}
                 >
-                  {t.download.viewNotes} {release.tag}
+                  {release.tag}
                 </a>
-              </article>
-            ))}
+              ))}
+            </nav>
+            <div className="release-stack">
+              {releases.map((release, index) => (
+                <CollapsibleEntry
+                  id={release.tag}
+                  className={`changelog-entry${index === 0 ? " is-latest" : ""}`}
+                  key={release.id}
+                  moreLabel={t.changelog.showMore}
+                  lessLabel={t.changelog.showLess}
+                >
+                  <div className="changelog-entry-head">
+                    <span className="release-version">
+                      {release.tag}
+                      {index === 0 ? (
+                        <em>{t.download.latest}</em>
+                      ) : release.prerelease ? (
+                        <em>{t.download.preRelease}</em>
+                      ) : null}
+                    </span>
+                    <span className="changelog-date">{formatDate(release.publishedAt)}</span>
+                  </div>
+                  {release.body ? <ReleaseNotes body={release.body} /> : null}
+                  <a
+                    className="release-notes-link"
+                    href={release.htmlUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {t.download.viewNotes} {release.tag}
+                  </a>
+                </CollapsibleEntry>
+              ))}
+            </div>
           </div>
         )}
       </div>

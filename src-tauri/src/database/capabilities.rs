@@ -384,8 +384,8 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "redshift",
             "Amazon Redshift",
             DriverTier::Specialized,
-            S, S, S, L, S, S, S, S, S, L, S, L, L,
-            &["Redshift shares the PostgreSQL wire driver; DDL, restore, and administration semantics require dedicated coverage.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.", "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied."]),
+            S, S, S, L, S, S, S, S, S, S, S, L, L,
+            &["Redshift shares the PostgreSQL wire driver; DDL, restore, and administration semantics require dedicated coverage.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.", "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied.", "Explain returns a text plan; the JSON plan format is not supported."]),
         DatabaseType::SQLite => profile(
             database_type,
             "sqlite",
@@ -422,8 +422,8 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "mssql",
             "SQL Server",
             DriverTier::Extended,
-            S, S, S, S, S, S, S, S, S, L, S, L, L,
-            &["Cancel kills the session from a second connection (TDS attention is not exposed by the driver), so the cancelled session is fully terminated rather than interrupted.", "Reviewed schema changes run in one transaction; statements SQL Server forbids inside transactions (ALTER DATABASE, CREATE/DROP DATABASE, BACKUP/RESTORE, RECONFIGURE, full-text index DDL) are rejected and rolled back.", "Stored procedures are listed with definitions but there is no dedicated proc editor/executor surface."],
+            S, S, S, S, S, S, S, S, S, S, S, L, L,
+            &["Cancel kills the session from a second connection (TDS attention is not exposed by the driver), so the cancelled session is fully terminated rather than interrupted.", "Explain runs SHOWPLAN_TEXT/XML around the statement on the shared session.", "Reviewed schema changes run in one transaction; statements SQL Server forbids inside transactions (ALTER DATABASE, CREATE/DROP DATABASE, BACKUP/RESTORE, RECONFIGURE, full-text index DDL) are rejected and rolled back.", "Stored procedures are listed with definitions but there is no dedicated proc editor/executor surface."],
         ),
         DatabaseType::Redis => profile(
             database_type,
@@ -446,8 +446,8 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "vertica",
             "Vertica",
             DriverTier::Specialized,
-            S, S, S, L, S, S, S, S, S, L, S, L, L,
-            &["Vertica shares the PostgreSQL wire driver; dialect-specific DDL and administration coverage is incomplete.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.", "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied."]),
+            S, S, S, L, S, S, S, S, S, S, S, L, L,
+            &["Vertica shares the PostgreSQL wire driver; dialect-specific DDL and administration coverage is incomplete.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.", "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied.", "Explain returns a text plan; the JSON plan format is not supported."]),
         DatabaseType::ClickHouse => profile(
             database_type,
             "clickhouse",
@@ -492,9 +492,8 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "oracle",
             "Oracle (ORDS)",
             DriverTier::Extended,
-            S, S, U, L, S, U, U, U, S, U, U, U, U,
-            &["Requires ORDS (Oracle REST Data Services) enabled on the database; write operations are not supported over the REST endpoint.", "Prepared parameters, inline edits, atomic imports, explain plans, schema actions, and backup/restore are not available through the ORDS SQL endpoint.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."],
-        ),
+            S, S, U, L, S, U, U, U, S, S, U, U, U,
+            &["Requires ORDS (Oracle REST Data Services) enabled on the database; write operations are not supported over the REST endpoint.", "Prepared parameters, inline edits, atomic imports, schema actions, and backup/restore are not available through the ORDS SQL endpoint.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.", "Explain writes PLAN_TABLE via EXPLAIN PLAN and reads it back through DBMS_XPLAN; requires PLAN_TABLE to exist."]),
     }
 }
 

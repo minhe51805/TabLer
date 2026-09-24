@@ -124,6 +124,7 @@ export function SQLEditor({
     explainPlan,
     explainSourceSql,
     isRunningExplain,
+    supportsExplain,
     handleExplain,
     setExplainPlan,
     aiProposal,
@@ -307,21 +308,23 @@ export function SQLEditor({
               <span>Vim</span>
             </button>
 
-            <button
-              type="button"
-              onClick={() => void handleExplain(false)}
-              disabled={isRunningExplain}
-              title={language === "vi" ? "Xem Query Plan" : "Show EXPLAIN plan"}
-              aria-label="EXPLAIN"
-              className="sql-editor-tool-btn"
-            >
-              {isRunningExplain ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <GitBranch className="w-3.5 h-3.5" />
-              )}
-              <span>EXPLAIN</span>
-            </button>
+            {supportsExplain && (
+              <button
+                type="button"
+                onClick={() => void handleExplain(false)}
+                disabled={isRunningExplain}
+                title={language === "vi" ? "Xem Query Plan" : "Show EXPLAIN plan"}
+                aria-label="EXPLAIN"
+                className="sql-editor-tool-btn"
+              >
+                {isRunningExplain ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <GitBranch className="w-3.5 h-3.5" />
+                )}
+                <span>EXPLAIN</span>
+              </button>
+            )}
 
             <button
               type="button"

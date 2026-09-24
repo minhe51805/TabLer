@@ -674,8 +674,6 @@ export function buildExplainQuery(sql: string, dbType: DatabaseType, analyze = f
     case "postgresql":
     case "cockroachdb":
     case "greenplum":
-    case "redshift":
-    case "vertica":
       return analyze
         ? `EXPLAIN (ANALYZE, COSTS, VERBOSE, BUFFERS, FORMAT JSON) ${sql}`
         : `EXPLAIN (COSTS, VERBOSE, FORMAT JSON) ${sql}`;
@@ -694,21 +692,31 @@ export function buildExplainQuery(sql: string, dbType: DatabaseType, analyze = f
       return analyze ? `EXPLAIN QUERY PLAN ${sql}` : `EXPLAIN QUERY PLAN ${sql}`;
 
     case "mssql":
-      return analyze ? `SET SHOWPLAN_XML ON; ${sql}` : `SET SHOWPLAN_TEXT ON; ${sql}`;
+      // SHOWPLAN_* is a session-level flag — without the trailing OFF every
+      // later statement on this connection returns a plan instead of rows.
+      return analyze
+        ? `SET SHOWPLAN_XML ON; ${sql}; SET SHOWPLAN_XML OFF`
+        : `SET SHOWPLAN_TEXT ON; ${sql}; SET SHOWPLAN_TEXT OFF`;
 
     case "snowflake":
-    case "bigquery":
-      return analyze ? `EXPLAIN ${sql}` : `EXPLAIN ${sql}`;
-
     case "clickhouse":
-      return analyze ? `EXPLAIN ${sql}` : `EXPLAIN ${sql}`;
+      return `EXPLAIN ${sql}`;
+
+    case "redshift":
+    case "vertica":
+      // Text plans only — neither accepts Postgres's FORMAT JSON option.
+      return `EXPLAIN ${sql}`;
 
     case "libsql":
     case "cloudflare_d1":
       return `EXPLAIN QUERY PLAN ${sql}`;
 
     case "oracle":
-      return `EXPLAIN PLAN FOR ${sql}`;
+      // EXPLAIN PLAN writes PLAN_TABLE and returns no rows — the plan must be
+      // read back through DBMS_XPLAN. A fixed STATEMENT_ID keeps the pair
+      // consistent across ORDS's pooled connections; the DELETE clears stale
+      // rows from earlier explains.
+      return `DELETE FROM PLAN_TABLE WHERE STATEMENT_ID = 'TABLER'; EXPLAIN PLAN SET STATEMENT_ID = 'TABLER' FOR ${sql}; SELECT * FROM TABLE(DBMS_XPLAN.DISPLAY('PLAN_TABLE', 'TABLER', 'TYPICAL'))`;
 
     default:
       return `EXPLAIN ${sql}`;

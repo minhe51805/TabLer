@@ -84,7 +84,7 @@
     "atomic_edit_queue": "S",
     "atomic_csv_import": "S",
     "data_export": "S",
-    "explain": "L",
+    "explain": "S",
     "schema_edit": "S",
     "backup_restore": "L",
     "administration": "L"
@@ -159,7 +159,7 @@
     "atomic_edit_queue": "S",
     "atomic_csv_import": "S",
     "data_export": "S",
-    "explain": "L",
+    "explain": "S",
     "schema_edit": "S",
     "backup_restore": "L",
     "administration": "L"
@@ -204,7 +204,7 @@
     "atomic_edit_queue": "S",
     "atomic_csv_import": "S",
     "data_export": "S",
-    "explain": "L",
+    "explain": "S",
     "schema_edit": "S",
     "backup_restore": "L",
     "administration": "L"
@@ -294,7 +294,7 @@
     "atomic_edit_queue": "U",
     "atomic_csv_import": "U",
     "data_export": "S",
-    "explain": "U",
+    "explain": "S",
     "schema_edit": "U",
     "backup_restore": "U",
     "administration": "U"

@@ -138,7 +138,7 @@
       "atomicEditQueue": "supported",
       "atomicCsvImport": "supported",
       "dataExport": "supported",
-      "explain": "limited",
+      "explain": "supported",
       "schemaEdit": "supported",
       "backupRestore": "limited",
       "administration": "limited"
@@ -146,7 +146,8 @@
     "limitations": [
       "Redshift shares the PostgreSQL wire driver; DDL, restore, and administration semantics require dedicated coverage.",
       "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.",
-      "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied."
+      "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied.",
+      "Explain returns a text plan; the JSON plan format is not supported."
     ]
   },
   {
@@ -271,13 +272,14 @@
       "atomicEditQueue": "supported",
       "atomicCsvImport": "supported",
       "dataExport": "supported",
-      "explain": "limited",
+      "explain": "supported",
       "schemaEdit": "supported",
       "backupRestore": "limited",
       "administration": "limited"
     },
     "limitations": [
       "Cancel kills the session from a second connection (TDS attention is not exposed by the driver), so the cancelled session is fully terminated rather than interrupted.",
+      "Explain runs SHOWPLAN_TEXT/XML around the statement on the shared session.",
       "Reviewed schema changes run in one transaction; statements SQL Server forbids inside transactions (ALTER DATABASE, CREATE/DROP DATABASE, BACKUP/RESTORE, RECONFIGURE, full-text index DDL) are rejected and rolled back.",
       "Stored procedures are listed with definitions but there is no dedicated proc editor/executor surface."
     ]
@@ -352,7 +354,7 @@
       "atomicEditQueue": "supported",
       "atomicCsvImport": "supported",
       "dataExport": "supported",
-      "explain": "limited",
+      "explain": "supported",
       "schemaEdit": "supported",
       "backupRestore": "limited",
       "administration": "limited"
@@ -360,7 +362,8 @@
     "limitations": [
       "Vertica shares the PostgreSQL wire driver; dialect-specific DDL and administration coverage is incomplete.",
       "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.",
-      "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied."
+      "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied.",
+      "Explain returns a text plan; the JSON plan format is not supported."
     ]
   },
   {
@@ -512,15 +515,16 @@
       "atomicEditQueue": "unsupported",
       "atomicCsvImport": "unsupported",
       "dataExport": "supported",
-      "explain": "unsupported",
+      "explain": "supported",
       "schemaEdit": "unsupported",
       "backupRestore": "unsupported",
       "administration": "unsupported"
     },
     "limitations": [
       "Requires ORDS (Oracle REST Data Services) enabled on the database; write operations are not supported over the REST endpoint.",
-      "Prepared parameters, inline edits, atomic imports, explain plans, schema actions, and backup/restore are not available through the ORDS SQL endpoint.",
-      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
+      "Prepared parameters, inline edits, atomic imports, schema actions, and backup/restore are not available through the ORDS SQL endpoint.",
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.",
+      "Explain writes PLAN_TABLE via EXPLAIN PLAN and reads it back through DBMS_XPLAN; requires PLAN_TABLE to exist."
     ]
   }
 ]

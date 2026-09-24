@@ -5584,3 +5584,118 @@ a {
   text-decoration: underline;
   text-underline-offset: 3px;
 }
+
+/* changelog version jump — a sticky rail of version pills on the left so
+   long release lists stay navigable; collapses under the stack on mobile */
+.changelog-layout {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+
+.changelog-nav {
+  position: sticky;
+  top: 100px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.changelog-nav a {
+  padding: 6px 12px;
+  border-radius: 8px;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 12px;
+  color: var(--neu-muted);
+  text-decoration: none;
+  transition:
+    color 0.2s ease,
+    box-shadow 0.2s ease,
+    background 0.2s ease;
+}
+
+.changelog-nav a:hover {
+  color: var(--neu-accent);
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-in);
+}
+
+.changelog-nav a.is-latest {
+  color: var(--neu-accent);
+  font-weight: 700;
+}
+
+@media (max-width: 720px) {
+  .changelog-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .changelog-nav {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+  }
+}
+
+/* high-contrast preference — stronger borders and ink for users who ask
+   the OS for more contrast */
+@media (prefers-contrast: more) {
+  .neu .feature-card,
+  .neu .plugin-card,
+  .neu .changelog-entry,
+  .neu .download-option,
+  .neu .doc-code,
+  .neu .product-frame {
+    border: 1.5px solid var(--neu-ink) !important;
+    box-shadow: none !important;
+  }
+
+  .neu .section-heading p,
+  .neu .feature-card p,
+  .neu .doc-article p,
+  .neu .changelog-date {
+    color: var(--neu-ink) !important;
+  }
+}
+
+/* plugins filter — same recessed search language as the docs sidebar,
+   full-width under the intro */
+.plugins-search {
+  position: relative;
+  margin: 26px 0 8px;
+  max-width: 420px;
+}
+
+.plugins-search-icon {
+  position: absolute;
+  left: 14px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted-soft);
+  pointer-events: none;
+}
+
+.plugins-search-input {
+  width: 100%;
+  padding: 12px 44px 12px 40px;
+  border: none;
+  border-radius: 12px;
+  font-size: 14px;
+  color: var(--neu-ink);
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-in);
+  outline: none;
+  transition: box-shadow 0.2s ease;
+}
+
+.plugins-search-input:focus {
+  box-shadow:
+    var(--neu-shadow-in),
+    0 0 0 2px rgba(8, 126, 252, 0.35);
+}
+
+.plugins-search-input::placeholder {
+  color: var(--muted-soft);
+}

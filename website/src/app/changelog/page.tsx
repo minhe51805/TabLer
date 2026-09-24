@@ -72,34 +72,48 @@ export default async function ChangelogPage() {
         {releases.length === 0 ? (
           <div className="release-empty">{t.changelog.empty}</div>
         ) : (
-          <div className="release-stack">
-            {releases.map((release, index) => (
-              <article
-                className={`changelog-entry${index === 0 ? " is-latest" : ""}`}
-                key={release.id}
-              >
-                <div className="changelog-entry-head">
-                  <span className="release-version">
-                    {release.tag}
-                    {index === 0 ? (
-                      <em>{t.download.latest}</em>
-                    ) : release.prerelease ? (
-                      <em>{t.download.preRelease}</em>
-                    ) : null}
-                  </span>
-                  <span className="changelog-date">{formatDate(release.publishedAt)}</span>
-                </div>
-                {release.body ? <ReleaseNotes body={release.body} /> : null}
+          <div className="changelog-layout">
+            <nav className="changelog-nav" aria-label="Versions">
+              {releases.map((release, index) => (
                 <a
-                  className="release-notes-link"
-                  href={release.htmlUrl}
-                  target="_blank"
-                  rel="noreferrer"
+                  key={release.id}
+                  href={`#${release.tag}`}
+                  className={index === 0 ? "is-latest" : undefined}
                 >
-                  {t.download.viewNotes} {release.tag}
+                  {release.tag}
                 </a>
-              </article>
-            ))}
+              ))}
+            </nav>
+            <div className="release-stack">
+              {releases.map((release, index) => (
+                <article
+                  id={release.tag}
+                  className={`changelog-entry${index === 0 ? " is-latest" : ""}`}
+                  key={release.id}
+                >
+                  <div className="changelog-entry-head">
+                    <span className="release-version">
+                      {release.tag}
+                      {index === 0 ? (
+                        <em>{t.download.latest}</em>
+                      ) : release.prerelease ? (
+                        <em>{t.download.preRelease}</em>
+                      ) : null}
+                    </span>
+                    <span className="changelog-date">{formatDate(release.publishedAt)}</span>
+                  </div>
+                  {release.body ? <ReleaseNotes body={release.body} /> : null}
+                  <a
+                    className="release-notes-link"
+                    href={release.htmlUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    {t.download.viewNotes} {release.tag}
+                  </a>
+                </article>
+              ))}
+            </div>
           </div>
         )}
       </div>

@@ -263,6 +263,7 @@ const en = {
       copy: "On install the app recomputes each bundle's SHA-256 digest and refuses to import it unless the digest matches the manifest. Credentials never touch this website.",
     },
     empty: "The plugin catalog is not available yet. Run the repository generator to publish it.",
+    searchPlaceholder: "Filter plugins",
   },
   changelog: {
     back: "Back to home",
@@ -529,6 +530,7 @@ const vi: typeof en = {
       copy: "Khi cài, app tính lại SHA-256 của từng bundle và từ chối nhập nếu digest không khớp manifest. Thông tin đăng nhập không bao giờ đi qua website.",
     },
     empty: "Danh mục plugin chưa sẵn sàng. Hãy chạy trình sinh repository để xuất bản.",
+    searchPlaceholder: "Lọc plugin",
   },
   changelog: {
     back: "Về trang chủ",

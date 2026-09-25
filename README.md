@@ -213,8 +213,10 @@ TableR/
 
 ## Contributing
 
-Contributions, bug reports, and focused feature proposals are welcome. Read
-[CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and
+Contributions, bug reports, and focused feature proposals are welcome.
+**New contributor?** Start with [ONBOARDING.md](ONBOARDING.md) — the ordered
+path through the architecture docs and the traps that cost a first week.
+Then read [CONTRIBUTING.md](CONTRIBUTING.md) for the development workflow and
 [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) before opening a pull request.
 
 Before submitting a change, run:

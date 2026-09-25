@@ -864,4 +864,127 @@ mod tests {
             "msg": "something else",
         }));
     }
+
+    #[test]
+    fn strips_explain_prefixes() {
+        assert_eq!(
+            MongoDbDriver::strip_explain_prefix("EXPLAIN SELECT * FROM users"),
+            Some(("SELECT * FROM users", false))
+        );
+        assert_eq!(
+            MongoDbDriver::strip_explain_prefix("explain analyze select 1"),
+            Some(("select 1", true))
+        );
+        assert_eq!(
+            MongoDbDriver::strip_explain_prefix("EXPLAIN (ANALYZE, COSTS) SELECT 1"),
+            Some(("SELECT 1", true))
+        );
+        assert_eq!(
+            MongoDbDriver::strip_explain_prefix("-- note\nEXPLAIN SELECT 1"),
+            Some(("SELECT 1", false))
+        );
+        assert_eq!(
+            MongoDbDriver::strip_explain_prefix("// shell note\nEXPLAIN db.users.find({})"),
+            Some(("db.users.find({})", false))
+        );
+        assert_eq!(
+            MongoDbDriver::strip_explain_prefix("/* c */ EXPLAIN SELECT 1"),
+            Some(("SELECT 1", false))
+        );
+        assert_eq!(
+            MongoDbDriver::strip_explain_prefix("db.users.find({})"),
+            None
+        );
+        assert_eq!(
+            MongoDbDriver::strip_explain_prefix("EXPLAINS SELECT 1"),
+            None
+        );
+        assert_eq!(MongoDbDriver::strip_explain_prefix("EXPLAIN"), None);
+    }
+
+    #[test]
+    fn explain_wraps_translated_select_as_find() {
+        use mongodb::bson::doc;
+
+        let inner = MongoDbDriver::parse_command(
+            "SELECT name FROM users WHERE status = 'active' ORDER BY name LIMIT 5",
+        )
+        .unwrap();
+        let command = MongoDbDriver::explainable_command_document(inner, false).unwrap();
+        assert_eq!(command.get_str("verbosity").unwrap(), "executionStats");
+        let explain = command.get_document("explain").unwrap();
+        assert_eq!(explain.get_str("find").unwrap(), "users");
+        assert_eq!(
+            explain.get_document("filter").unwrap(),
+            &doc! { "status": "active" }
+        );
+        assert_eq!(explain.get_i64("limit").unwrap(), 5);
+        assert_eq!(explain.get_document("sort").unwrap(), &doc! { "name": 1 });
+    }
+
+    #[test]
+    fn explain_wraps_aggregate_pipeline_with_cursor() {
+        let inner =
+            MongoDbDriver::parse_command("SELECT status, COUNT(*) AS n FROM users GROUP BY status")
+                .unwrap();
+        let command = MongoDbDriver::explainable_command_document(inner, true).unwrap();
+        assert_eq!(command.get_str("verbosity").unwrap(), "allPlansExecution");
+        let explain = command.get_document("explain").unwrap();
+        assert_eq!(explain.get_str("aggregate").unwrap(), "users");
+        assert!(!explain.get_array("pipeline").unwrap().is_empty());
+        // The aggregate command requires a cursor field even under explain.
+        assert!(explain.get_document("cursor").unwrap().is_empty());
+    }
+
+    #[test]
+    fn explain_wraps_count_and_write_commands() {
+        use mongodb::bson::doc;
+
+        let count = MongoDbDriver::explainable_command_document(
+            MongoDbDriver::parse_command("SELECT COUNT(*) FROM users WHERE active = true").unwrap(),
+            false,
+        )
+        .unwrap();
+        let explain = count.get_document("explain").unwrap();
+        assert_eq!(explain.get_str("count").unwrap(), "users");
+        assert_eq!(
+            explain.get_document("query").unwrap(),
+            &doc! { "active": true }
+        );
+
+        let update = MongoDbDriver::explainable_command_document(
+            MongoDbDriver::parse_command(
+                "db.users.updateMany({ role: 'user' }, { $set: { active: true } })",
+            )
+            .unwrap(),
+            false,
+        )
+        .unwrap();
+        let explain = update.get_document("explain").unwrap();
+        assert_eq!(explain.get_str("update").unwrap(), "users");
+        let spec = &explain.get_array("updates").unwrap()[0];
+        assert!(spec.as_document().unwrap().get_bool("multi").unwrap());
+
+        let delete = MongoDbDriver::explainable_command_document(
+            MongoDbDriver::parse_command("db.users.deleteOne({ name: 'A' })").unwrap(),
+            false,
+        )
+        .unwrap();
+        let explain = delete.get_document("explain").unwrap();
+        assert_eq!(explain.get_str("delete").unwrap(), "users");
+        let spec = &explain.get_array("deletes").unwrap()[0];
+        assert_eq!(spec.as_document().unwrap().get_i32("limit").unwrap(), 1);
+    }
+
+    #[test]
+    fn explain_runs_existing_explain_command_verbatim() {
+        let inner = MongoDbDriver::parse_command(
+            "db.runCommand({ explain: { find: 'users', filter: {} }, verbosity: 'queryPlanner' })",
+        )
+        .unwrap();
+        let command = MongoDbDriver::explainable_command_document(inner, false).unwrap();
+        // Already an explain command — returned as-is, not nested.
+        assert!(command.get_document("explain").is_ok());
+        assert_eq!(command.get_str("verbosity").unwrap(), "queryPlanner");
+    }
 }

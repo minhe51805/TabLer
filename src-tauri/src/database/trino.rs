@@ -2,7 +2,8 @@
 //!
 //! A statement is POSTed as the raw body; the coordinator answers with a JSON
 //! page carrying `columns`/`data` plus a `nextUri` that must be polled until
-//! absent. Cancelling is an HTTP DELETE on the in-flight URI.
+//! absent. Cancelling is an HTTP DELETE on the page's `partialCancelUri`
+//! (falling back to `nextUri` when the coordinator doesn't advertise one).
 
 use super::driver::DatabaseDriver;
 use super::models::*;
@@ -49,6 +50,10 @@ struct TrinoStats {
 struct TrinoPage {
     #[serde(rename = "nextUri", default)]
     next_uri: Option<String>,
+    /// Dedicated cancel endpoint for the running query; preferred over
+    /// `nextUri` for the DELETE that aborts it server-side.
+    #[serde(rename = "partialCancelUri", default)]
+    partial_cancel_uri: Option<String>,
     #[serde(default)]
     columns: Option<Vec<TrinoColumn>>,
     #[serde(default)]
@@ -76,7 +81,7 @@ pub struct TrinoDriver {
     /// Session default as `catalog` or `catalog.schema`.
     current_db: Arc<RwLock<Option<String>>>,
     /// request_id → URI to DELETE for a server-side abort. Holds the statement
-    /// URL until the first page hands back a `nextUri`.
+    /// URL until a page hands back a `partialCancelUri` (preferred) or `nextUri`.
     in_flight: Mutex<HashMap<String, String>>,
     /// Active transaction id from `X-Trino-Started-Transaction-Id`; every
     /// statement request re-sends it as `X-Trino-Transaction-Id` until COMMIT
@@ -333,8 +338,8 @@ impl TrinoDriver {
         self.observe_txn_headers(&first_headers);
         let mut acc = TrinoAccumulated::default();
         loop {
-            let next_uri = Self::merge_page(&mut acc, page, row_cap)?;
-            self.track_next_uri(request_id, next_uri.as_deref());
+            let (next_uri, cancel_uri) = Self::merge_page(&mut acc, page, row_cap)?;
+            self.track_cancel_uri(request_id, next_uri.as_deref(), cancel_uri.as_deref());
             if acc.rows.len() >= row_cap && next_uri.is_some() {
                 acc.truncated = true;
             }
@@ -433,7 +438,7 @@ impl TrinoDriver {
         let (mut page, _) = Self::send_page(request).await?;
         let mut acc = TrinoAccumulated::default();
         loop {
-            let next_uri = Self::merge_page(&mut acc, page, usize::MAX)?;
+            let (next_uri, _) = Self::merge_page(&mut acc, page, usize::MAX)?;
             match next_uri {
                 Some(uri) => {
                     let request = self
@@ -579,13 +584,15 @@ impl TrinoDriver {
         Ok(self.build_result(acc, sql, start.elapsed().as_millis()))
     }
 
-    /// Merge one page into the accumulator. Returns the `nextUri` to follow,
-    /// or `None` on the last page. A page-level `error` aborts the statement.
+    /// Merge one page into the accumulator. Returns the `nextUri` to follow
+    /// (or `None` on the last page) plus the `partialCancelUri` the page
+    /// advertised for server-side cancel. A page-level `error` aborts the
+    /// statement.
     fn merge_page(
         acc: &mut TrinoAccumulated,
         page: TrinoPage,
         row_cap: usize,
-    ) -> Result<Option<String>> {
+    ) -> Result<(Option<String>, Option<String>)> {
         if let Some(error) = page.error {
             let detail = if error.message.is_empty() {
                 error.error_name
@@ -617,7 +624,7 @@ impl TrinoDriver {
         {
             acc.update_count = Some(count);
         }
-        Ok(page.next_uri)
+        Ok((page.next_uri, page.partial_cancel_uri))
     }
 
     /// Lock the cancel-URI registry, recovering from poisoning the same way
@@ -627,12 +634,18 @@ impl TrinoDriver {
     }
 
     /// Keep the cancel registry pointed at the URI that aborts the running
-    /// query. Only touches requests registered by `execute_query_for_request`.
-    fn track_next_uri(&self, request_id: Option<&str>, uri: Option<&str>) {
+    /// query: the page's `partialCancelUri` when present, else its `nextUri`.
+    /// Only touches requests registered by `execute_query_for_request`.
+    fn track_cancel_uri(
+        &self,
+        request_id: Option<&str>,
+        next_uri: Option<&str>,
+        partial_cancel_uri: Option<&str>,
+    ) {
         let Some(request_id) = request_id else {
             return;
         };
-        let Some(uri) = uri else {
+        let Some(uri) = partial_cancel_uri.or(next_uri) else {
             return;
         };
         let mut map = self.lock_in_flight();
@@ -1144,8 +1157,8 @@ impl DatabaseDriver for TrinoDriver {
     }
 
     /// Request-scoped execution: the in-flight URI (statement URL until the
-    /// first `nextUri` arrives) is registered so `cancel_query_request` can
-    /// DELETE it on a second connection.
+    /// first `partialCancelUri`/`nextUri` arrives) is registered so
+    /// `cancel_query_request` can DELETE it on a second connection.
     async fn execute_query_for_request(&self, request_id: &str, sql: &str) -> Result<QueryResult> {
         if request_id.trim().is_empty() {
             return self.execute_query(sql).await;
@@ -1157,8 +1170,9 @@ impl DatabaseDriver for TrinoDriver {
         result
     }
 
-    /// Trino aborts a running query when the client DELETEs its `nextUri`
-    /// (or the statement URI before the first page lands).
+    /// Trino aborts a running query when the client DELETEs its
+    /// `partialCancelUri` — the canonical cancel endpoint — falling back to
+    /// `nextUri` (or the statement URI before the first page lands).
     async fn cancel_query_request(&self, request_id: &str) -> Result<bool> {
         let uri = self.lock_in_flight().get(request_id).cloned();
         let Some(uri) = uri else {
@@ -1572,12 +1586,14 @@ mod tests {
                 "columns": [{"name": "n", "type": "bigint"}],
                 "data": [[1], [2]]}"#,
         );
-        let next = TrinoDriver::merge_page(&mut acc, first, 500).unwrap();
+        let (next, cancel) = TrinoDriver::merge_page(&mut acc, first, 500).unwrap();
         assert_eq!(next.as_deref(), Some("http://x/2"));
+        assert!(cancel.is_none());
 
         let second = page_json(r#"{"data": [[3]], "stats": {"state": "FINISHED"}}"#);
-        let next = TrinoDriver::merge_page(&mut acc, second, 500).unwrap();
+        let (next, cancel) = TrinoDriver::merge_page(&mut acc, second, 500).unwrap();
         assert!(next.is_none());
+        assert!(cancel.is_none());
 
         assert_eq!(acc.columns.len(), 1);
         assert_eq!(acc.columns[0].name, "n");
@@ -1731,27 +1747,60 @@ mod tests {
         let driver = test_driver();
 
         // Unregistered request ids are ignored.
-        driver.track_next_uri(Some("req-1"), Some("http://x/1"));
+        driver.track_cancel_uri(Some("req-1"), Some("http://x/1"), None);
         assert!(driver.lock_in_flight().is_empty());
 
         // Registered ids follow the latest nextUri.
         driver
             .lock_in_flight()
             .insert("req-2".to_string(), driver.statement_url());
-        driver.track_next_uri(Some("req-2"), Some("http://x/2"));
+        driver.track_cancel_uri(Some("req-2"), Some("http://x/2"), None);
         assert_eq!(
             driver.lock_in_flight().get("req-2").cloned(),
             Some("http://x/2".to_string())
         );
-        driver.track_next_uri(Some("req-2"), Some("http://x/3"));
+        driver.track_cancel_uri(Some("req-2"), Some("http://x/3"), None);
         assert_eq!(
             driver.lock_in_flight().get("req-2").cloned(),
             Some("http://x/3".to_string())
         );
 
         // No request id: nothing recorded.
-        driver.track_next_uri(None, Some("http://x/4"));
+        driver.track_cancel_uri(None, Some("http://x/4"), None);
         assert_eq!(driver.lock_in_flight().len(), 1);
+    }
+
+    #[test]
+    fn cancel_bookkeeping_prefers_partial_cancel_uri() {
+        let driver = test_driver();
+        driver
+            .lock_in_flight()
+            .insert("req-1".to_string(), driver.statement_url());
+
+        // partialCancelUri wins over nextUri when the page carries both.
+        driver.track_cancel_uri(
+            Some("req-1"),
+            Some("http://x/next/2"),
+            Some("http://x/cancel/2"),
+        );
+        assert_eq!(
+            driver.lock_in_flight().get("req-1").cloned(),
+            Some("http://x/cancel/2".to_string())
+        );
+
+        // A page without partialCancelUri falls back to nextUri.
+        driver.track_cancel_uri(Some("req-1"), Some("http://x/next/3"), None);
+        assert_eq!(
+            driver.lock_in_flight().get("req-1").cloned(),
+            Some("http://x/next/3".to_string())
+        );
+
+        // Neither URI: the registry keeps the previous target.
+        driver.track_cancel_uri(Some("req-1"), None, None);
+        assert_eq!(
+            driver.lock_in_flight().get("req-1").cloned(),
+            Some("http://x/next/3".to_string())
+        );
     }
 
     #[test]

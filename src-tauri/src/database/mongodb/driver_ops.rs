@@ -33,6 +33,14 @@ impl MongoDbDriver {
         mut session: Option<&mut ClientSession>,
     ) -> Result<QueryResult> {
         let started_at = Instant::now();
+        // `EXPLAIN <statement>` never reaches the shell parser: the inner
+        // statement is parsed like any other command, then wrapped as
+        // `{ explain: <command>, verbosity: ... }` and run via runCommand.
+        if let Some((inner, analyze)) = Self::strip_explain_prefix(sql) {
+            return self
+                .execute_explain(inner, analyze, sql, comment, session)
+                .await;
+        }
         let command = Self::parse_command(sql)?;
         let active_database = self.current_db.read().await.clone();
 
@@ -408,6 +416,238 @@ impl MongoDbDriver {
         };
 
         Ok(result)
+    }
+
+    /// Strip a leading `EXPLAIN`/`EXPLAIN ANALYZE` prefix (comments and
+    /// whitespace tolerated) so the inner statement can be wrapped in the
+    /// `explain` command. Returns `(inner_sql, analyze)` or `None` when the
+    /// statement is not an EXPLAIN.
+    pub(super) fn strip_explain_prefix(sql: &str) -> Option<(&str, bool)> {
+        let mut rest = sql.trim_start();
+        loop {
+            if let Some(after) = rest.strip_prefix("--") {
+                rest = after.split_once('\n').map(|(_, tail)| tail).unwrap_or("");
+                rest = rest.trim_start();
+                continue;
+            }
+            if let Some(after) = rest.strip_prefix("//") {
+                rest = after.split_once('\n').map(|(_, tail)| tail).unwrap_or("");
+                rest = rest.trim_start();
+                continue;
+            }
+            if let Some(after) = rest.strip_prefix('#') {
+                rest = after.split_once('\n').map(|(_, tail)| tail).unwrap_or("");
+                rest = rest.trim_start();
+                continue;
+            }
+            if let Some(after) = rest.strip_prefix("/*") {
+                rest = match after.find("*/") {
+                    Some(end) => &after[end + 2..],
+                    None => "",
+                };
+                rest = rest.trim_start();
+                continue;
+            }
+            break;
+        }
+        let head = rest.get(..7)?;
+        if !head.eq_ignore_ascii_case("EXPLAIN") {
+            return None;
+        }
+        let after = &rest[7..];
+        if !after.starts_with(|ch: char| ch.is_whitespace() || ch == '(') {
+            return None;
+        }
+        let mut inner = after.trim_start();
+        let mut analyze = false;
+        // Tolerate a Postgres-style option list: EXPLAIN (ANALYZE, COSTS) …
+        if let Some(options) = inner.strip_prefix('(') {
+            if let Some(close) = options.find(')') {
+                if options[..close]
+                    .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                    .any(|word| word.eq_ignore_ascii_case("ANALYZE"))
+                {
+                    analyze = true;
+                }
+                inner = options[close + 1..].trim_start();
+            }
+        }
+        if let Some(head) = inner.get(..7) {
+            if head.eq_ignore_ascii_case("ANALYZE") {
+                let tail = &inner[7..];
+                if tail.starts_with(|ch: char| ch.is_whitespace()) {
+                    analyze = true;
+                    inner = tail.trim_start();
+                }
+            }
+        }
+        if inner.is_empty() {
+            return None;
+        }
+        Some((inner, analyze))
+    }
+
+    /// Run an `EXPLAIN` statement: MongoDB has no EXPLAIN keyword — the plan
+    /// comes from the `explain` command wrapping the translated inner command
+    /// (`{ explain: <command>, verbosity: ... }`). `EXPLAIN` maps to
+    /// `executionStats` (the plan plus observed counters; writes are still
+    /// never executed) and `EXPLAIN ANALYZE` to `allPlansExecution`, which
+    /// additionally times every candidate plan. The response document lands
+    /// in a single-row `query_plan` JSON column, matching the shape the
+    /// explain flow consumes on other drivers.
+    async fn execute_explain(
+        &self,
+        inner_sql: &str,
+        analyze: bool,
+        original_sql: &str,
+        comment: Option<Bson>,
+        session: Option<&mut ClientSession>,
+    ) -> Result<QueryResult> {
+        let started_at = Instant::now();
+        let inner = Self::parse_command(inner_sql)?;
+        let mut command = Self::explainable_command_document(inner, analyze)?;
+        // The comment rides inside the command document so $currentOp exposes
+        // it under `command.comment` for killOp matching.
+        if let Some(comment) = comment {
+            command.insert("comment", comment);
+        }
+        let active_database = self.current_db.read().await.clone();
+        let database = self.client.database(&active_database);
+        let run_action = database.run_command(command);
+        // `.session()` flips the action's session type parameter, so the
+        // explicit-session path must branch at the await point.
+        let response = match session {
+            Some(session) => run_action.session(&mut *session).await,
+            None => run_action.await,
+        }
+        .with_context(|| format!("Failed to explain MongoDB command against {active_database}"))?;
+        let plan = Self::bson_to_json(Bson::Document(response));
+        let plan_text = serde_json::to_string_pretty(&plan).unwrap_or_else(|_| plan.to_string());
+        Ok(Self::scalar_result(
+            "query_plan",
+            JsonValue::String(plan_text),
+            started_at.elapsed().as_millis(),
+            original_sql.to_string(),
+            0,
+        ))
+    }
+
+    /// Convert a parsed command into the document the `explain` command
+    /// wraps. `explain` accepts find/aggregate/count plus the write commands
+    /// (insert/update/delete) — writes are planned, never executed — so every
+    /// parsed variant maps. A `db.runCommand({...})` payload is wrapped
+    /// verbatim unless it already IS an explain command, which runs as-is.
+    pub(super) fn explainable_command_document(
+        command: MongoQueryCommand,
+        analyze: bool,
+    ) -> Result<Document> {
+        let verbosity = if analyze {
+            "allPlansExecution"
+        } else {
+            "executionStats"
+        };
+        let inner = match command {
+            MongoQueryCommand::RunCommand(document) => {
+                if document.contains_key("explain") {
+                    // Already an explain command — run it directly rather than
+                    // nesting `{ explain: { explain: ... } }`.
+                    return Ok(document);
+                }
+                document
+            }
+            MongoQueryCommand::Find {
+                collection,
+                filter,
+                projection,
+                sort,
+                limit,
+                skip,
+            } => {
+                let mut find = doc! { "find": collection, "filter": filter };
+                if let Some(projection) = projection {
+                    find.insert("projection", projection);
+                }
+                if let Some(sort) = sort {
+                    find.insert("sort", sort);
+                }
+                if let Some(limit) = limit {
+                    find.insert("limit", limit);
+                }
+                if let Some(skip) = skip {
+                    find.insert("skip", i64::try_from(skip).unwrap_or(i64::MAX));
+                }
+                find
+            }
+            MongoQueryCommand::FindOne { collection, filter } => {
+                doc! { "find": collection, "filter": filter, "limit": 1 }
+            }
+            MongoQueryCommand::Aggregate {
+                collection,
+                pipeline,
+            } => {
+                // The aggregate command requires a cursor field even under
+                // explain, where no cursor is ever opened.
+                doc! { "aggregate": collection, "pipeline": pipeline, "cursor": Document::new() }
+            }
+            MongoQueryCommand::CountDocuments { collection, filter } => {
+                doc! { "count": collection, "query": filter }
+            }
+            MongoQueryCommand::InsertOne {
+                collection,
+                document,
+            } => {
+                doc! { "insert": collection, "documents": [document] }
+            }
+            MongoQueryCommand::InsertMany {
+                collection,
+                documents,
+            } => {
+                doc! { "insert": collection, "documents": documents }
+            }
+            MongoQueryCommand::UpdateOne {
+                collection,
+                filter,
+                update,
+            } => {
+                let update_spec = doc! {
+                    "q": filter,
+                    "u": Self::update_payload_to_bson(update),
+                    "multi": false,
+                };
+                doc! { "update": collection, "updates": [update_spec] }
+            }
+            MongoQueryCommand::UpdateMany {
+                collection,
+                filter,
+                update,
+            } => {
+                let update_spec = doc! {
+                    "q": filter,
+                    "u": Self::update_payload_to_bson(update),
+                    "multi": true,
+                };
+                doc! { "update": collection, "updates": [update_spec] }
+            }
+            MongoQueryCommand::DeleteOne { collection, filter } => {
+                // `limit: 1` deletes one matching document; `limit: 0` all.
+                doc! { "delete": collection, "deletes": [doc! { "q": filter, "limit": 1 }] }
+            }
+            MongoQueryCommand::DeleteMany { collection, filter } => {
+                doc! { "delete": collection, "deletes": [doc! { "q": filter, "limit": 0 }] }
+            }
+        };
+        Ok(doc! { "explain": inner, "verbosity": verbosity })
+    }
+
+    /// The `u` field of an update command spec accepts either a replacement/
+    /// modifier document or an aggregation pipeline (4.2+).
+    fn update_payload_to_bson(update: MongoUpdatePayload) -> Bson {
+        match update {
+            MongoUpdatePayload::Document(document) => Bson::Document(document),
+            MongoUpdatePayload::Pipeline(stages) => {
+                Bson::Array(stages.into_iter().map(Bson::Document).collect())
+            }
+        }
     }
 
     /// Session-bound counterpart of `collect_cursor_limited`: a

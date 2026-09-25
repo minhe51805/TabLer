@@ -1088,6 +1088,26 @@ impl DatabaseDriver for DynamoDbDriver {
             .await
     }
 
+    /// Schema edits map a minimal DDL subset onto DynamoDB control-plane
+    /// calls: `CREATE TABLE name (pk type[, sk type])` → `CreateTable`
+    /// (on-demand billing) and `DROP TABLE name` → `DeleteTable`. Names and
+    /// types are parsed into a structured JSON payload — never interpolated
+    /// into a statement — and anything outside the subset is rejected with a
+    /// clear error. Each statement is applied sequentially; DynamoDB has no
+    /// multi-statement DDL transaction.
+    async fn execute_structure_statements(&self, statements: &[String]) -> Result<u64> {
+        let mut total_affected = 0_u64;
+        for statement in statements {
+            if statement.trim().is_empty() {
+                continue;
+            }
+            let (operation, payload) = parse_ddl_statement(statement)?;
+            self.invoke(operation, payload).await?;
+            total_affected += 1;
+        }
+        Ok(total_affected)
+    }
+
     /// Restore replays dump statements through `ExecuteStatement`, one
     /// request each. DynamoDB has no transaction spanning separate calls,
     /// so this is NOT atomic — a mid-restore failure leaves earlier
@@ -1502,6 +1522,253 @@ fn partiql_string_literal(value: &str) -> Result<String> {
         ));
     }
     Ok(format!("'{}'", value.replace('\'', "''")))
+}
+
+// ---------------------------------------------------------------------------
+// Minimal DDL subset → DynamoDB control-plane operations
+// ---------------------------------------------------------------------------
+
+/// One token of the DDL subset grammar: a bare word (keywords, types), a
+/// double-quoted identifier (already unescaped), or punctuation.
+#[derive(Debug, PartialEq)]
+enum DdlToken {
+    Word(String),
+    Ident(String),
+    Punct(char),
+}
+
+/// Split a DDL statement into tokens. Only whitespace, `"`-quoted
+/// identifiers, `(`, `)`, `,`, `;` and bare `[A-Za-z0-9_.$-]` words are
+/// recognized — anything else (quotes, comments, operators) fails here so
+/// no fragment can be reinterpreted as part of a name.
+fn tokenize_ddl(statement: &str) -> Result<Vec<DdlToken>> {
+    let mut tokens = Vec::new();
+    let mut chars = statement.chars().peekable();
+    while let Some(&ch) = chars.peek() {
+        match ch {
+            ch if ch.is_whitespace() => {
+                chars.next();
+            }
+            '(' | ')' | ',' | ';' => {
+                tokens.push(DdlToken::Punct(ch));
+                chars.next();
+            }
+            '"' => {
+                chars.next();
+                let mut name = String::new();
+                loop {
+                    match chars.next() {
+                        Some('"') if chars.peek() == Some(&'"') => {
+                            name.push('"');
+                            chars.next();
+                        }
+                        Some('"') => break,
+                        Some(inner) => name.push(inner),
+                        None => {
+                            return Err(anyhow!("Unterminated quoted identifier in DDL statement"))
+                        }
+                    }
+                }
+                tokens.push(DdlToken::Ident(name));
+            }
+            ch if ch.is_ascii_alphanumeric() || matches!(ch, '_' | '.' | '$' | '#' | '-') => {
+                let mut word = String::new();
+                while let Some(&next) = chars.peek() {
+                    if next.is_ascii_alphanumeric() || matches!(next, '_' | '.' | '$' | '#' | '-') {
+                        word.push(next);
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+                tokens.push(DdlToken::Word(word));
+            }
+            other => {
+                return Err(anyhow!(
+                    "Unsupported character '{other}' in DDL statement; only \
+                     CREATE TABLE / DROP TABLE are supported"
+                ))
+            }
+        }
+    }
+    Ok(tokens)
+}
+
+/// Pull the next identifier token (quoted or bare word). Bare keywords are
+/// accepted as names — DynamoDB attribute/table names have no reserved
+/// words — but punctuation never is.
+fn next_ddl_ident(tokens: &[DdlToken], pos: &mut usize, what: &str) -> Result<String> {
+    let name = match tokens.get(*pos) {
+        Some(DdlToken::Ident(name)) | Some(DdlToken::Word(name)) => name.clone(),
+        _ => return Err(anyhow!("Expected {what} in DDL statement")),
+    };
+    *pos += 1;
+    if name.is_empty()
+        || name
+            .chars()
+            .any(|ch| matches!(ch, '\0' | '\r' | '\n' | '\t'))
+    {
+        return Err(anyhow!("Invalid {what} in DDL statement"));
+    }
+    Ok(name)
+}
+
+/// Consume one expected keyword, case-insensitively.
+fn expect_ddl_keyword(tokens: &[DdlToken], pos: &mut usize, keyword: &str) -> Result<()> {
+    match tokens.get(*pos) {
+        Some(DdlToken::Word(word)) if word.eq_ignore_ascii_case(keyword) => {
+            *pos += 1;
+            Ok(())
+        }
+        _ => Err(anyhow!("Expected {keyword} in DDL statement")),
+    }
+}
+
+/// Consume one expected punctuation token.
+fn expect_ddl_punct(tokens: &[DdlToken], pos: &mut usize, punct: char) -> Result<()> {
+    match tokens.get(*pos) {
+        Some(DdlToken::Punct(ch)) if *ch == punct => {
+            *pos += 1;
+            Ok(())
+        }
+        _ => Err(anyhow!("Expected '{punct}' in DDL statement")),
+    }
+}
+
+/// Consume an optional keyword; returns whether it was present.
+fn eat_ddl_keyword(tokens: &[DdlToken], pos: &mut usize, keyword: &str) -> bool {
+    if matches!(tokens.get(*pos), Some(DdlToken::Word(word)) if word.eq_ignore_ascii_case(keyword))
+    {
+        *pos += 1;
+        true
+    } else {
+        false
+    }
+}
+
+/// Map a SQL-ish column type onto a DynamoDB scalar key type. Only S/N/B
+/// exist for key attributes; anything else is rejected so a typo never
+/// silently creates a wrongly-typed key.
+fn dynamodb_key_type(word: &str) -> Result<&'static str> {
+    Ok(match word.to_ascii_uppercase().as_str() {
+        "S" | "STRING" | "TEXT" | "VARCHAR" | "CHAR" => "S",
+        "N" | "NUMBER" | "INT" | "INTEGER" | "BIGINT" | "SMALLINT" | "TINYINT" | "FLOAT"
+        | "DOUBLE" | "REAL" | "DECIMAL" | "NUMERIC" => "N",
+        "B" | "BINARY" | "BLOB" | "BYTES" | "VARBINARY" => "B",
+        other => {
+            return Err(anyhow!(
+                "Unsupported key attribute type '{other}'; DynamoDB keys are S, N, or B"
+            ))
+        }
+    })
+}
+
+/// Parse one statement of the supported DDL subset into a DynamoDB
+/// control-plane `(operation, payload)` pair:
+///
+/// - `CREATE TABLE name (pk col type[, sk col type])` → `CreateTable` with
+///   `BillingMode: PAY_PER_REQUEST`. Only key attributes are declared —
+///   non-key columns do not exist in DynamoDB's schema.
+/// - `DROP TABLE name` → `DeleteTable`.
+///
+/// Names and types are parsed tokens placed into a structured JSON
+/// payload; nothing is ever interpolated into a statement string.
+fn parse_ddl_statement(statement: &str) -> Result<(&'static str, JsonValue)> {
+    let tokens = tokenize_ddl(statement)?;
+    let mut pos = 0_usize;
+    // Tolerate leading/trailing semicolons from script splitting.
+    while matches!(tokens.get(pos), Some(DdlToken::Punct(';'))) {
+        pos += 1;
+    }
+
+    let unsupported = || {
+        anyhow!(
+            "Unsupported statement for DynamoDB schema edit; only \
+             CREATE TABLE name (pk type[, sk type]) and DROP TABLE name are supported"
+        )
+    };
+
+    let verb = match tokens.get(pos) {
+        Some(DdlToken::Word(word)) => word.to_ascii_uppercase(),
+        _ => return Err(unsupported()),
+    };
+    pos += 1;
+
+    let result = match verb.as_str() {
+        "CREATE" => {
+            expect_ddl_keyword(&tokens, &mut pos, "TABLE")?;
+            // Optional IF NOT EXISTS.
+            if eat_ddl_keyword(&tokens, &mut pos, "IF") {
+                expect_ddl_keyword(&tokens, &mut pos, "NOT")?;
+                expect_ddl_keyword(&tokens, &mut pos, "EXISTS")?;
+            }
+            let table = next_ddl_ident(&tokens, &mut pos, "table name")?;
+            expect_ddl_punct(&tokens, &mut pos, '(')?;
+
+            let mut attributes = Vec::new();
+            let mut key_schema = Vec::new();
+            loop {
+                let column = next_ddl_ident(&tokens, &mut pos, "key column name")?;
+                let type_word = match tokens.get(pos) {
+                    Some(DdlToken::Word(word)) => word.clone(),
+                    _ => {
+                        return Err(anyhow!(
+                            "Expected a key attribute type (S, N, or B) for column '{column}'"
+                        ))
+                    }
+                };
+                pos += 1;
+                let attribute_type = dynamodb_key_type(&type_word)?;
+                attributes.push(json!({
+                    "AttributeName": column,
+                    "AttributeType": attribute_type,
+                }));
+                key_schema.push(json!({
+                    "AttributeName": column,
+                    "KeyType": if key_schema.is_empty() { "HASH" } else { "RANGE" },
+                }));
+                if key_schema.len() == 2 {
+                    break;
+                }
+                match tokens.get(pos) {
+                    Some(DdlToken::Punct(',')) => pos += 1,
+                    _ => break,
+                }
+            }
+            expect_ddl_punct(&tokens, &mut pos, ')')?;
+
+            (
+                "CreateTable",
+                json!({
+                    "TableName": table,
+                    "AttributeDefinitions": attributes,
+                    "KeySchema": key_schema,
+                    "BillingMode": "PAY_PER_REQUEST",
+                }),
+            )
+        }
+        "DROP" => {
+            expect_ddl_keyword(&tokens, &mut pos, "TABLE")?;
+            // Optional IF EXISTS.
+            if eat_ddl_keyword(&tokens, &mut pos, "IF") {
+                expect_ddl_keyword(&tokens, &mut pos, "EXISTS")?;
+            }
+            let table = next_ddl_ident(&tokens, &mut pos, "table name")?;
+            ("DeleteTable", json!({ "TableName": table }))
+        }
+        _ => return Err(unsupported()),
+    };
+
+    // Only trailing semicolons may follow the parsed statement.
+    for token in &tokens[pos..] {
+        if !matches!(token, DdlToken::Punct(';')) {
+            return Err(anyhow!(
+                "Unexpected trailing tokens in DDL statement; only one \
+                 CREATE TABLE or DROP TABLE per statement is supported"
+            ));
+        }
+    }
+    Ok(result)
 }
 
 /// Parse a browse filter into a rebuilt PartiQL WHERE clause with every
@@ -2174,10 +2441,82 @@ mod tests {
     #[test]
     fn transaction_limit_rejects_over_100_actions() {
         assert!(DynamoDbDriver::enforce_transaction_action_limit(100, "cell updates").is_ok());
+
         let error =
             DynamoDbDriver::enforce_transaction_action_limit(101, "cell updates").unwrap_err();
         assert!(error.to_string().contains("100"));
         assert!(error.to_string().contains("101"));
+    }
+
+    #[test]
+    fn ddl_create_table_builds_create_table_payload() {
+        let (operation, payload) = parse_ddl_statement("CREATE TABLE users (id TEXT)").unwrap();
+        assert_eq!(operation, "CreateTable");
+        assert_eq!(
+            payload,
+            json!({
+                "TableName": "users",
+                "AttributeDefinitions": [{"AttributeName": "id", "AttributeType": "S"}],
+                "KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
+                "BillingMode": "PAY_PER_REQUEST",
+            })
+        );
+    }
+
+    #[test]
+    fn ddl_create_table_with_sort_key_and_quoted_names() {
+        let (operation, payload) = parse_ddl_statement(
+            "create table if not exists \"my table\" (\"pk col\" number, sk binary);",
+        )
+        .unwrap();
+        assert_eq!(operation, "CreateTable");
+        assert_eq!(
+            payload,
+            json!({
+                "TableName": "my table",
+                "AttributeDefinitions": [
+                    {"AttributeName": "pk col", "AttributeType": "N"},
+                    {"AttributeName": "sk", "AttributeType": "B"},
+                ],
+                "KeySchema": [
+                    {"AttributeName": "pk col", "KeyType": "HASH"},
+                    {"AttributeName": "sk", "KeyType": "RANGE"},
+                ],
+                "BillingMode": "PAY_PER_REQUEST",
+            })
+        );
+    }
+
+    #[test]
+    fn ddl_drop_table_builds_delete_table_payload() {
+        let (operation, payload) =
+            parse_ddl_statement("DROP TABLE IF EXISTS \"old table\"").unwrap();
+        assert_eq!(operation, "DeleteTable");
+        assert_eq!(payload, json!({ "TableName": "old table" }));
+    }
+
+    #[test]
+    fn ddl_parser_rejects_unsupported_and_malformed_statements() {
+        // Outside the subset entirely.
+        assert!(parse_ddl_statement("ALTER TABLE t ADD COLUMN x INT").is_err());
+        assert!(parse_ddl_statement("CREATE INDEX i ON t (c)").is_err());
+        // Missing key column list / type.
+        assert!(parse_ddl_statement("CREATE TABLE t").is_err());
+        assert!(parse_ddl_statement("CREATE TABLE t (id)").is_err());
+        // Third key column — DynamoDB tables have at most HASH + RANGE.
+        assert!(parse_ddl_statement("CREATE TABLE t (a S, b N, c S)").is_err());
+        // Non-key column definitions are not part of the subset: a second
+        // typed column parses as the RANGE key, so exercise a non-key type
+        // (JSON maps to no key attribute) and a sized type parameter.
+        assert!(parse_ddl_statement("CREATE TABLE t (id S, payload JSON)").is_err());
+        assert!(parse_ddl_statement("CREATE TABLE t (id S, name VARCHAR(50))").is_err());
+        // Unsupported key type.
+        assert!(parse_ddl_statement("CREATE TABLE t (id DATE)").is_err());
+        // Trailing garbage / second statement.
+        assert!(parse_ddl_statement("DROP TABLE t; DROP TABLE u").is_err());
+        // Injection-shaped input fails at the tokenizer, never interpolates.
+        assert!(parse_ddl_statement("DROP TABLE t -- comment").is_err());
+        assert!(parse_ddl_statement("CREATE TABLE t (id S) ENGINE=x").is_err());
     }
 
     #[test]

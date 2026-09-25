@@ -183,8 +183,8 @@ const AGENT_ENGINE_TOOL_FLAGS: Record<
     checkpointRestore: true,
   },
   snowflake: {
-    parameterizedRead: false,
-    previewWrite: false,
+    parameterizedRead: true,
+    previewWrite: true,
     schemaObjects: true,
     presets: true,
     checkpointRestore: true,
@@ -197,10 +197,10 @@ const AGENT_ENGINE_TOOL_FLAGS: Record<
     checkpointRestore: true,
   },
   bigquery: {
-    parameterizedRead: false,
-    previewWrite: false,
+    parameterizedRead: true,
+    previewWrite: true,
     schemaObjects: true,
-    presets: false,
+    presets: true,
     checkpointRestore: true,
   },
   libsql: {
@@ -239,10 +239,10 @@ const AGENT_ENGINE_TOOL_FLAGS: Record<
     checkpointRestore: false,
   },
   oracle: {
-    parameterizedRead: false,
-    previewWrite: false,
+    parameterizedRead: true,
+    previewWrite: true,
     schemaObjects: true,
-    presets: false,
+    presets: true,
     checkpointRestore: true,
   },
   spanner: {

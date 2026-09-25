@@ -1,5 +1,6 @@
 use super::driver::DatabaseDriver;
 use super::models::*;
+use super::query_cancel::{request_cancel, CancelLookup, CancelScopeGuard, QueryCancelRegistry};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use futures_util::{stream, Stream, StreamExt, TryStreamExt};
@@ -24,7 +25,14 @@ pub struct OpenSearchDriver {
     password: Option<String>,
     current_index: RwLock<Option<String>>,
     plugin_id: String,
+    /// request_id → running-search scope so `cancel_query_request` can find
+    /// the `X-Opaque-Id`-tagged task in `GET /_tasks` and cancel it.
+    cancel_registry: RwLock<QueryCancelRegistry>,
 }
+
+/// `X-Opaque-Id` tag stamped on request-scoped searches so the `_tasks`
+/// API can attribute a server-side task back to the frontend request.
+const OPAQUE_ID_PREFIX: &str = "tabler-";
 
 impl OpenSearchDriver {
     fn read_pem(path: &str, label: &str) -> Result<Vec<u8>> {
@@ -128,6 +136,7 @@ impl OpenSearchDriver {
                     .filter(|value| !value.trim().is_empty()),
             ),
             plugin_id,
+            cancel_registry: RwLock::new(QueryCancelRegistry::new()),
         };
         driver.ping().await?;
         Ok(driver)
@@ -232,14 +241,28 @@ impl OpenSearchDriver {
             None => request,
         })
     }
-
     async fn send_json(&self, method: Method, path: &str, body: Option<&Value>) -> Result<Value> {
+        self.send_json_tagged(method, path, body, None).await
+    }
+
+    /// `send_json` with an optional `X-Opaque-Id` header so the request shows
+    /// up in `GET /_tasks` tagged back to the frontend request that issued it.
+    async fn send_json_tagged(
+        &self,
+        method: Method,
+        path: &str,
+        body: Option<&Value>,
+        opaque_id: Option<&str>,
+    ) -> Result<Value> {
         if let Some(body) = body {
             if serde_json::to_vec(body)?.len() > MAX_REQUEST_BYTES {
                 return Err(anyhow!("OpenSearch query exceeds the plugin request limit"));
             }
         }
         let mut request = self.request(method, path)?;
+        if let Some(opaque_id) = opaque_id {
+            request = request.header("X-Opaque-Id", opaque_id);
+        }
         if let Some(body) = body {
             request = request.json(body);
         }
@@ -278,10 +301,21 @@ impl OpenSearchDriver {
         serde_json::from_slice(&bytes).map_err(Into::into)
     }
 
-    async fn search(&self, index: &str, body: &Value, query_label: String) -> Result<QueryResult> {
+    async fn search(
+        &self,
+        index: &str,
+        body: &Value,
+        query_label: String,
+        opaque_id: Option<&str>,
+    ) -> Result<QueryResult> {
         let started = Instant::now();
         let response = self
-            .send_json(Method::POST, &format!("/{index}/_search"), Some(body))
+            .send_json_tagged(
+                Method::POST,
+                &format!("/{index}/_search"),
+                Some(body),
+                opaque_id,
+            )
             .await?;
         let hits = response
             .pointer("/hits/hits")
@@ -298,6 +332,254 @@ impl OpenSearchDriver {
             query_label,
             truncated,
         ))
+    }
+
+    /// Run a search with `"profile": true` and surface the `profile` section
+    /// as a single-row JSON result — the same plan-cell shape other drivers
+    /// use for EXPLAIN output.
+    async fn explain_search(
+        &self,
+        index: &str,
+        body: &Value,
+        query_label: String,
+        opaque_id: Option<&str>,
+    ) -> Result<QueryResult> {
+        let mut body = body.clone();
+        body["profile"] = json!(true);
+        let started = Instant::now();
+        let response = self
+            .send_json_tagged(
+                Method::POST,
+                &format!("/{index}/_search"),
+                Some(&body),
+                opaque_id,
+            )
+            .await?;
+        let profile = response
+            .get("profile")
+            .cloned()
+            .unwrap_or_else(|| json!({}));
+        let plan_text =
+            serde_json::to_string_pretty(&profile).unwrap_or_else(|_| profile.to_string());
+        Ok(QueryResult {
+            columns: vec![ColumnInfo {
+                name: "query_plan".to_string(),
+                data_type: "json".to_string(),
+                is_nullable: true,
+                is_primary_key: false,
+                max_length: None,
+                default_value: None,
+            }],
+            rows: vec![vec![Value::String(plan_text)]],
+            affected_rows: 0,
+            execution_time_ms: started.elapsed().as_millis(),
+            query: query_label,
+            sandboxed: true,
+            truncated: false,
+        })
+    }
+
+    /// Strip a leading `EXPLAIN` (and an optional `ANALYZE` — profiling always
+    /// executes the search) so the inner JSON body can run with
+    /// `"profile": true`. Returns `None` when the text is not an EXPLAIN.
+    fn strip_explain_prefix(sql: &str) -> Option<&str> {
+        fn strip_keyword<'a>(text: &'a str, keyword: &str) -> Option<&'a str> {
+            let head = text.get(..keyword.len())?;
+            if !head.eq_ignore_ascii_case(keyword) {
+                return None;
+            }
+            // The keyword must be standalone: `EXPLAINABLE` is not EXPLAIN.
+            match text.as_bytes().get(keyword.len()) {
+                Some(byte) if byte.is_ascii_alphanumeric() || *byte == b'_' => None,
+                _ => Some(text[keyword.len()..].trim_start()),
+            }
+        }
+        let rest = sql.trim_start();
+        let mut inner = strip_keyword(rest, "EXPLAIN")?;
+        if let Some(after) = strip_keyword(inner, "ANALYZE") {
+            inner = after;
+        }
+        Some(inner)
+    }
+
+    /// Parse the query text into `(search_body, is_explain)`. A leading
+    /// `EXPLAIN` marks the body for profiling; everything else must be one
+    /// JSON search request body.
+    fn parse_query_body(sql: &str) -> Result<(Value, bool)> {
+        let (text, explain) = match Self::strip_explain_prefix(sql) {
+            Some(inner) => (inner, true),
+            None => (sql, false),
+        };
+        let body: Value = serde_json::from_str(text.trim())
+            .map_err(|_| anyhow!("OpenSearch queries must be one JSON search request body"))?;
+        if !body.is_object() {
+            return Err(anyhow!("OpenSearch query body must be a JSON object"));
+        }
+        Self::validate_search_body(&body)?;
+        Ok((body, explain))
+    }
+
+    /// `X-Opaque-Id` header value for a request id, or `None` when nothing
+    /// header-safe survives sanitization (the task lookup then cannot match,
+    /// so cancel degrades to the pending-abort path).
+    fn opaque_id_for(request_id: &str) -> Option<String> {
+        let sanitized: String = request_id
+            .chars()
+            .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
+            .take(200)
+            .collect();
+        if sanitized.is_empty() {
+            None
+        } else {
+            Some(format!("{OPAQUE_ID_PREFIX}{sanitized}"))
+        }
+    }
+
+    /// Task ids (`node_id:task_id`) in a `GET /_tasks` response whose
+    /// `headers` carry the given opaque id. Header keys are normalized to
+    /// `x_opaque_id` form so `X-Opaque-Id`/`x-opaque-id` spellings all match.
+    fn matching_task_ids(tasks_response: &Value, opaque_id: &str) -> Vec<String> {
+        let mut ids = Vec::new();
+        let Some(nodes) = tasks_response.get("nodes").and_then(Value::as_object) else {
+            return ids;
+        };
+        for node in nodes.values() {
+            let Some(tasks) = node.get("tasks").and_then(Value::as_object) else {
+                continue;
+            };
+            for (task_id, task) in tasks {
+                let matches =
+                    task.get("headers")
+                        .and_then(Value::as_object)
+                        .is_some_and(|headers| {
+                            headers.iter().any(|(name, value)| {
+                                name.to_ascii_lowercase().replace('-', "_") == "x_opaque_id"
+                                    && value.as_str() == Some(opaque_id)
+                            })
+                        });
+                if matches {
+                    ids.push(task_id.clone());
+                }
+            }
+        }
+        ids
+    }
+
+    /// Find the running search task tagged with this opaque id and cancel it.
+    /// Returns `true` when at least one matching task was cancelled.
+    async fn cancel_tasks_by_opaque_id(&self, opaque_id: &str) -> Result<bool> {
+        let tasks = self
+            .send_json(Method::GET, "/_tasks?actions=*search*&detailed", None)
+            .await?;
+        let ids = Self::matching_task_ids(&tasks, opaque_id);
+        if ids.is_empty() {
+            return Ok(false);
+        }
+        for task_id in ids {
+            if !task_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b":_-.".contains(&byte))
+            {
+                return Err(anyhow!(
+                    "OpenSearch task id is outside the driver allowlist"
+                ));
+            }
+            self.send_json(Method::POST, &format!("/_tasks/{task_id}/_cancel"), None)
+                .await?;
+        }
+        Ok(true)
+    }
+
+    /// Validate a `_source` field name for inline writes. Dotted names are
+    /// allowed (OpenSearch expands them into nested objects); metadata fields
+    /// (`_id`, `_index`, `_score`, …) are not writable through `_source`.
+    fn validate_field_name(column: &str) -> Result<&str> {
+        let column = column.trim();
+        if column.is_empty()
+            || column.len() > 255
+            || column.starts_with('_')
+            || column.split('.').any(str::is_empty)
+            || !column
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || b".-_".contains(&byte))
+        {
+            return Err(anyhow!("OpenSearch field name is invalid"));
+        }
+        Ok(column)
+    }
+
+    /// Validate a document id for use in a `/{index}/_doc/{id}` path segment.
+    /// Anything that could break out of the segment (`/`, `?`, `#`, `%`,
+    /// control bytes) is rejected rather than percent-mangled.
+    fn validate_doc_id(id: &str) -> Result<&str> {
+        if id.is_empty()
+            || id.len() > 512
+            || !id
+                .bytes()
+                .all(|byte| (byte.is_ascii_graphic() || byte == b' ') && !b"/?#%".contains(&byte))
+        {
+            return Err(anyhow!("OpenSearch document id is invalid"));
+        }
+        Ok(id)
+    }
+
+    /// Resolve the `(index, document_id)` a pk selector points at. The grid's
+    /// pk selector maps to the document `_id` (surfaced as the `_id` column by
+    /// `get_table_data`); an optional `_index` selector column overrides the
+    /// target index so edits on index patterns hit the concrete index.
+    fn document_target(
+        &self,
+        table: &str,
+        database: Option<&str>,
+        primary_keys: &[RowKeyValue],
+    ) -> Result<(String, String)> {
+        let mut doc_id = None;
+        let mut index_override = None;
+        for key in primary_keys {
+            match key.column.as_str() {
+                "_id" => {
+                    doc_id = Some(
+                        key.value
+                            .as_str()
+                            .ok_or_else(|| anyhow!("OpenSearch _id selector must be a string"))?
+                            .to_string(),
+                    );
+                }
+                "_index" => {
+                    index_override = Some(
+                        key.value
+                            .as_str()
+                            .ok_or_else(|| anyhow!("OpenSearch _index selector must be a string"))?
+                            .to_string(),
+                    );
+                }
+                _ => {}
+            }
+        }
+        let doc_id = Self::validate_doc_id(&doc_id.ok_or_else(|| {
+            anyhow!("OpenSearch inline edits require the _id column as the row selector")
+        })?)?
+        .to_string();
+        let index = match index_override {
+            Some(index) => Self::validate_index(&index)?.to_string(),
+            None => self.index_for(if table.trim().is_empty() {
+                database
+            } else {
+                Some(table)
+            })?,
+        };
+        Ok((index, doc_id))
+    }
+
+    /// `POST /{index}/_update/{id}` body for one cell edit: a partial `doc`
+    /// merge keyed by the literal `_source` field name the grid displays.
+    fn build_update_body(column: &str, value: &Value) -> Result<Value> {
+        let column = Self::validate_field_name(column)?;
+        let mut doc = Map::new();
+        doc.insert(column.to_string(), value.clone());
+        let mut body = Map::new();
+        body.insert("doc".to_string(), Value::Object(doc));
+        Ok(Value::Object(body))
     }
 
     fn hits_to_result(
@@ -370,8 +652,21 @@ impl OpenSearchDriver {
         }
     }
 
-    fn readonly_error() -> anyhow::Error {
-        anyhow!("OpenSearch declarative driver ABI v1 is read-only")
+    /// Shared query path: parse the body, then run it as a plain search or a
+    /// `profile: true` explain. `opaque_id` tags the `_search` request so the
+    /// `_tasks` API can attribute it to the frontend request.
+    async fn execute_query_inner(&self, sql: &str, opaque_id: Option<&str>) -> Result<QueryResult> {
+        if sql.len() > MAX_REQUEST_BYTES {
+            return Err(anyhow!("OpenSearch query exceeds the plugin request limit"));
+        }
+        let (body, explain) = Self::parse_query_body(sql)?;
+        let index = self.index_for(None)?;
+        if explain {
+            self.explain_search(&index, &body, sql.to_string(), opaque_id)
+                .await
+        } else {
+            self.search(&index, &body, sql.to_string(), opaque_id).await
+        }
     }
 
     /// Call the OpenSearch security plugin REST API (`/_plugins/_security/...`)
@@ -502,17 +797,43 @@ impl DatabaseDriver for OpenSearchDriver {
     }
 
     async fn execute_query(&self, sql: &str) -> Result<QueryResult> {
-        if sql.len() > MAX_REQUEST_BYTES {
-            return Err(anyhow!("OpenSearch query exceeds the plugin request limit"));
+        self.execute_query_inner(sql, None).await
+    }
+
+    /// Request-scoped execution: the `_search` request is tagged with
+    /// `X-Opaque-Id: tabler-<request_id>` so `cancel_query_request` can find
+    /// the matching task in `GET /_tasks` and cancel it server-side.
+    async fn execute_query_for_request(&self, request_id: &str, sql: &str) -> Result<QueryResult> {
+        if request_id.trim().is_empty() {
+            return self.execute_query(sql).await;
         }
-        let body: Value = serde_json::from_str(sql.trim())
-            .map_err(|_| anyhow!("OpenSearch queries must be one JSON search request body"))?;
-        if !body.is_object() {
-            return Err(anyhow!("OpenSearch query body must be a JSON object"));
+        let guard = CancelScopeGuard::begin(&self.cancel_registry, request_id);
+        // The task is located by its opaque-id header, not a backend id —
+        // registering a marker only resolves the pending-cancel race.
+        if guard.register_backend(0) {
+            return Err(anyhow!("Query cancelled."));
         }
-        Self::validate_search_body(&body)?;
-        let index = self.index_for(None)?;
-        self.search(&index, &body, sql.to_string()).await
+        let result = self
+            .execute_query_inner(sql, Self::opaque_id_for(request_id).as_deref())
+            .await;
+        drop(guard);
+        result
+    }
+
+    /// Cancels by listing `GET /_tasks?actions=*search*&detailed`, matching
+    /// the task whose `headers` carry this request's `X-Opaque-Id`, and
+    /// issuing `POST /_tasks/{task_id}/_cancel` for it.
+    async fn cancel_query_request(&self, request_id: &str) -> Result<bool> {
+        match request_cancel(&self.cancel_registry, request_id) {
+            CancelLookup::NotRunning => Ok(false),
+            // Cancel was recorded before the search was sent; the scoped
+            // execute path aborts before the request leaves.
+            CancelLookup::Pending => Ok(true),
+            CancelLookup::Backend(_) => match Self::opaque_id_for(request_id) {
+                Some(opaque_id) => self.cancel_tasks_by_opaque_id(&opaque_id).await,
+                None => Ok(false),
+            },
+        }
     }
 
     async fn get_table_data(
@@ -561,7 +882,7 @@ impl DatabaseDriver for OpenSearchDriver {
             body["size"] = json!(limit.min(MAX_RESULT_ROWS as u64));
             Self::validate_search_body(&body)?;
             return self
-                .search(index, &body, format!("Browse index {index}"))
+                .search(index, &body, format!("Browse index {index}"), None)
                 .await;
         }
 
@@ -803,14 +1124,89 @@ impl DatabaseDriver for OpenSearchDriver {
             .ok_or_else(|| anyhow!("OpenSearch count response is invalid"))
     }
 
-    async fn update_table_cell(&self, _request: &TableCellUpdateRequest) -> Result<u64> {
-        Err(Self::readonly_error())
+    /// Partial update via `POST /{index}/_update/{id}` with a `doc` merge
+    /// body. Row identity is the document `_id` (the grid's pk selector maps
+    /// to `_id`; an `_index` selector column overrides the target index).
+    async fn update_table_cell(&self, request: &TableCellUpdateRequest) -> Result<u64> {
+        let (index, doc_id) = self.document_target(
+            &request.table,
+            request.database.as_deref(),
+            &request.primary_keys,
+        )?;
+        let body = Self::build_update_body(&request.target_column, &request.value)?;
+        let response = self
+            .send_json(
+                Method::POST,
+                &format!("/{index}/_update/{doc_id}"),
+                Some(&body),
+            )
+            .await?;
+        Ok(match response.get("result").and_then(Value::as_str) {
+            Some("updated") | Some("noop") => 1,
+            _ => 0,
+        })
     }
-    async fn delete_table_rows(&self, _request: &TableRowDeleteRequest) -> Result<u64> {
-        Err(Self::readonly_error())
+
+    /// Deletes each selected document via `DELETE /{index}/_doc/{id}`; the
+    /// `_id` selector column carries the document id.
+    async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64> {
+        if request.rows.is_empty() {
+            return Err(anyhow!("Deleting rows requires at least one selected row"));
+        }
+        let mut deleted = 0u64;
+        for row in &request.rows {
+            let (index, doc_id) =
+                self.document_target(&request.table, request.database.as_deref(), row)?;
+            let response = self
+                .send_json(Method::DELETE, &format!("/{index}/_doc/{doc_id}"), None)
+                .await?;
+            if response.get("result").and_then(Value::as_str) == Some("deleted") {
+                deleted += 1;
+            }
+        }
+        Ok(deleted)
     }
-    async fn insert_table_row(&self, _request: &TableRowInsertRequest) -> Result<u64> {
-        Err(Self::readonly_error())
+
+    /// Inserts one document. When the row carries an `_id` value it becomes
+    /// the document id via `PUT /{index}/_create/{id}` (conflict-safe create);
+    /// otherwise `POST /{index}/_doc` lets the server assign one.
+    async fn insert_table_row(&self, request: &TableRowInsertRequest) -> Result<u64> {
+        let index = self.index_for(if request.table.trim().is_empty() {
+            request.database.as_deref()
+        } else {
+            Some(request.table.as_str())
+        })?;
+        let mut doc = Map::new();
+        let mut doc_id = None;
+        for (column, value) in &request.values {
+            if column == "_id" {
+                doc_id = Some(
+                    value
+                        .as_str()
+                        .ok_or_else(|| anyhow!("OpenSearch _id must be a string"))?
+                        .to_string(),
+                );
+                continue;
+            }
+            let column = Self::validate_field_name(column)?;
+            doc.insert(column.to_string(), value.clone());
+        }
+        let body = Value::Object(doc);
+        let response = match doc_id {
+            Some(id) => {
+                let id = Self::validate_doc_id(&id)?;
+                self.send_json(Method::PUT, &format!("/{index}/_create/{id}"), Some(&body))
+                    .await?
+            }
+            None => {
+                self.send_json(Method::POST, &format!("/{index}/_doc"), Some(&body))
+                    .await?
+            }
+        };
+        Ok(match response.get("result").and_then(Value::as_str) {
+            Some("created") => 1,
+            _ => 0,
+        })
     }
     async fn use_database(&self, database: &str) -> Result<()> {
         let index = Self::validate_index(database)?.to_string();
@@ -849,7 +1245,9 @@ impl DatabaseDriver for OpenSearchDriver {
 mod tests {
     use super::*;
     use axum::{
-        routing::{get, post},
+        extract::Path,
+        http::HeaderMap,
+        routing::{delete, get, post, put},
         Json, Router,
     };
     use tokio::net::TcpListener;
@@ -875,31 +1273,151 @@ mod tests {
         .is_err());
     }
 
-    #[tokio::test]
-    async fn mutating_driver_operations_are_isolated_and_rejected() {
-        let driver = OpenSearchDriver {
+    fn test_driver() -> OpenSearchDriver {
+        OpenSearchDriver {
             client: Client::new(),
             base_url: Url::parse("http://127.0.0.1:9200/").unwrap(),
             username: None,
             password: None,
             current_index: RwLock::new(Some("logs".to_string())),
             plugin_id: "opensearch-driver".to_string(),
-        };
-        let request = TableRowInsertRequest {
-            table: "logs".to_string(),
-            database: None,
-            values: vec![],
-        };
+            cancel_registry: RwLock::new(QueryCancelRegistry::new()),
+        }
+    }
+
+    #[test]
+    fn strips_explain_prefixes() {
+        assert_eq!(
+            OpenSearchDriver::strip_explain_prefix("EXPLAIN {\"size\":1}"),
+            Some("{\"size\":1}")
+        );
+        assert_eq!(
+            OpenSearchDriver::strip_explain_prefix("  explain analyze {\"size\":1}"),
+            Some("{\"size\":1}")
+        );
+        assert_eq!(OpenSearchDriver::strip_explain_prefix("{\"size\":1}"), None);
+        // "EXPLAIN" must be a standalone keyword, not a JSON key prefix.
+        assert_eq!(OpenSearchDriver::strip_explain_prefix("EXPLAINABLE"), None);
+    }
+
+    #[test]
+    fn parses_explain_bodies() {
+        let (body, explain) =
+            OpenSearchDriver::parse_query_body("EXPLAIN {\"query\":{\"match_all\":{}}}").unwrap();
+        assert!(explain);
+        assert_eq!(body["query"]["match_all"], json!({}));
+        let (_, explain) =
+            OpenSearchDriver::parse_query_body("{\"query\":{\"match_all\":{}}}").unwrap();
+        assert!(!explain);
+        assert!(OpenSearchDriver::parse_query_body("EXPLAIN not json").is_err());
+    }
+
+    #[test]
+    fn opaque_ids_are_sanitized() {
+        assert_eq!(
+            OpenSearchDriver::opaque_id_for("req-1_2.3"),
+            Some("tabler-req-1_2.3".to_string())
+        );
+        assert_eq!(
+            OpenSearchDriver::opaque_id_for("a b\tc"),
+            Some("tabler-abc".to_string())
+        );
+        assert_eq!(OpenSearchDriver::opaque_id_for(" \t\n"), None);
+    }
+
+    #[test]
+    fn matches_tasks_by_opaque_id_header() {
+        let response = json!({
+            "nodes": {
+                "node-a": {
+                    "tasks": {
+                        "node-a:42": {
+                            "action": "indices:data/read/search",
+                            "headers": { "X-Opaque-Id": "tabler-req-9" }
+                        },
+                        "node-a:43": {
+                            "action": "indices:data/read/search",
+                            "headers": { "x-opaque-id": "tabler-other" }
+                        }
+                    }
+                },
+                "node-b": {
+                    "tasks": {
+                        "node-b:7": {
+                            "action": "indices:data/read/search",
+                            "headers": { "X_OPAQUE_ID": "tabler-req-9" }
+                        }
+                    }
+                }
+            }
+        });
+        let ids = OpenSearchDriver::matching_task_ids(&response, "tabler-req-9");
+        assert_eq!(ids.len(), 2);
+        assert!(ids.contains(&"node-a:42".to_string()));
+        assert!(ids.contains(&"node-b:7".to_string()));
+        assert!(OpenSearchDriver::matching_task_ids(&response, "tabler-missing").is_empty());
+        assert!(OpenSearchDriver::matching_task_ids(&json!({}), "tabler-req-9").is_empty());
+    }
+
+    #[test]
+    fn builds_update_body_as_doc_merge() {
+        let body = OpenSearchDriver::build_update_body("message", &json!("hi")).unwrap();
+        assert_eq!(body, json!({ "doc": { "message": "hi" } }));
+        assert!(OpenSearchDriver::build_update_body("_id", &json!("x")).is_err());
+        assert!(OpenSearchDriver::build_update_body("a..b", &json!(1)).is_err());
+        assert!(OpenSearchDriver::build_update_body("bad name", &json!(1)).is_err());
+    }
+
+    #[test]
+    fn resolves_document_targets_from_pk_selectors() {
+        let driver = test_driver();
+        let keys = vec![
+            RowKeyValue {
+                column: "_id".to_string(),
+                value: json!("doc-1"),
+            },
+            RowKeyValue {
+                column: "level".to_string(),
+                value: json!("info"),
+            },
+        ];
+        let (index, id) = driver.document_target("logs", None, &keys).unwrap();
+        assert_eq!((index.as_str(), id.as_str()), ("logs", "doc-1"));
+
+        let keys = vec![
+            RowKeyValue {
+                column: "_id".to_string(),
+                value: json!("doc-2"),
+            },
+            RowKeyValue {
+                column: "_index".to_string(),
+                value: json!("logs-2026"),
+            },
+        ];
+        let (index, id) = driver.document_target("logs-*", None, &keys).unwrap();
+        assert_eq!((index.as_str(), id.as_str()), ("logs-2026", "doc-2"));
+
         assert!(driver
-            .insert_table_row(&request)
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("read-only"));
+            .document_target(
+                "logs",
+                None,
+                &[RowKeyValue {
+                    column: "level".to_string(),
+                    value: json!("info"),
+                }]
+            )
+            .is_err());
+        assert!(OpenSearchDriver::validate_doc_id("a/b").is_err());
+        assert!(OpenSearchDriver::validate_doc_id("a?b").is_err());
+        assert!(OpenSearchDriver::validate_doc_id("plain-id_1.2").is_ok());
     }
 
     #[tokio::test]
     async fn declarative_driver_browses_a_live_opensearch_contract() {
+        let opaque_ids = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::<String>::new()));
+        let cancelled_tasks = std::sync::Arc::new(tokio::sync::Mutex::new(Vec::<String>::new()));
+        let search_opaque = opaque_ids.clone();
+        let cancel_capture = cancelled_tasks.clone();
         let app = Router::new()
             .route(
                 "/",
@@ -928,26 +1446,109 @@ mod tests {
             )
             .route(
                 "/logs/_search",
-                post(|| async {
-                    Json(json!({
-                        "hits": {
-                            "total": { "value": 2 },
-                            "hits": [
-                                {
-                                    "_index": "logs",
-                                    "_id": "1",
-                                    "_score": 1.0,
-                                    "_source": { "level": "info", "message": "ready" }
-                                }
-                            ]
+                post(move |headers: HeaderMap, Json(body): Json<Value>| {
+                    let capture = search_opaque.clone();
+                    async move {
+                        if let Some(value) = headers.get("x-opaque-id") {
+                            capture
+                                .lock()
+                                .await
+                                .push(value.to_str().unwrap_or("").to_string());
                         }
-                    }))
+                        if body.get("profile") == Some(&json!(true)) {
+                            return Json(json!({
+                                "hits": { "total": { "value": 0 }, "hits": [] },
+                                "profile": { "shards": [{ "id": "[node][logs][0]" }] }
+                            }));
+                        }
+                        Json(json!({
+                            "hits": {
+                                "total": { "value": 2 },
+                                "hits": [
+                                    {
+                                        "_index": "logs",
+                                        "_id": "1",
+                                        "_score": 1.0,
+                                        "_source": { "level": "info", "message": "ready" }
+                                    }
+                                ]
+                            }
+                        }))
+                    }
                 }),
             )
             .route(
                 "/logs/_count",
                 get(|| async { Json(json!({ "count": 2 })) })
                     .post(|| async { Json(json!({ "count": 1 })) }),
+            )
+            .route(
+                "/logs/_update/:id",
+                post(
+                    |Path(id): Path<String>, Json(body): Json<Value>| async move {
+                        assert_eq!(id, "doc-1");
+                        assert_eq!(body, json!({ "doc": { "message": "updated" } }));
+                        Json(json!({ "result": "updated" }))
+                    },
+                ),
+            )
+            .route(
+                "/logs/_doc/:id",
+                delete(|Path(id): Path<String>| async move {
+                    assert_eq!(id, "doc-1");
+                    Json(json!({ "result": "deleted" }))
+                })
+                .post(
+                    |Path(id): Path<String>, Json(body): Json<Value>| async move {
+                        assert_eq!(id, "doc-9");
+                        assert_eq!(body, json!({ "level": "warn" }));
+                        Json(json!({ "result": "created" }))
+                    },
+                ),
+            )
+            .route(
+                "/logs/_doc",
+                post(|Json(body): Json<Value>| async move {
+                    assert_eq!(body, json!({ "level": "info" }));
+                    Json(json!({ "result": "created", "_id": "generated" }))
+                }),
+            )
+            .route(
+                "/logs/_create/:id",
+                put(
+                    |Path(id): Path<String>, Json(body): Json<Value>| async move {
+                        assert_eq!(id, "doc-7");
+                        assert_eq!(body, json!({ "level": "error" }));
+                        Json(json!({ "result": "created" }))
+                    },
+                ),
+            )
+            .route(
+                "/_tasks",
+                get(|| async {
+                    Json(json!({
+                        "nodes": {
+                            "node-a": {
+                                "tasks": {
+                                    "node-a:42": {
+                                        "action": "indices:data/read/search",
+                                        "headers": { "X-Opaque-Id": "tabler-req-cancel" }
+                                    }
+                                }
+                            }
+                        }
+                    }))
+                }),
+            )
+            .route(
+                "/_tasks/:task/_cancel",
+                post(move |Path(task): Path<String>| {
+                    let capture = cancel_capture.clone();
+                    async move {
+                        capture.lock().await.push(task);
+                        Json(json!({ "nodes": {} }))
+                    }
+                }),
             );
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
@@ -984,6 +1585,91 @@ mod tests {
         assert!(result.sandboxed);
         assert!(result.truncated);
         assert_eq!(driver.count_rows("logs", None).await.unwrap(), 2);
+
+        // Inline edit: _update merges the doc body keyed by the literal field.
+        let updated = driver
+            .update_table_cell(&TableCellUpdateRequest {
+                table: "logs".to_string(),
+                database: None,
+                target_column: "message".to_string(),
+                value: json!("updated"),
+                primary_keys: vec![RowKeyValue {
+                    column: "_id".to_string(),
+                    value: json!("doc-1"),
+                }],
+            })
+            .await
+            .unwrap();
+        assert_eq!(updated, 1);
+
+        let deleted = driver
+            .delete_table_rows(&TableRowDeleteRequest {
+                table: "logs".to_string(),
+                database: None,
+                rows: vec![vec![RowKeyValue {
+                    column: "_id".to_string(),
+                    value: json!("doc-1"),
+                }]],
+            })
+            .await
+            .unwrap();
+        assert_eq!(deleted, 1);
+
+        // Insert without _id → POST _doc; with _id → PUT _create/{id}.
+        let inserted = driver
+            .insert_table_row(&TableRowInsertRequest {
+                table: "logs".to_string(),
+                database: None,
+                values: vec![("level".to_string(), json!("info"))],
+            })
+            .await
+            .unwrap();
+        assert_eq!(inserted, 1);
+        let inserted = driver
+            .insert_table_row(&TableRowInsertRequest {
+                table: "logs".to_string(),
+                database: None,
+                values: vec![
+                    ("_id".to_string(), json!("doc-7")),
+                    ("level".to_string(), json!("error")),
+                ],
+            })
+            .await
+            .unwrap();
+        assert_eq!(inserted, 1);
+
+        // EXPLAIN wraps the body with "profile": true and returns the plan.
+        let plan = driver
+            .execute_query(r#"EXPLAIN {"query":{"match_all":{}}}"#)
+            .await
+            .unwrap();
+        assert_eq!(plan.columns[0].name, "query_plan");
+        let plan_text = plan.rows[0][0].as_str().unwrap();
+        assert!(plan_text.contains("shards"));
+
+        // Request-scoped queries carry the X-Opaque-Id tag.
+        driver
+            .execute_query_for_request("req-tag", r#"{"query":{"match_all":{}}}"#)
+            .await
+            .unwrap();
+        assert_eq!(
+            opaque_ids.lock().await.as_slice(),
+            ["tabler-req-tag".to_string()]
+        );
+
+        // Cancel: no running request → false; open scope + matching task →
+        // the task id is cancelled server-side.
+        assert!(!driver.cancel_query_request("req-cancel").await.unwrap());
+        {
+            let guard = CancelScopeGuard::begin(&driver.cancel_registry, "req-cancel");
+            guard.register_backend(0);
+            assert!(driver.cancel_query_request("req-cancel").await.unwrap());
+            drop(guard);
+        }
+        assert_eq!(
+            cancelled_tasks.lock().await.as_slice(),
+            ["node-a:42".to_string()]
+        );
 
         server.abort();
     }

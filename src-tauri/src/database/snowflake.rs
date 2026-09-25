@@ -160,7 +160,6 @@ impl SnowflakeDriver {
                 timestamp_tz_output_format: "YYYY-MM-DD HH24:MI:SS.FF3 TZHTZM",
                 timezone: "UTC",
                 use_cached_result: true,
-                multi_statement_count: None,
             },
         }
     }
@@ -288,7 +287,7 @@ impl SnowflakeDriver {
 
         let started_at = Instant::now();
         let initial = self
-            .post_statement(trimmed_sql, database_override, bindings, None)
+            .post_statement(trimmed_sql, database_override, bindings)
             .await?;
 
         // The POST response carries the statement handle immediately, even
@@ -935,6 +934,40 @@ impl DatabaseDriver for SnowflakeDriver {
         Ok(result.affected_rows)
     }
 
+    /// Apply the staged edit queue inside one transaction: BEGIN, one bound
+    /// UPDATE per request, COMMIT. The SQL API session persists via the auth
+    /// token, so sequential requests share the transaction — a failed BEGIN
+    /// (e.g. a sessionless token) rejects the queue instead of applying it
+    /// non-atomically. A row that no longer matches its primary-key selector
+    /// rolls the whole queue back.
+    async fn apply_table_updates_atomically(
+        &self,
+        updates: &[TableCellUpdateRequest],
+    ) -> Result<u64> {
+        self.run_atomic_transaction(|| async {
+            let mut affected_rows = 0u64;
+            for request in updates {
+                let (sql, parameters) = self.build_bound_update(request)?;
+                let result = self
+                    .execute_bound_query(
+                        &sql,
+                        None,
+                        &sql,
+                        Some(Self::statement_bindings(&parameters)?),
+                    )
+                    .await?;
+                if result.affected_rows == 0 {
+                    return Err(anyhow!(
+                        "An edit queue row no longer matches its primary-key selector"
+                    ));
+                }
+                affected_rows += result.affected_rows;
+            }
+            Ok(affected_rows)
+        })
+        .await
+    }
+
     async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64> {
         if request.rows.is_empty() {
             return Err(anyhow!("Deleting rows requires at least one selected row"));
@@ -998,6 +1031,13 @@ impl DatabaseDriver for SnowflakeDriver {
             .await?;
         Ok(result.affected_rows)
     }
+
+    /// Insert every staged row inside one transaction: BEGIN, one bound
+    /// INSERT per request, COMMIT. The SQL API session persists via the auth
+    /// token, so sequential requests share the transaction — a failed BEGIN
+    /// (e.g. a sessionless token) rejects the import instead of applying it
+    /// non-atomically. Cancellation or any row failure rolls the whole file
+    /// back.
     async fn insert_table_rows_atomically(
         &self,
         requests: &[TableRowInsertRequest],
@@ -1010,52 +1050,97 @@ impl DatabaseDriver for SnowflakeDriver {
             return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
         }
 
-        // One multi-statement request keeps every INSERT inside a single
-        // server-side transaction: BEGIN; INSERT…; COMMIT.
-        let statement_count = requests.len() as u64 + 2;
-        let mut parameters = Vec::new();
-        let statement = self.build_atomic_insert_batch(requests, true, &mut parameters)?;
-        let bindings = Self::statement_bindings(&parameters)?;
-        let attempted = async {
-            let response = self
-                .post_statement(&statement, None, Some(bindings), Some(statement_count))
-                .await?;
-            self.await_result_set(response).await
-        };
-
-        match attempted.await {
-            // Snowflake does not support bind variables in multi-statement
-            // requests; retry once with escaped literals when it rejects them.
-            Err(error) if Self::is_multi_statement_binding_error(&error) => {
-                let literal_statement =
-                    self.build_atomic_insert_batch(requests, false, &mut Vec::new())?;
-                let response = self
-                    .post_statement(&literal_statement, None, None, Some(statement_count))
+        self.run_atomic_transaction(|| async {
+            let mut affected_rows = 0u64;
+            for request in requests {
+                if cancelled.load(Ordering::Relaxed) {
+                    return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+                }
+                let (sql, parameters) = self.build_bound_insert(request)?;
+                let result = self
+                    .execute_bound_query(
+                        &sql,
+                        None,
+                        &sql,
+                        Some(Self::statement_bindings(&parameters)?),
+                    )
                     .await?;
-                self.await_result_set(response).await?;
+                affected_rows += result.affected_rows;
             }
-            other => {
-                other?;
-            }
-        }
-
-        Ok(requests.len() as u64)
+            Ok(affected_rows)
+        })
+        .await
     }
 
+    /// Streamed CSV import: the transaction opens before the first row and
+    /// each parsed row is inserted as it arrives, so a parse error, a cancel,
+    /// or an early channel close rolls every inserted row back instead of
+    /// leaving a partial import behind.
     async fn insert_table_row_stream_atomically(
         &self,
         mut rows: tokio::sync::mpsc::Receiver<crate::database::models::CsvImportRow>,
         cancelled: Arc<AtomicBool>,
     ) -> Result<u64> {
-        let mut requests = Vec::new();
-        while let Some(row) = rows.recv().await {
-            if cancelled.load(Ordering::Relaxed) {
-                return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
-            }
-            requests.push(row.map_err(anyhow::Error::msg)?);
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
         }
-        self.insert_table_rows_atomically(&requests, cancelled)
-            .await
+
+        self.run_atomic_transaction(|| async {
+            let mut affected_rows = 0u64;
+            let mut received = 0usize;
+            while let Some(row) = rows.recv().await {
+                if cancelled.load(Ordering::Relaxed) {
+                    return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+                }
+                let request = row.map_err(anyhow::Error::msg)?;
+                received += 1;
+                let (sql, parameters) = self.build_bound_insert(&request)?;
+                let result = self
+                    .execute_bound_query(
+                        &sql,
+                        None,
+                        &sql,
+                        Some(Self::statement_bindings(&parameters)?),
+                    )
+                    .await?;
+                affected_rows += result.affected_rows;
+            }
+            if received == 0 {
+                return Err(anyhow!("CSV import requires at least one row"));
+            }
+            Ok(affected_rows)
+        })
+        .await
+    }
+
+    /// Write preview: BEGIN, run each statement inside the transaction, then
+    /// ALWAYS ROLLBACK so nothing persists. A failed rollback is surfaced —
+    /// reporting a clean preview whose writes may have committed would be a
+    /// lie.
+    async fn preview_write_transaction(&self, statements: &[String]) -> Result<Vec<QueryResult>> {
+        self.run_transaction_control("BEGIN").await?;
+        let mut results = Vec::with_capacity(statements.len());
+        let execution = async {
+            for statement in statements {
+                let mut result = self
+                    .execute_single_query(statement, None, statement)
+                    .await?;
+                result.sandboxed = true;
+                results.push(result);
+            }
+            Ok::<_, anyhow::Error>(())
+        }
+        .await;
+
+        let rollback = self.run_transaction_control("ROLLBACK").await;
+        execution?;
+        if let Err(error) = rollback {
+            log::error!("Snowflake write-preview rollback failed: {error}");
+            return Err(anyhow!(
+                "Write preview rollback failed; the previewed statements may have been committed: {error}"
+            ));
+        }
+        Ok(results)
     }
 
     async fn use_database(&self, database: &str) -> Result<()> {
@@ -1137,9 +1222,12 @@ impl DatabaseDriver for SnowflakeDriver {
 
 #[cfg(test)]
 mod tests {
+    use super::super::driver::DatabaseDriver;
     use super::super::models::{QueryParameter, QueryParameterType};
     use super::SnowflakeDriver;
     use serde_json::json;
+    use std::sync::atomic::AtomicBool;
+    use std::sync::Mutex;
 
     fn test_driver() -> SnowflakeDriver {
         use super::super::query_cancel::QueryCancelRegistry;
@@ -1245,5 +1333,347 @@ mod tests {
             QueryParameterType::Integer,
         )])
         .is_err());
+    }
+
+    #[test]
+    fn builds_bound_update_with_positional_parameters() {
+        use super::super::models::{RowKeyValue, TableCellUpdateRequest};
+
+        let driver = test_driver();
+        let request = TableCellUpdateRequest {
+            table: "TESTDB.PUBLIC.ITEMS".to_string(),
+            database: None,
+            target_column: "name".to_string(),
+            value: json!("O'Reilly"),
+            primary_keys: vec![
+                RowKeyValue {
+                    column: "id".to_string(),
+                    value: json!(7),
+                },
+                RowKeyValue {
+                    column: "deleted_at".to_string(),
+                    value: json!(null),
+                },
+            ],
+        };
+
+        let (sql, parameters) = driver.build_bound_update(&request).unwrap();
+        assert_eq!(
+            sql,
+            "UPDATE \"TESTDB\".\"PUBLIC\".\"ITEMS\" SET \"name\" = ? WHERE \"id\" = ? AND \"deleted_at\" IS NULL"
+        );
+        assert_eq!(parameters.len(), 2);
+        assert_eq!(parameters[0].value, json!("O'Reilly"));
+        assert_eq!(parameters[1].value, json!(7));
+    }
+
+    #[test]
+    fn builds_bound_insert_with_parse_json_for_variant() {
+        use super::super::models::TableRowInsertRequest;
+
+        let driver = test_driver();
+        let request = TableRowInsertRequest {
+            table: "TESTDB.PUBLIC.ITEMS".to_string(),
+            database: None,
+            values: vec![
+                ("id".to_string(), json!(3)),
+                ("payload".to_string(), json!({"a": 1})),
+            ],
+        };
+
+        let (sql, parameters) = driver.build_bound_insert(&request).unwrap();
+        assert_eq!(
+            sql,
+            "INSERT INTO \"TESTDB\".\"PUBLIC\".\"ITEMS\" (\"id\", \"payload\") VALUES (?, PARSE_JSON(?))"
+        );
+        assert_eq!(parameters.len(), 2);
+        assert_eq!(parameters[1].data_type, QueryParameterType::Json);
+    }
+
+    /// Minimal SQL API stub: records every submitted statement and returns a
+    /// ready result set (or a canned failure) so transaction sequencing can
+    /// be asserted without a live account.
+    struct MockSnowflake {
+        statements: Mutex<Vec<String>>,
+        fail_on: Option<String>,
+        /// Statements containing this needle report zero affected rows —
+        /// simulates a stale primary-key selector without a server error.
+        zero_rows_on: Option<String>,
+    }
+
+    async fn mock_statement(
+        axum::extract::State(state): axum::extract::State<std::sync::Arc<MockSnowflake>>,
+        axum::Json(payload): axum::Json<serde_json::Value>,
+    ) -> (axum::http::StatusCode, axum::Json<serde_json::Value>) {
+        let statement = payload
+            .get("statement")
+            .and_then(|value| value.as_str())
+            .unwrap_or_default()
+            .to_string();
+        state
+            .statements
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(statement.clone());
+
+        if state
+            .fail_on
+            .as_deref()
+            .map(|needle| statement.contains(needle))
+            .unwrap_or(false)
+        {
+            return (
+                axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                axum::Json(json!({
+                    "code": "1003",
+                    "sqlState": "42000",
+                    "message": format!("mock failure for: {statement}"),
+                })),
+            );
+        }
+
+        let stats = if state
+            .zero_rows_on
+            .as_deref()
+            .map(|needle| statement.contains(needle))
+            .unwrap_or(false)
+        {
+            json!({"numRowsUpdated": 0, "numRowsInserted": 0})
+        } else if statement.starts_with("UPDATE") {
+            json!({"numRowsUpdated": 1})
+        } else if statement.starts_with("INSERT") {
+            json!({"numRowsInserted": 1})
+        } else {
+            json!({})
+        };
+        (
+            axum::http::StatusCode::OK,
+            axum::Json(json!({
+                "statementHandle": "mock-handle",
+                "resultSetMetaData": {"numRows": 0, "rowType": [], "partitionInfo": []},
+                "data": [],
+                "stats": stats,
+            })),
+        )
+    }
+
+    async fn mock_driver(
+        fail_on: Option<&str>,
+        zero_rows_on: Option<&str>,
+    ) -> (SnowflakeDriver, std::sync::Arc<MockSnowflake>) {
+        let state = std::sync::Arc::new(MockSnowflake {
+            statements: Mutex::new(Vec::new()),
+            fail_on: fail_on.map(str::to_string),
+            zero_rows_on: zero_rows_on.map(str::to_string),
+        });
+        let app = axum::Router::new()
+            .route("/api/v2/statements", axum::routing::post(mock_statement))
+            .with_state(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let mut driver = test_driver();
+        driver.root_url = format!("http://{address}");
+        driver.statements_url = format!("http://{address}/api/v2/statements");
+        (driver, state)
+    }
+
+    fn recorded(state: &MockSnowflake) -> Vec<String> {
+        state
+            .statements
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .clone()
+    }
+
+    fn update_request(id: i64) -> super::super::models::TableCellUpdateRequest {
+        update_request_on_column(id, "name")
+    }
+
+    fn update_request_on_column(
+        id: i64,
+        target_column: &str,
+    ) -> super::super::models::TableCellUpdateRequest {
+        super::super::models::TableCellUpdateRequest {
+            table: "TESTDB.PUBLIC.ITEMS".to_string(),
+            database: None,
+            target_column: target_column.to_string(),
+            value: json!(format!("name-{id}")),
+            primary_keys: vec![super::super::models::RowKeyValue {
+                column: "id".to_string(),
+                value: json!(id),
+            }],
+        }
+    }
+
+    fn insert_request(id: i64) -> super::super::models::TableRowInsertRequest {
+        super::super::models::TableRowInsertRequest {
+            table: "TESTDB.PUBLIC.ITEMS".to_string(),
+            database: None,
+            values: vec![("id".to_string(), json!(id))],
+        }
+    }
+
+    #[tokio::test]
+    async fn atomic_edit_queue_runs_begin_updates_commit() {
+        let (driver, state) = mock_driver(None, None).await;
+        let affected = driver
+            .apply_table_updates_atomically(&[update_request(1), update_request(2)])
+            .await
+            .unwrap();
+
+        assert_eq!(affected, 2);
+        let statements = recorded(&state);
+        assert_eq!(statements.first().map(String::as_str), Some("BEGIN"));
+        assert_eq!(statements.last().map(String::as_str), Some("COMMIT"));
+        assert_eq!(statements.len(), 4);
+        assert!(statements[1].starts_with("UPDATE "));
+        assert!(statements[2].starts_with("UPDATE "));
+    }
+
+    #[tokio::test]
+    async fn atomic_edit_queue_rolls_back_when_row_is_stale() {
+        // The second UPDATE reports zero affected rows (stale primary-key
+        // selector) → the whole queue must roll back.
+        let (driver, state) = mock_driver(None, Some("\"stale_col\"")).await;
+        let error = driver
+            .apply_table_updates_atomically(&[
+                update_request(1),
+                update_request_on_column(2, "stale_col"),
+            ])
+            .await
+            .unwrap_err();
+
+        assert!(error
+            .to_string()
+            .contains("no longer matches its primary-key selector"));
+        let statements = recorded(&state);
+        assert_eq!(statements.first().map(String::as_str), Some("BEGIN"));
+        assert_eq!(statements.last().map(String::as_str), Some("ROLLBACK"));
+        assert!(!statements.iter().any(|sql| sql == "COMMIT"));
+    }
+
+    #[tokio::test]
+    async fn atomic_edit_queue_surfaces_begin_failure() {
+        let (driver, state) = mock_driver(Some("BEGIN"), None).await;
+        let error = driver
+            .apply_table_updates_atomically(&[update_request(1)])
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("mock failure"));
+        // Nothing ran after the failed BEGIN — no non-atomic fallback.
+        assert_eq!(recorded(&state), vec!["BEGIN".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn atomic_csv_import_commits_every_row() {
+        let (driver, state) = mock_driver(None, None).await;
+        let affected = driver
+            .insert_table_rows_atomically(
+                &[insert_request(1), insert_request(2)],
+                std::sync::Arc::new(AtomicBool::new(false)),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(affected, 2);
+        let statements = recorded(&state);
+        assert_eq!(statements.first().map(String::as_str), Some("BEGIN"));
+        assert_eq!(statements.last().map(String::as_str), Some("COMMIT"));
+        assert_eq!(statements.len(), 4);
+    }
+
+    #[tokio::test]
+    async fn atomic_csv_import_rolls_back_on_row_failure() {
+        let (driver, state) = mock_driver(Some("INSERT"), None).await;
+        let error = driver
+            .insert_table_rows_atomically(
+                &[insert_request(1)],
+                std::sync::Arc::new(AtomicBool::new(false)),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("mock failure"));
+        let statements = recorded(&state);
+        assert_eq!(statements.last().map(String::as_str), Some("ROLLBACK"));
+    }
+
+    #[tokio::test]
+    async fn atomic_csv_import_rejects_pre_cancelled_flag() {
+        let (driver, state) = mock_driver(None, None).await;
+        let error = driver
+            .insert_table_rows_atomically(
+                &[insert_request(1)],
+                std::sync::Arc::new(AtomicBool::new(true)),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("cancelled"));
+        // Cancelled before BEGIN: no statements were sent at all.
+        assert!(recorded(&state).is_empty());
+    }
+
+    #[tokio::test]
+    async fn streamed_csv_import_rolls_back_on_parse_error() {
+        let (driver, state) = mock_driver(None, None).await;
+        let (sender, receiver) = tokio::sync::mpsc::channel(4);
+        sender.send(Ok(insert_request(1))).await.unwrap();
+        sender.send(Err("bad csv row".to_string())).await.unwrap();
+        drop(sender);
+
+        let error = driver
+            .insert_table_row_stream_atomically(
+                receiver,
+                std::sync::Arc::new(AtomicBool::new(false)),
+            )
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("bad csv row"));
+        let statements = recorded(&state);
+        assert_eq!(statements.first().map(String::as_str), Some("BEGIN"));
+        assert_eq!(statements.last().map(String::as_str), Some("ROLLBACK"));
+        assert!(!statements.iter().any(|sql| sql == "COMMIT"));
+    }
+
+    #[tokio::test]
+    async fn write_preview_always_rolls_back() {
+        let (driver, state) = mock_driver(None, None).await;
+        let results = driver
+            .preview_write_transaction(&[
+                "UPDATE TESTDB.PUBLIC.ITEMS SET name = 'x' WHERE id = 1".to_string(),
+                "DELETE FROM TESTDB.PUBLIC.ITEMS WHERE id = 2".to_string(),
+            ])
+            .await
+            .unwrap();
+
+        assert_eq!(results.len(), 2);
+        assert!(results.iter().all(|result| result.sandboxed));
+        let statements = recorded(&state);
+        assert_eq!(statements.first().map(String::as_str), Some("BEGIN"));
+        assert_eq!(statements.last().map(String::as_str), Some("ROLLBACK"));
+        assert!(!statements.iter().any(|sql| sql == "COMMIT"));
+    }
+
+    #[tokio::test]
+    async fn write_preview_rolls_back_on_statement_failure() {
+        let (driver, state) = mock_driver(Some("DELETE"), None).await;
+        let error = driver
+            .preview_write_transaction(&[
+                "UPDATE TESTDB.PUBLIC.ITEMS SET name = 'x' WHERE id = 1".to_string(),
+                "DELETE FROM TESTDB.PUBLIC.ITEMS WHERE id = 2".to_string(),
+            ])
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("mock failure"));
+        let statements = recorded(&state);
+        assert_eq!(statements.last().map(String::as_str), Some("ROLLBACK"));
     }
 }

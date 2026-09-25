@@ -4,6 +4,7 @@ use anyhow::{anyhow, Context, Result};
 use redis::{cmd, Connection as RedisConnection, Value as RedisValue};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use std::cmp::Ordering;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use super::redis::RedisDriver;
 
@@ -562,52 +563,62 @@ impl RedisDriver {
     }
 
     pub(super) fn build_structure_for_key_type(key_type: &str) -> TableStructure {
+        // The first projected column is the row identity (key/field/index/
+        // member/id); flagging it as the primary key lets the grid build
+        // selectors for inline edits and deletes.
+        let mark_identity = |columns: Vec<ColumnDetail>| {
+            let mut columns = columns;
+            if let Some(first) = columns.first_mut() {
+                first.is_primary_key = true;
+            }
+            columns
+        };
         match key_type {
             "string" => Self::empty_structure(
                 "REDIS STRING",
-                vec![
+                mark_identity(vec![
                     Self::detail("key", "TEXT", Some("Redis key name")),
                     Self::detail("value", "TEXT", Some("String value")),
-                ],
+                ]),
             ),
             "hash" => Self::empty_structure(
                 "REDIS HASH",
-                vec![
+                mark_identity(vec![
                     Self::detail("field", "TEXT", Some("Hash field name")),
                     Self::detail("value", "TEXT", Some("Hash field value")),
-                ],
+                ]),
             ),
             "list" => Self::empty_structure(
                 "REDIS LIST",
-                vec![
+                mark_identity(vec![
                     Self::detail("index", "INTEGER", Some("List item index")),
                     Self::detail("value", "TEXT", Some("List item value")),
-                ],
+                ]),
             ),
             "set" => Self::empty_structure(
                 "REDIS SET",
-                vec![Self::detail("member", "TEXT", Some("Set member"))],
+                mark_identity(vec![Self::detail("member", "TEXT", Some("Set member"))]),
             ),
             "zset" => Self::empty_structure(
                 "REDIS SORTED SET",
-                vec![
+                mark_identity(vec![
                     Self::detail("member", "TEXT", Some("Sorted set member")),
                     Self::detail("score", "DOUBLE", Some("Sorted set score")),
-                ],
+                ]),
             ),
             "stream" => Self::empty_structure(
                 "REDIS STREAM",
-                vec![
+                mark_identity(vec![
                     Self::detail("id", "TEXT", Some("Stream entry id")),
                     Self::detail("payload", "JSON", Some("Stream entry fields")),
-                ],
+                ]),
             ),
             _ => Self::empty_structure(
                 "REDIS KEY",
-                vec![
+                mark_identity(vec![
                     Self::detail("key", "TEXT", Some("Redis key name")),
                     Self::detail("value", "TEXT", Some("Redis value projection")),
-                ],
+                ]),
             ),
         }
     }
@@ -635,104 +646,463 @@ impl RedisDriver {
             .collect::<Vec<_>>()
     }
 
-    pub(super) fn fetch_hash_rows(
-        connection: &mut RedisConnection,
-        table: &str,
-    ) -> Result<Vec<Vec<JsonValue>>> {
-        let value = cmd("HGETALL")
-            .arg(table)
-            .query::<RedisValue>(connection)
-            .with_context(|| format!("Failed to fetch Redis hash rows for {table}"))?;
+    // ------------------------------------------------------------------
+    // Write-path command builders (pure — no connection access). The
+    // driver queues the returned argv lists inside MULTI/EXEC so a batch
+    // either applies completely or is DISCARDed.
+    // ------------------------------------------------------------------
 
-        Ok(Self::rows_from_pair_array(value, "field", "value")
-            .map(|(_, rows)| rows)
-            .unwrap_or_default())
+    /// Column that identifies one projected row for a key type. Mirrors the
+    /// primary-key flag `build_structure_for_key_type` sets on the first
+    /// column, so a selector built from the grid always matches.
+    pub(super) fn identity_column_for_key_type(key_type: &str) -> Option<&'static str> {
+        match key_type {
+            "string" => Some("key"),
+            "hash" => Some("field"),
+            "list" => Some("index"),
+            "set" | "zset" => Some("member"),
+            "stream" => Some("id"),
+            _ => None,
+        }
     }
 
-    pub(super) fn fetch_list_rows(
-        connection: &mut RedisConnection,
-        table: &str,
-    ) -> Result<Vec<Vec<JsonValue>>> {
-        let values = cmd("LRANGE")
-            .arg(table)
-            .arg(0)
-            .arg(-1)
-            .query::<Vec<Vec<u8>>>(connection)
-            .with_context(|| format!("Failed to fetch Redis list rows for {table}"))?;
-
-        Ok(values
-            .into_iter()
-            .enumerate()
-            .map(|(index, value)| {
-                vec![
-                    JsonValue::from(index as i64),
-                    JsonValue::String(Self::bytes_to_string(&value)),
-                ]
-            })
-            .collect::<Vec<_>>())
+    /// Converts a grid cell into a Redis command argument. Redis stores
+    /// bytes only: numbers/bools serialize, structured values keep their
+    /// JSON text, and NULL is rejected rather than silently stringified.
+    pub(super) fn json_cell_to_redis_arg(value: &JsonValue) -> Result<String> {
+        match value {
+            JsonValue::Null => Err(anyhow!("Redis values cannot be NULL")),
+            JsonValue::String(text) => Ok(text.clone()),
+            JsonValue::Number(number) => Ok(number.to_string()),
+            JsonValue::Bool(flag) => Ok(flag.to_string()),
+            other => Ok(other.to_string()),
+        }
     }
 
-    pub(super) fn fetch_set_rows(
-        connection: &mut RedisConnection,
+    /// The single primary-key selector for a request, validated to name the
+    /// identity column of the key type.
+    fn row_selector<'a>(
+        primary_keys: &'a [RowKeyValue],
+        key_type: &str,
         table: &str,
-    ) -> Result<Vec<Vec<JsonValue>>> {
-        let mut members = cmd("SMEMBERS")
-            .arg(table)
-            .query::<Vec<Vec<u8>>>(connection)
-            .with_context(|| format!("Failed to fetch Redis set rows for {table}"))?;
-        members.sort();
-
-        Ok(members
-            .into_iter()
-            .map(|member| vec![JsonValue::String(Self::bytes_to_string(&member))])
-            .collect::<Vec<_>>())
+    ) -> Result<&'a JsonValue> {
+        let identity = Self::identity_column_for_key_type(key_type)
+            .ok_or_else(|| anyhow!("Redis key type '{key_type}' has no editable row identity"))?;
+        if primary_keys.len() != 1 {
+            return Err(anyhow!(
+                "Redis {key_type} rows are identified by exactly one '{identity}' value"
+            ));
+        }
+        let key = &primary_keys[0];
+        if key.column != identity {
+            return Err(anyhow!(
+                "Redis {key_type} rows are identified by '{identity}', not '{}'",
+                key.column
+            ));
+        }
+        // String keys are the row identity themselves: the selector must
+        // name the key being edited, not an arbitrary other key. List
+        // indexes legitimately arrive as JSON numbers, so only string-key
+        // selectors are string-checked here; per-type arms validate the
+        // shape they need.
+        if key_type == "string" {
+            let selector = key.value.as_str().ok_or_else(|| {
+                anyhow!("Redis {key_type} selector for '{identity}' must be a string")
+            })?;
+            if selector != table {
+                return Err(anyhow!(
+                    "Redis string selector '{selector}' does not match key '{table}'"
+                ));
+            }
+        }
+        Ok(&key.value)
     }
 
-    pub(super) fn fetch_zset_rows(
-        connection: &mut RedisConnection,
-        table: &str,
-    ) -> Result<Vec<Vec<JsonValue>>> {
-        let value = cmd("ZRANGE")
-            .arg(table)
-            .arg(0)
-            .arg(-1)
-            .arg("WITHSCORES")
-            .query::<RedisValue>(connection)
-            .with_context(|| format!("Failed to fetch Redis sorted-set rows for {table}"))?;
-
-        Ok(Self::rows_from_pair_array(value, "member", "score")
-            .map(|(_, rows)| rows)
-            .unwrap_or_default())
+    fn redis_list_index(value: &JsonValue) -> Result<i64> {
+        value
+            .as_i64()
+            .or_else(|| value.as_str().and_then(|raw| raw.parse::<i64>().ok()))
+            .ok_or_else(|| anyhow!("Redis list index must be an integer"))
     }
 
-    pub(super) fn fetch_stream_rows(
-        connection: &mut RedisConnection,
-        table: &str,
-    ) -> Result<Vec<Vec<JsonValue>>> {
-        let value = cmd("XRANGE")
-            .arg(table)
-            .arg("-")
-            .arg("+")
-            .query::<RedisValue>(connection)
-            .with_context(|| format!("Failed to fetch Redis stream rows for {table}"))?;
-
-        let rows = match value {
-            RedisValue::Array(entries) => entries
-                .into_iter()
-                .filter_map(|entry| match entry {
-                    RedisValue::Array(mut parts) if parts.len() == 2 => {
-                        let id = Self::redis_value_to_cell(parts.remove(0));
-                        let payload = JsonValue::String(
-                            Self::redis_value_to_json(parts.remove(0)).to_string(),
-                        );
-                        Some(vec![id, payload])
-                    }
-                    _ => None,
-                })
-                .collect::<Vec<_>>(),
-            _ => Vec::new(),
+    /// Commands for one cell update on a key of known type. Identity-column
+    /// edits are rejected: renaming a member/field/id is a delete+insert,
+    /// not an in-place update.
+    pub(super) fn build_cell_update_commands_for_type(
+        update: &TableCellUpdateRequest,
+        key_type: &str,
+    ) -> Result<Vec<Vec<String>>> {
+        let table = update.table.trim();
+        if table.is_empty() {
+            return Err(anyhow!("Redis key name cannot be empty"));
+        }
+        if let Some(identity) = Self::identity_column_for_key_type(key_type) {
+            if update.target_column == identity {
+                return Err(anyhow!(
+                    "Redis {key_type} '{identity}' values cannot be edited in place; delete and re-add the entry instead"
+                ));
+            }
+        }
+        let selector = Self::row_selector(&update.primary_keys, key_type, table)?;
+        let value = Self::json_cell_to_redis_arg(&update.value)?;
+        let commands = match key_type {
+            "string" => {
+                if update.target_column != "value" {
+                    return Err(anyhow!(
+                        "Redis string keys only expose a 'value' column, not '{}'",
+                        update.target_column
+                    ));
+                }
+                vec![vec!["SET".into(), table.into(), value]]
+            }
+            "hash" => {
+                if update.target_column != "value" {
+                    return Err(anyhow!(
+                        "Redis hashes only expose a 'value' column, not '{}'",
+                        update.target_column
+                    ));
+                }
+                let field = selector
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Redis hash field selector must be a string"))?;
+                vec![vec!["HSET".into(), table.into(), field.into(), value]]
+            }
+            "list" => {
+                if update.target_column != "value" {
+                    return Err(anyhow!(
+                        "Redis lists only expose a 'value' column, not '{}'",
+                        update.target_column
+                    ));
+                }
+                let index = Self::redis_list_index(selector)?;
+                vec![vec!["LSET".into(), table.into(), index.to_string(), value]]
+            }
+            "zset" => {
+                if update.target_column != "score" {
+                    return Err(anyhow!(
+                        "Redis sorted sets only expose a 'score' column, not '{}'",
+                        update.target_column
+                    ));
+                }
+                let member = selector
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Redis sorted-set member selector must be a string"))?;
+                vec![vec!["ZADD".into(), table.into(), value, member.into()]]
+            }
+            "stream" => {
+                return Err(anyhow!(
+                    "Redis stream entries are immutable; delete the entry and re-add it instead"
+                ));
+            }
+            other => {
+                return Err(anyhow!(
+                    "Redis key type '{other}' does not support cell updates"
+                ));
+            }
         };
+        Ok(commands)
+    }
 
-        Ok(rows)
+    /// Commands deleting one projected row of a key of known type. List rows
+    /// delete by index through a unique sentinel (LSET + LREM) because Redis
+    /// has no delete-by-index command.
+    pub(super) fn build_row_delete_commands_for_type(
+        table: &str,
+        primary_keys: &[RowKeyValue],
+        key_type: &str,
+    ) -> Result<Vec<Vec<String>>> {
+        let table = table.trim();
+        if table.is_empty() {
+            return Err(anyhow!("Redis key name cannot be empty"));
+        }
+        let selector = Self::row_selector(primary_keys, key_type, table)?;
+        let commands = match key_type {
+            "string" => vec![vec!["DEL".into(), table.into()]],
+            "hash" => {
+                let field = selector
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Redis hash field selector must be a string"))?;
+                vec![vec!["HDEL".into(), table.into(), field.into()]]
+            }
+            "list" => {
+                let index = Self::redis_list_index(selector)?;
+                let sentinel = Self::list_delete_sentinel();
+                vec![
+                    vec![
+                        "LSET".into(),
+                        table.into(),
+                        index.to_string(),
+                        sentinel.clone(),
+                    ],
+                    vec!["LREM".into(), table.into(), "1".into(), sentinel],
+                ]
+            }
+            "set" => {
+                let member = selector
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Redis set member selector must be a string"))?;
+                vec![vec!["SREM".into(), table.into(), member.into()]]
+            }
+            "zset" => {
+                let member = selector
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Redis sorted-set member selector must be a string"))?;
+                vec![vec!["ZREM".into(), table.into(), member.into()]]
+            }
+            "stream" => {
+                let id = selector
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Redis stream id selector must be a string"))?;
+                vec![vec!["XDEL".into(), table.into(), id.into()]]
+            }
+            other => {
+                return Err(anyhow!(
+                    "Redis key type '{other}' does not support row deletes"
+                ));
+            }
+        };
+        Ok(commands)
+    }
+
+    /// Commands inserting one row into a key of known type.
+    pub(super) fn build_row_insert_commands_for_type(
+        request: &TableRowInsertRequest,
+        key_type: &str,
+    ) -> Result<Vec<Vec<String>>> {
+        let table = request.table.trim();
+        if table.is_empty() {
+            return Err(anyhow!("Redis key name cannot be empty"));
+        }
+        if request.values.is_empty() {
+            return Err(anyhow!("Cannot insert an empty Redis row"));
+        }
+        let find = |name: &str| -> Option<&JsonValue> {
+            request
+                .values
+                .iter()
+                .find(|(column, _)| column == name)
+                .map(|(_, value)| value)
+        };
+        let required = |name: &str| -> Result<&JsonValue> {
+            find(name).ok_or_else(|| anyhow!("Redis {key_type} insert requires a '{name}' column"))
+        };
+        let commands = match key_type {
+            "string" => {
+                let value = Self::json_cell_to_redis_arg(required("value")?)?;
+                vec![vec!["SET".into(), table.into(), value]]
+            }
+            "hash" => {
+                let field = required("field")?
+                    .as_str()
+                    .ok_or_else(|| anyhow!("Redis hash field must be a string"))?;
+                let value = Self::json_cell_to_redis_arg(required("value")?)?;
+                vec![vec!["HSET".into(), table.into(), field.into(), value]]
+            }
+            "list" => {
+                let value = Self::json_cell_to_redis_arg(required("value")?)?;
+                vec![vec!["RPUSH".into(), table.into(), value]]
+            }
+            "set" => {
+                let member = Self::json_cell_to_redis_arg(required("member")?)?;
+                vec![vec!["SADD".into(), table.into(), member]]
+            }
+            "zset" => {
+                let member = Self::json_cell_to_redis_arg(required("member")?)?;
+                let score = Self::json_cell_to_redis_arg(required("score")?)?;
+                vec![vec!["ZADD".into(), table.into(), score, member]]
+            }
+            "stream" => {
+                let payload = required("payload")?;
+                let id = find("id")
+                    .and_then(JsonValue::as_str)
+                    .filter(|id| !id.trim().is_empty())
+                    .unwrap_or("*");
+                let fields = Self::stream_payload_fields(payload)?;
+                if fields.is_empty() {
+                    return Err(anyhow!(
+                        "Redis stream insert requires a non-empty 'payload' object"
+                    ));
+                }
+                let mut command = vec!["XADD".into(), table.into(), id.into()];
+                for (field, value) in fields {
+                    command.push(field);
+                    command.push(value);
+                }
+                vec![command]
+            }
+            other => {
+                return Err(anyhow!(
+                    "Redis key type '{other}' does not support row inserts"
+                ));
+            }
+        };
+        Ok(commands)
+    }
+
+    /// Infers the key type an insert should create from the column names the
+    /// grid/CSV mapping supplies. Returns None when the shape matches no
+    /// projection so the caller can reject with a clear message.
+    pub(super) fn infer_key_type_for_insert(
+        request: &TableRowInsertRequest,
+    ) -> Option<&'static str> {
+        let has = |name: &str| request.values.iter().any(|(column, _)| column == name);
+        if has("field") && has("value") {
+            Some("hash")
+        } else if has("member") && has("score") {
+            Some("zset")
+        } else if has("member") {
+            Some("set")
+        } else if has("payload") {
+            Some("stream")
+        } else if has("index") && has("value") {
+            Some("list")
+        } else if has("value") {
+            Some("string")
+        } else {
+            None
+        }
+    }
+
+    /// Flattens a stream payload cell into XADD field/value pairs. Accepts a
+    /// JSON object or its stringified form (the grid stores payloads as
+    /// JSON text).
+    fn stream_payload_fields(payload: &JsonValue) -> Result<Vec<(String, String)>> {
+        let parsed = match payload {
+            JsonValue::Object(_) => payload.clone(),
+            JsonValue::String(text) => serde_json::from_str::<JsonValue>(text)
+                .with_context(|| "Redis stream payload must be a JSON object")?,
+            _ => return Err(anyhow!("Redis stream payload must be a JSON object")),
+        };
+        let JsonValue::Object(map) = parsed else {
+            return Err(anyhow!("Redis stream payload must be a JSON object"));
+        };
+        map.into_iter()
+            .map(|(field, value)| Ok((field, Self::json_cell_to_redis_arg(&value)?)))
+            .collect()
+    }
+
+    /// Unique sentinel for list delete-by-index (LSET index sentinel, then
+    /// LREM 1 sentinel). Process-unique so it cannot collide with a real
+    /// list element in practice.
+    fn list_delete_sentinel() -> String {
+        static SENTINEL_COUNTER: AtomicU64 = AtomicU64::new(0);
+        let sequence = SENTINEL_COUNTER.fetch_add(1, AtomicOrdering::Relaxed);
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|duration| duration.as_nanos())
+            .unwrap_or(0);
+        format!(
+            "__tabler_delete_{}_{}_{sequence}",
+            std::process::id(),
+            nanos
+        )
+    }
+
+    /// Commands replaying one exported table entry from a TableR JSON
+    /// snapshot: DEL clears any existing key so a type change cannot fail
+    /// with WRONGTYPE, then the rows rebuild the value.
+    pub(super) fn build_snapshot_table_commands(
+        name: &str,
+        object_type: Option<&str>,
+        rows: &[JsonValue],
+    ) -> Result<Vec<Vec<String>>> {
+        let key_type = object_type
+            .map(|raw| raw.trim().to_ascii_lowercase())
+            .and_then(|raw| raw.strip_prefix("redis ").map(str::to_string).or(Some(raw)))
+            .filter(|raw| !raw.is_empty())
+            .or_else(|| Self::infer_key_type_from_snapshot_rows(rows));
+        let Some(key_type) = key_type else {
+            return Err(anyhow!(
+                "Cannot determine the Redis key type for snapshot entry '{name}'"
+            ));
+        };
+        let mut commands = vec![vec!["DEL".into(), name.to_string()]];
+        for row in rows {
+            let JsonValue::Object(map) = row else {
+                return Err(anyhow!("Snapshot row for '{name}' is not a JSON object"));
+            };
+            let cell = |column: &str| -> Option<&JsonValue> { map.get(column) };
+            let required = |column: &str| -> Result<&JsonValue> {
+                cell(column).ok_or_else(|| {
+                    anyhow!("Snapshot row for '{name}' is missing the '{column}' column")
+                })
+            };
+            match key_type.as_str() {
+                "string" => {
+                    let value = Self::json_cell_to_redis_arg(required("value")?)?;
+                    commands.push(vec!["SET".into(), name.to_string(), value]);
+                }
+                "hash" => {
+                    let field = required("field")?.as_str().ok_or_else(|| {
+                        anyhow!("Snapshot hash field for '{name}' must be a string")
+                    })?;
+                    let value = Self::json_cell_to_redis_arg(required("value")?)?;
+                    commands.push(vec![
+                        "HSET".into(),
+                        name.to_string(),
+                        field.to_string(),
+                        value,
+                    ]);
+                }
+                "list" => {
+                    let value = Self::json_cell_to_redis_arg(required("value")?)?;
+                    commands.push(vec!["RPUSH".into(), name.to_string(), value]);
+                }
+                "set" => {
+                    let member = Self::json_cell_to_redis_arg(required("member")?)?;
+                    commands.push(vec!["SADD".into(), name.to_string(), member]);
+                }
+                "zset" => {
+                    let member = Self::json_cell_to_redis_arg(required("member")?)?;
+                    let score = Self::json_cell_to_redis_arg(required("score")?)?;
+                    commands.push(vec!["ZADD".into(), name.to_string(), score, member]);
+                }
+                "stream" => {
+                    let payload = required("payload")?;
+                    let fields = Self::stream_payload_fields(payload)?;
+                    if fields.is_empty() {
+                        continue;
+                    }
+                    let id = cell("id")
+                        .and_then(JsonValue::as_str)
+                        .filter(|id| !id.trim().is_empty())
+                        .unwrap_or("*");
+                    let mut command = vec!["XADD".into(), name.to_string(), id.to_string()];
+                    for (field, value) in fields {
+                        command.push(field);
+                        command.push(value);
+                    }
+                    commands.push(command);
+                }
+                other => {
+                    return Err(anyhow!(
+                        "Snapshot entry '{name}' has unsupported Redis key type '{other}'"
+                    ));
+                }
+            }
+        }
+        Ok(commands)
+    }
+
+    /// Fallback key-type inference for snapshot entries whose structure was
+    /// not exported: classify by the column names present in the first row.
+    fn infer_key_type_from_snapshot_rows(rows: &[JsonValue]) -> Option<String> {
+        let first = rows.iter().find_map(|row| row.as_object())?;
+        let has = |name: &str| first.contains_key(name);
+        if has("field") && has("value") {
+            Some("hash".to_string())
+        } else if has("member") && has("score") {
+            Some("zset".to_string())
+        } else if has("member") {
+            Some("set".to_string())
+        } else if has("payload") {
+            Some("stream".to_string())
+        } else if has("index") && has("value") {
+            Some("list".to_string())
+        } else if has("value") {
+            Some("string".to_string())
+        } else {
+            None
+        }
     }
 }

@@ -1,7 +1,7 @@
 use super::PostgresDriver;
 use crate::database::driver::DatabaseDriver;
 use crate::database::models::*;
-use crate::database::query_cancel::{request_cancel, CancelLookup, CancelScopeGuard};
+use crate::database::query_cancel::{cancel_flag, request_cancel, CancelLookup, CancelScopeGuard};
 use crate::database::query_common::MAX_TABLE_PAGE_ROWS;
 use crate::database::safety::{
     normalize_order_dir, qualify_postgres_table_name, quote_postgres_identifier,
@@ -11,7 +11,7 @@ use crate::utils::sql::split_sql_statements;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures_util::TryStreamExt;
-use sqlx::postgres::PgRow;
+use sqlx::postgres::{PgConnection, PgRow};
 use sqlx::{Postgres, QueryBuilder, Row};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
@@ -100,6 +100,13 @@ impl DatabaseDriver for PostgresDriver {
         let pool = self.pool();
         let mut conn = pool.acquire().await.context("PostgreSQL acquire failed")?;
         let guard = CancelScopeGuard::begin(&self.cancel_registry, request_id);
+        if self.is_vertica() {
+            self.begin_vertica_request(&mut conn, request_id).await?;
+            let result = Self::execute_query_on_conn(&mut conn, sql).await;
+            self.finish_vertica_request(request_id);
+            drop(guard);
+            return result;
+        }
         let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut *conn)
             .await
@@ -113,6 +120,9 @@ impl DatabaseDriver for PostgresDriver {
     }
 
     async fn cancel_query_request(&self, request_id: &str) -> Result<bool> {
+        if self.is_vertica() {
+            return self.cancel_vertica_request(request_id).await;
+        }
         match request_cancel(&self.cancel_registry, request_id) {
             CancelLookup::NotRunning => Ok(false),
             CancelLookup::Pending => Ok(true),
@@ -280,6 +290,13 @@ impl DatabaseDriver for PostgresDriver {
         let pool = self.pool();
         let mut conn = pool.acquire().await.context("PostgreSQL acquire failed")?;
         let guard = CancelScopeGuard::begin(&self.cancel_registry, request_id);
+        if self.is_vertica() {
+            self.begin_vertica_request(&mut conn, request_id).await?;
+            let result = Self::execute_parameterized_on_conn(&mut conn, sql, parameters).await;
+            self.finish_vertica_request(request_id);
+            drop(guard);
+            return result;
+        }
         let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
             .fetch_one(&mut *conn)
             .await
@@ -287,37 +304,7 @@ impl DatabaseDriver for PostgresDriver {
         if guard.register_backend(i64::from(pid)) {
             return Err(anyhow!("Query cancelled."));
         }
-        let start = Instant::now();
-        let result = if Self::query_returns_rows(sql) {
-            let mut stream =
-                Self::bind_parameterized_query(sqlx::query(sql), parameters)?.fetch(&mut *conn);
-            let mut rows = Vec::new();
-            let mut truncated = false;
-            while let Some(row) = stream.try_next().await? {
-                if rows.len() == crate::database::query_common::MAX_QUERY_RESULT_ROWS {
-                    truncated = true;
-                    break;
-                }
-                rows.push(row);
-            }
-            let mut result =
-                Self::build_result_from_rows(&rows, 0, sql.to_string(), 0, false, truncated);
-            result.execution_time_ms = start.elapsed().as_millis();
-            Ok(result)
-        } else {
-            let outcome = Self::bind_parameterized_query(sqlx::query(sql), parameters)?
-                .execute(&mut *conn)
-                .await?;
-            Ok(QueryResult {
-                columns: Vec::new(),
-                rows: Vec::new(),
-                affected_rows: outcome.rows_affected(),
-                execution_time_ms: start.elapsed().as_millis(),
-                query: sql.to_string(),
-                sandboxed: false,
-                truncated: false,
-            })
-        };
+        let result = Self::execute_parameterized_on_conn(&mut conn, sql, parameters).await;
         drop(guard);
         result
     }
@@ -713,5 +700,216 @@ impl DatabaseDriver for PostgresDriver {
             limit,
         )
         .await
+    }
+}
+
+impl PostgresDriver {
+    /// Vertica shares this wire driver but does not honor pg_cancel_backend;
+    /// it cancels via INTERRUPT_STATEMENT(session_id, statement_id).
+    fn is_vertica(&self) -> bool {
+        self.db_type == DatabaseType::Vertica
+    }
+
+    /// Capture the Vertica session id for a request and record it so
+    /// `cancel_query_request` can interrupt the statement. Returns an error
+    /// when a cancel already won the race before registration.
+    async fn begin_vertica_request(&self, conn: &mut PgConnection, request_id: &str) -> Result<()> {
+        let raw: String = sqlx::query_scalar("SELECT current_session()")
+            .fetch_one(&mut *conn)
+            .await
+            .context("Vertica session id lookup failed")?;
+        let session_id = parse_vertica_session_id(&raw)?;
+        self.vertica_sessions
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .register(request_id, session_id);
+        // A cancel that arrived between slot creation and session
+        // registration flips the shared flag; abort before the user SQL
+        // starts so the request still honours it.
+        if cancel_flag(&self.cancel_registry, request_id)
+            .is_some_and(|flag| flag.load(Ordering::SeqCst))
+        {
+            self.finish_vertica_request(request_id);
+            return Err(anyhow!("Query cancelled."));
+        }
+        Ok(())
+    }
+
+    fn finish_vertica_request(&self, request_id: &str) {
+        self.vertica_sessions
+            .write()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .finish(request_id);
+    }
+
+    /// Interrupt the running Vertica statement for `request_id` from a second
+    /// pooled connection. The statement id only exists while the statement is
+    /// executing, so it is resolved from v_monitor.query_requests here rather
+    /// than captured up front.
+    async fn cancel_vertica_request(&self, request_id: &str) -> Result<bool> {
+        // Mark the shared slot too: a cancel that lands before the session id
+        // is registered flips the flag the execute path checks.
+        let lookup = request_cancel(&self.cancel_registry, request_id);
+        let Some(session_id) = self
+            .vertica_sessions
+            .read()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .session_id(request_id)
+        else {
+            // Pending: cancel recorded, execute path aborts before user SQL.
+            return Ok(matches!(lookup, CancelLookup::Pending));
+        };
+
+        // The statement id appears in v_monitor.query_requests only once the
+        // statement is executing; poll briefly so a cancel racing statement
+        // start still finds it.
+        let mut statement_id: Option<i64> = None;
+        for attempt in 0..10 {
+            statement_id = sqlx::query_scalar(
+                "SELECT statement_id FROM v_monitor.query_requests \
+                 WHERE session_id = $1 AND is_executing \
+                 ORDER BY start_timestamp DESC LIMIT 1",
+            )
+            .bind(&session_id)
+            .fetch_optional(&self.pool())
+            .await
+            .context("Vertica running-statement lookup failed")?;
+            if statement_id.is_some() || attempt == 9 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+
+        match statement_id {
+            Some(statement_id) => {
+                sqlx::query("SELECT INTERRUPT_STATEMENT($1, $2)")
+                    .bind(&session_id)
+                    .bind(statement_id)
+                    .execute(&self.pool())
+                    .await
+                    .context("Vertica INTERRUPT_STATEMENT failed")?;
+                Ok(true)
+            }
+            // Session registered but nothing executing yet — same outcome as
+            // pg_cancel_backend returning true with no active query.
+            None => Ok(true),
+        }
+    }
+
+    /// Shared body of `execute_parameterized_query_for_request` so the
+    /// PostgreSQL and Vertica request paths run identical SQL handling.
+    async fn execute_parameterized_on_conn(
+        conn: &mut PgConnection,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        let start = Instant::now();
+        if Self::query_returns_rows(sql) {
+            let mut stream =
+                Self::bind_parameterized_query(sqlx::query(sql), parameters)?.fetch(&mut *conn);
+            let mut rows = Vec::new();
+            let mut truncated = false;
+            while let Some(row) = stream.try_next().await? {
+                if rows.len() == crate::database::query_common::MAX_QUERY_RESULT_ROWS {
+                    truncated = true;
+                    break;
+                }
+                rows.push(row);
+            }
+            let mut result =
+                Self::build_result_from_rows(&rows, 0, sql.to_string(), 0, false, truncated);
+            result.execution_time_ms = start.elapsed().as_millis();
+            return Ok(result);
+        }
+        let outcome = Self::bind_parameterized_query(sqlx::query(sql), parameters)?
+            .execute(&mut *conn)
+            .await?;
+        Ok(QueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            affected_rows: outcome.rows_affected(),
+            execution_time_ms: start.elapsed().as_millis(),
+            query: sql.to_string(),
+            sandboxed: false,
+            truncated: false,
+        })
+    }
+}
+
+/// Validate a `current_session()` value before it is stored for cancel.
+/// Vertica session ids look like `v_node0001-1234:0x1a` (node-session:txn);
+/// anything else means the server answered with an unexpected shape and the
+/// request should fail rather than register a bogus cancel target.
+fn parse_vertica_session_id(raw: &str) -> Result<String> {
+    let session_id = raw.trim();
+    let valid = !session_id.is_empty()
+        && session_id.len() <= 128
+        && session_id.contains('-')
+        && session_id.contains(':')
+        && session_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | ':' | '.'));
+    if !valid {
+        return Err(anyhow!("Unexpected Vertica session id: {raw:?}"));
+    }
+    Ok(session_id.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::VerticaSessionRegistry;
+    use super::parse_vertica_session_id;
+
+    #[test]
+    fn vertica_session_id_accepts_node_session_txn_shape() {
+        let parsed = parse_vertica_session_id("v_node0001-1234:0x1a").unwrap();
+        assert_eq!(parsed, "v_node0001-1234:0x1a");
+    }
+
+    #[test]
+    fn vertica_session_id_trims_surrounding_whitespace() {
+        let parsed = parse_vertica_session_id("  v_node0002-55:0x2b  ").unwrap();
+        assert_eq!(parsed, "v_node0002-55:0x2b");
+    }
+
+    #[test]
+    fn vertica_session_id_rejects_unexpected_shapes() {
+        for raw in [
+            "",
+            "   ",
+            "1234",
+            "no-separator",
+            "v_node0001-1234:0x1a'; DROP TABLE t;--",
+            "v_node0001 1234:0x1a",
+        ] {
+            assert!(
+                parse_vertica_session_id(raw).is_err(),
+                "expected rejection for {raw:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn vertica_session_registry_tracks_request_lifecycle() {
+        let mut registry = VerticaSessionRegistry::default();
+        assert_eq!(registry.session_id("req-1"), None);
+
+        registry.register("req-1", "v_node0001-1:0x1".to_string());
+        assert_eq!(
+            registry.session_id("req-1"),
+            Some("v_node0001-1:0x1".to_string())
+        );
+
+        // A later request reusing the id replaces the stale session.
+        registry.register("req-1", "v_node0001-2:0x2".to_string());
+        assert_eq!(
+            registry.session_id("req-1"),
+            Some("v_node0001-2:0x2".to_string())
+        );
+
+        registry.finish("req-1");
+        assert_eq!(registry.session_id("req-1"), None);
+        // Finishing an unknown request is a no-op.
+        registry.finish("req-1");
     }
 }

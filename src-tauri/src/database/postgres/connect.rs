@@ -1,4 +1,4 @@
-use super::PostgresDriver;
+use super::{PostgresDriver, VerticaSessionRegistry};
 use crate::config::resolve_pool_max_connections;
 use crate::database::models::*;
 use crate::database::pgpass::read_pgpass;
@@ -89,6 +89,8 @@ impl PostgresDriver {
             connect_options: options,
             current_db: Arc::new(RwLock::new(Some(database.to_string()))),
             cancel_registry: StdRwLock::new(QueryCancelRegistry::new()),
+            db_type: config.db_type,
+            vertica_sessions: StdRwLock::new(VerticaSessionRegistry::default()),
             pool_max_connections,
         })
     }

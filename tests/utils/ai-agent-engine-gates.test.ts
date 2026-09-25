@@ -25,6 +25,9 @@ const SQL_ENGINES_WITH_PREVIEW: DatabaseType[] = [
   "redshift",
   "mssql",
   "vertica",
+  "snowflake",
+  "bigquery",
+  "oracle",
   "spanner",
   "trino",
 ];
@@ -32,12 +35,9 @@ const SQL_ENGINES_WITH_PREVIEW: DatabaseType[] = [
 // SQL dialects without a rollback-preview driver impl — preview_write is gated.
 const SQL_ENGINES_WITHOUT_PREVIEW: DatabaseType[] = [
   "duckdb",
-  "snowflake",
   "clickhouse",
-  "bigquery",
   "libsql",
   "cloudflare_d1",
-  "oracle",
   "dynamodb",
 ];
 

@@ -159,6 +159,10 @@ pub(super) struct BigQueryQueryRequest {
     pub(super) parameter_mode: Option<&'static str>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub(super) query_parameters: Vec<BigQueryQueryParameter>,
+    /// `dryRun: true` validates the statement and returns byte/slot
+    /// estimates without executing it — the driver's EXPLAIN surface.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) dry_run: Option<bool>,
 }
 
 #[derive(Debug, Serialize)]
@@ -192,6 +196,11 @@ pub(super) struct BigQueryQueryResponse {
     pub(super) rows: Vec<BigQueryTableRow>,
     pub(super) job_complete: Option<bool>,
     pub(super) num_dml_affected_rows: Option<String>,
+    /// Dry-run estimate fields (`jobs.query` with `dryRun: true`).
+    pub(super) total_bytes_processed: Option<String>,
+    pub(super) total_slot_ms: Option<String>,
+    pub(super) total_bytes_billed: Option<String>,
+    pub(super) cache_hit: Option<bool>,
 }
 
 /// REST client helpers, API DTOs, and result conversion for the BigQuery
@@ -489,12 +498,114 @@ impl BigQueryDriver {
         preserve_query_text: &str,
         parameters: &[QueryParameter],
     ) -> Result<QueryResult> {
+        // BigQuery has no EXPLAIN keyword: `EXPLAIN <sql>` runs the inner
+        // statement as a dry-run job and reports its byte/slot estimates.
+        if let Some(inner) = Self::strip_explain_prefix(sql) {
+            return self
+                .execute_explain(inner, dataset_override, parameters, preserve_query_text)
+                .await;
+        }
         let started_at = Instant::now();
         let (response, job_reference) = self
             .submit_query_job(sql, dataset_override, parameters)
             .await?;
         self.collect_query_result(response, job_reference, preserve_query_text, started_at)
             .await
+    }
+
+    /// Run an `EXPLAIN` statement as a `jobs.query` dry run. BigQuery has
+    /// no EXPLAIN keyword and no plan text on dry runs — the honest output
+    /// is the validation + cost estimate (`totalBytesProcessed`, slot ms)
+    /// the API returns. `EXPLAIN ANALYZE` is accepted but still only dry
+    /// runs: BigQuery offers no execute-and-profile equivalent here.
+    pub(super) async fn execute_explain(
+        &self,
+        inner_sql: &str,
+        dataset_override: Option<&str>,
+        parameters: &[QueryParameter],
+        preserve_query_text: &str,
+    ) -> Result<QueryResult> {
+        let started_at = Instant::now();
+        let response = self
+            .submit_dry_run(inner_sql, dataset_override, parameters)
+            .await?;
+        Ok(Self::explain_result_from_dry_run(
+            response,
+            started_at.elapsed().as_millis(),
+            preserve_query_text,
+        ))
+    }
+
+    /// Shape a dry-run response into a metric/value `QueryResult`. Dry runs
+    /// never return rows or a schema, so the estimate fields are surfaced
+    /// as rows instead.
+    pub(super) fn explain_result_from_dry_run(
+        response: BigQueryQueryResponse,
+        elapsed_ms: u128,
+        query: &str,
+    ) -> QueryResult {
+        let mut rows: Vec<Vec<JsonValue>> = Vec::new();
+        let mut push_metric = |metric: &str, value: JsonValue| {
+            rows.push(vec![JsonValue::String(metric.to_string()), value]);
+        };
+        if let Some(bytes) = response
+            .total_bytes_processed
+            .as_deref()
+            .and_then(|raw| raw.parse::<i64>().ok())
+        {
+            push_metric("total_bytes_processed", JsonValue::from(bytes));
+        }
+        if let Some(bytes) = response
+            .total_bytes_billed
+            .as_deref()
+            .and_then(|raw| raw.parse::<i64>().ok())
+        {
+            push_metric("total_bytes_billed", JsonValue::from(bytes));
+        }
+        if let Some(slot_ms) = response
+            .total_slot_ms
+            .as_deref()
+            .and_then(|raw| raw.parse::<i64>().ok())
+        {
+            push_metric("total_slot_ms", JsonValue::from(slot_ms));
+        }
+        if let Some(cache_hit) = response.cache_hit {
+            push_metric("cache_hit", JsonValue::Bool(cache_hit));
+        }
+        push_metric(
+            "note",
+            JsonValue::String(
+                "Dry-run estimate: the statement was validated but not executed; BigQuery exposes no plan text for dry runs."
+                    .to_string(),
+            ),
+        );
+
+        QueryResult {
+            columns: vec![
+                ColumnInfo {
+                    name: "metric".to_string(),
+                    data_type: "STRING".to_string(),
+                    is_nullable: false,
+                    is_primary_key: false,
+                    max_length: None,
+                    default_value: None,
+                },
+                ColumnInfo {
+                    name: "value".to_string(),
+                    data_type: "JSON".to_string(),
+                    is_nullable: true,
+                    is_primary_key: false,
+                    max_length: None,
+                    default_value: None,
+                },
+            ],
+            rows,
+            affected_rows: 0,
+            execution_time_ms: elapsed_ms,
+            query: query.to_string(),
+            sandboxed: false,
+            truncated: false,
+        }
     }
 
     /// Submit a `jobs.query` request and return the first response page
@@ -507,6 +618,42 @@ impl BigQueryDriver {
         dataset_override: Option<&str>,
         parameters: &[QueryParameter],
     ) -> Result<(BigQueryQueryResponse, BigQueryJobReference)> {
+        let request = self.build_query_request(sql, dataset_override, parameters)?;
+        let response: BigQueryQueryResponse = self
+            .post_json(&format!("projects/{}/queries", self.project_id), &request)
+            .await?;
+
+        let job_reference = response
+            .job_reference
+            .clone()
+            .ok_or_else(|| anyhow!("BigQuery did not return a job reference"))?;
+        Ok((response, job_reference))
+    }
+
+    /// Submit a `jobs.query` dry run: BigQuery validates the statement and
+    /// returns `totalBytesProcessed`/slot estimates without executing it.
+    /// Dry-run responses carry no `jobReference` — there is no job to poll
+    /// or cancel.
+    pub(super) async fn submit_dry_run(
+        &self,
+        sql: &str,
+        dataset_override: Option<&str>,
+        parameters: &[QueryParameter],
+    ) -> Result<BigQueryQueryResponse> {
+        let mut request = self.build_query_request(sql, dataset_override, parameters)?;
+        request.dry_run = Some(true);
+        self.post_json(&format!("projects/{}/queries", self.project_id), &request)
+            .await
+    }
+
+    /// Assemble the `jobs.query` request body shared by real submissions
+    /// and dry runs.
+    fn build_query_request(
+        &self,
+        sql: &str,
+        dataset_override: Option<&str>,
+        parameters: &[QueryParameter],
+    ) -> Result<BigQueryQueryRequest> {
         let trimmed_sql = sql.trim();
         if trimmed_sql.is_empty() {
             return Err(anyhow!("BigQuery query cannot be empty"));
@@ -527,30 +674,20 @@ impl BigQueryDriver {
                     })
             });
 
-        let response: BigQueryQueryResponse = self
-            .post_json(
-                &format!("projects/{}/queries", self.project_id),
-                &BigQueryQueryRequest {
-                    query: trimmed_sql.to_string(),
-                    use_legacy_sql: false,
-                    max_results: (MAX_QUERY_RESULT_ROWS + 1) as u32,
-                    timeout_ms: BIGQUERY_QUERY_TIMEOUT_MS,
-                    default_dataset,
-                    location: self.location.clone(),
-                    parameter_mode: (!parameters.is_empty()).then_some("POSITIONAL"),
-                    query_parameters: parameters
-                        .iter()
-                        .map(Self::query_parameter_binding)
-                        .collect::<Result<Vec<_>>>()?,
-                },
-            )
-            .await?;
-
-        let job_reference = response
-            .job_reference
-            .clone()
-            .ok_or_else(|| anyhow!("BigQuery did not return a job reference"))?;
-        Ok((response, job_reference))
+        Ok(BigQueryQueryRequest {
+            query: trimmed_sql.to_string(),
+            use_legacy_sql: false,
+            max_results: (MAX_QUERY_RESULT_ROWS + 1) as u32,
+            timeout_ms: BIGQUERY_QUERY_TIMEOUT_MS,
+            default_dataset,
+            location: self.location.clone(),
+            parameter_mode: (!parameters.is_empty()).then_some("POSITIONAL"),
+            query_parameters: parameters
+                .iter()
+                .map(Self::query_parameter_binding)
+                .collect::<Result<Vec<_>>>()?,
+            dry_run: None,
+        })
     }
 
     /// Poll a submitted job to completion and convert the pages into a

@@ -26,6 +26,9 @@ pub enum DatabaseType {
     CloudflareD1,
     OpenSearch,
     Oracle,
+    Spanner,
+    DynamoDB,
+    Trino,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

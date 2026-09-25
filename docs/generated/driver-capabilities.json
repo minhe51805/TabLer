@@ -526,5 +526,86 @@
       "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.",
       "Explain writes PLAN_TABLE via EXPLAIN PLAN and reads it back through DBMS_XPLAN; requires PLAN_TABLE to exist."
     ]
+  },
+  {
+    "key": "spanner",
+    "label": "Google Spanner",
+    "tier": "specialized",
+    "queryModel": "sql",
+    "distribution": "plugin_http",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "supported",
+      "queryCancellation": "supported",
+      "pagination": "supported",
+      "inlineEdit": "supported",
+      "atomicEditQueue": "not_applicable",
+      "atomicCsvImport": "unsupported",
+      "dataExport": "supported",
+      "explain": "supported",
+      "schemaEdit": "unsupported",
+      "backupRestore": "not_applicable",
+      "administration": "unsupported"
+    },
+    "limitations": [
+      "Runs over the Cloud Spanner REST API (executeSql); authentication is a Google OAuth2 access token stored in the password field.",
+      "Atomic imports, schema actions, backup/restore, and administration are not available through the REST endpoint; cell edits run one DML statement per row.",
+      "Cancel deletes the session, which aborts its in-flight REST calls; the next query lazily recreates it."
+    ]
+  },
+  {
+    "key": "dynamodb",
+    "label": "Amazon DynamoDB",
+    "tier": "specialized",
+    "queryModel": "sql",
+    "distribution": "plugin_http",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "supported",
+      "queryCancellation": "limited",
+      "pagination": "supported",
+      "inlineEdit": "supported",
+      "atomicEditQueue": "not_applicable",
+      "atomicCsvImport": "unsupported",
+      "dataExport": "supported",
+      "explain": "unsupported",
+      "schemaEdit": "not_applicable",
+      "backupRestore": "unsupported",
+      "administration": "unsupported"
+    },
+    "limitations": [
+      "PartiQL statements only; the driver signs requests with AWS Signature V4 using the access key in username and secret key in password.",
+      "Inline edits run one PartiQL statement per row — no multi-row atomicity; atomic imports, explain, schema actions, backup/restore, and administration are not implemented.",
+      "Cancel aborts NextToken paging client-side; DynamoDB cannot kill a running statement server-side."
+    ]
+  },
+  {
+    "key": "trino",
+    "label": "Trino",
+    "tier": "extended",
+    "queryModel": "sql",
+    "distribution": "plugin_http",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "unsupported",
+      "queryCancellation": "supported",
+      "pagination": "supported",
+      "inlineEdit": "supported",
+      "atomicEditQueue": "not_applicable",
+      "atomicCsvImport": "unsupported",
+      "dataExport": "supported",
+      "explain": "supported",
+      "schemaEdit": "unsupported",
+      "backupRestore": "not_applicable",
+      "administration": "unsupported"
+    },
+    "limitations": [
+      "Runs over the Trino HTTP protocol (/v1/statement); the driver follows nextUri pages until the coordinator reports no more data.",
+      "Prepared parameters, atomic imports, schema actions, backup/restore, and administration are not implemented; cell edits use escaped literals.",
+      "Cancel issues HTTP DELETE on the running query URI."
+    ]
   }
 ]

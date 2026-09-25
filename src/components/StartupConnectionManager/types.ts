@@ -88,6 +88,9 @@ export const DB_LABELS: Record<string, DbLabel> = {
   bigquery: { abbr: "Bq", color: "#8e44ad" },
   libsql: { abbr: "Ls", color: "#2ecc71" },
   cloudflared1: { abbr: "D1", color: "#f39c12" },
+  spanner: { abbr: "Sp", color: "#4285f4" },
+  dynamodb: { abbr: "Dy", color: "#4053d6" },
+  trino: { abbr: "Tr", color: "#dd00a1" },
 };
 
 // ─── Hover Preview ─────────────────────────────────────────────────────────────

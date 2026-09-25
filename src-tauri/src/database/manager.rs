@@ -7,6 +7,7 @@ use super::cloudflare_d1::CloudflareD1Driver;
 use super::driver::DatabaseDriver;
 #[cfg(feature = "duckdb-driver")]
 use super::duckdb::DuckDbDriver;
+use super::dynamodb::DynamoDbDriver;
 #[cfg(feature = "libsql-driver")]
 use super::libsql::LibSqlDriver;
 use super::models::*;
@@ -19,7 +20,9 @@ use super::postgres::PostgresDriver;
 #[cfg(feature = "redis-driver")]
 use super::redis::RedisDriver;
 use super::snowflake::SnowflakeDriver;
+use super::spanner::SpannerDriver;
 use super::sqlite::SqliteDriver;
+use super::trino::TrinoDriver;
 use crate::ssh::ssh_tunnel::{SshTunnelManager, TunnelHandle};
 use crate::storage::plugin_storage::PluginStorage;
 use anyhow::{anyhow, Result};
@@ -417,6 +420,21 @@ impl DatabaseManager {
                 require_installed_http_plugin(&self.plugin_storage, &mut actual_config, "oracle")
                     .await?;
                 Arc::new(OracleDriver::connect(&actual_config).await?)
+            }
+            DatabaseType::Spanner => {
+                require_installed_http_plugin(&self.plugin_storage, &mut actual_config, "spanner")
+                    .await?;
+                Arc::new(SpannerDriver::connect(&actual_config).await?)
+            }
+            DatabaseType::DynamoDB => {
+                require_installed_http_plugin(&self.plugin_storage, &mut actual_config, "dynamodb")
+                    .await?;
+                Arc::new(DynamoDbDriver::connect(&actual_config).await?)
+            }
+            DatabaseType::Trino => {
+                require_installed_http_plugin(&self.plugin_storage, &mut actual_config, "trino")
+                    .await?;
+                Arc::new(TrinoDriver::connect(&actual_config).await?)
             }
         };
 

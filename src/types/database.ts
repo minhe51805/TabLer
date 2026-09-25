@@ -19,7 +19,10 @@ export type DatabaseType =
   | "libsql"
   | "cloudflare_d1"
   | "opensearch"
-  | "oracle";
+  | "oracle"
+  | "spanner"
+  | "dynamodb"
+  | "trino";
 
 export interface ConnectionConfig {
   id: string;

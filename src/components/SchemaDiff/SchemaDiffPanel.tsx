@@ -330,6 +330,7 @@ export function SchemaDiffPanel() {
                 "duckdb",
                 "clickhouse",
                 "snowflake",
+                "trino",
               ].map((option) => (
                 <option key={option} value={option}>
                   {option}

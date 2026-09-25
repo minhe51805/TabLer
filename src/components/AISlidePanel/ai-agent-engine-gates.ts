@@ -27,6 +27,9 @@ export const AGENT_QUERY_MODEL_BY_ENGINE: Record<DatabaseType, QueryModel> = {
   mongodb: "document",
   opensearch: "search",
   oracle: "sql",
+  spanner: "sql",
+  dynamodb: "sql",
+  trino: "sql",
 };
 
 const ENGINE_LABEL: Record<DatabaseType, string> = {
@@ -50,6 +53,9 @@ const ENGINE_LABEL: Record<DatabaseType, string> = {
   mongodb: "MongoDB",
   opensearch: "OpenSearch",
   oracle: "Oracle (ORDS)",
+  spanner: "Google Spanner",
+  dynamodb: "Amazon DynamoDB",
+  trino: "Trino",
 };
 
 export interface AgentToolAvailability {
@@ -234,6 +240,27 @@ const AGENT_ENGINE_TOOL_FLAGS: Record<
   },
   oracle: {
     parameterizedRead: false,
+    previewWrite: false,
+    schemaObjects: true,
+    presets: false,
+    checkpointRestore: false,
+  },
+  spanner: {
+    parameterizedRead: true,
+    previewWrite: false,
+    schemaObjects: true,
+    presets: false,
+    checkpointRestore: false,
+  },
+  dynamodb: {
+    parameterizedRead: false,
+    previewWrite: false,
+    schemaObjects: false,
+    presets: false,
+    checkpointRestore: false,
+  },
+  trino: {
+    parameterizedRead: true,
     previewWrite: false,
     schemaObjects: true,
     presets: false,

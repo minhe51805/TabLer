@@ -47,6 +47,9 @@ const DATABASE_TYPES: readonly DatabaseType[] = [
   "libsql",
   "cloudflare_d1",
   "oracle",
+  "spanner",
+  "dynamodb",
+  "trino",
 ];
 
 /**

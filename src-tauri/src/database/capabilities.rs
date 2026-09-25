@@ -84,7 +84,10 @@ pub const fn driver_distribution(database_type: DatabaseType) -> DriverDistribut
         | DatabaseType::Snowflake
         | DatabaseType::CloudflareD1
         | DatabaseType::OpenSearch
-        | DatabaseType::Oracle => DriverDistribution::PluginHttp,
+        | DatabaseType::Oracle
+        | DatabaseType::Spanner
+        | DatabaseType::DynamoDB
+        | DatabaseType::Trino => DriverDistribution::PluginHttp,
         DatabaseType::DuckDB
         | DatabaseType::Cassandra
         | DatabaseType::Redis
@@ -260,7 +263,7 @@ impl DriverCapabilityProfile {
     }
 }
 
-pub const ALL_DATABASE_TYPES: [DatabaseType; 20] = [
+pub const ALL_DATABASE_TYPES: [DatabaseType; 23] = [
     DatabaseType::MySQL,
     DatabaseType::MariaDB,
     DatabaseType::PostgreSQL,
@@ -281,6 +284,9 @@ pub const ALL_DATABASE_TYPES: [DatabaseType; 20] = [
     DatabaseType::CloudflareD1,
     DatabaseType::OpenSearch,
     DatabaseType::Oracle,
+    DatabaseType::Spanner,
+    DatabaseType::DynamoDB,
+    DatabaseType::Trino,
 ];
 
 const S: CapabilitySupport = CapabilitySupport::Supported;
@@ -494,6 +500,30 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             DriverTier::Extended,
             S, S, S, L, S, U, U, U, S, S, U, U, U,
             &["Requires ORDS (Oracle REST Data Services) enabled on the database; write operations are not supported over the REST endpoint.", "Prepared parameters, inline edits, atomic imports, schema actions, and backup/restore are not available through the ORDS SQL endpoint.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.", "Explain writes PLAN_TABLE via EXPLAIN PLAN and reads it back through DBMS_XPLAN; requires PLAN_TABLE to exist."]),
+        DatabaseType::Spanner => profile(
+            database_type,
+            "spanner",
+            "Google Spanner",
+            DriverTier::Specialized,
+            S, S, S, S, S, S, N, U, S, S, U, N, U,
+            &["Runs over the Cloud Spanner REST API (executeSql); authentication is a Google OAuth2 access token stored in the password field.", "Atomic imports, schema actions, backup/restore, and administration are not available through the REST endpoint; cell edits run one DML statement per row.", "Cancel deletes the session, which aborts its in-flight REST calls; the next query lazily recreates it."],
+        ),
+        DatabaseType::DynamoDB => profile(
+            database_type,
+            "dynamodb",
+            "Amazon DynamoDB",
+            DriverTier::Specialized,
+            S, S, S, L, S, S, N, U, S, U, N, U, U,
+            &["PartiQL statements only; the driver signs requests with AWS Signature V4 using the access key in username and secret key in password.", "Inline edits run one PartiQL statement per row — no multi-row atomicity; atomic imports, explain, schema actions, backup/restore, and administration are not implemented.", "Cancel aborts NextToken paging client-side; DynamoDB cannot kill a running statement server-side."],
+        ),
+        DatabaseType::Trino => profile(
+            database_type,
+            "trino",
+            "Trino",
+            DriverTier::Extended,
+            S, S, U, S, S, S, N, U, S, S, U, N, U,
+            &["Runs over the Trino HTTP protocol (/v1/statement); the driver follows nextUri pages until the coordinator reports no more data.", "Prepared parameters, atomic imports, schema actions, backup/restore, and administration are not implemented; cell edits use escaped literals.", "Cancel issues HTTP DELETE on the running query URI."],
+        ),
     }
 }
 
@@ -760,7 +790,10 @@ mod tests {
                 | DatabaseType::Snowflake
                 | DatabaseType::CloudflareD1
                 | DatabaseType::OpenSearch
-                | DatabaseType::Oracle => PluginHttp,
+                | DatabaseType::Oracle
+                | DatabaseType::Spanner
+                | DatabaseType::DynamoDB
+                | DatabaseType::Trino => PluginHttp,
                 DatabaseType::DuckDB
                 | DatabaseType::Cassandra
                 | DatabaseType::Redis
@@ -825,6 +858,9 @@ mod tests {
             "cloudflare_d1",
             "opensearch",
             "oracle",
+            "spanner",
+            "dynamodb",
+            "trino",
         ] {
             assert!(
                 !builtin.contains(key),
@@ -849,5 +885,19 @@ mod tests {
         let committed =
             include_str!("../../../docs/generated/driver-capabilities.json").replace("\r\n", "\n");
         assert_eq!(committed, expected, "regenerate the capability matrix");
+    }
+
+    #[test]
+    #[ignore]
+    fn write_committed_matrix() {
+        let json = serde_json::to_string_pretty(&all_driver_capabilities()).unwrap() + "\n";
+        std::fs::write(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/../docs/generated/driver-capabilities.json"
+            ),
+            json,
+        )
+        .unwrap();
     }
 }

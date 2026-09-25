@@ -36,6 +36,9 @@ const SQL_ENGINES_WITHOUT_PREVIEW: DatabaseType[] = [
   "libsql",
   "cloudflare_d1",
   "oracle",
+  "spanner",
+  "dynamodb",
+  "trino",
 ];
 
 const SQL_ENGINES: DatabaseType[] = [...SQL_ENGINES_WITH_PREVIEW, ...SQL_ENGINES_WITHOUT_PREVIEW];

@@ -1,0 +1,36 @@
+{
+  "apiVersion": 1,
+  "version": "1.0.0",
+  "publishedAt": "2026-09-25T00:00:00.000Z",
+  "kind": "adapter",
+  "author": "TableR Team",
+  "entry": null,
+  "capabilities": ["database"],
+  "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+  "compatibility": {
+    "minAppVersion": "0.1.4",
+    "maxAppVersion": null,
+    "platforms": [],
+    "architectures": []
+  },
+  "updateUrl": null,
+  "id": "spanner-driver",
+  "name": "Google Spanner driver",
+  "description": "Adds Google Cloud Spanner connectivity over the declarative HTTP driver host.",
+  "integrity": {
+    "algorithm": "sha256",
+    "digest": "ae528460a05e6b54d671d0ee4d3e8a2d541ecf50c9f2f50c24bc17d1190b0e55"
+  },
+  "contributes": {
+    "formats": [],
+    "drivers": [
+      {
+        "id": "spanner",
+        "label": "Google Spanner",
+        "protocol": "spanner",
+        "runtime": "declarative-http-v1",
+        "status": "stable"
+      }
+    ]
+  }
+}

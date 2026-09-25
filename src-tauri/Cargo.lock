@@ -7273,6 +7273,7 @@ dependencies = [
  "env_logger",
  "fs2",
  "futures-util",
+ "hmac",
  "json5",
  "keyring",
  "libsql",

@@ -30073,6 +30073,47 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   border-color: var(--mm-border);
 }
 
+/* ExportEncryptDialog — checkbox + password inside the shared confirm shell. */
+.export-encrypt-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: var(--mm-fs-body);
+  color: var(--text-primary);
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.export-encrypt-toggle input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--mm-accent, #6366f1);
+  cursor: pointer;
+}
+
+.export-encrypt-password {
+  margin-top: 12px;
+}
+
+.export-encrypt-password .input {
+  width: 100%;
+  margin-top: 6px;
+}
+
+.export-encrypt-note {
+  margin: 8px 0 0;
+  font-size: var(--mm-fs-small);
+  color: var(--text-secondary);
+}
+
+.export-encrypt-error {
+  margin: 6px 0 0;
+  font-size: var(--mm-fs-small);
+  color: rgba(239, 68, 68, 0.95);
+}
+
 .app-root .ai-workspace-stage--sidebar .ai-workspace-commandbar {
   display: flex;
   flex-wrap: wrap;

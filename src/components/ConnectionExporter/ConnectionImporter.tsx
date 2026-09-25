@@ -14,6 +14,7 @@ import {
   type BundleItemPreview,
   type TeamBundleCounts,
   type TeamBundlePreview,
+  ENCRYPTED_BUNDLE_CODE,
 } from "../../utils/team-bundle";
 import { useI18n } from "../../i18n";
 import { getBundleCopy } from "./bundle-copy";
@@ -58,10 +59,16 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
   } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const isBundleFile = filePath?.endsWith(".tabler-bundle") ?? false;
   /** Set when the picked file is a DBeaver/DataGrip export (.json/.xml). */
   const [externalFilePath, setExternalFilePath] = useState<string | null>(null);
   const [externalSkipped, setExternalSkipped] = useState<SkippedConnection[]>([]);
+
+  // `.texp` files are export envelopes; the importer only understands the
+  // ones wrapping a workspace bundle and says so for anything else.
+  const isBundleFile =
+    (filePath?.endsWith(".tabler-bundle") ?? false) || (filePath?.endsWith(".texp") ?? false);
+  /** Set when the picked bundle is an encrypted envelope awaiting a password. */
+  const [bundleNeedsPassword, setBundleNeedsPassword] = useState(false);
 
   const handlePickFile = async () => {
     setError(null);
@@ -71,39 +78,35 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
         filters: [
           {
             name: "TableR Export",
-            extensions: ["tabler-connections", "tabler-bundle"],
+            extensions: ["tabler-connections", "tabler-bundle", "texp"],
           },
         ],
       });
       if (picked && typeof picked === "string") {
         setFilePath(picked);
+        setPassword("");
         setPreviewConnections(null);
         setSelectedForImport(new Set());
         setBundlePreview(null);
         setBundleSelected(new Set());
+        setBundleNeedsPassword(false);
         setResult(null);
         setExternalFilePath(null);
         setExternalSkipped([]);
-        // Bundles carry no secrets — preview immediately, no password needed.
-        if (picked.endsWith(".tabler-bundle")) {
+        // Plain bundles preview immediately; encrypted envelopes (.texp, or
+        // an envelope renamed to .tabler-bundle) report ENCRYPTED_BUNDLE_CODE
+        // and fall into the password prompt below.
+        if (picked.endsWith(".tabler-bundle") || picked.endsWith(".texp")) {
           setIsDecrypting(true);
           try {
-            const res = await previewWorkspaceBundle(picked);
-            setBundlePreview(res.preview);
-            const keys = new Set<string>();
-            for (const [section, items] of bundleSections(res.preview)) {
-              // UI prefs get one section-level checkbox, not per-key rows.
-              if (section === "uiPrefs") {
-                if (items.some((item) => !item.exists)) keys.add("uiPrefs");
-                continue;
-              }
-              for (const item of items) {
-                if (!item.exists) keys.add(`${section}:${item.index}`);
-              }
-            }
-            setBundleSelected(keys);
+            await loadBundlePreview(picked);
           } catch (e) {
-            setError(e instanceof Error ? e.message : String(e));
+            const msg = e instanceof Error ? e.message : String(e);
+            if (msg.includes(ENCRYPTED_BUNDLE_CODE)) {
+              setBundleNeedsPassword(true);
+            } else {
+              setError(msg);
+            }
           } finally {
             setIsDecrypting(false);
           }
@@ -114,6 +117,43 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
     }
   };
 
+  const loadBundlePreview = async (path: string, password?: string) => {
+    const res = await previewWorkspaceBundle(path, password);
+    setBundlePreview(res.preview);
+    const keys = new Set<string>();
+    for (const [section, items] of bundleSections(res.preview)) {
+      // UI prefs get one section-level checkbox, not per-key rows.
+      if (section === "uiPrefs") {
+        if (items.some((item) => !item.exists)) keys.add("uiPrefs");
+        continue;
+      }
+      for (const item of items) {
+        if (!item.exists) keys.add(`${section}:${item.index}`);
+      }
+    }
+    setBundleSelected(keys);
+  };
+
+  /** Retry the bundle preview with the password once the envelope asked for one. */
+  const handleBundleDecrypt = async () => {
+    if (!filePath || !password) return;
+    setIsDecrypting(true);
+    setError(null);
+    try {
+      await loadBundlePreview(filePath, password);
+      setBundleNeedsPassword(false);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("Decryption failed") || msg.includes("Incorrect password")) {
+        setError(bundleCopy.import.errorIncorrectPassword);
+      } else {
+        setError(msg);
+      }
+    } finally {
+      setIsDecrypting(false);
+    }
+  };
+
   const handleBundleImport = async () => {
     if (!bundlePreview || !filePath) return;
     setIsLoading(true);
@@ -121,15 +161,20 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
     try {
       const pick = (section: string, items: BundleItemPreview[]) =>
         items.filter((item) => bundleSelected.has(`${section}:${item.index}`)).map((i) => i.index);
-      const res = await importWorkspaceBundle(filePath, {
-        connections: pick("connections", bundlePreview.connections),
-        sqlFavorites: pick("sqlFavorites", bundlePreview.sqlFavorites),
-        schedules: pick("schedules", bundlePreview.schedules),
-        aiProviders: pick("aiProviders", bundlePreview.aiProviders),
-        uiPrefs: bundleSelected.has("uiPrefs")
-          ? bundlePreview.uiPrefs.map((item) => item.index)
-          : [],
-      });
+      const res = await importWorkspaceBundle(
+        filePath,
+        {
+          connections: pick("connections", bundlePreview.connections),
+          sqlFavorites: pick("sqlFavorites", bundlePreview.sqlFavorites),
+          schedules: pick("schedules", bundlePreview.schedules),
+          aiProviders: pick("aiProviders", bundlePreview.aiProviders),
+          uiPrefs: bundleSelected.has("uiPrefs")
+            ? bundlePreview.uiPrefs.map((item) => item.index)
+            : [],
+        },
+        // Needed to re-read the file when it is an encrypted envelope.
+        password || undefined,
+      );
       onImport();
       const counts = res.counts;
       const total = counts
@@ -325,8 +370,15 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
                 ) : (
                   <button
                     type="button"
-                    onClick={() => void handleDecrypt()}
-                    disabled={!filePath || isBundleFile || !password || isDecrypting}
+                    onClick={() =>
+                      void (bundleNeedsPassword ? handleBundleDecrypt() : handleDecrypt())
+                    }
+                    disabled={
+                      !filePath ||
+                      (!bundleNeedsPassword && isBundleFile) ||
+                      !password ||
+                      isDecrypting
+                    }
                     className="cex-btn-primary"
                   >
                     {isDecrypting
@@ -550,7 +602,7 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
                   : bundleCopy.import.external.button}
               </button>
 
-              {filePath && !isBundleFile && (
+              {filePath && (!isBundleFile || bundleNeedsPassword) && (
                 <div className="cex-fieldset">
                   <div className="connection-form-field">
                     <label className="form-label uppercase tracking-wide">
@@ -562,7 +614,9 @@ export function ConnectionImporter({ onImport, onClose }: ConnectionImporterProp
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                         onKeyDown={(e) => {
-                          if (e.key === "Enter") void handleDecrypt();
+                          if (e.key === "Enter") {
+                            void (bundleNeedsPassword ? handleBundleDecrypt() : handleDecrypt());
+                          }
                         }}
                         placeholder={bundleCopy.import.decryptPlaceholder}
                         className="input h-11 pr-11"

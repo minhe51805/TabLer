@@ -14,7 +14,7 @@ import { getQueryProfile } from "../utils/query-profile";
 import { splitSqlStatements } from "../utils/sqlStatements";
 import { assertStatementsAllowed, SafeModeCancelledError } from "../utils/safe-mode-query-guard";
 import { invokeMutation } from "../utils/tauri-utils";
-import { requestAppConfirmation } from "../stores/confirmStore";
+import { requestAppConfirmation, requestAppExportEncryption } from "../stores/confirmStore";
 import { invalidateQueryResultCache } from "../utils/query-result-cache";
 
 interface RestorePreview {
@@ -350,6 +350,10 @@ export function useDatabaseFileActions(language: string) {
 
   const exportDatabase = useCallback(async () => {
     if (!activeConnectionId || !activeConnection || isExportingDatabase) return;
+    const encrypt = await requestAppExportEncryption({
+      fileLabel: `${activeConnection.name || activeConnection.db_type}`,
+    });
+    if (!encrypt.confirmed) return;
     const startedAt = performance.now();
     setIsExportingDatabase(true);
     try {
@@ -362,6 +366,7 @@ export function useDatabaseFileActions(language: string) {
           activeConnection.host ||
           activeConnection.file_path ||
           activeConnection.db_type,
+        encryptPassword: encrypt.password,
       });
       emitAppToast({
         tone: "success",

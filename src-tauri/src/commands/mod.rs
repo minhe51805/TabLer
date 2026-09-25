@@ -9,6 +9,7 @@ pub mod data_import;
 pub mod deep_link;
 pub mod diagnostics;
 pub mod export;
+pub mod export_crypto;
 mod export_support;
 pub mod file;
 pub mod maintenance;

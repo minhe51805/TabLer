@@ -39,6 +39,8 @@ export const TR_BUNDLE_COPY: BundleCopy = {
     schedules: "Kayıtlı zamanlamalar",
     aiProviders: "AI sağlayıcı ayarları (API anahtarları hariç)",
     uiPrefs: "UI tercihleri (tema, düzenler, kısayollar)",
+    encryptLabel: "Dışa aktarmayı şifrele (AES-256-GCM)",
+    encryptNote: "Paket, düz JSON yerine şifreli bir .texp dosyası olarak yazılır.",
     button: "Paketi Dışa Aktar",
     working: "Dışa aktarılıyor...",
     done: "Çalışma alanı paketi şuraya aktarıldı:",

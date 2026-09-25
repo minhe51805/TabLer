@@ -1,27 +1,25 @@
 //! Connection export/import with AES-256-GCM encryption.
 //! File format: { version: "1", salt: base64, iv: base64, data: base64 }
 
+use crate::commands::export_crypto::{
+    decrypt_envelope, derive_export_key, encrypt_envelope, ExportEnvelope, MIN_PASSWORD_LEN,
+};
 use crate::database::models::{ConnectionConfig, DatabaseType, SslMode};
 use crate::storage::connection_storage::ConnectionStorage;
 use aes_gcm::{
-    aead::{Aead, KeyInit, Payload},
+    aead::{Aead, KeyInit},
     Aes256Gcm, Nonce,
 };
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
-use pbkdf2::pbkdf2_hmac_array;
-use rand::RngCore;
 use rfd::FileDialog;
 use serde::{Deserialize, Serialize};
-use sha2::Sha256;
 use std::collections::HashMap;
 use tauri::State;
 use uuid::Uuid;
 
+// v1 files predate the authenticated envelope; keep their weaker parameters
+// readable for migration. Envelope crypto itself lives in `export_crypto`.
 const PBKDF2_V1_ITERATIONS: u32 = 100_000;
-const PBKDF2_V2_ITERATIONS: u32 = 600_000;
-const MIN_PASSWORD_LEN: usize = 10;
-const SALT_LEN: usize = 32;
-const NONCE_LEN: usize = 12;
 const EXPORT_AAD: &[u8] = b"tabler.connection-export.v2";
 const EXPORT_FORMAT: &str = "tabler.connection-export";
 
@@ -35,19 +33,6 @@ struct EncryptedPayloadV1 {
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-struct EncryptedPayloadV2 {
-    version: u8,
-    format: String,
-    cipher: String,
-    kdf: String,
-    iterations: u32,
-    salt: String,
-    nonce: String,
-    data: String,
-}
-
-#[derive(Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
 struct ConnectionExportDocument {
     version: u8,
     format: String,
@@ -55,51 +40,15 @@ struct ConnectionExportDocument {
     connections: Vec<ExportableConnection>,
 }
 
-/// Derive a 256-bit key from password using PBKDF2-SHA256.
-fn derive_key(password: &str, salt: &[u8], iterations: u32) -> [u8; 32] {
-    pbkdf2_hmac_array::<Sha256, 32>(password.as_bytes(), salt, iterations)
-}
+const NONCE_LEN: usize = 12;
+#[cfg(test)]
+const SALT_LEN: usize = 32;
+#[cfg(test)]
+const PBKDF2_V2_ITERATIONS: u32 = crate::commands::export_crypto::PBKDF2_ITERATIONS;
 
 /// Encrypt connection data with the authenticated, versioned v2 envelope.
 pub fn encrypt_connections(data: &str, password: &str) -> Result<String, String> {
-    if password.len() < MIN_PASSWORD_LEN {
-        return Err(format!(
-            "Password must be at least {MIN_PASSWORD_LEN} characters."
-        ));
-    }
-
-    let mut rng = rand::rngs::OsRng;
-    let mut salt = [0u8; SALT_LEN];
-    let mut nonce_bytes = [0u8; NONCE_LEN];
-    rng.fill_bytes(&mut salt);
-    rng.fill_bytes(&mut nonce_bytes);
-
-    let key = derive_key(password, &salt, PBKDF2_V2_ITERATIONS);
-    let cipher =
-        Aes256Gcm::new_from_slice(&key).map_err(|e| format!("Failed to create cipher: {}", e))?;
-    let nonce = Nonce::from_slice(&nonce_bytes);
-
-    let ciphertext = cipher
-        .encrypt(
-            nonce,
-            Payload {
-                msg: data.as_bytes(),
-                aad: EXPORT_AAD,
-            },
-        )
-        .map_err(|e| format!("Encryption failed: {}", e))?;
-
-    let payload = EncryptedPayloadV2 {
-        version: 2,
-        format: EXPORT_FORMAT.to_string(),
-        cipher: "AES-256-GCM".to_string(),
-        kdf: "PBKDF2-HMAC-SHA256".to_string(),
-        iterations: PBKDF2_V2_ITERATIONS,
-        salt: BASE64.encode(salt),
-        nonce: BASE64.encode(nonce_bytes),
-        data: BASE64.encode(ciphertext),
-    };
-
+    let payload = encrypt_envelope(data.as_bytes(), password, EXPORT_FORMAT, EXPORT_AAD, 2)?;
     serde_json::to_string(&payload)
         .map_err(|e| format!("Failed to serialize encrypted payload: {}", e))
 }
@@ -129,40 +78,8 @@ pub fn decrypt_connections(encrypted: &str, password: &str) -> Result<String, St
     String::from_utf8(plaintext).map_err(|e| format!("Decrypted data is not valid UTF-8: {e}"))
 }
 
-fn decrypt_v2(payload: EncryptedPayloadV2, password: &str) -> Result<Vec<u8>, String> {
-    if payload.format != EXPORT_FORMAT
-        || payload.cipher != "AES-256-GCM"
-        || payload.kdf != "PBKDF2-HMAC-SHA256"
-    {
-        return Err("Unsupported v2 connection export parameters.".to_string());
-    }
-    if payload.iterations < PBKDF2_V1_ITERATIONS || payload.iterations > 2_000_000 {
-        return Err("Connection export uses unsupported KDF iterations.".to_string());
-    }
-    let salt = BASE64
-        .decode(payload.salt)
-        .map_err(|_| "Invalid v2 export salt.".to_string())?;
-    let nonce_bytes = BASE64
-        .decode(payload.nonce)
-        .map_err(|_| "Invalid v2 export nonce.".to_string())?;
-    let ciphertext = BASE64
-        .decode(payload.data)
-        .map_err(|_| "Invalid v2 export data.".to_string())?;
-    if nonce_bytes.len() != NONCE_LEN {
-        return Err("Invalid v2 export nonce length.".to_string());
-    }
-    let key = derive_key(password, &salt, payload.iterations);
-    let cipher =
-        Aes256Gcm::new_from_slice(&key).map_err(|e| format!("Failed to create cipher: {e}"))?;
-    cipher
-        .decrypt(
-            Nonce::from_slice(&nonce_bytes),
-            Payload {
-                msg: ciphertext.as_ref(),
-                aad: EXPORT_AAD,
-            },
-        )
-        .map_err(|_| "Decryption failed. Incorrect password or modified file.".to_string())
+fn decrypt_v2(payload: ExportEnvelope, password: &str) -> Result<Vec<u8>, String> {
+    decrypt_envelope(payload, password, EXPORT_FORMAT, EXPORT_AAD)
 }
 
 fn decrypt_v1(payload: EncryptedPayloadV1, password: &str) -> Result<Vec<u8>, String> {
@@ -178,7 +95,7 @@ fn decrypt_v1(payload: EncryptedPayloadV1, password: &str) -> Result<Vec<u8>, St
     if nonce_bytes.len() != NONCE_LEN {
         return Err("Invalid v1 export IV length.".to_string());
     }
-    let key = derive_key(password, &salt, PBKDF2_V1_ITERATIONS);
+    let key = derive_export_key(password, &salt, PBKDF2_V1_ITERATIONS);
     let cipher =
         Aes256Gcm::new_from_slice(&key).map_err(|e| format!("Failed to create cipher: {e}"))?;
     cipher
@@ -1028,7 +945,7 @@ mod tests {
     fn encrypt_v1_fixture(data: &str, password: &str) -> String {
         let salt = [7_u8; SALT_LEN];
         let nonce_bytes = [9_u8; NONCE_LEN];
-        let key = derive_key(password, &salt, PBKDF2_V1_ITERATIONS);
+        let key = derive_export_key(password, &salt, PBKDF2_V1_ITERATIONS);
         let cipher = Aes256Gcm::new_from_slice(&key).unwrap();
         let ciphertext = cipher
             .encrypt(Nonce::from_slice(&nonce_bytes), data.as_bytes())

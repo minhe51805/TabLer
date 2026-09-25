@@ -51,12 +51,16 @@ pub(super) struct SqlExportPayload {
     pub(super) row_count: u64,
 }
 
+/// Export the whole database as a SQL dump (or a JSON snapshot for engines
+/// without SQL DDL). With `encrypt_password` the payload is wrapped in the
+/// `tabler.export` AES-256-GCM envelope and written to `<chosen>.texp`.
 #[tauri::command]
 pub async fn export_database(
     connection_id: String,
     database: Option<String>,
     db_type: DatabaseType,
     connection_name: Option<String>,
+    encrypt_password: Option<String>,
     db_manager: State<'_, DatabaseManager>,
 ) -> Result<DatabaseExportResult, String> {
     db_manager
@@ -79,42 +83,86 @@ pub async fn export_database(
         .or_else(|| driver_ref.current_database())
         .filter(|value| !value.trim().is_empty());
 
+    if let Some(password) = encrypt_password.as_deref() {
+        crate::commands::export_crypto::validate_export_password(password)?;
+    }
     let export_format = preferred_export_format(db_type);
-    let suggested_name = build_export_filename(
+    let mut suggested_name = build_export_filename(
         connection_name.as_deref(),
         resolved_database.as_deref(),
         db_type,
         export_format,
     );
+    // `.texp` is already part of the suggested name when encryption is on,
+    // so the dialog's overwrite prompt covers the real destination.
+    if encrypt_password.is_some() {
+        suggested_name.push_str(".texp");
+    }
     let target_path = open_export_save_dialog(&suggested_name, export_format)?;
-
+    let target_path = crate::commands::export_crypto::encrypted_export_path(&target_path);
+    let encrypt = encrypt_password.as_deref();
     let (table_count, row_count) = match export_format {
         DatabaseExportFormat::Sql => {
             let content = build_sql_export(driver_ref, resolved_database.as_deref(), db_type)
                 .await
                 .map_err(|error| error.to_string())?;
             let target_path_for_write = target_path.clone();
-            task::spawn_blocking(move || fs::write(&target_path_for_write, content.content))
-                .await
-                .map_err(|_| "Database export write task failed unexpectedly.".to_string())?
-                .with_context(|| format!("Failed to write export file '{}'", target_path.display()))
-                .map_err(|error| error.to_string())?;
+            let password = encrypt.map(str::to_string);
+            task::spawn_blocking(move || -> Result<(), String> {
+                let payload = match password.as_deref() {
+                    Some(password) => crate::commands::export_crypto::encrypt_export_payload(
+                        content.content.as_bytes(),
+                        password,
+                        "database",
+                    )?,
+                    None => content.content,
+                };
+                fs::write(&target_path_for_write, payload)
+                    .with_context(|| {
+                        format!(
+                            "Failed to write export file '{}'",
+                            target_path_for_write.display()
+                        )
+                    })
+                    .map_err(|error| error.to_string())
+            })
+            .await
+            .map_err(|_| "Database export write task failed unexpectedly.".to_string())??;
             (content.table_count, content.row_count)
         }
         DatabaseExportFormat::JsonSnapshot => {
             // Rows stream to the file batch-by-batch; a failure mid-export
             // removes the partial file instead of leaving a truncated dump.
+            let write_path = if encrypt.is_some() {
+                temporary_export_path(&target_path)
+            } else {
+                target_path.clone()
+            };
             match stream_json_snapshot(
                 driver_ref,
                 resolved_database.as_deref(),
                 db_type,
-                &target_path,
+                &write_path,
             )
             .await
             {
-                Ok(counts) => counts,
+                Ok(counts) => {
+                    if let Some(password) = encrypt {
+                        let source = write_path.clone();
+                        let destination = target_path.clone();
+                        let password = password.to_string();
+                        task::spawn_blocking(move || {
+                            encrypt_export_file(&source, &destination, &password, "database")
+                        })
+                        .await
+                        .map_err(|_| {
+                            "Database export encryption task failed unexpectedly.".to_string()
+                        })??;
+                    }
+                    counts
+                }
                 Err(error) => {
-                    let _ = fs::remove_file(&target_path);
+                    let _ = fs::remove_file(&write_path);
                     return Err(error.to_string());
                 }
             }

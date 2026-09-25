@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Bot, Check, Code2, Play, ShieldCheck, Table2, UserRound } from "lucide-react";
+import { Bot, Code2, Play, ShieldCheck, Table2, UserRound } from "lucide-react";
 
 /**
  * Live agent-loop storyboard inside the agent section's product frame.
@@ -129,9 +129,6 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
   const handedOff = phase === "handover" || phase === "done";
   const StepIcon = STEP_ICONS[Math.min(station, STEP_ICONS.length - 1)];
 
-  // Left pane, % coordinates: avatar parks beside the node, then slides
-  // to the client avatar for the handover.
-  const avatarX = handedOff ? 82 : inStation ? 62 : 50;
   const avatarGone = !inScene;
 
   return (
@@ -160,42 +157,40 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
             })}
           </ol>
 
-          {/* current step node — swaps content each station */}
-          {inScene && !handedOff && !reduced && (
-            <div className="agent-demo-node-card" key={station}>
+          {/* center stage — node card with the agent orbiting it */}
+          <div className="agent-demo-orbit" aria-hidden={!inScene || handedOff}>
+            <div
+              className={`agent-demo-node-card ${handedOff ? "is-out" : ""}`}
+              key={reduced ? "r" : station}
+            >
               <span className="agent-demo-node-icon">
                 <StepIcon size={20} strokeWidth={1.9} aria-hidden="true" />
               </span>
-              <span className="agent-demo-node-label">{copy.steps[station]}</span>
-            </div>
-          )}
-          {reduced && (
-            <div className="agent-demo-node-card">
-              <span className="agent-demo-node-icon">
-                <Check size={20} strokeWidth={2} aria-hidden="true" />
+              <span className="agent-demo-node-label">
+                {reduced ? copy.steps[3] : copy.steps[Math.min(station, 3)]}
               </span>
-              <span className="agent-demo-node-label">{copy.steps[3]}</span>
             </div>
-          )}
 
-          {/* client avatar — appears for the handover */}
-          <div
-            className={`agent-demo-client ${handedOff || reduced ? "is-on" : ""}`}
-            aria-hidden="true"
-          >
-            <UserRound size={16} />
-          </div>
-          {/* agent avatar */}
-          <div
-            className={`agent-demo-avatar ${avatarGone && !reduced ? "is-gone" : ""} ${
-              phase === "arrive" && !reduced ? "is-arriving" : ""
-            } ${inStation && !reduced ? "is-working" : ""}`}
-            style={{ left: `${avatarX}%` }}
-            aria-hidden="true"
-          >
-            <span className="agent-demo-avatar-icon">
-              <Bot size={18} />
-            </span>
+            {/* agent avatar — orbits the node on stations, slides right
+                to the client for the handover */}
+            <div
+              className={`agent-demo-avatar ${avatarGone && !reduced ? "is-gone" : ""} ${
+                phase === "arrive" && !reduced ? "is-arriving" : ""
+              } ${inStation && !reduced ? "is-working" : ""} ${handedOff ? "is-handing" : ""}`}
+              aria-hidden="true"
+            >
+              <span className="agent-demo-avatar-icon">
+                <Bot size={18} />
+              </span>
+            </div>
+
+            {/* client avatar — slides in at the right edge for the handover */}
+            <div
+              className={`agent-demo-client ${handedOff || reduced ? "is-on" : ""}`}
+              aria-hidden="true"
+            >
+              <UserRound size={16} />
+            </div>
           </div>
         </div>
 

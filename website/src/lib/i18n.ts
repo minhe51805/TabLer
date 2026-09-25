@@ -133,6 +133,26 @@ const en = {
         copy: "If an AI endpoint rate-limits or drops, the agent fails over to your next configured provider and keeps the run alive.",
       },
     ],
+    demo: {
+      prompt: "Top 5 customers by revenue this quarter",
+      steps: ["Inspect", "Draft SQL", "Verify", "Run"],
+      term: [
+        [
+          "$ agent.inspect_schema()",
+          "→ 3 tables: customers, orders, order_items",
+          "→ joins resolved on customer_id",
+        ],
+        [
+          "$ agent.draft_sql()",
+          "→ SELECT … GROUP BY customer",
+          "→ ORDER BY revenue DESC · LIMIT 5",
+        ],
+        ["$ agent.verify()", "→ plan: read-only SELECT", "→ ✓ safe — no writes, no locks"],
+        ["$ agent.execute()", "→ streaming rows…", "→ ✓ 5 rows · 38 ms"],
+      ],
+      handover: "Done — here are your top 5 customers by revenue this quarter.",
+      done: "5 rows in 38 ms",
+    },
   },
   erd: {
     eyebrow: "ENTITY RELATIONSHIPS",
@@ -405,6 +425,26 @@ const vi: typeof en = {
         copy: "Nếu một AI endpoint bị rate limit hoặc ngắt, agent tự chuyển sang provider kế tiếp bạn đã cấu hình và giữ phiên chạy tiếp.",
       },
     ],
+    demo: {
+      prompt: "Top 5 khách hàng theo doanh thu quý này",
+      steps: ["Đọc schema", "Soạn SQL", "Xác minh", "Chạy"],
+      term: [
+        [
+          "$ agent.inspect_schema()",
+          "→ 3 bảng: customers, orders, order_items",
+          "→ join qua customer_id",
+        ],
+        [
+          "$ agent.draft_sql()",
+          "→ SELECT … GROUP BY customer",
+          "→ ORDER BY revenue DESC · LIMIT 5",
+        ],
+        ["$ agent.verify()", "→ plan: chỉ đọc SELECT", "→ ✓ an toàn — không ghi, không lock"],
+        ["$ agent.execute()", "→ đang stream rows…", "→ ✓ 5 dòng · 38 ms"],
+      ],
+      handover: "Xong — đây là top 5 khách hàng theo doanh thu quý này.",
+      done: "5 dòng trong 38 ms",
+    },
   },
   erd: {
     eyebrow: "QUAN HỆ THỰC THỂ",

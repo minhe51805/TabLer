@@ -31,6 +31,8 @@ import {
   OPEN_REVIEW_CENTER_EVENT,
 } from "../components/ReviewCenter/review-center-store";
 
+import { useOnboardingStore } from "../stores/onboarding-store";
+
 /** GitHub targets for the Help menu's outbound links. */
 const ISSUES_NEW_URL = "https://github.com/minhe51805/TabLer/issues/new";
 const DISCUSSIONS_URL = "https://github.com/minhe51805/TabLer/discussions";
@@ -647,6 +649,13 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
             label: t("menu.item.keyboardShortcuts"),
             action: () => {
               actions.onOpenKeyboardShortcuts();
+              closeMenu();
+            },
+          },
+          {
+            label: getWindowMenuCopy(language).restartTour,
+            action: () => {
+              useOnboardingStore.getState().restartTour();
               closeMenu();
             },
           },

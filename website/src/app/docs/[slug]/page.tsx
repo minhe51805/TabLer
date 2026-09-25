@@ -6,14 +6,10 @@ import { DocView } from "../DocView";
 type PageParams = { params: Promise<{ slug: string }> };
 
 export function generateStaticParams() {
-  return docsSlugs
-    .filter((slug) => slug !== "")
-    .map((slug) => ({ slug }));
+  return docsSlugs.filter((slug) => slug !== "").map((slug) => ({ slug }));
 }
 
-export async function generateMetadata({
-  params,
-}: PageParams): Promise<Metadata> {
+export async function generateMetadata({ params }: PageParams): Promise<Metadata> {
   const { slug } = await params;
   const language = await getSiteLanguage();
   const docs = getDocs(language);
@@ -23,9 +19,19 @@ export async function generateMetadata({
     return { title: `TableR ${docs.label}` };
   }
 
+  const title = `${page.title} — TableR ${docs.label}`;
   return {
-    title: `${page.title} — TableR ${docs.label}`,
+    title,
     description: page.description,
+    openGraph: {
+      title,
+      description: page.description,
+      type: "article",
+    },
+    twitter: {
+      title,
+      description: page.description,
+    },
   };
 }
 

@@ -878,7 +878,7 @@ export function Sidebar() {
           Folders
         </button>
       </div>
-      <div className="sidebar-browser-content">
+      <div className="sidebar-browser-content" data-tour="sidebar-tree">
         {activeSidebarTab === "database" ? (
           renderDatabaseExplorer()
         ) : (

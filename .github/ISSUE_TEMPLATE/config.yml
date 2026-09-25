@@ -1,0 +1,11 @@
+# Blank issues stay off — every report should fit a template or move to
+# Discussions where it belongs.
+blank_issues_enabled: false
+
+contact_links:
+  - name: Ask a question / discuss ideas
+    url: https://github.com/minhe51805/TabLer/discussions
+    about: "Questions, ideas and open-ended discussion — not bug reports."
+  - name: Security vulnerability
+    url: https://github.com/minhe51805/TabLer/security/advisories/new
+    about: "Report privately — see SECURITY.md. Never file a public issue for a vulnerability."

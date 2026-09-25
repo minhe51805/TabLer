@@ -9,8 +9,8 @@ import { useEditorPreferencesStore } from "../stores/editorPreferencesStore";
 import type { AppLanguagePreference, TranslationKey } from "../i18n";
 import type { DatabaseType, Tab } from "../types";
 import {
+  adminQueryMenuLabel,
   getAdminQueryPreset,
-  killSessionMenuLabel,
   type AdminQueryKind,
 } from "../utils/admin-query-presets";
 import { getNewQueryTabTitle, getQueryProfile } from "../utils/query-profile";
@@ -457,11 +457,11 @@ export function useWorkspaceMenuHandlers(inputs: WorkspaceMenuHandlerInputs) {
 
       const preset = getAdminQueryPreset(activeConn.db_type, kind);
       const itemLabel =
-        kind === "kill-session"
-          ? killSessionMenuLabel(language)
-          : kind === "process-list"
-            ? t("menu.item.processList")
-            : t("menu.item.userManagement");
+        kind === "process-list"
+          ? t("menu.item.processList")
+          : kind === "user-management"
+            ? t("menu.item.userManagement")
+            : adminQueryMenuLabel(language, kind);
 
       if (!preset.supported || !preset.content.trim()) {
         setError(

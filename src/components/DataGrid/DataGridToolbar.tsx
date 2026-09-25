@@ -19,6 +19,8 @@ import {
 } from "lucide-react";
 import { DataGridMaskIndicator } from "./DataGridMaskIndicator";
 import { DataGridAnonymizerModal } from "./dialogs/DataGridAnonymizerModal";
+import { DataGridRewindModal } from "./DataGridRewindModal";
+import { getRewindCopy } from "./rewind-copy";
 import { GenerateTestRowsDialog } from "../GenerateTestRows/GenerateTestRowsDialog";
 import { getSeedRowsCopy } from "../GenerateTestRows/seed-rows-copy";
 import { DataGridChartModal } from "./DataGridChartModal";
@@ -158,6 +160,12 @@ interface DataGridToolbarProps {
   onUnmaskColumn?: (column: string) => void;
   /** Remove every mask rule in the current table scope. */
   onUnmaskAll?: () => void;
+  /** Active connection — needed to list/restore its rewind checkpoints.
+   *  The Rewind menu entry only appears when a connection id is available. */
+  connectionId?: string;
+  /** Open the Rewind checkpoint browser. Defaults to the built-in modal when
+   *  a connectionId is provided; a caller may supply its own handler instead. */
+  onOpenRewind?: () => void;
 }
 
 function buildExportFilename(tableName: string | undefined, extension: string): string {
@@ -218,6 +226,8 @@ export function DataGridToolbar({
   autoRefreshTick,
   autoRefreshPaused = false,
   autoRefreshBusy = false,
+  connectionId,
+  onOpenRewind,
   diffResult = null,
   dbType,
   onToggleRowInspector,
@@ -228,6 +238,7 @@ export function DataGridToolbar({
 }: DataGridToolbarProps) {
   const [showSettings, setShowSettings] = useState(false);
   const [showExportMenu, setShowExportMenu] = useState(false);
+  const [showRewind, setShowRewind] = useState(false);
   const [showCopyMenu, setShowCopyMenu] = useState(false);
   const [showAnonymizer, setShowAnonymizer] = useState(false);
   const [showSeedRows, setShowSeedRows] = useState(false);
@@ -250,6 +261,8 @@ export function DataGridToolbar({
   // Formats compiled into the backend; parquet is absent when the
   // `parquet-export` cargo feature is off.
   const [fullFormats, setFullFormats] = useState<ExportFormatInfo[]>(DEFAULT_EXPORT_FORMATS);
+  const powerCopy = getDataGridPowerCopy(language);
+  const rewindCopy = getRewindCopy(language);
   useEffect(() => {
     let cancelled = false;
     void getCompiledExportFormats().then((formats) => {
@@ -259,7 +272,6 @@ export function DataGridToolbar({
       cancelled = true;
     };
   }, []);
-  const powerCopy = getDataGridPowerCopy(language);
 
   /** True when at least one column can feed a numeric Y axis. */
   const hasNumericColumn = useMemo(
@@ -270,6 +282,10 @@ export function DataGridToolbar({
   );
 
   const canAutoRefresh = Boolean(onAutoRefreshMsChange && autoRefreshTick);
+
+  /** Rewind entry in the Tools menu: a caller-supplied handler wins, otherwise
+   *  the toolbar's own checkpoint modal opens when a connection id is known. */
+  const handleOpenRewind = onOpenRewind ?? (connectionId ? () => setShowRewind(true) : undefined);
 
   // Countdown ticker: ticks once per second, freezes while the page is hidden
   // or the grid is a background tab, and re-runs the query at zero.
@@ -817,6 +833,8 @@ export function DataGridToolbar({
             powerCopy={powerCopy}
             onChart={() => setShowChartModal(true)}
             onToggleRowInspector={onToggleRowInspector}
+            rewindCopy={rewindCopy}
+            onOpenRewind={handleOpenRewind}
             onAutoRefreshMsChange={onAutoRefreshMsChange}
             onClose={() => setShowToolsMenu(false)}
           />
@@ -1102,6 +1120,13 @@ export function DataGridToolbar({
           columns={resolvedColumns}
           dataRows={anonymizerRows ?? dataRows}
           onClose={() => setShowAnonymizer(false)}
+        />
+      )}
+      {showRewind && connectionId && (
+        <DataGridRewindModal
+          connectionId={connectionId}
+          onClose={() => setShowRewind(false)}
+          onRestored={onReloadData}
         />
       )}
       {showSeedRows && tableName && (

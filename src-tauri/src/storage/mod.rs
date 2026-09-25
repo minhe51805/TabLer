@@ -1,4 +1,5 @@
 pub mod ai_storage;
+pub mod checkpoint_store;
 pub mod connection_storage;
 pub mod file_storage;
 pub mod mcp_storage;

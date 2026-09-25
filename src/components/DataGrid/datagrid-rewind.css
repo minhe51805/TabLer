@@ -1,0 +1,103 @@
+/* Rewind checkpoint modal (grid pre-write snapshots). Per-feature stylesheet —
+   do not move rules into app-components.css (AGENTS.md §6). */
+
+/* Small caption under the modal title; also the empty-state subtext. */
+.datagrid-rewind-hint {
+  padding: 0 12px 8px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* One checkpoint row inside the qs-list shell. */
+.datagrid-rewind-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 12px;
+}
+
+.datagrid-rewind-kind {
+  flex-shrink: 0;
+  width: 56px;
+  text-align: center;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  padding: 2px 4px;
+  border-radius: 4px;
+  border: 1px solid var(--border-color, rgba(128, 128, 128, 0.3));
+  color: var(--text-secondary);
+}
+
+.datagrid-rewind-kind.update {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.datagrid-rewind-kind.delete {
+  color: var(--danger, #e5534b);
+  border-color: color-mix(in srgb, var(--danger, #e5534b) 45%, transparent);
+}
+
+.datagrid-rewind-kind.insert {
+  color: var(--success, #4ac26b);
+  border-color: color-mix(in srgb, var(--success, #4ac26b) 45%, transparent);
+}
+
+.datagrid-rewind-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+
+.datagrid-rewind-db {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-tertiary);
+}
+
+.datagrid-rewind-meta {
+  flex-shrink: 0;
+  font-size: 11px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.datagrid-rewind-actions {
+  display: inline-flex;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.datagrid-rewind-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--border-color, rgba(128, 128, 128, 0.3));
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.datagrid-rewind-action:hover:not(:disabled) {
+  background: var(--bg-hover, rgba(128, 128, 128, 0.12));
+  color: var(--text-primary);
+}
+
+.datagrid-rewind-action.danger:hover:not(:disabled) {
+  color: var(--danger, #e5534b);
+  border-color: color-mix(in srgb, var(--danger, #e5534b) 45%, transparent);
+}
+
+.datagrid-rewind-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

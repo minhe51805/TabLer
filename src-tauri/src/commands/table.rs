@@ -19,6 +19,10 @@ use tauri::{AppHandle, Emitter, State};
 use tokio::sync::mpsc;
 use tokio::time::{timeout, Duration};
 
+use crate::commands::rewind::capture_rewind_checkpoint;
+use crate::database::models::RowKeyValue;
+use crate::storage::checkpoint_store::CheckpointKind;
+
 const TABLE_QUERY_TIMEOUT: Duration = Duration::from_secs(120);
 const TABLE_METADATA_TIMEOUT: Duration = Duration::from_secs(60);
 const CSV_FILE_IMPORT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
@@ -69,7 +73,7 @@ pub struct CsvImportCancellationState {
 /// the mismatch is a hard error here. Engines that synthesize the count
 /// (Cassandra: 1 or batch len) pass trivially; SQL engines report real
 /// `rows_affected()`. `hint` explains the most likely cause for the UI.
-fn ensure_rows_affected(
+pub(crate) fn ensure_rows_affected(
     operation: &str,
     expected: u64,
     affected: u64,
@@ -316,6 +320,17 @@ pub async fn update_table_cell(
         .get_driver(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
+    // Capture the pre-image before the write so Rewind can undo it.
+    capture_rewind_checkpoint(
+        &driver,
+        &connection_id,
+        &request.table,
+        request.database.as_deref(),
+        CheckpointKind::Update,
+        vec![request.primary_keys.clone()],
+        vec![request.target_column.clone()],
+    )
+    .await;
     let window = table_query_timeout(db_manager.inner(), &connection_id).await;
     let affected = timeout(window, driver.update_table_cell(&request))
         .await
@@ -354,6 +369,28 @@ pub async fn apply_table_updates_atomically(
         .get_driver(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
+    let rewind_selectors: Vec<Vec<RowKeyValue>> =
+        updates.iter().map(|u| u.primary_keys.clone()).collect();
+    let rewind_columns: Vec<String> = {
+        let mut seen = std::collections::BTreeSet::new();
+        updates
+            .iter()
+            .map(|u| u.target_column.clone())
+            .filter(|c| seen.insert(c.clone()))
+            .collect()
+    };
+    let rewind_table = updates.first().map(|u| u.table.clone()).unwrap_or_default();
+    let rewind_database = updates.first().and_then(|u| u.database.clone());
+    capture_rewind_checkpoint(
+        &driver,
+        &connection_id,
+        &rewind_table,
+        rewind_database.as_deref(),
+        CheckpointKind::Update,
+        rewind_selectors,
+        rewind_columns,
+    )
+    .await;
     let window = table_query_timeout(db_manager.inner(), &connection_id).await;
     let expected = updates.len() as u64;
     let affected = timeout(window, driver.apply_table_updates_atomically(&updates))
@@ -391,6 +428,17 @@ pub async fn delete_table_rows(
         .get_driver(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
+    // Capture the pre-image before the write so Rewind can undo it.
+    capture_rewind_checkpoint(
+        &driver,
+        &connection_id,
+        &request.table,
+        request.database.as_deref(),
+        CheckpointKind::Delete,
+        request.rows.clone(),
+        Vec::new(),
+    )
+    .await;
     let window = table_query_timeout(db_manager.inner(), &connection_id).await;
     let expected = request.rows.len() as u64;
     let affected = timeout(window, driver.delete_table_rows(&request))

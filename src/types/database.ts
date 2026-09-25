@@ -128,6 +128,17 @@ export interface TableRowDeleteRequest {
   rows: RowKeyValue[][];
 }
 
+/** Rewind checkpoint descriptor returned by `list_rewind_checkpoints`.
+ *  `kind` is the captured write type; `createdAtMs` is epoch milliseconds. */
+export interface RewindCheckpointInfo {
+  id: string;
+  tableName: string;
+  database: string | null;
+  kind: "update" | "delete" | "insert";
+  rowCount: number;
+  createdAtMs: number;
+}
+
 export interface TableInfo {
   name: string;
   schema?: string;

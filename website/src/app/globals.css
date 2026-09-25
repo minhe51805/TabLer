@@ -2696,6 +2696,74 @@ a {
   line-height: 1.65;
 }
 
+/* Docs route loading skeleton — pulses in the article column while the
+   doc body streams in */
+.docs-loading {
+  max-width: 800px;
+}
+
+.docs-loading-title,
+.docs-loading-lede,
+.docs-loading-block {
+  border-radius: 8px;
+  background: linear-gradient(90deg, var(--soft-line) 25%, var(--line) 50%, var(--soft-line) 75%);
+  background-size: 400% 100%;
+  animation: docs-loading-shimmer 1.4s ease-in-out infinite;
+}
+
+.docs-loading-title {
+  width: 55%;
+  height: 42px;
+}
+
+.docs-loading-lede {
+  width: 85%;
+  height: 20px;
+  margin-top: 18px;
+}
+
+.docs-loading-lede--short {
+  width: 60%;
+  margin-top: 10px;
+}
+
+.docs-loading-block {
+  height: 16px;
+  margin-top: 14px;
+}
+
+.docs-loading-block:nth-of-type(4) {
+  width: 92%;
+}
+
+.docs-loading-block:nth-of-type(5) {
+  width: 78%;
+}
+
+.docs-loading-block:nth-of-type(6) {
+  width: 88%;
+}
+
+.docs-loading-block:nth-of-type(7) {
+  width: 64%;
+}
+
+@keyframes docs-loading-shimmer {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .docs-loading-title,
+  .docs-loading-lede,
+  .docs-loading-block {
+    animation: none;
+  }
+}
 /* Article body ---------------------------------------------------- */
 
 .doc-article {

@@ -1,6 +1,7 @@
 "use client";
 
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, Menu, X } from "lucide-react";
+import Link from "next/link";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
 /**
@@ -40,6 +41,74 @@ export function DockToggle() {
         <ChevronUp size={16} strokeWidth={2.2} aria-hidden="true" />
       )}
     </button>
+  );
+}
+
+/**
+ * Mobile navigation for the home header. `.main-nav` is hidden below 980px,
+ * so this renders a hamburger button plus a drop-down panel with the same
+ * links (icons + labels). The panel closes on link tap, Escape, or a pointer
+ * outside; body scroll is locked while it is open.
+ */
+export function MobileNav({
+  links,
+  label,
+}: {
+  links: { href: string; label: string }[];
+  label: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    const onPointer = (e: PointerEvent) => {
+      if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onPointer);
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onPointer);
+      document.body.style.overflow = "";
+    };
+  }, [open]);
+
+  return (
+    <div className="mobile-nav" ref={rootRef}>
+      <button
+        type="button"
+        className="mobile-nav-toggle"
+        aria-expanded={open}
+        aria-label={label}
+        onClick={() => setOpen((v) => !v)}
+      >
+        {open ? (
+          <X size={18} strokeWidth={2} aria-hidden="true" />
+        ) : (
+          <Menu size={18} strokeWidth={2} aria-hidden="true" />
+        )}
+      </button>
+      <nav className="mobile-nav-panel" aria-label={label} hidden={!open}>
+        {links.map((link) =>
+          link.href.startsWith("/") ? (
+            <Link key={link.href} href={link.href} onClick={() => setOpen(false)}>
+              {link.label}
+            </Link>
+          ) : (
+            <a key={link.href} href={link.href} onClick={() => setOpen(false)}>
+              {link.label}
+            </a>
+          ),
+        )}
+      </nav>
+    </div>
   );
 }
 
@@ -250,7 +319,7 @@ type HeroPhase = { eyebrow: string; title: string; copy: string };
 
 /**
  * Scrollytelling hero — a pinned stage telling the product story over a
- * 460vh scroll track (Apple-style scrub, DOM transforms only):
+ * 300vh scroll track (Apple-style scrub, DOM transforms only):
  *   1. hero copy fades/rises away (done by ~14%)
  *   2. the product frame opens like a laptop lid (rotateX 58° → 0°) and
  *      lifts to center stage by ~30%
@@ -278,7 +347,7 @@ export function HeroScrollFX({ phases }: { phases: HeroPhase[] }) {
     const images = Array.from(document.querySelectorAll<HTMLElement>(".neu .hero-phase-image"));
     if (!hero || !copy || !media || !frame || !header) return;
     if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
-    // The 460vh pinned scrub is a desktop affordance — on phones it makes
+    // The 300vh pinned scrub is a desktop affordance — on phones it makes
     // the hero feel endless and the per-frame transforms jank. Fall back
     // to a plain hero (copy + frame visible, no scroll track).
     if (window.matchMedia("(max-width: 720px)").matches) return;

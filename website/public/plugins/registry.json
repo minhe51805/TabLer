@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-25T11:55:10.985Z",
+  "generatedAt": "2026-09-25T12:48:55.717Z",
   "packages": [
     {
       "manifest": {
@@ -691,6 +691,54 @@
     {
       "manifest": {
         "apiVersion": 1,
+        "id": "surrealdb-driver",
+        "name": "SurrealDB driver",
+        "version": "1.0.0",
+        "publishedAt": "2026-09-25T00:00:00.000Z",
+        "kind": "adapter",
+        "description": "Adds SurrealDB connectivity (SurrealQL over the HTTP /rpc endpoint) through the declarative HTTP driver host.",
+        "author": "TableR Team",
+        "entry": null,
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute",
+          "network.fetch"
+        ],
+        "compatibility": {
+          "minAppVersion": "0.1.4",
+          "maxAppVersion": null,
+          "platforms": [],
+          "architectures": []
+        },
+        "integrity": {
+          "algorithm": "sha256",
+          "digest": "16be79c650105f77b3a624565c48cf1bd5196e664114818ebcd47d44ebef1df7"
+        },
+        "updateUrl": null,
+        "contributes": {
+          "formats": [],
+          "drivers": [
+            {
+              "id": "surrealdb",
+              "label": "SurrealDB",
+              "protocol": "surrealdb",
+              "runtime": "declarative-http-v1",
+              "status": "stable"
+            }
+          ]
+        }
+      },
+      "assets": [],
+      "publishedAt": "2026-09-25T00:00:00.000Z",
+      "releaseNotes": "Registry package for SurrealDB driver 1.0.0."
+    },
+    {
+      "manifest": {
+        "apiVersion": 1,
         "version": "1.0.0",
         "publishedAt": "2026-09-25T00:00:00.000Z",
         "kind": "adapter",
@@ -735,6 +783,54 @@
       "assets": [],
       "publishedAt": "2026-09-25T00:00:00.000Z",
       "releaseNotes": "Registry package for Trino driver 1.0.0."
+    },
+    {
+      "manifest": {
+        "apiVersion": 1,
+        "id": "weaviate-driver",
+        "name": "Weaviate driver",
+        "version": "1.0.0",
+        "publishedAt": "2026-09-25T00:00:00.000Z",
+        "kind": "adapter",
+        "description": "Adds Weaviate connectivity (REST + GraphQL on :8080) through the declarative HTTP driver host: class browsing, a SELECT subset, inline edits, and schema edits.",
+        "author": "TableR Team",
+        "entry": null,
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute",
+          "network.fetch"
+        ],
+        "compatibility": {
+          "minAppVersion": "0.1.4",
+          "maxAppVersion": null,
+          "platforms": [],
+          "architectures": []
+        },
+        "integrity": {
+          "algorithm": "sha256",
+          "digest": "37ce66015ffcb3642b8eb96accd477931de90529e50019cfeb4edc979f951118"
+        },
+        "updateUrl": null,
+        "contributes": {
+          "formats": [],
+          "drivers": [
+            {
+              "id": "weaviate",
+              "label": "Weaviate",
+              "protocol": "weaviate",
+              "runtime": "declarative-http-v1",
+              "status": "stable"
+            }
+          ]
+        }
+      },
+      "assets": [],
+      "publishedAt": "2026-09-25T00:00:00.000Z",
+      "releaseNotes": "Registry package for Weaviate driver 1.0.0."
     }
   ]
 }

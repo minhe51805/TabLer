@@ -96,6 +96,13 @@ export const docsSlugs = [
   "libsql",
   "cloudflare-d1",
   "oracle",
+  "dynamodb",
+  "elasticsearch",
+  "opensearch",
+  "spanner",
+  "trino",
+  "surrealdb",
+  "weaviate",
   "plugins",
   "sql-workspace",
   "exploring-data",
@@ -136,6 +143,13 @@ export const engineOrder: { key: string; label: string }[] = [
   { key: "libsql", label: "LibSQL" },
   { key: "cloudflare-d1", label: "Cloudflare D1" },
   { key: "oracle", label: "Oracle (ORDS)" },
+  { key: "dynamodb", label: "Amazon DynamoDB" },
+  { key: "elasticsearch", label: "Elasticsearch" },
+  { key: "opensearch", label: "OpenSearch" },
+  { key: "spanner", label: "Google Spanner" },
+  { key: "trino", label: "Trino" },
+  { key: "surrealdb", label: "SurrealDB" },
+  { key: "weaviate", label: "Weaviate" },
 ];
 
 /**
@@ -2419,6 +2433,634 @@ const EN_ORACLE: EngineSpec = {
   ],
 };
 
+const EN_DYNAMODB: EngineSpec = {
+  slug: "dynamodb",
+  icon: "PlugZap",
+  title: "Amazon DynamoDB",
+  description:
+    "Connect TableR to Amazon DynamoDB with AWS access credentials and a region, run PartiQL statements, verify the connection, and troubleshoot — via the dynamodb-driver plugin.",
+  intro:
+    "DynamoDB is reached through its JSON API (ExecuteStatement / PartiQL) — the connection is provided by the dynamodb-driver plugin (install it from the plugins page). Provide a region or a custom endpoint, plus an AWS access key pair.",
+  overviewText:
+    "TableR calls the DynamoDB ExecuteStatement API over HTTPS and queries tables with PartiQL — one statement per request. The host field accepts either an AWS region name (the regional endpoint is derived) or a full endpoint URL for DynamoDB Local or compatible services.",
+  overviewBullets: [
+    "PartiQL — queries run through the ExecuteStatement API; SELECT is supported.",
+    "SigV4 auth — the username field takes your AWS access key ID; the password field the secret access key.",
+    "Plugin-gated — the DynamoDB card appears once the dynamodb-driver plugin is installed.",
+    "Custom endpoints — point the host at DynamoDB Local or another compatible endpoint by URL.",
+  ],
+  beforeYouStart: [
+    "The dynamodb-driver plugin installed (Plugins → Amazon DynamoDB → Install).",
+    "An AWS access key ID and secret access key with DynamoDB read permission.",
+    "The AWS region your tables live in (or a full endpoint URL for local testing).",
+  ],
+  connFieldsIntro:
+    "These fields match TableR's DynamoDB connection form. The secret access key is stored in the operating system keyring, never in plain configuration files.",
+  fieldRows: [
+    [
+      "Host",
+      "Yes",
+      "—",
+      "An AWS region (e.g. us-east-1) or a full endpoint URL (e.g. http://localhost:8000).",
+    ],
+    [
+      "Region",
+      "No",
+      "—",
+      "Optional; derived from the host when it is an AWS region or an AWS endpoint URL.",
+    ],
+    ["Username", "Yes", "—", "Your AWS access key ID (used for SigV4 signing)."],
+    ["Password", "Yes", "—", "Your AWS secret access key; stored in the OS keyring."],
+  ],
+  formSteps: [
+    {
+      title: "Install the DynamoDB plugin",
+      text: "Open Plugins, find Amazon DynamoDB, and install the dynamodb-driver plugin.",
+    },
+    { title: "Choose DynamoDB", text: "Open the launcher and pick the Amazon DynamoDB card." },
+    {
+      title: "Enter region or endpoint",
+      text: "Type an AWS region like us-east-1, or a full endpoint URL for DynamoDB Local.",
+    },
+    {
+      title: "Add AWS credentials",
+      text: "Username = access key ID, Password = secret access key; the secret is saved to the keyring.",
+    },
+    {
+      title: "Save and connect",
+      text: "Save the profile so it reappears in the launcher, then connect.",
+    },
+  ],
+  verifyLead: "Once connected, open a query tab and run PartiQL against a table:",
+  verifyCode: "SELECT * FROM your_table LIMIT 10;",
+  verifyTrail: "If rows return, the credentials, region, and endpoint are all correct.",
+  troubleshootRows: [
+    [
+      "DynamoDB card missing",
+      "The dynamodb-driver plugin is not installed.",
+      "Open Plugins and install the Amazon DynamoDB driver, then retry.",
+    ],
+    [
+      "DynamoDB requires the AWS access key id in the username field",
+      "The username field is empty.",
+      "Enter your AWS access key ID in the username field.",
+    ],
+    [
+      "Signature mismatch / UnrecognizedClientException",
+      "Wrong secret access key or key pair.",
+      "Re-check the access key ID and secret; update the saved password in the keyring.",
+    ],
+    [
+      "Could not resolve endpoint",
+      "Invalid region or endpoint URL.",
+      "Use a valid AWS region name, or a full http(s) endpoint URL including the host.",
+    ],
+    [
+      "ResourceNotFoundException",
+      "The queried table does not exist in this region.",
+      "Confirm the table name and that the region matches your tables.",
+    ],
+  ],
+};
+
+const EN_ELASTICSEARCH: EngineSpec = {
+  slug: "elasticsearch",
+  icon: "PlugZap",
+  title: "Elasticsearch",
+  description:
+    "Connect TableR to Elasticsearch over its REST API with TLS, optional basic auth, verify the connection, and troubleshoot — via the elasticsearch-driver plugin.",
+  intro:
+    "Elasticsearch is reached over its REST API — the connection is provided by the elasticsearch-driver plugin (install it from the plugins page). TLS is required for any non-loopback host.",
+  overviewText:
+    "TableR talks to the Elasticsearch REST endpoint over HTTP/HTTPS and browses indices like tables. The driver verifies the server reports Elasticsearch (via X-Elastic-Product) — an OpenSearch endpoint is refused with a hint to use the OpenSearch engine instead. Basic auth (username/password) is optional.",
+  overviewBullets: [
+    "REST API — connects over HTTP(S) to the cluster endpoint (default port 9200).",
+    "TLS enforced — non-loopback hosts require SSL/TLS; only localhost may use plain HTTP.",
+    "Product check — an endpoint that reports OpenSearch is rejected; use the OpenSearch card instead.",
+    "Plugin-gated — the Elasticsearch card appears once the elasticsearch-driver plugin is installed.",
+  ],
+  beforeYouStart: [
+    "The elasticsearch-driver plugin installed (Plugins → Elasticsearch → Install).",
+    "The cluster host and port (default 9200, or 443 behind HTTPS).",
+    "TLS enabled for any remote cluster (required).",
+    "Optional: a username and password when the cluster enforces basic auth.",
+  ],
+  connFieldsIntro:
+    "These fields match TableR's Elasticsearch connection form. The password is stored in the operating system keyring, never in plain configuration files.",
+  fieldRows: [
+    ["Host", "Yes", "—", "The Elasticsearch host; credentials cannot be embedded here."],
+    ["Port", "No", "9200", "The REST port; 443 when SSL/TLS is enabled."],
+    ["Username", "No", "—", "Optional basic-auth user (e.g. elastic)."],
+    ["Password", "No", "—", "Optional basic-auth password; stored in the OS keyring."],
+    ["SSL/TLS", "No", "Off", "Required for non-loopback hosts; optional only for localhost."],
+  ],
+  formSteps: [
+    {
+      title: "Install the Elasticsearch plugin",
+      text: "Open Plugins, find Elasticsearch, and install the elasticsearch-driver plugin.",
+    },
+    { title: "Choose Elasticsearch", text: "Open the launcher and pick the Elasticsearch card." },
+    { title: "Enter host and port", text: "Use your cluster host and port (9200 or 443)." },
+    {
+      title: "Enable SSL/TLS",
+      text: "Required for any remote host; only localhost may stay on plain HTTP.",
+    },
+    {
+      title: "Add credentials (optional)",
+      text: "Username and password when the cluster enforces basic auth.",
+    },
+    {
+      title: "Save and connect",
+      text: "Save the profile so it reappears in the launcher, then connect.",
+    },
+  ],
+  sslIntro:
+    "Driver plugins require TLS for non-loopback hosts — the connection is refused without it. Keep SSL/TLS on for anything that is not localhost.",
+  sslBullets: [
+    "Off — plain HTTP, localhost only.",
+    "On — HTTPS to the REST endpoint on port 443 (or your TLS port).",
+  ],
+  verifyLead: "Once connected, indices appear as tables; ping runs a root request:",
+  verifyCode: "GET /\nGET _cat/indices?v",
+  verifyLang: "text",
+  verifyTrail:
+    "If the cluster name/version and the index list return, the endpoint, TLS, and credentials are correct.",
+  troubleshootRows: [
+    [
+      "Elasticsearch card missing",
+      "The elasticsearch-driver plugin is not installed.",
+      "Open Plugins and install the Elasticsearch driver, then retry.",
+    ],
+    [
+      "driver plugins require TLS for non-loopback hosts",
+      "SSL/TLS is off for a remote host.",
+      "Enable SSL/TLS — only localhost may use plain HTTP.",
+    ],
+    [
+      "reports OpenSearch, not Elasticsearch",
+      "The endpoint is an OpenSearch cluster.",
+      "Connect with the OpenSearch engine instead.",
+    ],
+    [
+      "401 / unauthorized",
+      "Missing or wrong basic-auth credentials.",
+      "Add a valid username/password; the password is saved to the keyring.",
+    ],
+    [
+      "Connection refused",
+      "Cluster down, wrong port, or a firewall.",
+      "Confirm the cluster is up and the REST port is reachable.",
+    ],
+  ],
+};
+
+const EN_OPENSEARCH: EngineSpec = {
+  slug: "opensearch",
+  icon: "PlugZap",
+  title: "OpenSearch",
+  description:
+    "Connect TableR to OpenSearch over its REST API with TLS, optional basic auth, verify the connection, and troubleshoot — via the opensearch-driver plugin.",
+  intro:
+    "OpenSearch is reached over its REST API — the connection is provided by the opensearch-driver plugin (install it from the plugins page). TLS is required for any non-loopback host.",
+  overviewText:
+    "TableR talks to the OpenSearch REST endpoint over HTTP/HTTPS and browses indices like tables. Basic auth (username/password) is optional; AWS OpenSearch domains typically sit behind HTTPS on port 443.",
+  overviewBullets: [
+    "REST API — connects over HTTP(S) to the domain endpoint (default port 9200).",
+    "TLS enforced — non-loopback hosts require SSL/TLS; only localhost may use plain HTTP.",
+    "Plugin-gated — the OpenSearch card appears once the opensearch-driver plugin is installed.",
+  ],
+  beforeYouStart: [
+    "The opensearch-driver plugin installed (Plugins → OpenSearch → Install).",
+    "The domain host and port (9200 self-hosted, 443 on AWS OpenSearch).",
+    "TLS enabled for any remote host (required).",
+    "Optional: a username and password when fine-grained access control is on.",
+  ],
+  connFieldsIntro:
+    "These fields match TableR's OpenSearch connection form. The password is stored in the operating system keyring, never in plain configuration files.",
+  fieldRows: [
+    ["Host", "Yes", "—", "The OpenSearch host or AWS domain endpoint; no embedded credentials."],
+    ["Port", "No", "9200", "The REST port; 443 when SSL/TLS is enabled."],
+    ["Username", "No", "—", "Optional basic-auth user (e.g. admin)."],
+    ["Password", "No", "—", "Optional basic-auth password; stored in the OS keyring."],
+    ["SSL/TLS", "No", "Off", "Required for non-loopback hosts; optional only for localhost."],
+  ],
+  formSteps: [
+    {
+      title: "Install the OpenSearch plugin",
+      text: "Open Plugins, find OpenSearch, and install the opensearch-driver plugin.",
+    },
+    { title: "Choose OpenSearch", text: "Open the launcher and pick the OpenSearch card." },
+    { title: "Enter host and port", text: "Use your domain host and port (9200 or 443)." },
+    {
+      title: "Enable SSL/TLS",
+      text: "Required for any remote host; only localhost may stay on plain HTTP.",
+    },
+    {
+      title: "Add credentials (optional)",
+      text: "Username and password when the domain enforces basic auth.",
+    },
+    {
+      title: "Save and connect",
+      text: "Save the profile so it reappears in the launcher, then connect.",
+    },
+  ],
+  sslIntro:
+    "Driver plugins require TLS for non-loopback hosts — the connection is refused without it. Keep SSL/TLS on for anything that is not localhost.",
+  sslBullets: [
+    "Off — plain HTTP, localhost only.",
+    "On — HTTPS to the REST endpoint on port 443 (or your TLS port).",
+  ],
+  verifyLead: "Once connected, indices appear as tables; ping runs a root request:",
+  verifyCode: "GET /\nGET _cat/indices?v",
+  verifyLang: "text",
+  verifyTrail:
+    "If the cluster name/version and the index list return, the endpoint, TLS, and credentials are correct.",
+  troubleshootRows: [
+    [
+      "OpenSearch card missing",
+      "The opensearch-driver plugin is not installed.",
+      "Open Plugins and install the OpenSearch driver, then retry.",
+    ],
+    [
+      "driver plugins require TLS for non-loopback hosts",
+      "SSL/TLS is off for a remote host.",
+      "Enable SSL/TLS — only localhost may use plain HTTP.",
+    ],
+    [
+      "401 / unauthorized",
+      "Missing or wrong basic-auth credentials.",
+      "Add a valid username/password; the password is saved to the keyring.",
+    ],
+    [
+      "Connection refused",
+      "Domain down, wrong port, or a firewall/security group.",
+      "Confirm the domain is up and the REST port is reachable.",
+    ],
+  ],
+};
+
+const EN_SPANNER: EngineSpec = {
+  slug: "spanner",
+  icon: "PlugZap",
+  title: "Google Spanner",
+  description:
+    "Connect TableR to Google Cloud Spanner over its REST API with an instance path, database name, and OAuth2 access token — via the spanner-driver plugin.",
+  intro:
+    "Spanner is reached over the Google Cloud REST API — the connection is provided by the spanner-driver plugin (install it from the plugins page). You identify the target by instance path and database name, and authenticate with an OAuth2 access token.",
+  overviewText:
+    "TableR calls the Spanner REST API (spanner.googleapis.com) — there is no host/port to run. The host field takes the instance path projects/<project>/instances/<instance>, the database field the database name, and the password field a Google OAuth2 access token. Set SPANNER_EMULATOR_HOST to point at a local emulator instead.",
+  overviewBullets: [
+    "REST API — reached at spanner.googleapis.com over HTTPS; emulator via SPANNER_EMULATOR_HOST.",
+    "Instance path — the host field carries projects/<p>/instances/<i>, not a hostname.",
+    "OAuth2 token — the password field takes a Google access token; stored in the keyring.",
+    "Plugin-gated — the Spanner card appears once the spanner-driver plugin is installed.",
+  ],
+  beforeYouStart: [
+    "The spanner-driver plugin installed (Plugins → Google Spanner → Install).",
+    "The instance path projects/<project>/instances/<instance>.",
+    "The database name inside that instance.",
+    "A Google OAuth2 access token with Spanner read access.",
+  ],
+  connFieldsIntro:
+    "These fields match TableR's Spanner connection form. The access token is stored in the operating system keyring, never in plain configuration files.",
+  fieldRows: [
+    ["Host", "Yes", "—", "The instance path: projects/<project>/instances/<instance>."],
+    ["Database", "Yes", "—", "The database name inside the instance."],
+    ["Password", "Yes", "—", "A Google OAuth2 access token; stored in the OS keyring."],
+  ],
+  formSteps: [
+    {
+      title: "Install the Spanner plugin",
+      text: "Open Plugins, find Google Spanner, and install the spanner-driver plugin.",
+    },
+    { title: "Choose Google Spanner", text: "Open the launcher and pick the Google Spanner card." },
+    {
+      title: "Enter the instance path",
+      text: "Use projects/<project>/instances/<instance> in the host field.",
+    },
+    { title: "Enter the database name", text: "Name the database inside that instance." },
+    {
+      title: "Add the access token",
+      text: "Paste a Google OAuth2 access token in the password field; it is saved to the keyring.",
+    },
+    {
+      title: "Save and connect",
+      text: "Save the profile so it reappears in the launcher, then connect.",
+    },
+  ],
+  verifyLead: "Once connected, open a query tab and run GoogleSQL:",
+  verifyCode: "SELECT 1;\nSELECT table_name FROM information_schema.tables;",
+  verifyTrail: "If both statements return, the instance path, database, and token are all correct.",
+  troubleshootRows: [
+    [
+      "Spanner card missing",
+      "The spanner-driver plugin is not installed.",
+      "Open Plugins and install the Google Spanner driver, then retry.",
+    ],
+    [
+      "Spanner host must be the instance path projects/<p>/instances/<i>",
+      "The host is a hostname instead of an instance path.",
+      "Use the full projects/<project>/instances/<instance> form.",
+    ],
+    [
+      "Spanner database name is required",
+      "The database field is empty.",
+      "Enter the database name inside the instance.",
+    ],
+    [
+      "401 / invalid authentication credentials",
+      "Missing or expired OAuth2 access token.",
+      "Mint a fresh token (gcloud auth print-access-token) and update the saved password.",
+    ],
+    [
+      "Instance not found",
+      "Wrong project or instance name in the path.",
+      "Re-check the projects/<p>/instances/<i> path in the host field.",
+    ],
+  ],
+};
+
+const EN_TRINO: EngineSpec = {
+  slug: "trino",
+  icon: "PlugZap",
+  title: "Trino",
+  description:
+    "Connect TableR to a Trino coordinator over HTTP/HTTPS with a user, optional password, and a catalog.schema selection — via the trino-driver plugin.",
+  intro:
+    "Trino is reached through the coordinator's HTTP protocol — the connection is provided by the trino-driver plugin (install it from the plugins page). Provide the coordinator host, a user name, and select a catalog (or catalog.schema) as the database.",
+  overviewText:
+    "TableR speaks the Trino client protocol over HTTP/HTTPS (default port 8080). Every request carries X-Trino-User, so a user name is always sent (default tabler); a password adds HTTP Basic auth for secured coordinators. The database field selects the session catalog — or catalog.schema to pin a schema too.",
+  overviewBullets: [
+    "Coordinator HTTP — connects to the coordinator on port 8080 (or 443/8443 over TLS).",
+    "X-Trino-User — every request carries the user; it defaults to tabler when left empty.",
+    "catalog[.schema] — the database field selects the session catalog and optional schema.",
+    "Plugin-gated — the Trino card appears once the trino-driver plugin is installed.",
+  ],
+  beforeYouStart: [
+    "The trino-driver plugin installed (Plugins → Trino → Install).",
+    "The coordinator host and port (default 8080).",
+    "A Trino user name (any string; defaults to tabler).",
+    "Optional: a password when the coordinator enforces basic auth (usually over TLS).",
+    "The catalog (or catalog.schema) to query, e.g. tpch.tiny.",
+  ],
+  connFieldsIntro:
+    "These fields match TableR's Trino connection form. The password is stored in the operating system keyring, never in plain configuration files.",
+  fieldRows: [
+    ["Host", "Yes", "—", "The Trino coordinator host."],
+    ["Port", "No", "8080", "The coordinator HTTP port; use 443/8443 with SSL/TLS."],
+    ["Username", "No", "tabler", "Sent as X-Trino-User on every request; defaults to tabler."],
+    [
+      "Password",
+      "No",
+      "—",
+      "Optional; adds HTTP Basic auth for secured coordinators. Stored in the OS keyring.",
+    ],
+    ["Database", "No", "—", "Session default as catalog or catalog.schema (e.g. tpch.tiny)."],
+    ["SSL/TLS", "No", "Off", "Enable for HTTPS coordinators; required when basic auth is used."],
+  ],
+  formSteps: [
+    {
+      title: "Install the Trino plugin",
+      text: "Open Plugins, find Trino, and install the trino-driver plugin.",
+    },
+    { title: "Choose Trino", text: "Open the launcher and pick the Trino card." },
+    {
+      title: "Enter coordinator host and port",
+      text: "Use your coordinator host and port (8080 for HTTP).",
+    },
+    {
+      title: "Set the user",
+      text: "Any user name works — it is sent as X-Trino-User; defaults to tabler.",
+    },
+    {
+      title: "Pick a catalog",
+      text: "Use the Database field for catalog or catalog.schema (e.g. tpch.tiny).",
+    },
+    {
+      title: "Enable SSL/TLS + password (optional)",
+      text: "Turn on TLS and add a password when the coordinator enforces basic auth.",
+    },
+    {
+      title: "Save and connect",
+      text: "Save the profile so it reappears in the launcher, then connect.",
+    },
+  ],
+  verifyLead: "Once connected, open a query tab and run SQL through the coordinator:",
+  verifyCode: "SELECT 1;\nSHOW CATALOGS;",
+  verifyTrail: "If both statements return, the coordinator, user, and credentials are all correct.",
+  troubleshootRows: [
+    [
+      "Trino card missing",
+      "The trino-driver plugin is not installed.",
+      "Open Plugins and install the Trino driver, then retry.",
+    ],
+    [
+      "Trino database must use 'catalog' or 'catalog.schema' format",
+      "The database value has too many segments.",
+      "Use catalog or catalog.schema — e.g. tpch or tpch.tiny.",
+    ],
+    [
+      "Authentication failed (401)",
+      "Coordinator requires basic auth or the password is wrong.",
+      "Enable SSL/TLS and provide a valid password; it is saved to the keyring.",
+    ],
+    [
+      "Connection refused",
+      "Coordinator down, wrong port, or a firewall.",
+      "Confirm the coordinator is up and the HTTP port is reachable.",
+    ],
+    [
+      "Catalog does not exist",
+      "The selected catalog is not configured on the coordinator.",
+      "Run SHOW CATALOGS or pick one from the database selector.",
+    ],
+  ],
+};
+
+const EN_SURREALDB: EngineSpec = {
+  slug: "surrealdb",
+  icon: "PlugZap",
+  title: "SurrealDB",
+  description:
+    "Connect TableR to SurrealDB over its HTTP API with a namespace, optional sign-in credentials or a bearer token, verify the connection, and troubleshoot — via the surrealdb-driver plugin.",
+  intro:
+    "SurrealDB is reached over its HTTP API — the connection is provided by the surrealdb-driver plugin (install it from the plugins page). Provide the host, pick a namespace/database, and authenticate with a user/password pair or a token alone.",
+  overviewText:
+    "TableR calls SurrealDB's HTTP /sql endpoint and queries with SurrealQL. The host field accepts a plain host (with the port appended) or a full gateway URL. Authentication is flexible: username + password signs in with Basic auth, while a password alone is sent as a Bearer token.",
+  overviewBullets: [
+    "HTTP /sql — connects to the SurrealDB HTTP endpoint (default port 8000); full URLs work too.",
+    "Two auth modes — username + password for sign-in, or password alone as a Bearer token.",
+    "Namespace + database — the namespace extra field (ns) and the database field scope your data.",
+    "Plugin-gated — the SurrealDB card appears once the surrealdb-driver plugin is installed.",
+  ],
+  beforeYouStart: [
+    "The surrealdb-driver plugin installed (Plugins → SurrealDB → Install).",
+    "The SurrealDB host and port (default 8000), or a full gateway URL.",
+    "A namespace and database to work in.",
+    "Credentials: a user/password pair, or just a token in the password field.",
+  ],
+  connFieldsIntro:
+    "These fields match TableR's SurrealDB connection form. The password or token is stored in the operating system keyring, never in plain configuration files.",
+  fieldRows: [
+    ["Host", "Yes", "—", "The SurrealDB host, or a full gateway URL including scheme."],
+    ["Port", "No", "8000", "The HTTP port; ignored when the host is a full URL."],
+    ["Username", "No", "—", "Sign-in user; paired with the password for Basic auth."],
+    [
+      "Password",
+      "No",
+      "—",
+      "Sign-in password — or a Bearer token when the username is empty. Stored in the OS keyring.",
+    ],
+    ["Namespace", "No", "—", "The SurrealDB namespace (the ns extra field)."],
+    ["Database", "No", "—", "The database inside the namespace."],
+    ["SSL/TLS", "No", "Off", "Enable for HTTPS endpoints."],
+  ],
+  formSteps: [
+    {
+      title: "Install the SurrealDB plugin",
+      text: "Open Plugins, find SurrealDB, and install the surrealdb-driver plugin.",
+    },
+    { title: "Choose SurrealDB", text: "Open the launcher and pick the SurrealDB card." },
+    {
+      title: "Enter host and port",
+      text: "Use your SurrealDB host and port (8000), or paste a full gateway URL.",
+    },
+    {
+      title: "Set namespace and database",
+      text: "Use the ns extra field for the namespace and the Database field for the database.",
+    },
+    {
+      title: "Add credentials",
+      text: "Username + password for sign-in, or just the password field for a Bearer token.",
+    },
+    {
+      title: "Save and connect",
+      text: "Save the profile so it reappears in the launcher, then connect.",
+    },
+  ],
+  verifyLead: "Once connected, open a query tab and run SurrealQL:",
+  verifyCode: "SELECT * FROM your_table LIMIT 10;\nINFO FOR DB;",
+  verifyTrail:
+    "If rows and the database info return, the endpoint, credentials, and namespace are correct.",
+  troubleshootRows: [
+    [
+      "SurrealDB card missing",
+      "The surrealdb-driver plugin is not installed.",
+      "Open Plugins and install the SurrealDB driver, then retry.",
+    ],
+    [
+      "SurrealDB host is required",
+      "The host field is empty.",
+      "Enter the SurrealDB host or a full gateway URL.",
+    ],
+    [
+      "IAM / authentication error",
+      "Wrong credentials or token, or missing sign-in scope.",
+      "Re-check the user/password or token; confirm the account can access the namespace.",
+    ],
+    [
+      "Connection refused",
+      "Server down, wrong port, or a firewall.",
+      "Confirm SurrealDB is running and the HTTP port is reachable.",
+    ],
+    [
+      "Namespace or database not found",
+      "Wrong ns or database value.",
+      "Check the namespace (ns field) and database names.",
+    ],
+  ],
+};
+
+const EN_WEAVIATE: EngineSpec = {
+  slug: "weaviate",
+  icon: "PlugZap",
+  title: "Weaviate",
+  description:
+    "Connect TableR to Weaviate over its REST/GraphQL API with an optional API key and TLS, verify the connection, and troubleshoot — via the weaviate-driver plugin.",
+  intro:
+    "Weaviate is reached over its REST and GraphQL APIs — the connection is provided by the weaviate-driver plugin (install it from the plugins page). Provide the host and, for secured instances, an API key.",
+  overviewText:
+    "TableR talks to Weaviate over HTTP/HTTPS — REST for schema/meta and GraphQL for queries — and browses classes like tables. Authentication is an optional API key sent as a Bearer token (password field or the api_key extra field). TLS, custom CA certificates, and mTLS client certificates are supported for secured deployments.",
+  overviewBullets: [
+    "REST + GraphQL — schema and data are read over HTTP(S); classes appear as tables.",
+    "API key auth — the password field or api_key extra field is sent as a Bearer token.",
+    "Single schema — Weaviate exposes one schema; leave the database field empty or set it to default.",
+    "Plugin-gated — the Weaviate card appears once the weaviate-driver plugin is installed.",
+  ],
+  beforeYouStart: [
+    "The weaviate-driver plugin installed (Plugins → Weaviate → Install).",
+    "The Weaviate host and port (8080 self-hosted, 443 on Weaviate Cloud).",
+    "An API key when the instance requires authentication.",
+    "TLS enabled for remote/cloud instances.",
+  ],
+  connFieldsIntro:
+    "These fields match TableR's Weaviate connection form. The API key is stored in the operating system keyring, never in plain configuration files.",
+  fieldRows: [
+    ["Host", "Yes", "—", "The Weaviate host; credentials cannot be embedded here."],
+    ["Port", "No", "8080", "The REST port; 443 when SSL/TLS is enabled."],
+    [
+      "Password",
+      "No",
+      "—",
+      "A Weaviate API key (or use the api_key extra field); stored in the OS keyring.",
+    ],
+    ["Database", "No", "—", "Must be empty or 'default' — Weaviate exposes a single schema."],
+    ["SSL/TLS", "No", "Off", "Enable for HTTPS; supports custom CA and mTLS client certificates."],
+  ],
+  formSteps: [
+    {
+      title: "Install the Weaviate plugin",
+      text: "Open Plugins, find Weaviate, and install the weaviate-driver plugin.",
+    },
+    { title: "Choose Weaviate", text: "Open the launcher and pick the Weaviate card." },
+    { title: "Enter host and port", text: "Use your Weaviate host and port (8080 or 443)." },
+    {
+      title: "Add the API key",
+      text: "Paste it into the password field (or the api_key extra field); it is saved to the keyring.",
+    },
+    {
+      title: "Enable SSL/TLS for remote",
+      text: "Turn on TLS for cloud or remote instances; add CA or client certs if needed.",
+    },
+    {
+      title: "Save and connect",
+      text: "Save the profile so it reappears in the launcher, then connect.",
+    },
+  ],
+  verifyLead: "Once connected, classes appear as tables; ping hits the meta endpoint:",
+  verifyCode: "GET /v1/meta\nGET /v1/schema",
+  verifyLang: "text",
+  verifyTrail:
+    "If the meta and schema responses return, the endpoint, TLS, and API key are all correct.",
+  troubleshootRows: [
+    [
+      "Weaviate card missing",
+      "The weaviate-driver plugin is not installed.",
+      "Open Plugins and install the Weaviate driver, then retry.",
+    ],
+    [
+      "Weaviate credentials cannot be embedded in the host",
+      "The host contains user:pass@.",
+      "Move the API key to the password or api_key field and keep the host clean.",
+    ],
+    [
+      "Weaviate exposes a single schema",
+      "The database field is set to a name other than 'default'.",
+      "Leave the database empty or set it to 'default'.",
+    ],
+    [
+      "401 / unauthorized",
+      "Missing or wrong API key.",
+      "Add a valid API key; it is saved to the keyring.",
+    ],
+    [
+      "Connection refused",
+      "Instance down, wrong port, or a firewall.",
+      "Confirm Weaviate is up and the REST port is reachable.",
+    ],
+  ],
+};
+
 const VI_POSTGRESQL: EngineSpec = {
   slug: "postgresql",
   icon: "PlugZap",
@@ -4186,6 +4828,653 @@ const VI_ORACLE: EngineSpec = {
   ],
 };
 
+const VI_DYNAMODB: EngineSpec = {
+  slug: "dynamodb",
+  icon: "PlugZap",
+  title: "Amazon DynamoDB",
+  description:
+    "Kết nối TableR tới Amazon DynamoDB bằng AWS access credentials và region, chạy PartiQL, kiểm tra kết nối và khắc phục sự cố — qua plugin dynamodb-driver.",
+  intro:
+    "DynamoDB được truy cập qua JSON API của nó (ExecuteStatement / PartiQL) — kết nối do plugin dynamodb-driver cung cấp (cài nó từ trang plugins). Cung cấp một region hoặc endpoint URL tùy chỉnh, cùng cặp AWS access key.",
+  overviewText:
+    "TableR gọi API DynamoDB ExecuteStatement qua HTTPS và truy vấn bảng bằng PartiQL — một câu lệnh mỗi request. Trường host nhận tên AWS region (endpoint regional được suy ra) hoặc một endpoint URL đầy đủ cho DynamoDB Local hoặc dịch vụ tương thích.",
+  overviewBullets: [
+    "PartiQL — truy vấn chạy qua API ExecuteStatement; hỗ trợ SELECT.",
+    "SigV4 auth — trường username nhận AWS access key ID; trường password nhận secret access key.",
+    "Cần plugin — thẻ DynamoDB xuất hiện sau khi plugin dynamodb-driver được cài.",
+    "Endpoint tùy chỉnh — trỏ host tới DynamoDB Local hoặc endpoint tương thích khác bằng URL.",
+  ],
+  beforeYouStart: [
+    "Plugin dynamodb-driver đã cài (Plugins → Amazon DynamoDB → Install).",
+    "Một AWS access key ID và secret access key có quyền đọc DynamoDB.",
+    "AWS region chứa các bảng của bạn (hoặc endpoint URL đầy đủ để test local).",
+  ],
+  connFieldsIntro:
+    "Các trường dưới đây khớp với form kết nối DynamoDB của TableR. Secret access key được lưu trong keyring của hệ điều hành, không bao giờ vào tệp cấu hình dạng văn bản.",
+  fieldRows: [
+    [
+      "Host",
+      "Có",
+      "—",
+      "Một AWS region (vd. us-east-1) hoặc một endpoint URL đầy đủ (vd. http://localhost:8000).",
+    ],
+    [
+      "Region",
+      "Không",
+      "—",
+      "Tùy chọn; được suy ra từ host khi host là AWS region hoặc endpoint URL AWS.",
+    ],
+    ["Username", "Có", "—", "AWS access key ID của bạn (dùng ký SigV4)."],
+    ["Password", "Có", "—", "AWS secret access key của bạn; lưu trong keyring."],
+  ],
+  formSteps: [
+    {
+      title: "Cài plugin DynamoDB",
+      text: "Mở Plugins, tìm Amazon DynamoDB, và cài plugin dynamodb-driver.",
+    },
+    { title: "Chọn DynamoDB", text: "Mở trình khởi chạy và chọn thẻ Amazon DynamoDB." },
+    {
+      title: "Nhập region hoặc endpoint",
+      text: "Nhập một AWS region như us-east-1, hoặc endpoint URL đầy đủ cho DynamoDB Local.",
+    },
+    {
+      title: "Thêm AWS credentials",
+      text: "Username = access key ID, Password = secret access key; secret được lưu vào keyring.",
+    },
+    {
+      title: "Lưu và kết nối",
+      text: "Lưu profile để nó xuất hiện lại trong trình khởi chạy, rồi kết nối.",
+    },
+  ],
+  verifyLead: "Sau khi kết nối, mở một tab query và chạy PartiQL trên một bảng:",
+  verifyCode: "SELECT * FROM your_table LIMIT 10;",
+  verifyTrail: "Nếu trả về dòng, credentials, region và endpoint đều đúng.",
+  troubleshootRows: [
+    [
+      "Không thấy thẻ DynamoDB",
+      "Plugin dynamodb-driver chưa được cài.",
+      "Mở Plugins và cài driver Amazon DynamoDB, rồi thử lại.",
+    ],
+    [
+      "DynamoDB requires the AWS access key id in the username field",
+      "Trường username đang trống.",
+      "Nhập AWS access key ID vào trường username.",
+    ],
+    [
+      "Signature mismatch / UnrecognizedClientException",
+      "Sai secret access key hoặc cặp key.",
+      "Kiểm tra lại access key ID và secret; cập nhật password đã lưu trong keyring.",
+    ],
+    [
+      "Could not resolve endpoint",
+      "Region hoặc endpoint URL không hợp lệ.",
+      "Dùng tên AWS region hợp lệ, hoặc endpoint http(s) URL đầy đủ kèm host.",
+    ],
+    [
+      "ResourceNotFoundException",
+      "Bảng được truy vấn không tồn tại trong region này.",
+      "Xác nhận tên bảng và region khớp với các bảng của bạn.",
+    ],
+  ],
+};
+
+const VI_ELASTICSEARCH: EngineSpec = {
+  slug: "elasticsearch",
+  icon: "PlugZap",
+  title: "Elasticsearch",
+  description:
+    "Kết nối TableR tới Elasticsearch qua REST API với TLS, basic auth tùy chọn, kiểm tra kết nối và khắc phục sự cố — qua plugin elasticsearch-driver.",
+  intro:
+    "Elasticsearch được truy cập qua REST API của nó — kết nối do plugin elasticsearch-driver cung cấp (cài nó từ trang plugins). TLS bắt buộc cho mọi host không phải loopback.",
+  overviewText:
+    "TableR nói chuyện với REST endpoint của Elasticsearch qua HTTP/HTTPS và duyệt các index như bảng. Driver kiểm tra server báo Elasticsearch (qua X-Elastic-Product) — một endpoint OpenSearch bị từ chối kèm gợi ý dùng engine OpenSearch. Basic auth (username/password) là tùy chọn.",
+  overviewBullets: [
+    "REST API — kết nối qua HTTP(S) tới cluster endpoint (port mặc định 9200).",
+    "Bắt buộc TLS — host không phải loopback phải bật SSL/TLS; chỉ localhost được dùng HTTP thuần.",
+    "Kiểm tra product — endpoint báo OpenSearch bị từ chối; hãy dùng thẻ OpenSearch.",
+    "Cần plugin — thẻ Elasticsearch xuất hiện sau khi plugin elasticsearch-driver được cài.",
+  ],
+  beforeYouStart: [
+    "Plugin elasticsearch-driver đã cài (Plugins → Elasticsearch → Install).",
+    "Cluster host và port (mặc định 9200, hoặc 443 sau HTTPS).",
+    "TLS đã bật cho mọi cluster từ xa (bắt buộc).",
+    "Tùy chọn: username và password khi cluster bắt buộc basic auth.",
+  ],
+  connFieldsIntro:
+    "Các trường dưới đây khớp với form kết nối Elasticsearch của TableR. Mật khẩu được lưu trong keyring của hệ điều hành, không bao giờ vào tệp cấu hình dạng văn bản.",
+  fieldRows: [
+    ["Host", "Có", "—", "Elasticsearch host; không được nhúng credentials vào đây."],
+    ["Port", "Không", "9200", "Port REST; 443 khi bật SSL/TLS."],
+    ["Username", "Không", "—", "User basic-auth tùy chọn (vd. elastic)."],
+    ["Password", "Không", "—", "Password basic-auth tùy chọn; lưu trong keyring."],
+    [
+      "SSL/TLS",
+      "Không",
+      "Tắt",
+      "Bắt buộc cho host không phải loopback; chỉ tùy chọn cho localhost.",
+    ],
+  ],
+  formSteps: [
+    {
+      title: "Cài plugin Elasticsearch",
+      text: "Mở Plugins, tìm Elasticsearch, và cài plugin elasticsearch-driver.",
+    },
+    { title: "Chọn Elasticsearch", text: "Mở trình khởi chạy và chọn thẻ Elasticsearch." },
+    { title: "Nhập host và port", text: "Dùng cluster host và port (9200 hoặc 443)." },
+    {
+      title: "Bật SSL/TLS",
+      text: "Bắt buộc cho mọi host từ xa; chỉ localhost được giữ HTTP thuần.",
+    },
+    {
+      title: "Thêm credentials (tùy chọn)",
+      text: "Username và password khi cluster bắt buộc basic auth.",
+    },
+    {
+      title: "Lưu và kết nối",
+      text: "Lưu profile để nó xuất hiện lại trong trình khởi chạy, rồi kết nối.",
+    },
+  ],
+  sslIntro:
+    "Driver plugin bắt buộc TLS cho host không phải loopback — kết nối bị từ chối nếu thiếu. Giữ SSL/TLS bật cho mọi thứ không phải localhost.",
+  sslBullets: [
+    "Tắt — HTTP thuần, chỉ localhost.",
+    "Bật — HTTPS tới REST endpoint trên port 443 (hoặc port TLS của bạn).",
+  ],
+  verifyLead: "Sau khi kết nối, các index hiện như bảng; ping chạy một root request:",
+  verifyCode: "GET /\nGET _cat/indices?v",
+  verifyLang: "text",
+  verifyTrail:
+    "Nếu tên/phiên bản cluster và danh sách index trả về, endpoint, TLS và credentials đều đúng.",
+  troubleshootRows: [
+    [
+      "Không thấy thẻ Elasticsearch",
+      "Plugin elasticsearch-driver chưa được cài.",
+      "Mở Plugins và cài driver Elasticsearch, rồi thử lại.",
+    ],
+    [
+      "driver plugins require TLS for non-loopback hosts",
+      "SSL/TLS đang tắt cho một host từ xa.",
+      "Bật SSL/TLS — chỉ localhost được dùng HTTP thuần.",
+    ],
+    [
+      "reports OpenSearch, not Elasticsearch",
+      "Endpoint là một OpenSearch cluster.",
+      "Kết nối bằng engine OpenSearch thay thế.",
+    ],
+    [
+      "401 / unauthorized",
+      "Thiếu hoặc sai basic-auth credentials.",
+      "Thêm username/password hợp lệ; password được lưu vào keyring.",
+    ],
+    [
+      "Connection refused",
+      "Cluster tắt, sai port, hoặc firewall.",
+      "Xác nhận cluster đang chạy và port REST truy cập được.",
+    ],
+  ],
+};
+
+const VI_OPENSEARCH: EngineSpec = {
+  slug: "opensearch",
+  icon: "PlugZap",
+  title: "OpenSearch",
+  description:
+    "Kết nối TableR tới OpenSearch qua REST API với TLS, basic auth tùy chọn, kiểm tra kết nối và khắc phục sự cố — qua plugin opensearch-driver.",
+  intro:
+    "OpenSearch được truy cập qua REST API của nó — kết nối do plugin opensearch-driver cung cấp (cài nó từ trang plugins). TLS bắt buộc cho mọi host không phải loopback.",
+  overviewText:
+    "TableR nói chuyện với REST endpoint của OpenSearch qua HTTP/HTTPS và duyệt các index như bảng. Basic auth (username/password) là tùy chọn; các domain AWS OpenSearch thường đặt sau HTTPS trên port 443.",
+  overviewBullets: [
+    "REST API — kết nối qua HTTP(S) tới domain endpoint (port mặc định 9200).",
+    "Bắt buộc TLS — host không phải loopback phải bật SSL/TLS; chỉ localhost được dùng HTTP thuần.",
+    "Cần plugin — thẻ OpenSearch xuất hiện sau khi plugin opensearch-driver được cài.",
+  ],
+  beforeYouStart: [
+    "Plugin opensearch-driver đã cài (Plugins → OpenSearch → Install).",
+    "Domain host và port (9200 self-hosted, 443 trên AWS OpenSearch).",
+    "TLS đã bật cho mọi host từ xa (bắt buộc).",
+    "Tùy chọn: username và password khi bật fine-grained access control.",
+  ],
+  connFieldsIntro:
+    "Các trường dưới đây khớp với form kết nối OpenSearch của TableR. Mật khẩu được lưu trong keyring của hệ điều hành, không bao giờ vào tệp cấu hình dạng văn bản.",
+  fieldRows: [
+    ["Host", "Có", "—", "OpenSearch host hoặc AWS domain endpoint; không nhúng credentials."],
+    ["Port", "Không", "9200", "Port REST; 443 khi bật SSL/TLS."],
+    ["Username", "Không", "—", "User basic-auth tùy chọn (vd. admin)."],
+    ["Password", "Không", "—", "Password basic-auth tùy chọn; lưu trong keyring."],
+    [
+      "SSL/TLS",
+      "Không",
+      "Tắt",
+      "Bắt buộc cho host không phải loopback; chỉ tùy chọn cho localhost.",
+    ],
+  ],
+  formSteps: [
+    {
+      title: "Cài plugin OpenSearch",
+      text: "Mở Plugins, tìm OpenSearch, và cài plugin opensearch-driver.",
+    },
+    { title: "Chọn OpenSearch", text: "Mở trình khởi chạy và chọn thẻ OpenSearch." },
+    { title: "Nhập host và port", text: "Dùng domain host và port (9200 hoặc 443)." },
+    {
+      title: "Bật SSL/TLS",
+      text: "Bắt buộc cho mọi host từ xa; chỉ localhost được giữ HTTP thuần.",
+    },
+    {
+      title: "Thêm credentials (tùy chọn)",
+      text: "Username và password khi domain bắt buộc basic auth.",
+    },
+    {
+      title: "Lưu và kết nối",
+      text: "Lưu profile để nó xuất hiện lại trong trình khởi chạy, rồi kết nối.",
+    },
+  ],
+  sslIntro:
+    "Driver plugin bắt buộc TLS cho host không phải loopback — kết nối bị từ chối nếu thiếu. Giữ SSL/TLS bật cho mọi thứ không phải localhost.",
+  sslBullets: [
+    "Tắt — HTTP thuần, chỉ localhost.",
+    "Bật — HTTPS tới REST endpoint trên port 443 (hoặc port TLS của bạn).",
+  ],
+  verifyLead: "Sau khi kết nối, các index hiện như bảng; ping chạy một root request:",
+  verifyCode: "GET /\nGET _cat/indices?v",
+  verifyLang: "text",
+  verifyTrail:
+    "Nếu tên/phiên bản cluster và danh sách index trả về, endpoint, TLS và credentials đều đúng.",
+  troubleshootRows: [
+    [
+      "Không thấy thẻ OpenSearch",
+      "Plugin opensearch-driver chưa được cài.",
+      "Mở Plugins và cài driver OpenSearch, rồi thử lại.",
+    ],
+    [
+      "driver plugins require TLS for non-loopback hosts",
+      "SSL/TLS đang tắt cho một host từ xa.",
+      "Bật SSL/TLS — chỉ localhost được dùng HTTP thuần.",
+    ],
+    [
+      "401 / unauthorized",
+      "Thiếu hoặc sai basic-auth credentials.",
+      "Thêm username/password hợp lệ; password được lưu vào keyring.",
+    ],
+    [
+      "Connection refused",
+      "Domain tắt, sai port, hoặc firewall/security group.",
+      "Xác nhận domain đang chạy và port REST truy cập được.",
+    ],
+  ],
+};
+
+const VI_SPANNER: EngineSpec = {
+  slug: "spanner",
+  icon: "PlugZap",
+  title: "Google Spanner",
+  description:
+    "Kết nối TableR tới Google Cloud Spanner qua REST API với instance path, database name và OAuth2 access token — qua plugin spanner-driver.",
+  intro:
+    "Spanner được truy cập qua Google Cloud REST API — kết nối do plugin spanner-driver cung cấp (cài nó từ trang plugins). Bạn định danh đích bằng instance path và database name, và xác thực bằng một OAuth2 access token.",
+  overviewText:
+    "TableR gọi Spanner REST API (spanner.googleapis.com) — không có host/port để chạy. Trường host nhận instance path projects/<project>/instances/<instance>, trường database nhận tên database, và trường password nhận một Google OAuth2 access token. Đặt SPANNER_EMULATOR_HOST để trỏ tới emulator local thay thế.",
+  overviewBullets: [
+    "REST API — truy cập tại spanner.googleapis.com qua HTTPS; emulator qua SPANNER_EMULATOR_HOST.",
+    "Instance path — trường host mang projects/<p>/instances/<i>, không phải hostname.",
+    "OAuth2 token — trường password nhận một Google access token; lưu trong keyring.",
+    "Cần plugin — thẻ Spanner xuất hiện sau khi plugin spanner-driver được cài.",
+  ],
+  beforeYouStart: [
+    "Plugin spanner-driver đã cài (Plugins → Google Spanner → Install).",
+    "Instance path projects/<project>/instances/<instance>.",
+    "Tên database bên trong instance đó.",
+    "Một Google OAuth2 access token có quyền đọc Spanner.",
+  ],
+  connFieldsIntro:
+    "Các trường dưới đây khớp với form kết nối Spanner của TableR. Access token được lưu trong keyring của hệ điều hành, không bao giờ vào tệp cấu hình dạng văn bản.",
+  fieldRows: [
+    ["Host", "Có", "—", "Instance path: projects/<project>/instances/<instance>."],
+    ["Database", "Có", "—", "Tên database bên trong instance."],
+    ["Password", "Có", "—", "Một Google OAuth2 access token; lưu trong keyring."],
+  ],
+  formSteps: [
+    {
+      title: "Cài plugin Spanner",
+      text: "Mở Plugins, tìm Google Spanner, và cài plugin spanner-driver.",
+    },
+    { title: "Chọn Google Spanner", text: "Mở trình khởi chạy và chọn thẻ Google Spanner." },
+    {
+      title: "Nhập instance path",
+      text: "Dùng projects/<project>/instances/<instance> trong trường host.",
+    },
+    { title: "Nhập database name", text: "Đặt tên database bên trong instance đó." },
+    {
+      title: "Thêm access token",
+      text: "Dán một Google OAuth2 access token vào trường password; nó được lưu vào keyring.",
+    },
+    {
+      title: "Lưu và kết nối",
+      text: "Lưu profile để nó xuất hiện lại trong trình khởi chạy, rồi kết nối.",
+    },
+  ],
+  verifyLead: "Sau khi kết nối, mở một tab query và chạy GoogleSQL:",
+  verifyCode: "SELECT 1;\nSELECT table_name FROM information_schema.tables;",
+  verifyTrail: "Nếu cả hai câu lệnh trả về, instance path, database và token đều đúng.",
+  troubleshootRows: [
+    [
+      "Không thấy thẻ Spanner",
+      "Plugin spanner-driver chưa được cài.",
+      "Mở Plugins và cài driver Google Spanner, rồi thử lại.",
+    ],
+    [
+      "Spanner host must be the instance path projects/<p>/instances/<i>",
+      "Host là một hostname thay vì instance path.",
+      "Dùng dạng đầy đủ projects/<project>/instances/<instance>.",
+    ],
+    [
+      "Spanner database name is required",
+      "Trường database đang trống.",
+      "Nhập tên database bên trong instance.",
+    ],
+    [
+      "401 / invalid authentication credentials",
+      "Thiếu hoặc hết hạn OAuth2 access token.",
+      "Tạo token mới (gcloud auth print-access-token) và cập nhật password đã lưu.",
+    ],
+    [
+      "Instance not found",
+      "Sai project hoặc instance name trong path.",
+      "Kiểm tra lại path projects/<p>/instances/<i> trong trường host.",
+    ],
+  ],
+};
+
+const VI_TRINO: EngineSpec = {
+  slug: "trino",
+  icon: "PlugZap",
+  title: "Trino",
+  description:
+    "Kết nối TableR tới Trino coordinator qua HTTP/HTTPS với user, password tùy chọn và lựa chọn catalog.schema — qua plugin trino-driver.",
+  intro:
+    "Trino được truy cập qua giao thức HTTP của coordinator — kết nối do plugin trino-driver cung cấp (cài nó từ trang plugins). Cung cấp coordinator host, một user name, và chọn một catalog (hoặc catalog.schema) làm database.",
+  overviewText:
+    "TableR nói giao thức Trino client qua HTTP/HTTPS (port mặc định 8080). Mọi request mang X-Trino-User, nên một user name luôn được gửi (mặc định tabler); password thêm HTTP Basic auth cho coordinator bảo mật. Trường database chọn catalog của session — hoặc catalog.schema để ghim cả schema.",
+  overviewBullets: [
+    "Coordinator HTTP — kết nối tới coordinator trên port 8080 (hoặc 443/8443 qua TLS).",
+    "X-Trino-User — mọi request mang user; mặc định là tabler khi để trống.",
+    "catalog[.schema] — trường database chọn catalog của session và schema tùy chọn.",
+    "Cần plugin — thẻ Trino xuất hiện sau khi plugin trino-driver được cài.",
+  ],
+  beforeYouStart: [
+    "Plugin trino-driver đã cài (Plugins → Trino → Install).",
+    "Coordinator host và port (mặc định 8080).",
+    "Một Trino user name (chuỗi bất kỳ; mặc định tabler).",
+    "Tùy chọn: password khi coordinator bắt buộc basic auth (thường qua TLS).",
+    "Catalog (hoặc catalog.schema) để truy vấn, vd. tpch.tiny.",
+  ],
+  connFieldsIntro:
+    "Các trường dưới đây khớp với form kết nối Trino của TableR. Mật khẩu được lưu trong keyring của hệ điều hành, không bao giờ vào tệp cấu hình dạng văn bản.",
+  fieldRows: [
+    ["Host", "Có", "—", "Trino coordinator host."],
+    ["Port", "Không", "8080", "Port HTTP của coordinator; dùng 443/8443 với SSL/TLS."],
+    [
+      "Username",
+      "Không",
+      "tabler",
+      "Gửi dưới dạng X-Trino-User trên mọi request; mặc định tabler.",
+    ],
+    [
+      "Password",
+      "Không",
+      "—",
+      "Tùy chọn; thêm HTTP Basic auth cho coordinator bảo mật. Lưu trong keyring.",
+    ],
+    [
+      "Database",
+      "Không",
+      "—",
+      "Mặc định session dạng catalog hoặc catalog.schema (vd. tpch.tiny).",
+    ],
+    ["SSL/TLS", "Không", "Tắt", "Bật cho coordinator HTTPS; bắt buộc khi dùng basic auth."],
+  ],
+  formSteps: [
+    {
+      title: "Cài plugin Trino",
+      text: "Mở Plugins, tìm Trino, và cài plugin trino-driver.",
+    },
+    { title: "Chọn Trino", text: "Mở trình khởi chạy và chọn thẻ Trino." },
+    {
+      title: "Nhập coordinator host và port",
+      text: "Dùng coordinator host và port của bạn (8080 cho HTTP).",
+    },
+    {
+      title: "Đặt user",
+      text: "User name bất kỳ đều được — nó được gửi là X-Trino-User; mặc định tabler.",
+    },
+    {
+      title: "Chọn catalog",
+      text: "Dùng trường Database cho catalog hoặc catalog.schema (vd. tpch.tiny).",
+    },
+    {
+      title: "Bật SSL/TLS + password (tùy chọn)",
+      text: "Bật TLS và thêm password khi coordinator bắt buộc basic auth.",
+    },
+    {
+      title: "Lưu và kết nối",
+      text: "Lưu profile để nó xuất hiện lại trong trình khởi chạy, rồi kết nối.",
+    },
+  ],
+  verifyLead: "Sau khi kết nối, mở một tab query và chạy SQL qua coordinator:",
+  verifyCode: "SELECT 1;\nSHOW CATALOGS;",
+  verifyTrail: "Nếu cả hai câu lệnh trả về, coordinator, user và credentials đều đúng.",
+  troubleshootRows: [
+    [
+      "Không thấy thẻ Trino",
+      "Plugin trino-driver chưa được cài.",
+      "Mở Plugins và cài driver Trino, rồi thử lại.",
+    ],
+    [
+      "Trino database must use 'catalog' or 'catalog.schema' format",
+      "Giá trị database có quá nhiều phân đoạn.",
+      "Dùng catalog hoặc catalog.schema — vd. tpch hoặc tpch.tiny.",
+    ],
+    [
+      "Authentication failed (401)",
+      "Coordinator bắt buộc basic auth hoặc sai password.",
+      "Bật SSL/TLS và cung cấp password hợp lệ; nó được lưu vào keyring.",
+    ],
+    [
+      "Connection refused",
+      "Coordinator tắt, sai port, hoặc firewall.",
+      "Xác nhận coordinator đang chạy và port HTTP truy cập được.",
+    ],
+    [
+      "Catalog does not exist",
+      "Catalog đã chọn chưa được cấu hình trên coordinator.",
+      "Chạy SHOW CATALOGS hoặc chọn một catalog từ bộ chọn database.",
+    ],
+  ],
+};
+
+const VI_SURREALDB: EngineSpec = {
+  slug: "surrealdb",
+  icon: "PlugZap",
+  title: "SurrealDB",
+  description:
+    "Kết nối TableR tới SurrealDB qua HTTP API với namespace, credentials đăng nhập tùy chọn hoặc bearer token, kiểm tra kết nối và khắc phục sự cố — qua plugin surrealdb-driver.",
+  intro:
+    "SurrealDB được truy cập qua HTTP API của nó — kết nối do plugin surrealdb-driver cung cấp (cài nó từ trang plugins). Cung cấp host, chọn namespace/database, và xác thực bằng cặp user/password hoặc chỉ một token.",
+  overviewText:
+    "TableR gọi endpoint HTTP /sql của SurrealDB và truy vấn bằng SurrealQL. Trường host nhận host thuần (port được nối thêm) hoặc một gateway URL đầy đủ. Xác thực linh hoạt: username + password đăng nhập bằng Basic auth, còn chỉ password được gửi là Bearer token.",
+  overviewBullets: [
+    "HTTP /sql — kết nối tới endpoint HTTP của SurrealDB (port mặc định 8000); URL đầy đủ cũng được.",
+    "Hai kiểu auth — username + password để đăng nhập, hoặc chỉ password làm Bearer token.",
+    "Namespace + database — trường extra namespace (ns) và trường database giới hạn dữ liệu.",
+    "Cần plugin — thẻ SurrealDB xuất hiện sau khi plugin surrealdb-driver được cài.",
+  ],
+  beforeYouStart: [
+    "Plugin surrealdb-driver đã cài (Plugins → SurrealDB → Install).",
+    "SurrealDB host và port (mặc định 8000), hoặc một gateway URL đầy đủ.",
+    "Một namespace và database để làm việc.",
+    "Credentials: cặp user/password, hoặc chỉ một token trong trường password.",
+  ],
+  connFieldsIntro:
+    "Các trường dưới đây khớp với form kết nối SurrealDB của TableR. Mật khẩu hoặc token được lưu trong keyring của hệ điều hành, không bao giờ vào tệp cấu hình dạng văn bản.",
+  fieldRows: [
+    ["Host", "Có", "—", "SurrealDB host, hoặc một gateway URL đầy đủ kèm scheme."],
+    ["Port", "Không", "8000", "Port HTTP; bị bỏ qua khi host là URL đầy đủ."],
+    ["Username", "Không", "—", "User đăng nhập; đi cặp với password cho Basic auth."],
+    [
+      "Password",
+      "Không",
+      "—",
+      "Password đăng nhập — hoặc Bearer token khi username trống. Lưu trong keyring.",
+    ],
+    ["Namespace", "Không", "—", "Namespace SurrealDB (trường extra ns)."],
+    ["Database", "Không", "—", "Database bên trong namespace."],
+    ["SSL/TLS", "Không", "Tắt", "Bật cho endpoint HTTPS."],
+  ],
+  formSteps: [
+    {
+      title: "Cài plugin SurrealDB",
+      text: "Mở Plugins, tìm SurrealDB, và cài plugin surrealdb-driver.",
+    },
+    { title: "Chọn SurrealDB", text: "Mở trình khởi chạy và chọn thẻ SurrealDB." },
+    {
+      title: "Nhập host và port",
+      text: "Dùng SurrealDB host và port của bạn (8000), hoặc dán một gateway URL đầy đủ.",
+    },
+    {
+      title: "Đặt namespace và database",
+      text: "Dùng trường extra ns cho namespace và trường Database cho database.",
+    },
+    {
+      title: "Thêm credentials",
+      text: "Username + password để đăng nhập, hoặc chỉ trường password cho Bearer token.",
+    },
+    {
+      title: "Lưu và kết nối",
+      text: "Lưu profile để nó xuất hiện lại trong trình khởi chạy, rồi kết nối.",
+    },
+  ],
+  verifyLead: "Sau khi kết nối, mở một tab query và chạy SurrealQL:",
+  verifyCode: "SELECT * FROM your_table LIMIT 10;\nINFO FOR DB;",
+  verifyTrail:
+    "Nếu các dòng và thông tin database trả về, endpoint, credentials và namespace đều đúng.",
+  troubleshootRows: [
+    [
+      "Không thấy thẻ SurrealDB",
+      "Plugin surrealdb-driver chưa được cài.",
+      "Mở Plugins và cài driver SurrealDB, rồi thử lại.",
+    ],
+    [
+      "SurrealDB host is required",
+      "Trường host đang trống.",
+      "Nhập SurrealDB host hoặc một gateway URL đầy đủ.",
+    ],
+    [
+      "IAM / authentication error",
+      "Sai credentials hoặc token, hoặc thiếu phạm vi đăng nhập.",
+      "Kiểm tra lại user/password hoặc token; xác nhận tài khoản truy cập được namespace.",
+    ],
+    [
+      "Connection refused",
+      "Server tắt, sai port, hoặc firewall.",
+      "Xác nhận SurrealDB đang chạy và port HTTP truy cập được.",
+    ],
+    [
+      "Namespace or database not found",
+      "Sai giá trị ns hoặc database.",
+      "Kiểm tra lại tên namespace (trường ns) và database.",
+    ],
+  ],
+};
+
+const VI_WEAVIATE: EngineSpec = {
+  slug: "weaviate",
+  icon: "PlugZap",
+  title: "Weaviate",
+  description:
+    "Kết nối TableR tới Weaviate qua REST/GraphQL API với API key tùy chọn và TLS, kiểm tra kết nối và khắc phục sự cố — qua plugin weaviate-driver.",
+  intro:
+    "Weaviate được truy cập qua REST và GraphQL API của nó — kết nối do plugin weaviate-driver cung cấp (cài nó từ trang plugins). Cung cấp host và, cho instance bảo mật, một API key.",
+  overviewText:
+    "TableR nói chuyện với Weaviate qua HTTP/HTTPS — REST cho schema/meta và GraphQL cho truy vấn — và duyệt các class như bảng. Xác thực là một API key tùy chọn gửi dưới dạng Bearer token (trường password hoặc trường extra api_key). TLS, CA certificate tùy chỉnh và mTLS client certificate được hỗ trợ cho các triển khai bảo mật.",
+  overviewBullets: [
+    "REST + GraphQL — schema và dữ liệu được đọc qua HTTP(S); class hiện như bảng.",
+    "API key auth — trường password hoặc trường extra api_key được gửi là Bearer token.",
+    "Một schema — Weaviate chỉ có một schema; để trống trường database hoặc đặt là default.",
+    "Cần plugin — thẻ Weaviate xuất hiện sau khi plugin weaviate-driver được cài.",
+  ],
+  beforeYouStart: [
+    "Plugin weaviate-driver đã cài (Plugins → Weaviate → Install).",
+    "Weaviate host và port (8080 self-hosted, 443 trên Weaviate Cloud).",
+    "Một API key khi instance yêu cầu xác thực.",
+    "TLS bật cho các instance từ xa/cloud.",
+  ],
+  connFieldsIntro:
+    "Các trường dưới đây khớp với form kết nối Weaviate của TableR. API key được lưu trong keyring của hệ điều hành, không bao giờ vào tệp cấu hình dạng văn bản.",
+  fieldRows: [
+    ["Host", "Có", "—", "Weaviate host; không được nhúng credentials vào đây."],
+    ["Port", "Không", "8080", "Port REST; 443 khi bật SSL/TLS."],
+    [
+      "Password",
+      "Không",
+      "—",
+      "Một Weaviate API key (hoặc dùng trường extra api_key); lưu trong keyring.",
+    ],
+    ["Database", "Không", "—", "Phải để trống hoặc là 'default' — Weaviate chỉ có một schema."],
+    ["SSL/TLS", "Không", "Tắt", "Bật cho HTTPS; hỗ trợ CA tùy chỉnh và mTLS client certificate."],
+  ],
+  formSteps: [
+    {
+      title: "Cài plugin Weaviate",
+      text: "Mở Plugins, tìm Weaviate, và cài plugin weaviate-driver.",
+    },
+    { title: "Chọn Weaviate", text: "Mở trình khởi chạy và chọn thẻ Weaviate." },
+    { title: "Nhập host và port", text: "Dùng Weaviate host và port của bạn (8080 hoặc 443)." },
+    {
+      title: "Thêm API key",
+      text: "Dán vào trường password (hoặc trường extra api_key); nó được lưu vào keyring.",
+    },
+    {
+      title: "Bật SSL/TLS cho remote",
+      text: "Bật TLS cho instance cloud hoặc từ xa; thêm CA hoặc client cert nếu cần.",
+    },
+    {
+      title: "Lưu và kết nối",
+      text: "Lưu profile để nó xuất hiện lại trong trình khởi chạy, rồi kết nối.",
+    },
+  ],
+  verifyLead: "Sau khi kết nối, các class hiện như bảng; ping gọi meta endpoint:",
+  verifyCode: "GET /v1/meta\nGET /v1/schema",
+  verifyLang: "text",
+  verifyTrail: "Nếu phản hồi meta và schema trả về, endpoint, TLS và API key đều đúng.",
+  troubleshootRows: [
+    [
+      "Không thấy thẻ Weaviate",
+      "Plugin weaviate-driver chưa được cài.",
+      "Mở Plugins và cài driver Weaviate, rồi thử lại.",
+    ],
+    [
+      "Weaviate credentials cannot be embedded in the host",
+      "Host chứa user:pass@.",
+      "Chuyển API key sang trường password hoặc api_key và giữ host sạch.",
+    ],
+    [
+      "Weaviate exposes a single schema",
+      "Trường database đặt tên khác 'default'.",
+      "Để trống database hoặc đặt là 'default'.",
+    ],
+    [
+      "401 / unauthorized",
+      "Thiếu hoặc sai API key.",
+      "Thêm một API key hợp lệ; nó được lưu vào keyring.",
+    ],
+    [
+      "Connection refused",
+      "Instance tắt, sai port, hoặc firewall.",
+      "Xác nhận Weaviate đang chạy và port REST truy cập được.",
+    ],
+  ],
+};
+
 /* ------------------------------------------------------------------ */
 /* English content                                                     */
 /* ------------------------------------------------------------------ */
@@ -4761,6 +6050,41 @@ const en: DocsBundle = {
               text: "Oracle Database over REST Data Services via the oracle-driver plugin: connection fields, schema alias, SSL/TLS, verifying the connection, and troubleshooting — on its own page.",
               href: "/docs/oracle",
             },
+            {
+              title: "Amazon DynamoDB — in-depth guide",
+              text: "PartiQL over ExecuteStatement: region or endpoint, AWS access key pair, verifying the connection, and troubleshooting — on its own page.",
+              href: "/docs/dynamodb",
+            },
+            {
+              title: "Elasticsearch — in-depth guide",
+              text: "REST API with enforced TLS and optional basic auth, verifying the connection, and troubleshooting — on its own page.",
+              href: "/docs/elasticsearch",
+            },
+            {
+              title: "OpenSearch — in-depth guide",
+              text: "REST API domains with enforced TLS and optional basic auth, verifying the connection, and troubleshooting — on its own page.",
+              href: "/docs/opensearch",
+            },
+            {
+              title: "Google Spanner — in-depth guide",
+              text: "REST API with instance path, database name, and OAuth2 access token, verifying the connection, and troubleshooting — on its own page.",
+              href: "/docs/spanner",
+            },
+            {
+              title: "Trino — in-depth guide",
+              text: "Coordinator HTTP protocol: user, catalog.schema selection, optional basic auth, verifying the connection, and troubleshooting — on its own page.",
+              href: "/docs/trino",
+            },
+            {
+              title: "SurrealDB — in-depth guide",
+              text: "HTTP /sql API: namespace, sign-in credentials or Bearer token, verifying the connection, and troubleshooting — on its own page.",
+              href: "/docs/surrealdb",
+            },
+            {
+              title: "Weaviate — in-depth guide",
+              text: "REST/GraphQL vector database: API key auth, TLS and mTLS, verifying the connection, and troubleshooting — on its own page.",
+              href: "/docs/weaviate",
+            },
           ],
         },
       ],
@@ -4784,6 +6108,13 @@ const en: DocsBundle = {
     buildEnginePage(EN_ENGINE_LABELS, EN_LIBSQL),
     buildEnginePage(EN_ENGINE_LABELS, EN_CLOUDFLARE_D1),
     buildEnginePage(EN_ENGINE_LABELS, EN_ORACLE),
+    buildEnginePage(EN_ENGINE_LABELS, EN_DYNAMODB),
+    buildEnginePage(EN_ENGINE_LABELS, EN_ELASTICSEARCH),
+    buildEnginePage(EN_ENGINE_LABELS, EN_OPENSEARCH),
+    buildEnginePage(EN_ENGINE_LABELS, EN_SPANNER),
+    buildEnginePage(EN_ENGINE_LABELS, EN_TRINO),
+    buildEnginePage(EN_ENGINE_LABELS, EN_SURREALDB),
+    buildEnginePage(EN_ENGINE_LABELS, EN_WEAVIATE),
     {
       slug: "plugins",
       icon: "Puzzle",
@@ -6230,6 +7561,41 @@ const vi: DocsBundle = {
               text: "Oracle Database qua REST Data Services bằng plugin oracle-driver: các trường kết nối, schema alias, SSL/TLS, kiểm tra kết nối và khắc phục sự cố — trên một trang riêng.",
               href: "/docs/oracle",
             },
+            {
+              title: "Amazon DynamoDB — hướng dẫn chuyên sâu",
+              text: "PartiQL qua ExecuteStatement: region hoặc endpoint, cặp AWS access key, kiểm tra kết nối và khắc phục sự cố — trên một trang riêng.",
+              href: "/docs/dynamodb",
+            },
+            {
+              title: "Elasticsearch — hướng dẫn chuyên sâu",
+              text: "REST API với TLS bắt buộc và basic auth tùy chọn, kiểm tra kết nối và khắc phục sự cố — trên một trang riêng.",
+              href: "/docs/elasticsearch",
+            },
+            {
+              title: "OpenSearch — hướng dẫn chuyên sâu",
+              text: "REST API domain với TLS bắt buộc và basic auth tùy chọn, kiểm tra kết nối và khắc phục sự cố — trên một trang riêng.",
+              href: "/docs/opensearch",
+            },
+            {
+              title: "Google Spanner — hướng dẫn chuyên sâu",
+              text: "REST API với instance path, database name và OAuth2 access token, kiểm tra kết nối và khắc phục sự cố — trên một trang riêng.",
+              href: "/docs/spanner",
+            },
+            {
+              title: "Trino — hướng dẫn chuyên sâu",
+              text: "Coordinator HTTP protocol: user, lựa chọn catalog.schema, basic auth tùy chọn, kiểm tra kết nối và khắc phục sự cố — trên một trang riêng.",
+              href: "/docs/trino",
+            },
+            {
+              title: "SurrealDB — hướng dẫn chuyên sâu",
+              text: "HTTP /sql API: namespace, credentials đăng nhập hoặc Bearer token, kiểm tra kết nối và khắc phục sự cố — trên một trang riêng.",
+              href: "/docs/surrealdb",
+            },
+            {
+              title: "Weaviate — hướng dẫn chuyên sâu",
+              text: "REST/GraphQL vector database: API key auth, TLS và mTLS, kiểm tra kết nối và khắc phục sự cố — trên một trang riêng.",
+              href: "/docs/weaviate",
+            },
           ],
         },
       ],
@@ -6253,6 +7619,13 @@ const vi: DocsBundle = {
     buildEnginePage(VI_ENGINE_LABELS, VI_LIBSQL),
     buildEnginePage(VI_ENGINE_LABELS, VI_CLOUDFLARE_D1),
     buildEnginePage(VI_ENGINE_LABELS, VI_ORACLE),
+    buildEnginePage(VI_ENGINE_LABELS, VI_DYNAMODB),
+    buildEnginePage(VI_ENGINE_LABELS, VI_ELASTICSEARCH),
+    buildEnginePage(VI_ENGINE_LABELS, VI_OPENSEARCH),
+    buildEnginePage(VI_ENGINE_LABELS, VI_SPANNER),
+    buildEnginePage(VI_ENGINE_LABELS, VI_TRINO),
+    buildEnginePage(VI_ENGINE_LABELS, VI_SURREALDB),
+    buildEnginePage(VI_ENGINE_LABELS, VI_WEAVIATE),
     {
       slug: "plugins",
       icon: "Puzzle",

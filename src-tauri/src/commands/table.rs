@@ -39,6 +39,23 @@ struct CsvImportProgress {
     processed_rows: u64,
     processed_bytes: u64,
     total_bytes: u64,
+    /// Set to "verifying" while the post-import row-count check runs, so a
+    /// slow COUNT on a big table does not look like a stalled import.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    phase: Option<&'static str>,
+}
+
+/// Result of an atomic CSV file import. `verified_rows` is the row-count
+/// delta measured around the transaction (`count_rows` after minus before);
+/// `None` when the count could not run. Triggers and concurrent writers can
+/// skew it, so a mismatch is surfaced through `warnings`, not an error.
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AtomicCsvImportSummary {
+    pub inserted_rows: u64,
+    pub verified_rows: Option<i64>,
+    pub total_rows_after: Option<i64>,
+    pub warnings: Vec<String>,
 }
 
 #[derive(Default)]
@@ -511,7 +528,7 @@ pub async fn import_csv_file_atomically(
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, CsvImportCancellationState>,
     safe_mode: State<'_, SafeModeState>,
-) -> Result<u64, String> {
+) -> Result<AtomicCsvImportSummary, String> {
     db_manager.assert_write_allowed(&connection_id).await?;
     let database_type = db_manager
         .connection_database_type(&connection_id)
@@ -561,6 +578,8 @@ pub async fn import_csv_file_atomically(
     let mappings = request.mappings.clone();
     let has_headers = request.has_headers;
     let (sender, receiver) = mpsc::channel(128);
+    // `app` is moved into the parser; keep a clone for verify-phase events.
+    let parser_app = app.clone();
     let parser = tokio::task::spawn_blocking(move || {
         stream_csv_rows(
             &file_path,
@@ -572,11 +591,37 @@ pub async fn import_csv_file_atomically(
             &target_columns,
             total_bytes,
             &parser_operation_id,
-            &app,
+            &parser_app,
             parser_cancelled,
             sender,
         )
     });
+
+    // Baseline row count for the post-import verification. A COUNT failure
+    // never aborts the import — verification is skipped instead.
+    let mut warnings: Vec<String> = Vec::new();
+    let _ = app.emit(
+        "csv-import-progress",
+        CsvImportProgress {
+            operation_id: operation_id.clone(),
+            processed_rows: 0,
+            processed_bytes: 0,
+            total_bytes,
+            phase: Some("verifying"),
+        },
+    );
+    let count_before = match driver
+        .count_rows(&request.table, request.database.as_deref())
+        .await
+    {
+        Ok(count) => Some(count),
+        Err(error) => {
+            warnings.push(format!(
+                "Row-count verification skipped: baseline count failed: {error}"
+            ));
+            None
+        }
+    };
 
     let import_result = match timeout(
         CSV_FILE_IMPORT_TIMEOUT,
@@ -595,7 +640,50 @@ pub async fn import_csv_file_atomically(
         .map_err(|_| "CSV parser stopped unexpectedly.".to_string())?;
     cancellation_state.finish(&operation_id);
     parser_result?;
-    import_result
+    let inserted_rows = import_result?;
+
+    // Post-import verification: the measured delta should match what the
+    // driver claimed to insert. Mismatches warn instead of failing — triggers
+    // and concurrent writers legitimately skew the count.
+    let mut verified_rows = None;
+    let mut total_rows_after = None;
+    let _ = app.emit(
+        "csv-import-progress",
+        CsvImportProgress {
+            operation_id: operation_id.clone(),
+            processed_rows: inserted_rows,
+            processed_bytes: total_bytes,
+            total_bytes,
+            phase: Some("verifying"),
+        },
+    );
+    match driver
+        .count_rows(&request.table, request.database.as_deref())
+        .await
+    {
+        Ok(after) => {
+            total_rows_after = Some(after);
+            if let Some(before) = count_before {
+                let delta = after - before;
+                verified_rows = Some(delta);
+                if delta != inserted_rows as i64 {
+                    warnings.push(format!(
+                        "Verified row count differs: table grew by {delta} rows but the driver reported {inserted_rows} inserted (triggers or concurrent writes can cause this)."
+                    ));
+                }
+            }
+        }
+        Err(error) => warnings.push(format!(
+            "Row-count verification skipped: post-import count failed: {error}"
+        )),
+    }
+
+    Ok(AtomicCsvImportSummary {
+        inserted_rows,
+        verified_rows,
+        total_rows_after,
+        warnings,
+    })
 }
 
 fn canonical_csv_path(raw_path: &str) -> Result<PathBuf, String> {
@@ -733,6 +821,7 @@ fn stream_csv_rows(
                     processed_rows,
                     processed_bytes,
                     total_bytes,
+                    phase: None,
                 },
             );
         }
@@ -744,6 +833,7 @@ fn stream_csv_rows(
             processed_rows,
             processed_bytes: total_bytes,
             total_bytes,
+            phase: None,
         },
     );
     Ok(())

@@ -409,7 +409,12 @@ describe("queryStore", () => {
   });
 
   it("streams selected CSV files without loading rows into frontend memory", async () => {
-    invokeMutationMock.mockResolvedValue(50_000);
+    invokeMutationMock.mockResolvedValue({
+      insertedRows: 50_000,
+      verifiedRows: 50_000,
+      totalRowsAfter: 60_000,
+      warnings: [],
+    });
 
     await expect(
       useQueryStore.getState().importCsvFileAtomically(
@@ -424,7 +429,7 @@ describe("queryStore", () => {
         },
         "csv-file-1",
       ),
-    ).resolves.toBe(50_000);
+    ).resolves.toMatchObject({ insertedRows: 50_000, verifiedRows: 50_000 });
 
     expect(invokeMutationMock).toHaveBeenCalledWith("import_csv_file_atomically", {
       connectionId: "connection-1",

@@ -1,6 +1,6 @@
 import type { DatabaseType } from "../types";
 
-export type AdminQueryKind = "process-list" | "user-management";
+export type AdminQueryKind = "process-list" | "user-management" | "kill-session";
 
 export interface AdminQueryPreset {
   supported: boolean;
@@ -86,6 +86,14 @@ const PROCESS_LIST_PRESETS: Partial<Record<DatabaseType, AdminQueryPreset>> = {
     content: "",
     reason: "DynamoDB exposes no process list; use CloudWatch Contributor Insights externally.",
   },
+  opensearch: {
+    supported: true,
+    content: "GET /_cat/tasks?format=json",
+  },
+  elasticsearch: {
+    supported: true,
+    content: "GET /_cat/tasks?format=json",
+  },
 };
 
 const USER_MANAGEMENT_PRESETS: Partial<Record<DatabaseType, AdminQueryPreset>> = {
@@ -168,7 +176,120 @@ const USER_MANAGEMENT_PRESETS: Partial<Record<DatabaseType, AdminQueryPreset>> =
     content: "",
     reason: "DynamoDB access is managed by AWS IAM, not in-database users.",
   },
+  elasticsearch: {
+    supported: false,
+    content: "",
+    reason:
+      "Elasticsearch security runs through the X-Pack _security REST API; user administration is not integrated.",
+  },
 };
+
+/**
+ * Kill-session presets use `{{param}}` placeholders — the same grammar the
+ * SQL editor's ParamFillDialog resolves (`src/utils/sql-params.ts`), so the
+ * menu item can open a query tab and let the normal run path prompt for the
+ * session id, show the resolved statement, and pass it through the standard
+ * write/safe-mode gates. `:int` params render unquoted; default (string)
+ * params render as a quoted literal, so presets must NOT add their own quotes
+ * around `{{session_id}}`. Oracle needs sid+serial# — two int params
+ * substituted inside a single quoted literal.
+ */
+const KILL_SESSION_PRESETS: Partial<Record<DatabaseType, AdminQueryPreset>> = {
+  mysql: { supported: true, content: "KILL {{session_id:int}};" },
+  mariadb: { supported: true, content: "KILL {{session_id:int}};" },
+  postgresql: {
+    supported: true,
+    content: "SELECT pg_terminate_backend({{session_id:int}}) AS terminated;",
+  },
+  greenplum: {
+    supported: true,
+    content: "SELECT pg_terminate_backend({{session_id:int}}) AS terminated;",
+  },
+  redshift: {
+    supported: true,
+    content: "SELECT pg_terminate_backend({{session_id:int}}) AS terminated;",
+  },
+  // CockroachDB does not implement pg_terminate_backend (distributed SQL, no
+  // per-node backends); the native CANCEL SESSION takes the hex session id.
+  cockroachdb: {
+    supported: true,
+    content: "CANCEL SESSION {{session_id}};",
+  },
+  mssql: { supported: true, content: "KILL {{session_id:int}};" },
+  vertica: {
+    supported: true,
+    content: "SELECT CLOSE_SESSION({{session_id}}) AS closed;",
+  },
+  clickhouse: {
+    supported: true,
+    content: "KILL QUERY WHERE query_id = {{session_id}};",
+  },
+  snowflake: {
+    supported: true,
+    content: "SELECT SYSTEM$CANCEL_QUERY({{session_id}}) AS cancelled;",
+  },
+  trino: {
+    supported: true,
+    content: "CALL system.runtime.kill_query(query_id => {{session_id}});",
+  },
+  bigquery: {
+    supported: true,
+    content: "CALL BQ.JOBS.CANCEL({{session_id}});",
+  },
+  oracle: {
+    supported: true,
+    content: "ALTER SYSTEM KILL SESSION '{{session_sid:int}},{{session_serial:int}}';",
+  },
+  redis: { supported: true, content: "CLIENT KILL ID {{session_id:int}}" },
+  mongodb: { supported: true, content: "db.killOp({{session_id:int}})" },
+  cassandra: {
+    supported: false,
+    content: "",
+    reason: "Cassandra has no CQL-level session or query kill primitive.",
+  },
+  spanner: {
+    supported: false,
+    content: "",
+    reason:
+      "Spanner cannot cancel another session's query via SQL; cancellation happens client-side or through the Operations API.",
+  },
+  elasticsearch: {
+    supported: false,
+    content: "",
+    reason:
+      "Elasticsearch task cancellation is a REST call (POST /_tasks/<id>/_cancel), not a statement the query surface can run.",
+  },
+  opensearch: {
+    supported: false,
+    content: "",
+    reason:
+      "OpenSearch task cancellation is a REST call (POST /_tasks/<id>/_cancel), not a statement the query surface can run.",
+  },
+  dynamodb: {
+    supported: false,
+    content: "",
+    reason: "DynamoDB exposes no session or query kill primitive.",
+  },
+};
+
+/**
+ * Menu label for the kill-session action. Kept beside the presets rather than
+ * the global i18n table — the label only exists where these presets surface.
+ */
+export function killSessionMenuLabel(language: string): string {
+  switch (language) {
+    case "vi":
+      return "Kết thúc phiên...";
+    case "zh":
+      return "终止会话...";
+    case "tr":
+      return "Oturumu sonlandır...";
+    case "ko":
+      return "세션 종료...";
+    default:
+      return "Kill session...";
+  }
+}
 
 export function getAdminQueryPreset(
   dbType: DatabaseType | undefined,
@@ -191,6 +312,22 @@ export function getAdminQueryPreset(
     return (
       PROCESS_LIST_PRESETS[dbType] ??
       unsupported("No process list preset is available for this engine yet.")
+    );
+  }
+
+  if (kind === "kill-session") {
+    if (
+      dbType === "sqlite" ||
+      dbType === "duckdb" ||
+      dbType === "libsql" ||
+      dbType === "cloudflare_d1"
+    ) {
+      return unsupported("This engine has no server-side sessions to kill.");
+    }
+
+    return (
+      KILL_SESSION_PRESETS[dbType] ??
+      unsupported("No kill-session preset is available for this engine yet.")
     );
   }
 

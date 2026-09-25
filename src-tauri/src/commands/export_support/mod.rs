@@ -40,8 +40,8 @@ pub(super) fn preferred_export_format(db_type: DatabaseType) -> DatabaseExportFo
     match db_type {
         DatabaseType::Redis
         | DatabaseType::MongoDB
-        | DatabaseType::Cassandra
-        | DatabaseType::OpenSearch => DatabaseExportFormat::JsonSnapshot,
+        | DatabaseType::OpenSearch
+        | DatabaseType::Elasticsearch => DatabaseExportFormat::JsonSnapshot,
         _ => DatabaseExportFormat::Sql,
     }
 }

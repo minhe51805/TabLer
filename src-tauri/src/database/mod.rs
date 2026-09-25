@@ -10,6 +10,7 @@ pub mod driver;
 #[cfg(feature = "duckdb-driver")]
 pub mod duckdb;
 pub mod dynamodb;
+pub mod elasticsearch;
 #[cfg(feature = "libsql-driver")]
 pub mod libsql;
 pub mod manager;

@@ -1,5 +1,6 @@
 pub mod ai;
 pub mod ai_checkpoints;
+pub mod checkpoint_crypto;
 pub mod connection;
 pub mod connection_export;
 mod connection_support;

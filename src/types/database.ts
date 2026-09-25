@@ -19,6 +19,7 @@ export type DatabaseType =
   | "libsql"
   | "cloudflare_d1"
   | "opensearch"
+  | "elasticsearch"
   | "oracle"
   | "spanner"
   | "dynamodb"

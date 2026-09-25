@@ -8,6 +8,7 @@ use super::driver::DatabaseDriver;
 #[cfg(feature = "duckdb-driver")]
 use super::duckdb::DuckDbDriver;
 use super::dynamodb::DynamoDbDriver;
+use super::elasticsearch::ElasticsearchDriver;
 #[cfg(feature = "libsql-driver")]
 use super::libsql::LibSqlDriver;
 use super::models::*;
@@ -415,6 +416,15 @@ impl DatabaseManager {
                 )
                 .await?;
                 Arc::new(OpenSearchDriver::connect(&actual_config, plugin_id).await?)
+            }
+            DatabaseType::Elasticsearch => {
+                let plugin_id = require_installed_http_plugin(
+                    &self.plugin_storage,
+                    &mut actual_config,
+                    "elasticsearch",
+                )
+                .await?;
+                Arc::new(ElasticsearchDriver::connect(&actual_config, plugin_id).await?)
             }
             DatabaseType::Oracle => {
                 require_installed_http_plugin(&self.plugin_storage, &mut actual_config, "oracle")

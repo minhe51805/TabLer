@@ -46,7 +46,7 @@ const SQL_ENGINES: DatabaseType[] = [...SQL_ENGINES_WITH_PREVIEW, ...SQL_ENGINES
 describe("agent engine tool gates", () => {
   it("classifies every configured engine", () => {
     expect(Object.keys(AGENT_QUERY_MODEL_BY_ENGINE).sort()).toEqual(
-      [...SQL_ENGINES, "cassandra", "redis", "mongodb", "opensearch"].sort(),
+      [...SQL_ENGINES, "cassandra", "redis", "mongodb", "opensearch", "elasticsearch"].sort(),
     );
   });
 
@@ -92,20 +92,23 @@ describe("agent engine tool gates", () => {
     expect(catalog).not.toContain('"action":"preview_write"');
   });
 
-  it.each(["redis", "opensearch"] as const)("hides SQL tools on non-SQL engine %s", (engine) => {
-    const availability = agentToolAvailability(engine);
-    expect(availability.sqlRead).toBe(false);
-    expect(availability.sqlWritePreview).toBe(false);
-    expect(isAgentToolEnabled("run_readonly_sql", availability)).toBe(false);
-    expect(isAgentToolEnabled("preview_write", availability)).toBe(false);
-    expect(isAgentToolEnabled("sample_table_data", availability)).toBe(true);
-    const catalog = formatAgentToolCatalog({ workspaceToolsEnabled: true, availability });
-    const actions = catalog.map((line) => line.match(/"action":"([^"]+)"/)?.[1]);
-    expect(actions).not.toContain("run_readonly_sql");
-    expect(actions).not.toContain("preview_write");
-    expect(actions).toContain("sample_table_data");
-    expect(actions).toContain("list_tables");
-  });
+  it.each(["redis", "opensearch", "elasticsearch"] as const)(
+    "hides SQL tools on non-SQL engine %s",
+    (engine) => {
+      const availability = agentToolAvailability(engine);
+      expect(availability.sqlRead).toBe(false);
+      expect(availability.sqlWritePreview).toBe(false);
+      expect(isAgentToolEnabled("run_readonly_sql", availability)).toBe(false);
+      expect(isAgentToolEnabled("preview_write", availability)).toBe(false);
+      expect(isAgentToolEnabled("sample_table_data", availability)).toBe(true);
+      const catalog = formatAgentToolCatalog({ workspaceToolsEnabled: true, availability });
+      const actions = catalog.map((line) => line.match(/"action":"([^"]+)"/)?.[1]);
+      expect(actions).not.toContain("run_readonly_sql");
+      expect(actions).not.toContain("preview_write");
+      expect(actions).toContain("sample_table_data");
+      expect(actions).toContain("list_tables");
+    },
+  );
 
   it("keeps translated SELECT reads on mongodb with txn-backed write preview", () => {
     const availability = agentToolAvailability("mongodb");
@@ -117,7 +120,7 @@ describe("agent engine tool gates", () => {
     expect(availability.previewWrite).toBe(true);
     expect(isAgentToolEnabled("run_readonly_sql", availability)).toBe(true);
     expect(isAgentToolEnabled("preview_write", availability)).toBe(true);
-    expect(isAgentToolEnabled("restore_checkpoint", availability)).toBe(false);
+    expect(isAgentToolEnabled("restore_checkpoint", availability)).toBe(true);
     expect(isAgentToolEnabled("list_schema_objects", availability)).toBe(false);
     expect(isAgentToolEnabled("sample_table_data", availability)).toBe(true);
     const catalog = formatAgentToolCatalog({ workspaceToolsEnabled: true, availability });
@@ -156,7 +159,7 @@ describe("agent engine tool gates", () => {
     const cassandra = agentToolAvailability("cassandra");
     expect(isAgentToolEnabled("propose_seed_data", cassandra)).toBe(true);
 
-    for (const engine of ["redis", "opensearch"] as const) {
+    for (const engine of ["redis", "opensearch", "elasticsearch"] as const) {
       const availability = agentToolAvailability(engine);
       expect(availability.documentPropose).toBe(false);
       expect(availability.sqlWritePreview).toBe(false);
@@ -236,7 +239,14 @@ describe("agent engine tool gates", () => {
       expect(byKey[key]).toBe("builtin");
     }
     // HTTP engines: candidates for downloadable HTTP plugin manifests.
-    for (const key of ["clickhouse", "bigquery", "snowflake", "cloudflare_d1", "opensearch"]) {
+    for (const key of [
+      "clickhouse",
+      "bigquery",
+      "snowflake",
+      "cloudflare_d1",
+      "opensearch",
+      "elasticsearch",
+    ]) {
       expect(byKey[key]).toBe("plugin_http");
     }
     // Native-crate engines: feature-flag build or sidecar only.

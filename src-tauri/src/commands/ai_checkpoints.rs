@@ -3,9 +3,19 @@
 //! the data when a change goes wrong — the database analog of Claude Code's
 //! `/rewind` / Codex `/undo` file checkpointing.
 //!
-//! Storage layout: `<data_dir>/ai-checkpoints/<connection_id>/<ts>-<label>.sql`
+//! Storage layout: `<data_dir>/ai-checkpoints/<connection_id>/<ts>-<label>.<ext>`
 //! plus a `<name>.meta.json` sidecar carrying the counts shown in the picker.
+//! `ext` follows `preferred_export_format`: `.sql` dumps for SQL engines,
+//! `.json` snapshots for document/KV/search engines (`.enc` is also accepted
+//! on read for externally produced encrypted blobs). Bodies at rest are
+//! passed through [`super::checkpoint_crypto`]; legacy plaintext files still
+//! read transparently.
 //! Retention keeps the newest [`MAX_CHECKPOINTS_PER_CONNECTION`] per connection.
+//!
+//! Restore semantics: replaying a checkpoint is a data-overlay — the dump's
+//! INSERT/restore payload is applied over the CURRENT state, so rows written
+//! after the checkpoint are not deleted (MSSQL is the exception: its
+//! drop-and-recreate pipeline really does return the schema to the snapshot).
 
 use crate::database::capabilities::DriverCapability;
 use crate::database::driver::DatabaseDriver;
@@ -19,7 +29,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::State;
 use tokio::task;
 
-use super::export_support::build_sql_export;
+use super::checkpoint_crypto::{decrypt_checkpoint_payload, encrypt_checkpoint_payload};
+use super::export::{DatabaseExportFormat, SqlExportPayload};
+use super::export_support::{build_sql_export, preferred_export_format, stream_json_snapshot};
 use super::restore::{run_sql_restore, PreRestoreSnapshot, RestorePreview, RestoreResult};
 use super::safe_mode::SafeModeState;
 
@@ -83,12 +95,79 @@ fn checkpoint_dir(connection_id: &str) -> Result<PathBuf, String> {
         .join(sanitize_component(connection_id)))
 }
 
+/// Payload produced by the engine-specific dump step of [`snapshot_database`].
+/// SQL dumps build in memory; JSON snapshots stream to a staging file inside
+/// the checkpoint dir so a full database never materializes in one Vec.
+enum SnapshotPayload {
+    Sql(SqlExportPayload),
+    Json {
+        temp_path: PathBuf,
+        table_count: usize,
+        row_count: u64,
+    },
+}
+
+impl SnapshotPayload {
+    fn extension(&self) -> &'static str {
+        match self {
+            SnapshotPayload::Sql(_) => "sql",
+            SnapshotPayload::Json { .. } => "json",
+        }
+    }
+
+    fn table_count(&self) -> usize {
+        match self {
+            SnapshotPayload::Sql(payload) => payload.table_count,
+            SnapshotPayload::Json { table_count, .. } => *table_count,
+        }
+    }
+
+    fn row_count(&self) -> u64 {
+        match self {
+            SnapshotPayload::Sql(payload) => payload.row_count,
+            SnapshotPayload::Json { row_count, .. } => *row_count,
+        }
+    }
+}
+
+/// Engines that cannot replay the checkpoint artifact `snapshot_database`
+/// produces for them. The read-only search transport (OpenSearch, and the
+/// Elasticsearch bridge sharing it) is the only member: it snapshots as a
+/// JSON document while `restore.rs` hard-blocks the engine — its driver is
+/// read-only — so a checkpoint file would be a dead artifact no restore path
+/// can consume. Document engines (MongoDB, DynamoDB) replay the same JSON
+/// snapshot shape through their drivers, and Redis rebuilds keys from it, so
+/// they are intentionally NOT listed here.
+pub(super) fn checkpoint_restore_supported(db_type: DatabaseType) -> bool {
+    !matches!(
+        db_type,
+        DatabaseType::OpenSearch | DatabaseType::Elasticsearch
+    )
+}
+
+/// Reads and decrypts a checkpoint body. `decrypt_checkpoint_payload` passes
+/// legacy plaintext files through untouched, so pre-encryption checkpoints
+/// keep working without a format flag.
+fn read_checkpoint_body(connection_id: &str, path: &Path) -> Result<Vec<u8>, String> {
+    let blob = fs::read(path)
+        .map_err(|error| format!("Failed to read checkpoint '{}': {error}", path.display()))?;
+    decrypt_checkpoint_payload(connection_id, &blob)
+        .map_err(|error| format!("Failed to decrypt checkpoint '{}': {error}", path.display()))
+}
+
 fn checkpoint_paths(dir: &Path, file_name: &str) -> Result<(PathBuf, PathBuf), String> {
     // Never trust client-supplied file names with separators.
     if file_name.contains('/') || file_name.contains('\\') || file_name.contains("..") {
         return Err("Invalid checkpoint file name.".to_string());
     }
-    if !file_name.ends_with(".sql") {
+    // `.sql` dumps and `.json` snapshots are the formats snapshot_database
+    // writes; `.enc` is accepted for externally produced encrypted blobs.
+    // `.meta.json` sidecars are metadata, never checkpoint bodies.
+    let valid_body = (file_name.ends_with(".sql")
+        || file_name.ends_with(".json")
+        || file_name.ends_with(".enc"))
+        && !file_name.ends_with(".meta.json");
+    if !valid_body {
         return Err("Invalid checkpoint file name.".to_string());
     }
     Ok((
@@ -259,6 +338,9 @@ pub async fn create_database_checkpoint(
 /// Shared snapshot core: dump schema + data and persist it (with a meta
 /// sidecar) under the connection's checkpoint folder. Powers `/backup`, the
 /// agent's create_checkpoint tool, and the pre-restore safety snapshot.
+/// Engines without a restore path for their snapshot format are refused up
+/// front — a checkpoint that can never be replayed is dead weight that only
+/// looks like a safety point.
 pub(super) async fn snapshot_database(
     connection_id: &str,
     database: Option<String>,
@@ -266,6 +348,11 @@ pub(super) async fn snapshot_database(
     label: Option<String>,
     db_manager: &DatabaseManager,
 ) -> Result<DatabaseCheckpoint, String> {
+    if !checkpoint_restore_supported(db_type) {
+        return Err(format!(
+            "Checkpoints are not supported on {db_type:?}: its snapshot cannot be restored."
+        ));
+    }
     db_manager
         .require_capability(connection_id, DriverCapability::DataExport)
         .await
@@ -285,13 +372,50 @@ pub(super) async fn snapshot_database(
         .or_else(|| driver_ref.current_database())
         .filter(|value| !value.trim().is_empty());
 
-    let content = build_sql_export(driver_ref, resolved_database.as_deref(), db_type)
-        .await
-        .map_err(|error| error.to_string())?;
-
     let created_at = now_epoch_ms();
+    let label_component = sanitize_label(label.as_deref());
+    let dir = checkpoint_dir(connection_id)?;
+    task::spawn_blocking({
+        let dir = dir.clone();
+        move || fs::create_dir_all(&dir)
+    })
+    .await
+    .map_err(|_| "Checkpoint folder task failed unexpectedly.".to_string())?
+    .map_err(|error| format!("Failed to create checkpoint folder: {error}"))?;
+
+    let payload = match preferred_export_format(db_type) {
+        DatabaseExportFormat::Sql => SnapshotPayload::Sql(
+            build_sql_export(driver_ref, resolved_database.as_deref(), db_type)
+                .await
+                .map_err(|error| error.to_string())?,
+        ),
+        DatabaseExportFormat::JsonSnapshot => {
+            // Same dump the manual export produces — streamed to a staging
+            // file so the snapshot never materializes as one buffer.
+            let temp_path = dir.join(format!("{created_at}-{label_component}.json.tmp"));
+            match stream_json_snapshot(
+                driver_ref,
+                resolved_database.as_deref(),
+                db_type,
+                &temp_path,
+            )
+            .await
+            {
+                Ok((table_count, row_count)) => SnapshotPayload::Json {
+                    temp_path,
+                    table_count,
+                    row_count,
+                },
+                Err(error) => {
+                    let _ = fs::remove_file(&temp_path);
+                    return Err(error.to_string());
+                }
+            }
+        }
+    };
+
     let meta = CheckpointMeta {
-        file_name: format!("{}-{}.sql", created_at, sanitize_label(label.as_deref())),
+        file_name: format!("{created_at}-{label_component}.{}", payload.extension()),
         label: label
             .as_deref()
             .map(str::trim)
@@ -301,30 +425,39 @@ pub(super) async fn snapshot_database(
         created_at,
         engine: format!("{db_type:?}").to_lowercase(),
         database: resolved_database.clone(),
-        table_count: content.table_count,
-        row_count: content.row_count,
+        table_count: payload.table_count(),
+        row_count: payload.row_count(),
     };
 
-    let dir = checkpoint_dir(connection_id)?;
-    let (sql_path, meta_path) = checkpoint_paths(&dir, &meta.file_name)?;
+    let (checkpoint_path, meta_path) = checkpoint_paths(&dir, &meta.file_name)?;
     let meta_for_write = meta.clone();
-    let sql_body = content.content.clone();
-    let size_bytes = content.content.len() as u64;
-    let dir_for_write = dir.clone();
-    task::spawn_blocking(move || -> Result<(), String> {
-        fs::create_dir_all(&dir_for_write)
-            .map_err(|error| format!("Failed to create checkpoint folder: {error}"))?;
-        fs::write(&sql_path, &sql_body).map_err(|error| {
+    let connection_id_for_write = connection_id.to_string();
+    let size_bytes = task::spawn_blocking(move || -> Result<u64, String> {
+        let body = match payload {
+            SnapshotPayload::Sql(content) => content.content.into_bytes(),
+            SnapshotPayload::Json { temp_path, .. } => {
+                let bytes = fs::read(&temp_path).map_err(|error| {
+                    let _ = fs::remove_file(&temp_path);
+                    format!("Failed to read snapshot staging file: {error}")
+                })?;
+                let _ = fs::remove_file(&temp_path);
+                bytes
+            }
+        };
+        let encrypted = encrypt_checkpoint_payload(&connection_id_for_write, &body)
+            .map_err(|error| format!("Failed to encrypt checkpoint: {error}"))?;
+        let size_bytes = encrypted.len() as u64;
+        fs::write(&checkpoint_path, &encrypted).map_err(|error| {
             format!(
                 "Failed to write checkpoint '{}': {error}",
-                sql_path.display()
+                checkpoint_path.display()
             )
         })?;
         let meta_json = serde_json::to_string_pretty(&meta_for_write)
             .map_err(|error| format!("Failed to serialize checkpoint metadata: {error}"))?;
         fs::write(&meta_path, meta_json)
             .map_err(|error| format!("Failed to write checkpoint metadata: {error}"))?;
-        Ok(())
+        Ok(size_bytes)
     })
     .await
     .map_err(|_| "Checkpoint write task failed unexpectedly.".to_string())??;
@@ -400,8 +533,8 @@ pub fn list_database_checkpoints(connection_id: String) -> Result<Vec<DatabaseCh
         .filter_map(|entry| {
             let content = fs::read_to_string(entry.path()).ok()?;
             let meta: CheckpointMeta = serde_json::from_str(&content).ok()?;
-            let sql_path = dir.join(&meta.file_name);
-            let size_bytes = fs::metadata(&sql_path).ok()?.len();
+            let body_path = dir.join(&meta.file_name);
+            let size_bytes = fs::metadata(&body_path).ok()?.len();
             Some(DatabaseCheckpoint { meta, size_bytes })
         })
         .collect();
@@ -409,7 +542,29 @@ pub fn list_database_checkpoints(connection_id: String) -> Result<Vec<DatabaseCh
     Ok(checkpoints)
 }
 
+/// True when the decrypted checkpoint body is a TableR JSON snapshot
+/// (`meta.format == "json-snapshot"`) rather than a SQL dump.
+fn is_json_snapshot_body(body: &str) -> bool {
+    if !body.trim_start().starts_with('{') {
+        return false;
+    }
+    serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|value| {
+            value
+                .get("meta")
+                .and_then(|meta| meta.get("format"))
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_string)
+        })
+        .as_deref()
+        == Some("json-snapshot")
+}
+
 /// `/rollback` step 2a: classify what restoring a checkpoint would run.
+/// SQL dumps are counted by the shared SQL classifier; JSON snapshots are
+/// counted straight from the payload (tables replayed + rows re-inserted)
+/// because splitting them as SQL would report garbage.
 #[tauri::command]
 pub fn preview_database_checkpoint_restore(
     connection_id: String,
@@ -417,36 +572,74 @@ pub fn preview_database_checkpoint_restore(
     db_type: DatabaseType,
 ) -> Result<RestorePreview, String> {
     let dir = checkpoint_dir(&connection_id)?;
-    let (sql_path, _) = checkpoint_paths(&dir, &file_name)?;
-    let sql = fs::read_to_string(&sql_path).map_err(|error| {
-        format!(
-            "Failed to read checkpoint '{}': {error}",
-            sql_path.display()
-        )
-    })?;
+    let (checkpoint_path, _) = checkpoint_paths(&dir, &file_name)?;
+    let body = read_checkpoint_body(&connection_id, &checkpoint_path)?;
+    let body = String::from_utf8(body)
+        .map_err(|_| "The checkpoint body is not valid UTF-8.".to_string())?;
+
+    if is_json_snapshot_body(&body) {
+        return build_json_snapshot_preview(&body);
+    }
+
     let sql = if db_type == DatabaseType::MSSQL {
-        normalize_legacy_mssql_dump(&sql)
+        normalize_legacy_mssql_dump(&body)
     } else {
-        sql
+        body
     };
     super::restore::build_restore_preview(&sql, db_type)
 }
 
-/// Deletes one checkpoint (the `.sql` dump and its meta sidecar). The dump
-/// path is validated against separator/traversal attacks like every other
-/// checkpoint command.
+/// Counts a JSON snapshot checkpoint for the restore preview: each snapshot
+/// table is replayed and its rows are re-inserted — a pure data restore with
+/// no schema or destructive statements. Snapshot replay is a data-overlay:
+/// it never deletes rows written after the checkpoint, and on engines like
+/// Redis a failed replay cannot roll back, so the preview must say so.
+fn build_json_snapshot_preview(body: &str) -> Result<RestorePreview, String> {
+    let snapshot: serde_json::Value = serde_json::from_str(body)
+        .map_err(|error| format!("The JSON checkpoint could not be parsed: {error}"))?;
+    let tables = snapshot
+        .get("tables")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "The JSON snapshot does not contain a 'tables' array.".to_string())?;
+    let row_count: u64 = tables
+        .iter()
+        .map(|table| {
+            table
+                .get("rows")
+                .and_then(serde_json::Value::as_array)
+                .map(|rows| rows.len() as u64)
+                .unwrap_or(0)
+        })
+        .sum();
+    Ok(RestorePreview {
+        statement_count: tables.len(),
+        schema_change_count: 0,
+        data_change_count: row_count as usize,
+        destructive_statement_count: 0,
+        unclassified_statement_count: 0,
+        transactional: false,
+        warning: Some(
+            "JSON snapshot restore overlays checkpoint rows on the current data — rows written after the checkpoint are kept, and a failed replay cannot be rolled back."
+                .to_string(),
+        ),
+    })
+}
+
+/// Deletes one checkpoint (the dump/snapshot file and its meta sidecar).
+/// The dump path is validated against separator/traversal attacks like every
+/// other checkpoint command.
 #[tauri::command]
 pub async fn delete_database_checkpoint(
     connection_id: String,
     file_name: String,
 ) -> Result<(), String> {
     let dir = checkpoint_dir(&connection_id)?;
-    let (sql_path, meta_path) = checkpoint_paths(&dir, &file_name)?;
+    let (checkpoint_path, meta_path) = checkpoint_paths(&dir, &file_name)?;
     task::spawn_blocking(move || -> Result<(), String> {
-        if !sql_path.exists() {
+        if !checkpoint_path.exists() {
             return Err("Checkpoint not found.".to_string());
         }
-        fs::remove_file(&sql_path)
+        fs::remove_file(&checkpoint_path)
             .map_err(|error| format!("Failed to delete checkpoint: {error}"))?;
         if meta_path.exists() {
             let _ = fs::remove_file(&meta_path);
@@ -458,8 +651,8 @@ pub async fn delete_database_checkpoint(
     Ok(())
 }
 
-/// Rename a checkpoint (updates the label in the meta sidecar). The SQL file
-/// name itself is left untouched — labels live in the sidecar only.
+/// Rename a checkpoint (updates the label in the meta sidecar). The dump
+/// file name itself is left untouched — labels live in the sidecar only.
 #[tauri::command]
 pub async fn rename_database_checkpoint(
     connection_id: String,
@@ -467,7 +660,7 @@ pub async fn rename_database_checkpoint(
     label: String,
 ) -> Result<CheckpointMeta, String> {
     let dir = checkpoint_dir(&connection_id)?;
-    let (_sql_path, meta_path) = checkpoint_paths(&dir, &file_name)?;
+    let (_checkpoint_path, meta_path) = checkpoint_paths(&dir, &file_name)?;
     let trimmed = label.trim();
     if trimmed.is_empty() {
         return Err("Checkpoint label must not be empty.".to_string());
@@ -489,12 +682,15 @@ pub async fn rename_database_checkpoint(
     .map_err(|error| format!("Checkpoint rename task failed: {error}"))?
 }
 
-/// `/rollback` step 2b: run the checkpoint SQL through the shared restore
-/// pipeline (capability checks, statement splitting, transactional execution).
-/// Safe Mode is intentionally not re-asserted here: the human confirmed the
-/// exact checkpoint through the picker modal, and dump SQL routinely contains
-/// parser-hostile or destructive statements that would make the recovery
-/// path impossible behind read-only tiers.
+/// `/rollback` step 2b: replay the checkpoint through the shared restore
+/// pipeline (capability checks, payload classification, driver execution).
+/// SQL dumps go through statement splitting as before; JSON snapshots are
+/// handed to the driver's `execute_restore_statements`, which replays them
+/// as a data-overlay (checkpoint rows over the current state — newer rows
+/// are not deleted). Safe Mode is intentionally not re-asserted here: the
+/// human confirmed the exact checkpoint through the picker modal, and dump
+/// payloads routinely contain parser-hostile or destructive statements that
+/// would make the recovery path impossible behind read-only tiers.
 #[tauri::command]
 pub async fn restore_database_checkpoint(
     connection_id: String,
@@ -503,18 +699,28 @@ pub async fn restore_database_checkpoint(
     db_manager: State<'_, DatabaseManager>,
     safe_mode: State<'_, SafeModeState>,
 ) -> Result<RestoreResult, String> {
+    if !checkpoint_restore_supported(db_type) {
+        return Err(format!(
+            "Checkpoints cannot be restored on {db_type:?}: the engine has no replay path."
+        ));
+    }
     db_manager.assert_write_allowed(&connection_id).await?;
     let dir = checkpoint_dir(&connection_id)?;
-    let (sql_path, _) = checkpoint_paths(&dir, &file_name)?;
-    let sql = task::spawn_blocking(move || -> Result<String, String> {
-        fs::read_to_string(&sql_path).map_err(|error| format!("Failed to read checkpoint: {error}"))
+    let (checkpoint_path, _) = checkpoint_paths(&dir, &file_name)?;
+    let connection_id_for_read = connection_id.clone();
+    let body = task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        read_checkpoint_body(&connection_id_for_read, &checkpoint_path)
     })
     .await
     .map_err(|_| "Checkpoint read task failed unexpectedly.".to_string())??;
-    let sql = if db_type == DatabaseType::MSSQL {
-        normalize_legacy_mssql_dump(&sql)
+    let body = String::from_utf8(body)
+        .map_err(|_| "The checkpoint body is not valid UTF-8.".to_string())?;
+    // JSON snapshots replay verbatim — the driver detects the snapshot
+    // payload itself (redis/mongo pattern), so no SQL normalization applies.
+    let sql = if db_type == DatabaseType::MSSQL && !is_json_snapshot_body(&body) {
+        normalize_legacy_mssql_dump(&body)
     } else {
-        sql
+        body
     };
 
     let mut pre_restore_warning: Option<String> = None;
@@ -695,5 +901,95 @@ mod n_prefix_multiline_tests {
             out.contains("OBJECT_ID(N'[dbo].[T]', 'U')"),
             "guard mangled: {out}"
         );
+    }
+}
+#[cfg(test)]
+mod checkpoint_format_tests {
+    use super::*;
+
+    #[test]
+    fn checkpoint_paths_accept_sql_json_enc_and_reject_other_names() {
+        let dir = Path::new("checkpoints");
+        for name in ["1-a.sql", "1-a.json", "1-a.enc"] {
+            let (body, meta) = checkpoint_paths(dir, name)
+                .unwrap_or_else(|error| panic!("{name} rejected: {error}"));
+            assert_eq!(body, dir.join(name));
+            assert_eq!(meta, dir.join(format!("{name}.meta.json")));
+        }
+        for name in [
+            "1-a.txt",
+            "1-a.meta.json",
+            "../x.sql",
+            "a/b.sql",
+            "a\\b.sql",
+            "no-extension",
+        ] {
+            assert!(
+                checkpoint_paths(dir, name).is_err(),
+                "{name} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn json_snapshot_detection_uses_the_snapshot_format_marker() {
+        assert!(is_json_snapshot_body(
+            r#"{"meta":{"format":"json-snapshot"},"tables":[]}"#
+        ));
+        // JSON that is not a TableR snapshot stays on the SQL path so it
+        // fails honestly in the SQL classifier instead of miscounting.
+        assert!(!is_json_snapshot_body(
+            r#"{"meta":{"format":"other"},"tables":[]}"#
+        ));
+        assert!(!is_json_snapshot_body("INSERT INTO t VALUES (1);"));
+        assert!(!is_json_snapshot_body("{not valid json"));
+    }
+
+    #[test]
+    fn json_snapshot_preview_counts_tables_and_rows_as_data_restore() {
+        let body = serde_json::json!({
+            "meta": {"format": "json-snapshot", "engine": "mongodb"},
+            "tables": [
+                {"name": "users", "rows": [{"_id": 1}, {"_id": 2}]},
+                {"name": "orders", "rows": [{"_id": 9}]},
+                {"name": "empty", "rows": []},
+            ],
+        })
+        .to_string();
+        let preview = build_json_snapshot_preview(&body).unwrap();
+        assert_eq!(preview.statement_count, 3);
+        assert_eq!(preview.data_change_count, 3);
+        assert_eq!(preview.schema_change_count, 0);
+        assert_eq!(preview.destructive_statement_count, 0);
+        assert_eq!(preview.unclassified_statement_count, 0);
+        assert!(!preview.transactional);
+        assert!(preview.warning.is_some());
+    }
+
+    #[test]
+    fn json_snapshot_preview_rejects_a_missing_tables_array() {
+        assert!(build_json_snapshot_preview(r#"{"meta":{"format":"json-snapshot"}}"#).is_err());
+    }
+    #[test]
+    fn only_the_read_only_search_engines_are_blocked_from_checkpointing() {
+        // OpenSearch and the Elasticsearch bridge share the read-only search
+        // transport — restore.rs refuses them, so checkpoints must too.
+        assert!(!checkpoint_restore_supported(DatabaseType::OpenSearch));
+        assert!(!checkpoint_restore_supported(DatabaseType::Elasticsearch));
+        for db_type in [
+            DatabaseType::MySQL,
+            DatabaseType::PostgreSQL,
+            DatabaseType::MSSQL,
+            DatabaseType::SQLite,
+            DatabaseType::MongoDB,
+            DatabaseType::DynamoDB,
+            DatabaseType::Redis,
+            DatabaseType::Cassandra,
+        ] {
+            assert!(
+                checkpoint_restore_supported(db_type),
+                "{db_type:?} should checkpoint"
+            );
+        }
     }
 }

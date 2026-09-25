@@ -8,7 +8,11 @@ import { ThemeEngine, type ThemeDefinition } from "../stores/useTheme";
 import { useEditorPreferencesStore } from "../stores/editorPreferencesStore";
 import type { AppLanguagePreference, TranslationKey } from "../i18n";
 import type { DatabaseType, Tab } from "../types";
-import { getAdminQueryPreset, type AdminQueryKind } from "../utils/admin-query-presets";
+import {
+  getAdminQueryPreset,
+  killSessionMenuLabel,
+  type AdminQueryKind,
+} from "../utils/admin-query-presets";
 import { getNewQueryTabTitle, getQueryProfile } from "../utils/query-profile";
 import { DEFAULT_WINDOW_MENU_SECTION, type WindowMenuSectionKey } from "../types/app-types";
 import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "../utils/ui-scale";
@@ -453,7 +457,11 @@ export function useWorkspaceMenuHandlers(inputs: WorkspaceMenuHandlerInputs) {
 
       const preset = getAdminQueryPreset(activeConn.db_type, kind);
       const itemLabel =
-        kind === "process-list" ? t("menu.item.processList") : t("menu.item.userManagement");
+        kind === "kill-session"
+          ? killSessionMenuLabel(language)
+          : kind === "process-list"
+            ? t("menu.item.processList")
+            : t("menu.item.userManagement");
 
       if (!preset.supported || !preset.content.trim()) {
         setError(
@@ -578,6 +586,7 @@ export function useWorkspaceMenuHandlers(inputs: WorkspaceMenuHandlerInputs) {
       isConnected,
       activeConnectionId,
       supportsSqlFileActions,
+      activeDbType: activeConn?.db_type,
       activeTabType: activeTab?.type,
       uiFontScale,
       languagePreference,

@@ -1,3 +1,4 @@
+use super::restore::snapshot_restore_tables;
 use super::{strip_database_prefix, MongoDbDriver, MongoQueryCommand, MongoUpdatePayload};
 use crate::commands::profiler::{PROBE_ROW_LIMIT, PROFILER_COLUMNS, TOP_QUERY_COLUMNS};
 use crate::database::driver::DatabaseDriver;
@@ -20,7 +21,7 @@ use std::time::Instant;
 /// Documents per `insert_many` call inside an import transaction. The driver
 /// splits oversized payloads on its own; this bound exists so the cancel flag
 /// is polled between batches instead of only once per collection.
-const MONGO_TXN_INSERT_BATCH: usize = 1_000;
+pub(super) const MONGO_TXN_INSERT_BATCH: usize = 1_000;
 
 impl MongoDbDriver {
     /// Shared body of `execute_query`/`execute_query_for_request`. `comment`
@@ -684,7 +685,7 @@ impl MongoDbDriver {
     /// multi-document transactions. Sessions are a client-side construct, so
     /// `start_session` alone proves nothing; the `hello` response is the
     /// authoritative signal (`isMaster` is the pre-4.4 fallback).
-    async fn transactions_supported(&self) -> Result<bool> {
+    pub(super) async fn transactions_supported(&self) -> Result<bool> {
         if let Some(cached) = *self
             .transactions_supported
             .read()
@@ -711,7 +712,7 @@ impl MongoDbDriver {
     /// Opens a `ClientSession` with a started transaction, rejecting
     /// standalone deployments up front instead of letting the first write
     /// fail mid-transaction with a less actionable server error.
-    async fn begin_transaction(&self) -> Result<ClientSession> {
+    pub(super) async fn begin_transaction(&self) -> Result<ClientSession> {
         if !self.transactions_supported().await? {
             return Err(anyhow!(
                 "MongoDB multi-document transactions require a replica set or sharded \
@@ -733,7 +734,7 @@ impl MongoDbDriver {
     /// Commits the session's transaction, retrying while the server reports
     /// `UnknownTransactionCommitResult` — that label means the commit outcome
     /// is ambiguous, so retrying is the documented way to resolve it.
-    async fn commit_transaction(session: &mut ClientSession) -> Result<()> {
+    pub(super) async fn commit_transaction(session: &mut ClientSession) -> Result<()> {
         loop {
             match session.commit_transaction().await {
                 Ok(()) => return Ok(()),
@@ -748,7 +749,7 @@ impl MongoDbDriver {
     /// Best-effort abort: the transaction is already failed or being
     /// discarded, so an abort error is logged rather than masking the real
     /// cause. Dropping the session would abort anyway.
-    async fn abort_transaction_quietly(session: &mut ClientSession) {
+    pub(super) async fn abort_transaction_quietly(session: &mut ClientSession) {
         if let Err(error) = session.abort_transaction().await {
             log::warn!("MongoDB transaction abort failed: {error}");
         }
@@ -1353,6 +1354,19 @@ impl DatabaseDriver for MongoDbDriver {
         .await;
         Self::abort_transaction_quietly(&mut session).await;
         execution
+    }
+
+    /// Restore replays a TableR JSON snapshot (the format MongoDB exports
+    /// produce): each table's collection is cleared with `deleteMany({})` and
+    /// rebuilt from its row documents — inside one multi-document transaction
+    /// on replica sets/mongos, sequentially on standalone deployments (the
+    /// non-atomic caveat is logged there). Anything that is not a JSON
+    /// snapshot keeps the default statement-by-statement behaviour.
+    async fn execute_restore_statements(&self, statements: &[String]) -> Result<u64> {
+        match snapshot_restore_tables(statements)? {
+            Some(tables) => self.replay_snapshot_tables(tables).await,
+            None => self.execute_structure_statements(statements).await,
+        }
     }
 
     async fn use_database(&self, database: &str) -> Result<()> {

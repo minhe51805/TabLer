@@ -24,6 +24,7 @@ export function getEnabledPluginDrivers(plugins: InstalledPluginRecord[]): Runti
  */
 export const PLUGIN_HTTP_PROTOCOLS = [
   "opensearch",
+  "elasticsearch",
   "clickhouse",
   "bigquery",
   "snowflake",

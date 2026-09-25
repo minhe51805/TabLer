@@ -54,7 +54,7 @@ pub const fn query_model_for(database_type: DatabaseType) -> QueryModel {
     match database_type {
         DatabaseType::Redis => QueryModel::Kv,
         DatabaseType::MongoDB => QueryModel::Document,
-        DatabaseType::OpenSearch => QueryModel::Search,
+        DatabaseType::OpenSearch | DatabaseType::Elasticsearch => QueryModel::Search,
         DatabaseType::Cassandra => QueryModel::Cql,
         _ => QueryModel::Sql,
     }
@@ -84,6 +84,7 @@ pub const fn driver_distribution(database_type: DatabaseType) -> DriverDistribut
         | DatabaseType::Snowflake
         | DatabaseType::CloudflareD1
         | DatabaseType::OpenSearch
+        | DatabaseType::Elasticsearch
         | DatabaseType::Oracle
         | DatabaseType::Spanner
         | DatabaseType::DynamoDB
@@ -266,8 +267,7 @@ impl DriverCapabilityProfile {
         }
     }
 }
-
-pub const ALL_DATABASE_TYPES: [DatabaseType; 23] = [
+pub const ALL_DATABASE_TYPES: [DatabaseType; 24] = [
     DatabaseType::MySQL,
     DatabaseType::MariaDB,
     DatabaseType::PostgreSQL,
@@ -287,6 +287,7 @@ pub const ALL_DATABASE_TYPES: [DatabaseType; 23] = [
     DatabaseType::LibSQL,
     DatabaseType::CloudflareD1,
     DatabaseType::OpenSearch,
+    DatabaseType::Elasticsearch,
     DatabaseType::Oracle,
     DatabaseType::Spanner,
     DatabaseType::DynamoDB,
@@ -497,13 +498,21 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             S, S, N, S, S, S, N, U, S, S, N, U, S,
             &["Atomic mutations are unsupported: OpenSearch has no multi-document transaction primitive and _bulk is not atomic.", "Inline edits address documents by _id; an optional _index selector column targets the concrete index behind a pattern.", "User administration runs through the security plugin REST API.", "SQL restore is unavailable.", "Cancel tags requests with X-Opaque-Id and aborts the matching task via POST /_tasks/{task}/_cancel."],
         ),
+        DatabaseType::Elasticsearch => profile(
+            database_type,
+            "elasticsearch",
+            "Elasticsearch",
+            DriverTier::Specialized,
+            S, S, N, S, S, S, N, U, S, S, N, U, U,
+            &["Atomic mutations are unsupported: Elasticsearch has no multi-document transaction primitive and _bulk is not atomic.", "Inline edits address documents by _id; an optional _index selector column targets the concrete index behind a pattern.", "User administration is not integrated: Elasticsearch security runs through the X-Pack _security REST API, which is out of scope.", "SQL restore is unavailable.", "Cancel tags requests with X-Opaque-Id and aborts the matching task via POST /_tasks/{task}/_cancel."],
+        ),
         DatabaseType::Oracle => profile(
             database_type,
             "oracle",
             "Oracle (ORDS)",
             DriverTier::Extended,
-            S, S, S, L, S, S, S, S, S, S, S, S, U,
-            &["Requires ORDS (Oracle REST Data Services) enabled on the database.", "Atomic edits/imports, restore, and write previews wrap statements in one anonymous PL/SQL block so ORDS runs them in a single transaction context; per-statement rowcounts are synthesized because a block returns no per-item counts.", "Restore atomicity holds only up to the last DDL boundary — Oracle DDL implicitly commits; DML replays all-or-nothing.", "Write previews accept INSERT/UPDATE/DELETE/MERGE only — SELECT cannot appear in PL/SQL and DDL would implicitly commit before the ROLLBACK.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.", "Explain writes PLAN_TABLE via EXPLAIN PLAN and reads it back through DBMS_XPLAN; requires PLAN_TABLE to exist."]),
+            S, S, S, L, S, S, S, S, S, S, S, S, S,
+            &["Requires ORDS (Oracle REST Data Services) enabled on the database.", "Atomic edits/imports, restore, and write previews wrap statements in one anonymous PL/SQL block so ORDS runs them in a single transaction context; per-statement rowcounts are synthesized because a block returns no per-item counts.", "Restore atomicity holds only up to the last DDL boundary — Oracle DDL implicitly commits; DML replays all-or-nothing.", "Write previews accept INSERT/UPDATE/DELETE/MERGE only — SELECT cannot appear in PL/SQL and DDL would implicitly commit before the ROLLBACK.", "User administration (dba_users, CREATE/ALTER USER, GRANT/REVOKE) requires DBA or SELECT_CATALOG_ROLE privileges.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.", "Explain writes PLAN_TABLE via EXPLAIN PLAN and reads it back through DBMS_XPLAN; requires PLAN_TABLE to exist."]),
         DatabaseType::Spanner => profile(
             database_type,
             "spanner",
@@ -518,7 +527,7 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "Amazon DynamoDB",
             DriverTier::Specialized,
             S, S, S, L, S, S, S, L, S, U, L, L, U,
-            &["PartiQL statements only; the driver signs requests with AWS Signature V4 using the access key in username and secret key in password.", "Atomic edits/imports run inside ExecuteTransaction capped at 100 actions — larger queues are rejected rather than chunked.", "Schema actions are limited to CREATE TABLE (partition key, optional sort key) and DROP TABLE via the control-plane API; explain and administration are not implemented; restore replays PartiQL INSERTs sequentially.", "Cancel aborts NextToken paging client-side; DynamoDB cannot kill a running statement server-side."],
+            &["PartiQL statements only; the driver signs requests with AWS Signature V4 using the access key in username and secret key in password.", "Atomic edits/imports run inside ExecuteTransaction capped at 100 actions — larger queues are rejected rather than chunked.", "Schema actions are limited to CREATE TABLE (partition key, optional sort key) and DROP TABLE via the control-plane API; explain and administration are not implemented.", "Restore replays JSON snapshots and PartiQL INSERTs; a table under the 100-action cap restores inside ExecuteTransaction, larger tables replay sequentially.", "Cancel aborts NextToken paging client-side; DynamoDB cannot kill a running statement server-side."],
         ),
         DatabaseType::Trino => profile(
             database_type,
@@ -783,6 +792,7 @@ mod tests {
                 | DatabaseType::Snowflake
                 | DatabaseType::CloudflareD1
                 | DatabaseType::OpenSearch
+                | DatabaseType::Elasticsearch
                 | DatabaseType::Oracle
                 | DatabaseType::Spanner
                 | DatabaseType::DynamoDB
@@ -850,6 +860,7 @@ mod tests {
             "snowflake",
             "cloudflare_d1",
             "opensearch",
+            "elasticsearch",
             "oracle",
             "spanner",
             "dynamodb",

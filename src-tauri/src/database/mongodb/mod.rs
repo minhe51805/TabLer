@@ -96,6 +96,8 @@ mod connect;
 
 mod driver_ops;
 
+mod restore;
+
 mod profiler;
 
 #[cfg(test)]

@@ -284,6 +284,21 @@
     "backup_restore": "U",
     "administration": "S"
   },
+  "elasticsearch": {
+    "connect": "S",
+    "query": "S",
+    "prepared_parameters": "N",
+    "query_cancellation": "S",
+    "pagination": "S",
+    "inline_edit": "S",
+    "atomic_edit_queue": "N",
+    "atomic_csv_import": "U",
+    "data_export": "S",
+    "explain": "S",
+    "schema_edit": "N",
+    "backup_restore": "U",
+    "administration": "U"
+  },
   "oracle": {
     "connect": "S",
     "query": "S",
@@ -297,7 +312,7 @@
     "explain": "S",
     "schema_edit": "S",
     "backup_restore": "S",
-    "administration": "U"
+    "administration": "S"
   },
   "spanner": {
     "connect": "S",

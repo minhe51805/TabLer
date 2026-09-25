@@ -270,4 +270,12 @@ mod tests {
             DatabaseExportFormat::JsonSnapshot
         );
     }
+
+    #[test]
+    fn elasticsearch_exports_a_json_snapshot_instead_of_sql() {
+        assert_eq!(
+            preferred_export_format(DatabaseType::Elasticsearch),
+            DatabaseExportFormat::JsonSnapshot
+        );
+    }
 }

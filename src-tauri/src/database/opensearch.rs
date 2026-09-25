@@ -18,6 +18,25 @@ const MAX_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
 const MAX_RESULT_ROWS: usize = 500;
 const MAX_PEM_BYTES: u64 = 1024 * 1024;
 
+/// Search product the transport is branded for. OpenSearch and Elasticsearch
+/// share the fork-era REST surface this driver exercises, so the same sandboxed
+/// HTTP layer serves both; the product only changes identity checks and
+/// user-facing labels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SearchProduct {
+    OpenSearch,
+    Elasticsearch,
+}
+
+impl SearchProduct {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::OpenSearch => "OpenSearch",
+            Self::Elasticsearch => "Elasticsearch",
+        }
+    }
+}
+
 pub struct OpenSearchDriver {
     client: Client,
     base_url: Url,
@@ -25,6 +44,9 @@ pub struct OpenSearchDriver {
     password: Option<String>,
     current_index: RwLock<Option<String>>,
     plugin_id: String,
+    /// Which search product this connection speaks to — Elasticsearch
+    /// connections run through the same transport via `ElasticsearchDriver`.
+    product: SearchProduct,
     /// request_id → running-search scope so `cancel_query_request` can find
     /// the `X-Opaque-Id`-tagged task in `GET /_tasks` and cancel it.
     cancel_registry: RwLock<QueryCancelRegistry>,
@@ -35,33 +57,49 @@ pub struct OpenSearchDriver {
 const OPAQUE_ID_PREFIX: &str = "tabler-";
 
 impl OpenSearchDriver {
-    fn read_pem(path: &str, label: &str) -> Result<Vec<u8>> {
+    fn read_pem(product: SearchProduct, path: &str, label: &str) -> Result<Vec<u8>> {
         let path = Path::new(path);
         let metadata = fs::symlink_metadata(path)
-            .map_err(|e| anyhow!("Failed to inspect OpenSearch {label}: {e}"))?;
+            .map_err(|e| anyhow!("Failed to inspect {} {label}: {e}", product.label()))?;
         if metadata.file_type().is_symlink() || !metadata.is_file() {
-            return Err(anyhow!("OpenSearch {label} must be a regular file"));
+            return Err(anyhow!(
+                "{} {label} must be a regular file",
+                product.label()
+            ));
         }
         if metadata.len() == 0 || metadata.len() > MAX_PEM_BYTES {
             return Err(anyhow!(
-                "OpenSearch {label} exceeds the certificate size limit"
+                "{} {label} exceeds the certificate size limit",
+                product.label()
             ));
         }
-        fs::read(path).map_err(|e| anyhow!("Failed to read OpenSearch {label}: {e}"))
+        fs::read(path).map_err(|e| anyhow!("Failed to read {} {label}: {e}", product.label()))
     }
 
     pub async fn connect(config: &ConnectionConfig, plugin_id: String) -> Result<Self> {
+        Self::connect_with_product(config, plugin_id, SearchProduct::OpenSearch).await
+    }
+
+    /// Product-aware connect shared with the Elasticsearch bridge. TLS, host
+    /// validation, and credential handling are identical for both products —
+    /// the label is the only difference until the first request runs.
+    pub(crate) async fn connect_with_product(
+        config: &ConnectionConfig,
+        plugin_id: String,
+        product: SearchProduct,
+    ) -> Result<Self> {
         let host = config
             .host
             .as_deref()
             .map(str::trim)
             .filter(|host| !host.is_empty())
-            .ok_or_else(|| anyhow!("OpenSearch host is required"))?;
+            .ok_or_else(|| anyhow!("{} host is required", product.label()))?;
         let is_loopback = matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]");
         let tls_enabled = !matches!(config.effective_ssl_mode(), SslMode::Disable);
         if !tls_enabled && !is_loopback {
             return Err(anyhow!(
-                "OpenSearch driver plugins require TLS for non-loopback hosts"
+                "{} driver plugins require TLS for non-loopback hosts",
+                product.label()
             ));
         }
         let scheme = if tls_enabled { "https" } else { "http" };
@@ -72,10 +110,11 @@ impl OpenSearchDriver {
             host.to_string()
         };
         let base_url = Url::parse(&format!("{scheme}://{authority_host}:{port}/"))
-            .map_err(|_| anyhow!("OpenSearch host or port is invalid"))?;
+            .map_err(|_| anyhow!("{} host or port is invalid", product.label()))?;
         if base_url.username() != "" || base_url.password().is_some() {
             return Err(anyhow!(
-                "OpenSearch credentials cannot be embedded in the host"
+                "{} credentials cannot be embedded in the host",
+                product.label()
             ));
         }
 
@@ -90,8 +129,11 @@ impl OpenSearchDriver {
             .map(str::trim)
             .filter(|value| !value.is_empty())
         {
-            let certificate =
-                reqwest::Certificate::from_pem(&Self::read_pem(ca_path, "CA certificate")?)?;
+            let certificate = reqwest::Certificate::from_pem(&Self::read_pem(
+                product,
+                ca_path,
+                "CA certificate",
+            )?)?;
             client_builder = client_builder.add_root_certificate(certificate);
         }
         match (
@@ -107,16 +149,17 @@ impl OpenSearchDriver {
                 .filter(|value| !value.is_empty()),
         ) {
             (Some(cert_path), Some(key_path)) => {
-                let mut identity_pem = Self::read_pem(cert_path, "client certificate")?;
+                let mut identity_pem = Self::read_pem(product, cert_path, "client certificate")?;
                 identity_pem.push(b'\n');
-                identity_pem.extend(Self::read_pem(key_path, "client key")?);
+                identity_pem.extend(Self::read_pem(product, key_path, "client key")?);
                 client_builder =
                     client_builder.identity(reqwest::Identity::from_pem(&identity_pem)?);
             }
             (None, None) => {}
             _ => {
                 return Err(anyhow!(
-                    "OpenSearch client certificate and key must be configured together"
+                    "{} client certificate and key must be configured together",
+                    product.label()
                 ))
             }
         }
@@ -136,13 +179,14 @@ impl OpenSearchDriver {
                     .filter(|value| !value.trim().is_empty()),
             ),
             plugin_id,
+            product,
             cancel_registry: RwLock::new(QueryCancelRegistry::new()),
         };
         driver.ping().await?;
         Ok(driver)
     }
 
-    fn validate_index(value: &str) -> Result<&str> {
+    fn validate_index(product: SearchProduct, value: &str) -> Result<&str> {
         let value = value.trim();
         if value.is_empty()
             || value.len() > 255
@@ -152,32 +196,46 @@ impl OpenSearchDriver {
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || b"-_.*,".contains(&byte))
         {
-            return Err(anyhow!("OpenSearch index name or pattern is invalid"));
+            return Err(anyhow!(
+                "{} index name or pattern is invalid",
+                product.label()
+            ));
         }
         Ok(value)
     }
 
     fn index_for(&self, value: Option<&str>) -> Result<String> {
         if let Some(value) = value.filter(|value| !value.trim().is_empty()) {
-            return Ok(Self::validate_index(value)?.to_string());
+            return Ok(Self::validate_index(self.product, value)?.to_string());
         }
         let current = self
             .current_index
             .read()
-            .map_err(|_| anyhow!("OpenSearch driver state is unavailable"))?
+            .map_err(|_| anyhow!("{} driver state is unavailable", self.product.label()))?
             .clone()
             .unwrap_or_else(|| "_all".to_string());
-        Ok(Self::validate_index(&current)?.to_string())
+        Ok(Self::validate_index(self.product, &current)?.to_string())
     }
 
-    fn validate_search_body(body: &Value) -> Result<()> {
-        fn visit(value: &Value, depth: usize, nodes: &mut usize) -> Result<()> {
+    fn validate_search_body(product: SearchProduct, body: &Value) -> Result<()> {
+        fn visit(
+            product: SearchProduct,
+            value: &Value,
+            depth: usize,
+            nodes: &mut usize,
+        ) -> Result<()> {
             if depth > 32 {
-                return Err(anyhow!("OpenSearch query exceeds the nesting limit"));
+                return Err(anyhow!(
+                    "{} query exceeds the nesting limit",
+                    product.label()
+                ));
             }
             *nodes = nodes.saturating_add(1);
             if *nodes > 10_000 {
-                return Err(anyhow!("OpenSearch query exceeds the structure limit"));
+                return Err(anyhow!(
+                    "{} query exceeds the structure limit",
+                    product.label()
+                ));
             }
             match value {
                 Value::Object(map) => {
@@ -187,7 +245,8 @@ impl OpenSearchDriver {
                             "script" | "script_fields" | "runtime_mappings" | "stored_fields"
                         ) {
                             return Err(anyhow!(
-                                "OpenSearch driver ABI v1 blocks server-side script and stored-field execution"
+                                "{} driver ABI v1 blocks server-side script and stored-field execution",
+                                product.label()
                             ));
                         }
                         if key == "size"
@@ -195,19 +254,23 @@ impl OpenSearchDriver {
                                 .as_u64()
                                 .is_some_and(|size| size > MAX_RESULT_ROWS as u64)
                         {
-                            return Err(anyhow!("OpenSearch result size exceeds the driver limit"));
+                            return Err(anyhow!(
+                                "{} result size exceeds the driver limit",
+                                product.label()
+                            ));
                         }
                         if key == "from" && child.as_u64().is_some_and(|offset| offset > 10_000) {
                             return Err(anyhow!(
-                                "OpenSearch result offset exceeds the driver limit"
+                                "{} result offset exceeds the driver limit",
+                                product.label()
                             ));
                         }
-                        visit(child, depth + 1, nodes)?;
+                        visit(product, child, depth + 1, nodes)?;
                     }
                 }
                 Value::Array(values) => {
                     for child in values {
-                        visit(child, depth + 1, nodes)?;
+                        visit(product, child, depth + 1, nodes)?;
                     }
                 }
                 _ => {}
@@ -216,23 +279,26 @@ impl OpenSearchDriver {
         }
 
         let mut nodes = 0;
-        visit(body, 0, &mut nodes)
+        visit(product, body, 0, &mut nodes)
     }
 
     fn request(&self, method: Method, path: &str) -> Result<reqwest::RequestBuilder> {
         if path.len() > 1024 || path.contains("..") || path.contains("//") || !path.starts_with('/')
         {
             return Err(anyhow!(
-                "OpenSearch request path is outside the driver allowlist"
+                "{} request path is outside the driver allowlist",
+                self.product.label()
             ));
         }
+
         let url = self.base_url.join(path.trim_start_matches('/'))?;
         if url.scheme() != self.base_url.scheme()
             || url.host_str() != self.base_url.host_str()
             || url.port_or_known_default() != self.base_url.port_or_known_default()
         {
             return Err(anyhow!(
-                "OpenSearch request escaped the configured endpoint"
+                "{} request escaped the configured endpoint",
+                self.product.label()
             ));
         }
         let request = self.client.request(method, url);
@@ -256,7 +322,10 @@ impl OpenSearchDriver {
     ) -> Result<Value> {
         if let Some(body) = body {
             if serde_json::to_vec(body)?.len() > MAX_REQUEST_BYTES {
-                return Err(anyhow!("OpenSearch query exceeds the plugin request limit"));
+                return Err(anyhow!(
+                    "{} query exceeds the plugin request limit",
+                    self.product.label()
+                ));
             }
         }
         let mut request = self.request(method, path)?;
@@ -273,7 +342,8 @@ impl OpenSearchDriver {
             .is_some_and(|length| length > MAX_RESPONSE_BYTES as u64)
         {
             return Err(anyhow!(
-                "OpenSearch response exceeds the plugin payload limit"
+                "{} response exceeds the plugin payload limit",
+                self.product.label()
             ));
         }
         let mut bytes = Vec::new();
@@ -282,7 +352,8 @@ impl OpenSearchDriver {
             let chunk = chunk?;
             if bytes.len().saturating_add(chunk.len()) > MAX_RESPONSE_BYTES {
                 return Err(anyhow!(
-                    "OpenSearch response exceeds the plugin payload limit"
+                    "{} response exceeds the plugin payload limit",
+                    self.product.label()
                 ));
             }
             bytes.extend_from_slice(&chunk);
@@ -290,7 +361,8 @@ impl OpenSearchDriver {
         if !status.is_success() {
             let message = String::from_utf8_lossy(&bytes);
             return Err(anyhow!(
-                "OpenSearch request failed with {}: {}",
+                "{} request failed with {}: {}",
+                self.product.label(),
                 status.as_u16(),
                 message.chars().take(400).collect::<String>()
             ));
@@ -405,17 +477,24 @@ impl OpenSearchDriver {
     /// Parse the query text into `(search_body, is_explain)`. A leading
     /// `EXPLAIN` marks the body for profiling; everything else must be one
     /// JSON search request body.
-    fn parse_query_body(sql: &str) -> Result<(Value, bool)> {
+    fn parse_query_body(product: SearchProduct, sql: &str) -> Result<(Value, bool)> {
         let (text, explain) = match Self::strip_explain_prefix(sql) {
             Some(inner) => (inner, true),
             None => (sql, false),
         };
-        let body: Value = serde_json::from_str(text.trim())
-            .map_err(|_| anyhow!("OpenSearch queries must be one JSON search request body"))?;
+        let body: Value = serde_json::from_str(text.trim()).map_err(|_| {
+            anyhow!(
+                "{} queries must be one JSON search request body",
+                product.label()
+            )
+        })?;
         if !body.is_object() {
-            return Err(anyhow!("OpenSearch query body must be a JSON object"));
+            return Err(anyhow!(
+                "{} query body must be a JSON object",
+                product.label()
+            ));
         }
-        Self::validate_search_body(&body)?;
+        Self::validate_search_body(product, &body)?;
         Ok((body, explain))
     }
 
@@ -481,7 +560,8 @@ impl OpenSearchDriver {
                 .all(|byte| byte.is_ascii_alphanumeric() || b":_-.".contains(&byte))
             {
                 return Err(anyhow!(
-                    "OpenSearch task id is outside the driver allowlist"
+                    "{} task id is outside the driver allowlist",
+                    self.product.label()
                 ));
             }
             self.send_json(Method::POST, &format!("/_tasks/{task_id}/_cancel"), None)
@@ -493,7 +573,7 @@ impl OpenSearchDriver {
     /// Validate a `_source` field name for inline writes. Dotted names are
     /// allowed (OpenSearch expands them into nested objects); metadata fields
     /// (`_id`, `_index`, `_score`, …) are not writable through `_source`.
-    fn validate_field_name(column: &str) -> Result<&str> {
+    fn validate_field_name(product: SearchProduct, column: &str) -> Result<&str> {
         let column = column.trim();
         if column.is_empty()
             || column.len() > 255
@@ -503,7 +583,7 @@ impl OpenSearchDriver {
                 .bytes()
                 .all(|byte| byte.is_ascii_alphanumeric() || b".-_".contains(&byte))
         {
-            return Err(anyhow!("OpenSearch field name is invalid"));
+            return Err(anyhow!("{} field name is invalid", product.label()));
         }
         Ok(column)
     }
@@ -511,14 +591,14 @@ impl OpenSearchDriver {
     /// Validate a document id for use in a `/{index}/_doc/{id}` path segment.
     /// Anything that could break out of the segment (`/`, `?`, `#`, `%`,
     /// control bytes) is rejected rather than percent-mangled.
-    fn validate_doc_id(id: &str) -> Result<&str> {
+    fn validate_doc_id(product: SearchProduct, id: &str) -> Result<&str> {
         if id.is_empty()
             || id.len() > 512
             || !id
                 .bytes()
                 .all(|byte| (byte.is_ascii_graphic() || byte == b' ') && !b"/?#%".contains(&byte))
         {
-            return Err(anyhow!("OpenSearch document id is invalid"));
+            return Err(anyhow!("{} document id is invalid", product.label()));
         }
         Ok(id)
     }
@@ -541,7 +621,9 @@ impl OpenSearchDriver {
                     doc_id = Some(
                         key.value
                             .as_str()
-                            .ok_or_else(|| anyhow!("OpenSearch _id selector must be a string"))?
+                            .ok_or_else(|| {
+                                anyhow!("{} _id selector must be a string", self.product.label())
+                            })?
                             .to_string(),
                     );
                 }
@@ -549,19 +631,27 @@ impl OpenSearchDriver {
                     index_override = Some(
                         key.value
                             .as_str()
-                            .ok_or_else(|| anyhow!("OpenSearch _index selector must be a string"))?
+                            .ok_or_else(|| {
+                                anyhow!("{} _index selector must be a string", self.product.label())
+                            })?
                             .to_string(),
                     );
                 }
                 _ => {}
             }
         }
-        let doc_id = Self::validate_doc_id(&doc_id.ok_or_else(|| {
-            anyhow!("OpenSearch inline edits require the _id column as the row selector")
-        })?)?
+        let doc_id = Self::validate_doc_id(
+            self.product,
+            &doc_id.ok_or_else(|| {
+                anyhow!(
+                    "{} inline edits require the _id column as the row selector",
+                    self.product.label()
+                )
+            })?,
+        )?
         .to_string();
         let index = match index_override {
-            Some(index) => Self::validate_index(&index)?.to_string(),
+            Some(index) => Self::validate_index(self.product, &index)?.to_string(),
             None => self.index_for(if table.trim().is_empty() {
                 database
             } else {
@@ -573,8 +663,8 @@ impl OpenSearchDriver {
 
     /// `POST /{index}/_update/{id}` body for one cell edit: a partial `doc`
     /// merge keyed by the literal `_source` field name the grid displays.
-    fn build_update_body(column: &str, value: &Value) -> Result<Value> {
-        let column = Self::validate_field_name(column)?;
+    fn build_update_body(product: SearchProduct, column: &str, value: &Value) -> Result<Value> {
+        let column = Self::validate_field_name(product, column)?;
         let mut doc = Map::new();
         doc.insert(column.to_string(), value.clone());
         let mut body = Map::new();
@@ -652,14 +742,82 @@ impl OpenSearchDriver {
         }
     }
 
-    /// Shared query path: parse the body, then run it as a plain search or a
+    /// Strip a leading `GET ` so read-only REST endpoints (cat APIs, cluster
+    /// health, task listing) can run through the same query surface as search
+    /// bodies. Returns `None` when the text is not a GET request.
+    fn strip_get_prefix(sql: &str) -> Option<&str> {
+        let rest = sql.trim_start();
+        let head = rest.get(..3)?;
+        if !head.eq_ignore_ascii_case("GET") {
+            return None;
+        }
+        match rest.as_bytes().get(3) {
+            // The keyword must be standalone and followed by whitespace.
+            Some(byte) if byte.is_ascii_whitespace() => Some(rest[3..].trim_start()),
+            _ => None,
+        }
+    }
+
+    /// Read-only REST endpoints the query surface may fetch. Everything here
+    /// is a GET-only introspection API on both OpenSearch and Elasticsearch;
+    /// arbitrary paths and non-GET verbs still cannot run through this driver.
+    const READ_ONLY_GET_PREFIXES: &'static [&'static str] =
+        &["/_cat/", "/_cluster/", "/_nodes", "/_tasks"];
+
+    /// Run a read-only `GET /path` request and surface the JSON body as a
+    /// single-row result — the admin-preset shape (`GET /_cat/tasks?format=json`)
+    /// that the OpenSearch/Elasticsearch dashboards expose.
+    async fn execute_read_request(&self, path: &str, query_label: String) -> Result<QueryResult> {
+        if !path.starts_with('/')
+            || !path
+                .bytes()
+                .all(|byte| byte.is_ascii_graphic() && !b" \"'<>`{}\r".contains(&byte))
+            || !Self::READ_ONLY_GET_PREFIXES
+                .iter()
+                .any(|prefix| path.starts_with(prefix))
+        {
+            return Err(anyhow!(
+                "{} GET requests are limited to read-only admin endpoints ({})",
+                self.product.label(),
+                Self::READ_ONLY_GET_PREFIXES.join(", ")
+            ));
+        }
+        let started = Instant::now();
+        let value = self.send_json(Method::GET, path, None).await?;
+        let text = serde_json::to_string_pretty(&value).unwrap_or_else(|_| value.to_string());
+        Ok(QueryResult {
+            columns: vec![ColumnInfo {
+                name: "response".to_string(),
+                data_type: "json".to_string(),
+                is_nullable: true,
+                is_primary_key: false,
+                max_length: None,
+                default_value: None,
+            }],
+            rows: vec![vec![Value::String(text)]],
+            affected_rows: 0,
+            execution_time_ms: started.elapsed().as_millis(),
+            query: query_label,
+            sandboxed: true,
+            truncated: false,
+        })
+    }
+
+    /// Shared query path: `GET /path` runs a read-only REST request, otherwise
+    /// the text parses into a search body and runs as a plain search or a
     /// `profile: true` explain. `opaque_id` tags the `_search` request so the
     /// `_tasks` API can attribute it to the frontend request.
     async fn execute_query_inner(&self, sql: &str, opaque_id: Option<&str>) -> Result<QueryResult> {
         if sql.len() > MAX_REQUEST_BYTES {
-            return Err(anyhow!("OpenSearch query exceeds the plugin request limit"));
+            return Err(anyhow!(
+                "{} query exceeds the plugin request limit",
+                self.product.label()
+            ));
         }
-        let (body, explain) = Self::parse_query_body(sql)?;
+        if let Some(path) = Self::strip_get_prefix(sql) {
+            return self.execute_read_request(path, sql.to_string()).await;
+        }
+        let (body, explain) = Self::parse_query_body(self.product, sql)?;
         let index = self.index_for(None)?;
         if explain {
             self.explain_search(&index, &body, sql.to_string(), opaque_id)
@@ -667,6 +825,36 @@ impl OpenSearchDriver {
         } else {
             self.search(&index, &body, sql.to_string(), opaque_id).await
         }
+    }
+    /// Raw `GET /` returning the response headers and body so the
+    /// Elasticsearch bridge can verify the product identity
+    /// (`X-Elastic-Product` header, `version.distribution` field).
+    pub(crate) async fn server_identity(&self) -> Result<(Option<String>, Value)> {
+        let response = self.request(Method::GET, "/")?.send().await?;
+        let status = response.status();
+        let product_header = response
+            .headers()
+            .get("x-elastic-product")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_string);
+        let bytes = response.bytes().await?;
+        if !status.is_success() {
+            return Err(anyhow!(
+                "{} request failed with {}: {}",
+                self.product.label(),
+                status.as_u16(),
+                String::from_utf8_lossy(&bytes)
+                    .chars()
+                    .take(400)
+                    .collect::<String>()
+            ));
+        }
+        let body = if bytes.is_empty() {
+            Value::Null
+        } else {
+            serde_json::from_slice(&bytes)?
+        };
+        Ok((product_header, body))
     }
 
     /// Call the OpenSearch security plugin REST API (`/_plugins/_security/...`)
@@ -744,7 +932,7 @@ impl DatabaseDriver for OpenSearchDriver {
         table: &str,
         _database: Option<&str>,
     ) -> Result<TableStructure> {
-        let index = Self::validate_index(table)?;
+        let index = Self::validate_index(self.product, table)?;
         let value = self
             .send_json(Method::GET, &format!("/{index}/_mapping"), None)
             .await?;
@@ -846,13 +1034,16 @@ impl DatabaseDriver for OpenSearchDriver {
         order_dir: Option<&str>,
         filter: Option<&str>,
     ) -> Result<QueryResult> {
-        let index = Self::validate_index(table)?;
+        let index = Self::validate_index(self.product, table)?;
         let mut body = json!({
             "query": { "match_all": {} }
         });
         if let Some(filter) = filter.map(str::trim).filter(|value| !value.is_empty()) {
             if filter.len() > 4096 {
-                return Err(anyhow!("OpenSearch filter exceeds the driver limit"));
+                return Err(anyhow!(
+                    "{} filter exceeds the driver limit",
+                    self.product.label()
+                ));
             }
             body["query"] = json!({ "query_string": { "query": filter } });
         }
@@ -862,7 +1053,7 @@ impl DatabaseDriver for OpenSearchDriver {
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
             {
-                return Err(anyhow!("OpenSearch sort field is invalid"));
+                return Err(anyhow!("{} sort field is invalid", self.product.label()));
             }
             let direction = if order_dir.is_some_and(|value| value.eq_ignore_ascii_case("desc")) {
                 "desc"
@@ -880,7 +1071,7 @@ impl DatabaseDriver for OpenSearchDriver {
         if offset.saturating_add(limit) <= 10_000 {
             body["from"] = json!(offset);
             body["size"] = json!(limit.min(MAX_RESULT_ROWS as u64));
-            Self::validate_search_body(&body)?;
+            Self::validate_search_body(self.product, &body)?;
             return self
                 .search(index, &body, format!("Browse index {index}"), None)
                 .await;
@@ -890,7 +1081,7 @@ impl DatabaseDriver for OpenSearchDriver {
         if body.get("sort").is_none() {
             body["sort"] = json!(["_doc"]);
         }
-        Self::validate_search_body(&body)?;
+        Self::validate_search_body(self.product, &body)?;
 
         let started = Instant::now();
         let mut response = self
@@ -963,14 +1154,14 @@ impl DatabaseDriver for OpenSearchDriver {
     }
 
     async fn count_rows(&self, table: &str, _database: Option<&str>) -> Result<i64> {
-        let index = Self::validate_index(table)?;
+        let index = Self::validate_index(self.product, table)?;
         let value = self
             .send_json(Method::GET, &format!("/{index}/_count"), None)
             .await?;
         value
             .get("count")
             .and_then(Value::as_i64)
-            .ok_or_else(|| anyhow!("OpenSearch count response is invalid"))
+            .ok_or_else(|| anyhow!("{} count response is invalid", self.product.label()))
     }
 
     fn export_table_rows<'a>(
@@ -986,14 +1177,17 @@ impl DatabaseDriver for OpenSearchDriver {
         // scroll API instead; each scroll page becomes one batch.
         let page_size = batch_size.max(1).min(MAX_RESULT_ROWS as u64);
         let setup = async move {
-            let index = Self::validate_index(table)?.to_string();
+            let index = Self::validate_index(self.product, table)?.to_string();
             let mut body = json!({
                 "size": page_size,
                 "query": { "match_all": {} }
             });
             if let Some(filter) = filter.map(str::trim).filter(|value| !value.is_empty()) {
                 if filter.len() > 4096 {
-                    return Err(anyhow!("OpenSearch filter exceeds the driver limit"));
+                    return Err(anyhow!(
+                        "{} filter exceeds the driver limit",
+                        self.product.label()
+                    ));
                 }
                 body["query"] = json!({ "query_string": { "query": filter } });
             }
@@ -1003,7 +1197,7 @@ impl DatabaseDriver for OpenSearchDriver {
                         .bytes()
                         .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
                 {
-                    return Err(anyhow!("OpenSearch sort field is invalid"));
+                    return Err(anyhow!("{} sort field is invalid", self.product.label()));
                 }
                 let direction = if order_dir.is_some_and(|value| value.eq_ignore_ascii_case("desc"))
                 {
@@ -1019,7 +1213,7 @@ impl DatabaseDriver for OpenSearchDriver {
                 // request a specific one.
                 body["sort"] = json!(["_doc"]);
             }
-            Self::validate_search_body(&body)?;
+            Self::validate_search_body(self.product, &body)?;
             Ok((index, body))
         };
 
@@ -1087,7 +1281,8 @@ impl DatabaseDriver for OpenSearchDriver {
                                 // Stopping here would silently truncate the
                                 // export — surface it as an error instead.
                                 return Err(anyhow!(
-                                    "OpenSearch export of '{index}' stopped early: the server did not return a scroll id"
+                                    "{} export of '{index}' stopped early: the server did not return a scroll id",
+                                    self.product.label()
                                 ));
                             }
                         };
@@ -1105,14 +1300,8 @@ impl DatabaseDriver for OpenSearchDriver {
         _database: Option<&str>,
         column: &str,
     ) -> Result<i64> {
-        let index = Self::validate_index(table)?;
-        if column.len() > 255
-            || !column
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
-        {
-            return Err(anyhow!("OpenSearch field name is invalid"));
-        }
+        let index = Self::validate_index(self.product, table)?;
+        let column = Self::validate_field_name(self.product, column)?;
         let body =
             json!({ "query": { "bool": { "must_not": { "exists": { "field": column } } } } });
         let value = self
@@ -1121,7 +1310,7 @@ impl DatabaseDriver for OpenSearchDriver {
         value
             .get("count")
             .and_then(Value::as_i64)
-            .ok_or_else(|| anyhow!("OpenSearch count response is invalid"))
+            .ok_or_else(|| anyhow!("{} count response is invalid", self.product.label()))
     }
 
     /// Partial update via `POST /{index}/_update/{id}` with a `doc` merge
@@ -1133,7 +1322,7 @@ impl DatabaseDriver for OpenSearchDriver {
             request.database.as_deref(),
             &request.primary_keys,
         )?;
-        let body = Self::build_update_body(&request.target_column, &request.value)?;
+        let body = Self::build_update_body(self.product, &request.target_column, &request.value)?;
         let response = self
             .send_json(
                 Method::POST,
@@ -1183,18 +1372,18 @@ impl DatabaseDriver for OpenSearchDriver {
                 doc_id = Some(
                     value
                         .as_str()
-                        .ok_or_else(|| anyhow!("OpenSearch _id must be a string"))?
+                        .ok_or_else(|| anyhow!("{} _id must be a string", self.product.label()))?
                         .to_string(),
                 );
                 continue;
             }
-            let column = Self::validate_field_name(column)?;
+            let column = Self::validate_field_name(self.product, column)?;
             doc.insert(column.to_string(), value.clone());
         }
         let body = Value::Object(doc);
         let response = match doc_id {
             Some(id) => {
-                let id = Self::validate_doc_id(&id)?;
+                let id = Self::validate_doc_id(self.product, &id)?;
                 self.send_json(Method::PUT, &format!("/{index}/_create/{id}"), Some(&body))
                     .await?
             }
@@ -1209,11 +1398,12 @@ impl DatabaseDriver for OpenSearchDriver {
         })
     }
     async fn use_database(&self, database: &str) -> Result<()> {
-        let index = Self::validate_index(database)?.to_string();
+        let index = Self::validate_index(self.product, database)?.to_string();
         *self
             .current_index
             .write()
-            .map_err(|_| anyhow!("OpenSearch driver state is unavailable"))? = Some(index);
+            .map_err(|_| anyhow!("{} driver state is unavailable", self.product.label()))? =
+            Some(index);
         Ok(())
     }
     async fn get_foreign_key_lookup_values(
@@ -1254,22 +1444,37 @@ mod tests {
 
     #[test]
     fn rejects_paths_and_index_names_that_can_escape_the_endpoint() {
-        assert!(OpenSearchDriver::validate_index("logs-*").is_ok());
-        assert!(OpenSearchDriver::validate_index("../_security").is_err());
-        assert!(OpenSearchDriver::validate_index("https://example.com").is_err());
+        assert!(OpenSearchDriver::validate_index(SearchProduct::OpenSearch, "logs-*").is_ok());
+        assert!(
+            OpenSearchDriver::validate_index(SearchProduct::OpenSearch, "../_security").is_err()
+        );
+        assert!(
+            OpenSearchDriver::validate_index(SearchProduct::OpenSearch, "https://example.com")
+                .is_err()
+        );
     }
 
     #[test]
     fn blocks_unbounded_or_scripted_search_bodies() {
-        assert!(OpenSearchDriver::validate_search_body(&json!({
-            "query": { "match_all": {} },
-            "size": 100
-        }))
+        assert!(OpenSearchDriver::validate_search_body(
+            SearchProduct::OpenSearch,
+            &json!({
+                "query": { "match_all": {} },
+                "size": 100
+            })
+        )
         .is_ok());
-        assert!(OpenSearchDriver::validate_search_body(&json!({ "size": 501 })).is_err());
-        assert!(OpenSearchDriver::validate_search_body(&json!({
-            "query": { "script": { "script": "return true" } }
-        }))
+        assert!(OpenSearchDriver::validate_search_body(
+            SearchProduct::OpenSearch,
+            &json!({ "size": 501 })
+        )
+        .is_err());
+        assert!(OpenSearchDriver::validate_search_body(
+            SearchProduct::OpenSearch,
+            &json!({
+                "query": { "script": { "script": "return true" } }
+            })
+        )
         .is_err());
     }
 
@@ -1281,6 +1486,7 @@ mod tests {
             password: None,
             current_index: RwLock::new(Some("logs".to_string())),
             plugin_id: "opensearch-driver".to_string(),
+            product: SearchProduct::OpenSearch,
             cancel_registry: RwLock::new(QueryCancelRegistry::new()),
         }
     }
@@ -1302,14 +1508,23 @@ mod tests {
 
     #[test]
     fn parses_explain_bodies() {
-        let (body, explain) =
-            OpenSearchDriver::parse_query_body("EXPLAIN {\"query\":{\"match_all\":{}}}").unwrap();
+        let (body, explain) = OpenSearchDriver::parse_query_body(
+            SearchProduct::OpenSearch,
+            "EXPLAIN {\"query\":{\"match_all\":{}}}",
+        )
+        .unwrap();
         assert!(explain);
         assert_eq!(body["query"]["match_all"], json!({}));
-        let (_, explain) =
-            OpenSearchDriver::parse_query_body("{\"query\":{\"match_all\":{}}}").unwrap();
+        let (_, explain) = OpenSearchDriver::parse_query_body(
+            SearchProduct::OpenSearch,
+            "{\"query\":{\"match_all\":{}}}",
+        )
+        .unwrap();
         assert!(!explain);
-        assert!(OpenSearchDriver::parse_query_body("EXPLAIN not json").is_err());
+        assert!(
+            OpenSearchDriver::parse_query_body(SearchProduct::OpenSearch, "EXPLAIN not json")
+                .is_err()
+        );
     }
 
     #[test]
@@ -1361,11 +1576,24 @@ mod tests {
 
     #[test]
     fn builds_update_body_as_doc_merge() {
-        let body = OpenSearchDriver::build_update_body("message", &json!("hi")).unwrap();
+        let body =
+            OpenSearchDriver::build_update_body(SearchProduct::OpenSearch, "message", &json!("hi"))
+                .unwrap();
         assert_eq!(body, json!({ "doc": { "message": "hi" } }));
-        assert!(OpenSearchDriver::build_update_body("_id", &json!("x")).is_err());
-        assert!(OpenSearchDriver::build_update_body("a..b", &json!(1)).is_err());
-        assert!(OpenSearchDriver::build_update_body("bad name", &json!(1)).is_err());
+        assert!(
+            OpenSearchDriver::build_update_body(SearchProduct::OpenSearch, "_id", &json!("x"))
+                .is_err()
+        );
+        assert!(
+            OpenSearchDriver::build_update_body(SearchProduct::OpenSearch, "a..b", &json!(1))
+                .is_err()
+        );
+        assert!(OpenSearchDriver::build_update_body(
+            SearchProduct::OpenSearch,
+            "bad name",
+            &json!(1)
+        )
+        .is_err());
     }
 
     #[test]
@@ -1407,9 +1635,11 @@ mod tests {
                 }]
             )
             .is_err());
-        assert!(OpenSearchDriver::validate_doc_id("a/b").is_err());
-        assert!(OpenSearchDriver::validate_doc_id("a?b").is_err());
-        assert!(OpenSearchDriver::validate_doc_id("plain-id_1.2").is_ok());
+        assert!(OpenSearchDriver::validate_doc_id(SearchProduct::OpenSearch, "a/b").is_err());
+        assert!(OpenSearchDriver::validate_doc_id(SearchProduct::OpenSearch, "a?b").is_err());
+        assert!(
+            OpenSearchDriver::validate_doc_id(SearchProduct::OpenSearch, "plain-id_1.2").is_ok()
+        );
     }
 
     #[tokio::test]

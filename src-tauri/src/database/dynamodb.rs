@@ -3,9 +3,13 @@
 //!
 //! Auth mapping: `username` carries the AWS access key id, `password` the
 //! secret access key, and `additional_fields["session_token"]` an optional
-//! STS session token. `host` is either a region (`us-east-1`) or a full
-//! endpoint URL (`http://localhost:8000` for DynamoDB Local); when it is an
-//! endpoint, `additional_fields["region"]` picks the signing region.
+//! STS session token. The token is a credential: `ConnectionStorage` moves it
+//! into the OS keyring (like `password`) when a connection is saved and
+//! restores it into `additional_fields` when the profile is loaded for
+//! connecting, so it never lands plaintext in `connections.json`.
+//! `host` is either a region (`us-east-1`) or a full endpoint URL
+//! (`http://localhost:8000` for DynamoDB Local); when it is an endpoint,
+//! `additional_fields["region"]` picks the signing region.
 //!
 //! Engine limitations surfaced to callers:
 //! - `ExecuteStatement` runs ONE PartiQL statement per request and has no
@@ -14,7 +18,10 @@
 //! - `ExecuteTransaction` is the only atomic write primitive and caps at
 //!   100 actions; larger edit queues/imports are rejected rather than
 //!   chunked. DynamoDB has no rollback-only transaction, so
-//!   `preview_write_transaction` stays unsupported.
+//!   `preview_write_transaction` stays unsupported. JSON-snapshot restores
+//!   commit each table through one `ExecuteTransaction` when it fits the
+//!   cap; a table with more rows falls back to sequential
+//!   `ExecuteStatement` calls and is NOT atomic.
 //! - `DescribeTable.ItemCount` is approximate (refreshed roughly every 6h).
 //! - DynamoDB is schemaless: only key attributes appear in
 //!   `AttributeDefinitions`, so `get_table_structure` cannot list
@@ -622,7 +629,79 @@ impl DynamoDbDriver {
         self.invoke("ExecuteTransaction", payload).await?;
         Ok(())
     }
+
+    /// Classify a restore payload: a TableR JSON snapshot (a `{`-led
+    /// document whose `meta.format` is `json-snapshot`) becomes PartiQL
+    /// `INSERT` statements grouped per exported table; anything else is a
+    /// plain PartiQL script and returns `None`. Snapshot rows are objects
+    /// keyed by attribute name — the same shape `row_to_object` exports —
+    /// so each object replays through [`Self::build_insert_statement`] with
+    /// every value bound as an `AttributeValue` parameter.
+    fn snapshot_restore_statements(
+        statements: &[String],
+    ) -> Result<Option<Vec<SnapshotTableInserts>>> {
+        let joined = statements.join(";\n");
+        let trimmed = joined.trim();
+        if !trimmed.starts_with('{') {
+            return Ok(None);
+        }
+        let snapshot: JsonValue = serde_json::from_str(trimmed).with_context(|| {
+            "The restore payload looks like a JSON snapshot but could not be parsed"
+        })?;
+        let format = snapshot
+            .get("meta")
+            .and_then(|meta| meta.get("format"))
+            .and_then(JsonValue::as_str);
+        if format != Some("json-snapshot") {
+            return Err(anyhow!(
+                "The restore payload is JSON but not a TableR json-snapshot export"
+            ));
+        }
+        let tables = snapshot
+            .get("tables")
+            .and_then(JsonValue::as_array)
+            .ok_or_else(|| anyhow!("The JSON snapshot does not contain a 'tables' array"))?;
+
+        let mut plans = Vec::with_capacity(tables.len());
+        for table in tables {
+            let name = table
+                .get("name")
+                .and_then(JsonValue::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| anyhow!("A snapshot table entry is missing its table name"))?;
+            let rows = table
+                .get("rows")
+                .and_then(JsonValue::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let mut inserts = Vec::with_capacity(rows.len());
+            for row in &rows {
+                let JsonValue::Object(attributes) = row else {
+                    return Err(anyhow!("A snapshot row for '{name}' is not a JSON object"));
+                };
+                let request = TableRowInsertRequest {
+                    table: name.to_string(),
+                    database: None,
+                    values: attributes
+                        .iter()
+                        .map(|(key, value)| (key.clone(), value.clone()))
+                        .collect(),
+                };
+                inserts.push(
+                    Self::build_insert_statement(&request)
+                        .with_context(|| format!("Cannot replay a snapshot row for '{name}'"))?,
+                );
+            }
+            plans.push((name.to_string(), inserts));
+        }
+        Ok(Some(plans))
+    }
 }
+
+/// One snapshot table and its replayable `INSERT` statements with bound
+/// `AttributeValue` parameters — `(table_name, [(statement, bindings)])`.
+type SnapshotTableInserts = (String, Vec<(String, Vec<JsonValue>)>);
 
 #[async_trait]
 impl DatabaseDriver for DynamoDbDriver {
@@ -1108,11 +1187,46 @@ impl DatabaseDriver for DynamoDbDriver {
         Ok(total_affected)
     }
 
-    /// Restore replays dump statements through `ExecuteStatement`, one
-    /// request each. DynamoDB has no transaction spanning separate calls,
-    /// so this is NOT atomic — a mid-restore failure leaves earlier
-    /// statements applied and surfaces the error.
+    /// Restore replays either a TableR JSON snapshot or a plain PartiQL
+    /// dump.
+    ///
+    /// A snapshot exports rows as PartiQL `INSERT`s grouped per table: a
+    /// table whose INSERTs fit one `ExecuteTransaction` (≤100 actions)
+    /// commits atomically; a table with more rows falls back to sequential
+    /// `ExecuteStatement` calls — NOT atomic, so a failure leaves earlier
+    /// rows applied (logged as a warning, error surfaced honestly).
+    /// Snapshots contain no table-creation step: restoring into a missing
+    /// table surfaces DynamoDB's own error.
+    ///
+    /// Plain dumps replay one request per statement — DynamoDB cannot
+    /// transact across calls, so that path was never atomic either.
     async fn execute_restore_statements(&self, statements: &[String]) -> Result<u64> {
+        if let Some(tables) = Self::snapshot_restore_statements(statements)? {
+            let mut total_affected = 0_u64;
+            for (table, inserts) in tables {
+                if inserts.is_empty() {
+                    continue;
+                }
+                if inserts.len() <= DYNAMODB_TRANSACTION_ACTION_LIMIT {
+                    self.execute_transaction(inserts).await?;
+                    total_affected += 1;
+                    continue;
+                }
+                log::warn!(
+                    "DynamoDB snapshot restore of '{table}' applies {} INSERTs \
+                     sequentially — a table exceeding the {DYNAMODB_TRANSACTION_ACTION_LIMIT}-action \
+                     transaction cap cannot restore atomically",
+                    inserts.len()
+                );
+                for (statement, parameters) in &inserts {
+                    self.execute_statement_page(statement, Some(parameters), None, None)
+                        .await?;
+                }
+                total_affected += 1;
+            }
+            return Ok(total_affected);
+        }
+
         let mut total_affected = 0_u64;
         for statement in statements {
             if statement.trim().is_empty() {
@@ -2446,6 +2560,107 @@ mod tests {
             DynamoDbDriver::enforce_transaction_action_limit(101, "cell updates").unwrap_err();
         assert!(error.to_string().contains("100"));
         assert!(error.to_string().contains("101"));
+    }
+
+    #[test]
+    fn snapshot_restore_builds_grouped_insert_statements() {
+        let snapshot = json!({
+            "meta": {"format": "json-snapshot", "engine": "dynamodb"},
+            "tables": [
+                {
+                    "name": "users",
+                    "rows": [
+                        {"pk": "u1", "age": 30, "tags": ["a", "b"]},
+                        {"pk": "u2", "active": true, "meta": {"city": "AD"}, "nick": null}
+                    ]
+                },
+                {
+                    "name": "audit log",
+                    "rows": [{"pk": "evt", "detail": "it's \"quoted\""}]
+                }
+            ]
+        });
+        let tables =
+            DynamoDbDriver::snapshot_restore_statements(&[
+                serde_json::to_string(&snapshot).unwrap()
+            ])
+            .unwrap()
+            .unwrap();
+        assert_eq!(tables.len(), 2);
+
+        let (name, inserts) = &tables[0];
+        assert_eq!(name, "users");
+        assert_eq!(inserts.len(), 2);
+        // Attribute names are single-quoted literals inside the VALUE
+        // struct; every value stays bound as a `?` parameter.
+        assert_eq!(
+            inserts[0].0,
+            "INSERT INTO \"users\" VALUE {'pk': ?, 'age': ?, 'tags': ?}"
+        );
+        assert_eq!(
+            inserts[0].1,
+            vec![
+                json!({"S": "u1"}),
+                json!({"N": "30"}),
+                json!({"L": [{"S": "a"}, {"S": "b"}]})
+            ]
+        );
+        // Nested snapshot values map recursively: object → M, null → NULL.
+        assert_eq!(
+            inserts[1].1,
+            vec![
+                json!({"S": "u2"}),
+                json!({"BOOL": true}),
+                json!({"M": {"city": {"S": "AD"}}}),
+                json!({"NULL": true})
+            ]
+        );
+
+        let (name, inserts) = &tables[1];
+        assert_eq!(name, "audit log");
+        assert_eq!(inserts.len(), 1);
+        assert_eq!(
+            inserts[0].0,
+            "INSERT INTO \"audit log\" VALUE {'pk': ?, 'detail': ?}"
+        );
+        assert_eq!(
+            inserts[0].1,
+            vec![json!({"S": "evt"}), json!({"S": "it's \"quoted\""})]
+        );
+    }
+
+    #[test]
+    fn snapshot_restore_classifies_and_rejects() {
+        // Plain PartiQL dumps keep the sequential path — no snapshot.
+        assert!(DynamoDbDriver::snapshot_restore_statements(&[
+            "INSERT INTO \"users\" VALUE {'pk': 'u1'}".to_string()
+        ])
+        .unwrap()
+        .is_none());
+
+        // A `{`-led payload that is not a json-snapshot is an honest error.
+        let wrong_format = serde_json::to_string(&json!({
+            "meta": {"format": "csv-export"}, "tables": []
+        }))
+        .unwrap();
+        assert!(DynamoDbDriver::snapshot_restore_statements(&[wrong_format]).is_err());
+
+        // Split statement list rejoins into one document; the format tag
+        // must still be validated.
+        let missing_tables = serde_json::to_string(&json!({
+            "meta": {"format": "json-snapshot"}
+        }))
+        .unwrap();
+        let error = DynamoDbDriver::snapshot_restore_statements(&[missing_tables]).unwrap_err();
+        assert!(error.to_string().contains("'tables'"));
+
+        // A snapshot row that is not a JSON object cannot become an INSERT.
+        let bad_row = serde_json::to_string(&json!({
+            "meta": {"format": "json-snapshot"},
+            "tables": [{"name": "users", "rows": [["pk", "u1"]]}]
+        }))
+        .unwrap();
+        assert!(DynamoDbDriver::snapshot_restore_statements(&[bad_row]).is_err());
     }
 
     #[test]

@@ -1,4 +1,6 @@
 import { useState, useEffect, lazy, Suspense } from "react";
+import { OnboardingTour } from "./components/OnboardingTour/OnboardingTour";
+
 import { AppStartupShell } from "./components/AppStartupShell";
 import { useTheme } from "./stores/useTheme";
 import { useEditorPreferencesStore } from "./stores/editorPreferencesStore";
@@ -320,140 +322,146 @@ function App() {
 
   if (showStartupShell) {
     return (
-      <AppStartupShell
-        connectionFormIntent={connectionFormIntent ?? undefined}
-        showStartupConnectionManager={showStartupConnectionManager}
-        isConnected={isConnected}
-        isConnecting={isConnecting}
-        isWindowMaximized={isWindowMaximized}
-        connectionFormElement={
-          <Suspense fallback={null}>
-            <ConnectionForm
-              initialIntent={connectionFormIntent ?? undefined}
-              embeddedInStartupShell
-              onClose={handleCloseConnectionForm}
-            />
-          </Suspense>
-        }
-        onNewConnection={() => handleOpenConnectionForm("connect")}
-        onOpenDatabaseFile={handleOpenDatabaseFile}
-        onMinimizeWindow={handleMinimizeWindow}
-        onToggleMaximizeWindow={handleToggleMaximizeWindow}
-        onCloseWindow={handleCloseWindow}
-        globalToastMarkup={globalToastMarkup}
-      />
+      <>
+        <AppStartupShell
+          connectionFormIntent={connectionFormIntent ?? undefined}
+          showStartupConnectionManager={showStartupConnectionManager}
+          isConnected={isConnected}
+          isConnecting={isConnecting}
+          isWindowMaximized={isWindowMaximized}
+          connectionFormElement={
+            <Suspense fallback={null}>
+              <ConnectionForm
+                initialIntent={connectionFormIntent ?? undefined}
+                embeddedInStartupShell
+                onClose={handleCloseConnectionForm}
+              />
+            </Suspense>
+          }
+          onNewConnection={() => handleOpenConnectionForm("connect")}
+          onOpenDatabaseFile={handleOpenDatabaseFile}
+          onMinimizeWindow={handleMinimizeWindow}
+          onToggleMaximizeWindow={handleToggleMaximizeWindow}
+          onCloseWindow={handleCloseWindow}
+          globalToastMarkup={globalToastMarkup}
+        />
+        <OnboardingTour />
+      </>
     );
   }
 
   return (
-    <WorkspaceShell
-      titlebarContextTitle={titlebarContextTitle}
-      titlebarContextLabel={titlebarContextLabel}
-      isConnected={isConnected}
-      isConnecting={isConnecting}
-      currentDatabase={currentDatabase}
-      isDesktopWindow={isDesktopWindow}
-      isWindowMenuOpen={isWindowMenuOpen}
-      activeWindowMenuSection={activeWindowMenuSection}
-      activeWindowMenuItemPath={activeWindowMenuItemPath}
-      windowMenuRef={windowMenuRef}
-      windowMenuSections={windowMenuSections}
-      handleToggleSidebar={handleToggleSidebar}
-      handleToggleWindowMenu={handleToggleWindowMenu}
-      handleToggleMaximizeWindow={handleToggleMaximizeWindow}
-      handleMinimizeWindow={handleMinimizeWindow}
-      handleCloseWindow={handleCloseWindow}
-      setActiveWindowMenuSection={setActiveWindowMenuSection}
-      setActiveWindowMenuItemPath={setActiveWindowMenuItemPath}
-      handleGoToLauncher={handleGoToLauncher}
-      isMetricsWorkspace={isMetricsWorkspace}
-      activeDatabaseLabel={activeDatabaseLabel}
-      activeWorkspaceActivity={activeWorkspaceActivity}
-      activeQueryChrome={activeQueryChrome}
-      querySessionByTab={querySessionByTab}
-      queryRunRequestByTab={queryRunRequestByTab}
-      handleNewQuery={handleNewQuery}
-      handleClearVisibleTabs={handleClearVisibleTabs}
-      handleRefreshWorkspace={handleRefreshWorkspace}
-      handleExportDatabase={handleExportDatabase}
-      isExportingDatabase={isExportingDatabase}
-      handleOpenMetricsBoard={handleOpenMetricsBoard}
-      handleFocusExplorerSearch={handleFocusExplorerSearch}
-      handleOpenAISlidePanel={handleOpenAISlidePanel}
-      handleShowDatabaseWorkspace={handleShowDatabaseWorkspace}
-      handleQueryChromeChange={handleQueryChromeChange}
-      handleQuerySessionChange={handleQuerySessionChange}
-      handleRunActiveQuery={handleRunActiveQuery}
-      handleToggleTerminalPanel={handleToggleTerminalPanel}
-      handleMouseDown={handleMouseDown}
-      showAISlidePanel={showAISlidePanel}
-    >
-      <WorkspaceOverlays
-        activeTab={activeTab}
-        handleNewQuery={handleNewQuery}
-        handleRunActiveQuery={handleRunActiveQuery}
-        handleToggleTerminalPanel={handleToggleTerminalPanel}
-        handleToggleSidebar={handleToggleSidebar}
-        handleToggleQueryHistory={handleToggleQueryHistory}
-        handleToggleSQLFavorites={handleToggleSQLFavorites}
-        toggleVimMode={toggleVimMode}
-        openCommandPalette={openCommandPalette}
-        openQuickSwitcher={openQuickSwitcher}
-        openGlobalSearch={openGlobalSearch}
-        setUiFontScale={setUiFontScale}
-        setShowAISlidePanel={setShowAISlidePanel}
-        connectionFormIntent={connectionFormIntent}
-        handleCloseConnectionForm={handleCloseConnectionForm}
-        shouldRenderGlobalModals={shouldRenderGlobalModals}
-        showAISettings={showAISettings}
-        setShowAISettings={setShowAISettings}
-        showAboutModal={showAboutModal}
-        setShowAboutModal={setShowAboutModal}
-        showPluginManager={showPluginManager}
-        setShowPluginManager={setShowPluginManager}
-        showMcpIntegrations={showMcpIntegrations}
-        setShowMcpIntegrations={setShowMcpIntegrations}
-        showUserRoleManagement={showUserRoleManagement}
-        setShowUserRoleManagement={setShowUserRoleManagement}
-        showKeyboardShortcutsModal={showKeyboardShortcutsModal}
-        setShowKeyboardShortcutsModal={setShowKeyboardShortcutsModal}
-        showThemeCustomizer={showThemeCustomizer}
-        setShowThemeCustomizer={setShowThemeCustomizer}
-        showConnectionExporter={showConnectionExporter}
-        setShowConnectionExporter={setShowConnectionExporter}
-        showConnectionImporter={showConnectionImporter}
-        setShowConnectionImporter={setShowConnectionImporter}
-        connections={connections}
-        activeConnectionId={activeConnectionId}
-        setShowTerminalPanel={setShowTerminalPanel}
-        handleOpenThemeCustomizer={handleOpenThemeCustomizer}
-        showStartupConnectionManager={showStartupConnectionManager}
+    <>
+      <WorkspaceShell
+        titlebarContextTitle={titlebarContextTitle}
+        titlebarContextLabel={titlebarContextLabel}
         isConnected={isConnected}
         isConnecting={isConnecting}
-        handleOpenConnectionForm={handleOpenConnectionForm}
-        handleOpenDatabaseFile={handleOpenDatabaseFile}
-        isWindowMaximized={isWindowMaximized}
-        handleMinimizeWindow={handleMinimizeWindow}
+        currentDatabase={currentDatabase}
+        isDesktopWindow={isDesktopWindow}
+        isWindowMenuOpen={isWindowMenuOpen}
+        activeWindowMenuSection={activeWindowMenuSection}
+        activeWindowMenuItemPath={activeWindowMenuItemPath}
+        windowMenuRef={windowMenuRef}
+        windowMenuSections={windowMenuSections}
+        handleToggleSidebar={handleToggleSidebar}
+        handleToggleWindowMenu={handleToggleWindowMenu}
         handleToggleMaximizeWindow={handleToggleMaximizeWindow}
+        handleMinimizeWindow={handleMinimizeWindow}
         handleCloseWindow={handleCloseWindow}
+        setActiveWindowMenuSection={setActiveWindowMenuSection}
+        setActiveWindowMenuItemPath={setActiveWindowMenuItemPath}
+        handleGoToLauncher={handleGoToLauncher}
+        isMetricsWorkspace={isMetricsWorkspace}
+        activeDatabaseLabel={activeDatabaseLabel}
+        activeWorkspaceActivity={activeWorkspaceActivity}
+        activeQueryChrome={activeQueryChrome}
+        querySessionByTab={querySessionByTab}
+        queryRunRequestByTab={queryRunRequestByTab}
+        handleNewQuery={handleNewQuery}
+        handleClearVisibleTabs={handleClearVisibleTabs}
+        handleRefreshWorkspace={handleRefreshWorkspace}
+        handleExportDatabase={handleExportDatabase}
+        isExportingDatabase={isExportingDatabase}
+        handleOpenMetricsBoard={handleOpenMetricsBoard}
+        handleFocusExplorerSearch={handleFocusExplorerSearch}
+        handleOpenAISlidePanel={handleOpenAISlidePanel}
+        handleShowDatabaseWorkspace={handleShowDatabaseWorkspace}
+        handleQueryChromeChange={handleQueryChromeChange}
+        handleQuerySessionChange={handleQuerySessionChange}
+        handleRunActiveQuery={handleRunActiveQuery}
+        handleToggleTerminalPanel={handleToggleTerminalPanel}
+        handleMouseDown={handleMouseDown}
         showAISlidePanel={showAISlidePanel}
-        hasMountedAISlidePanel={hasMountedAISlidePanel}
-        aiPanelDraft={aiPanelDraft}
-        aiPanelAttachment={aiPanelAttachment}
-        showQueryHistory={showQueryHistory}
-        setShowQueryHistory={setShowQueryHistory}
-        showSQLFavorites={showSQLFavorites}
-        setShowSQLFavorites={setShowSQLFavorites}
-        showQuerySchedules={showQuerySchedules}
-        setShowQuerySchedules={setShowQuerySchedules}
-        handleRunQueryFromHistory={handleRunQueryFromHistory}
-        handleRunQueryFromFavorites={handleRunQueryFromFavorites}
-        showRowInspector={showRowInspector}
-        rowInspectorData={rowInspectorData}
-        handleRowInspectorClose={handleRowInspectorClose}
-        globalToastMarkup={globalToastMarkup}
-      />
-    </WorkspaceShell>
+      >
+        <WorkspaceOverlays
+          activeTab={activeTab}
+          handleNewQuery={handleNewQuery}
+          handleRunActiveQuery={handleRunActiveQuery}
+          handleToggleTerminalPanel={handleToggleTerminalPanel}
+          handleToggleSidebar={handleToggleSidebar}
+          handleToggleQueryHistory={handleToggleQueryHistory}
+          handleToggleSQLFavorites={handleToggleSQLFavorites}
+          toggleVimMode={toggleVimMode}
+          openCommandPalette={openCommandPalette}
+          openQuickSwitcher={openQuickSwitcher}
+          openGlobalSearch={openGlobalSearch}
+          setUiFontScale={setUiFontScale}
+          setShowAISlidePanel={setShowAISlidePanel}
+          connectionFormIntent={connectionFormIntent}
+          handleCloseConnectionForm={handleCloseConnectionForm}
+          shouldRenderGlobalModals={shouldRenderGlobalModals}
+          showAISettings={showAISettings}
+          setShowAISettings={setShowAISettings}
+          showAboutModal={showAboutModal}
+          setShowAboutModal={setShowAboutModal}
+          showPluginManager={showPluginManager}
+          setShowPluginManager={setShowPluginManager}
+          showMcpIntegrations={showMcpIntegrations}
+          setShowMcpIntegrations={setShowMcpIntegrations}
+          showUserRoleManagement={showUserRoleManagement}
+          setShowUserRoleManagement={setShowUserRoleManagement}
+          showKeyboardShortcutsModal={showKeyboardShortcutsModal}
+          setShowKeyboardShortcutsModal={setShowKeyboardShortcutsModal}
+          showThemeCustomizer={showThemeCustomizer}
+          setShowThemeCustomizer={setShowThemeCustomizer}
+          showConnectionExporter={showConnectionExporter}
+          setShowConnectionExporter={setShowConnectionExporter}
+          showConnectionImporter={showConnectionImporter}
+          setShowConnectionImporter={setShowConnectionImporter}
+          connections={connections}
+          activeConnectionId={activeConnectionId}
+          setShowTerminalPanel={setShowTerminalPanel}
+          handleOpenThemeCustomizer={handleOpenThemeCustomizer}
+          showStartupConnectionManager={showStartupConnectionManager}
+          isConnected={isConnected}
+          isConnecting={isConnecting}
+          handleOpenConnectionForm={handleOpenConnectionForm}
+          handleOpenDatabaseFile={handleOpenDatabaseFile}
+          isWindowMaximized={isWindowMaximized}
+          handleMinimizeWindow={handleMinimizeWindow}
+          handleToggleMaximizeWindow={handleToggleMaximizeWindow}
+          handleCloseWindow={handleCloseWindow}
+          showAISlidePanel={showAISlidePanel}
+          hasMountedAISlidePanel={hasMountedAISlidePanel}
+          aiPanelDraft={aiPanelDraft}
+          aiPanelAttachment={aiPanelAttachment}
+          showQueryHistory={showQueryHistory}
+          setShowQueryHistory={setShowQueryHistory}
+          showSQLFavorites={showSQLFavorites}
+          setShowSQLFavorites={setShowSQLFavorites}
+          showQuerySchedules={showQuerySchedules}
+          setShowQuerySchedules={setShowQuerySchedules}
+          handleRunQueryFromHistory={handleRunQueryFromHistory}
+          handleRunQueryFromFavorites={handleRunQueryFromFavorites}
+          showRowInspector={showRowInspector}
+          rowInspectorData={rowInspectorData}
+          handleRowInspectorClose={handleRowInspectorClose}
+          globalToastMarkup={globalToastMarkup}
+        />
+      </WorkspaceShell>
+      <OnboardingTour />
+    </>
   );
 }
 

@@ -210,6 +210,7 @@ const VirtualizedSchemaRows = memo(function VirtualizedSchemaRows({
               style={{ paddingLeft: 4 + item.depth * 14 }}
               onClick={() => onToggleFolder(item.key)}
               aria-expanded={item.expanded}
+              data-tour={`folder-${item.folder}`}
             >
               {item.expanded ? (
                 <ChevronDown className="explorer-folder-chevron" />

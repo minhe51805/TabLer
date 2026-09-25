@@ -59,11 +59,16 @@ export function MobileNav({
 }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const toggleRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
+      if (e.key === "Escape") {
+        setOpen(false);
+        // return focus to the toggle — closing a menu drops it otherwise
+        toggleRef.current?.focus();
+      }
     };
     const onPointer = (e: PointerEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) {
@@ -84,6 +89,7 @@ export function MobileNav({
     <div className="mobile-nav" ref={rootRef}>
       <button
         type="button"
+        ref={toggleRef}
         className="mobile-nav-toggle"
         aria-expanded={open}
         aria-label={label}

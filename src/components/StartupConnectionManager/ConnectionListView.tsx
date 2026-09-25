@@ -298,7 +298,11 @@ export function ConnectionListView({
       </div>
 
       <div className="startup-manager-content">
-        <div ref={listRef} className={`startup-manager-list ${layoutMode}`}>
+        <div
+          ref={listRef}
+          className={`startup-manager-list ${layoutMode}`}
+          data-tour="connection-list"
+        >
           {flatItems.length === 0 ? (
             <div className="startup-manager-empty">
               <Database className="w-8 h-8 opacity-35" />
@@ -313,6 +317,7 @@ export function ConnectionListView({
                   <button
                     type="button"
                     className="startup-manager-sample-card"
+                    data-tour="startup-sample-db"
                     onClick={onCreateSample}
                     disabled={isCreatingSample || isConnecting}
                   >

@@ -29,6 +29,7 @@ import { getSiteLanguage } from "@/lib/language";
 import { getDictionary, type Dictionary } from "@/lib/i18n";
 import { repositoryUrl } from "@/lib/site";
 import { LanguageToggle } from "./LanguageToggle";
+import { AgentDemo } from "./AgentDemo";
 import {
   DockToggle,
   MobileNav,
@@ -427,13 +428,14 @@ export default async function Home() {
               <span />
               <strong>TableR / AI workspace</strong>
             </div>
-            <Image
-              className="product-image"
-              src="/screenshots/table-r-ai-workspace.png"
-              width={1920}
-              height={1080}
-              alt="TableR AI workspace with the agent panel beside the SQL editor"
-              sizes="(max-width: 720px) 94vw, 1180px"
+            <AgentDemo
+              copy={{
+                prompt: t.agent.demo.prompt,
+                steps: t.agent.demo.steps as [string, string, string, string],
+                term: t.agent.demo.term,
+                handover: t.agent.demo.handover,
+                done: t.agent.demo.done,
+              }}
             />
           </div>
         </div>

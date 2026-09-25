@@ -657,7 +657,7 @@ export function DataGridToolbar({
   );
 
   return (
-    <div className="datagrid-topbar">
+    <div className="datagrid-topbar" data-tour="grid-toolbar">
       {filterControl}
 
       {externalResult?.truncated && (

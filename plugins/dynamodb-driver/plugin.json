@@ -1,0 +1,36 @@
+{
+  "apiVersion": 1,
+  "version": "1.0.0",
+  "publishedAt": "2026-09-25T00:00:00.000Z",
+  "kind": "adapter",
+  "author": "TableR Team",
+  "entry": null,
+  "capabilities": ["database"],
+  "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+  "compatibility": {
+    "minAppVersion": "0.1.4",
+    "maxAppVersion": null,
+    "platforms": [],
+    "architectures": []
+  },
+  "updateUrl": null,
+  "id": "dynamodb-driver",
+  "name": "Amazon DynamoDB driver",
+  "description": "Adds Amazon DynamoDB connectivity (PartiQL) over the declarative HTTP driver host.",
+  "integrity": {
+    "algorithm": "sha256",
+    "digest": "7674a5d26a6f2478a3d00c387f0d9afb99fa69a129ce5b1d9af4df932517be05"
+  },
+  "contributes": {
+    "formats": [],
+    "drivers": [
+      {
+        "id": "dynamodb",
+        "label": "Amazon DynamoDB",
+        "protocol": "dynamodb",
+        "runtime": "declarative-http-v1",
+        "status": "stable"
+      }
+    ]
+  }
+}

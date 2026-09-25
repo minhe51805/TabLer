@@ -53,7 +53,8 @@ pub struct ImportSummary {
     /// rejected-row report when `rejection_report` is set.
     pub rejected_rows: usize,
     /// Rows read from the file but never inserted (the failed batch plus
-    /// everything after it when the run aborted early).
+    /// everything after it when the run aborted early). Rejected rows are
+    /// never counted here: they were skipped before being consumed.
     pub failed_rows: usize,
     /// Set when the run stopped before consuming the whole file: the batch
     /// error, a row-parse abort, or a cancellation. Absent on a clean finish.
@@ -63,6 +64,35 @@ pub struct ImportSummary {
     /// Non-fatal problems worth surfacing (e.g. the rejection report could
     /// not be written to a read-only directory).
     pub warnings: Vec<String>,
+    /// Row-count delta measured by `count_rows` across the import, checked
+    /// only on a clean finish. `None` when the count failed or never ran.
+    /// Triggers and concurrent writers can legitimately skew this, so a
+    /// mismatch is reported as a warning rather than an error.
+    pub verified_rows: Option<i64>,
+    /// Total rows in the target table measured after the import (`count_rows`
+    /// on the raw table name). `None` when the post-import count failed or
+    /// the run did not finish cleanly.
+    pub total_rows_after: Option<i64>,
+}
+
+/// Rows that were read but never inserted: consumed minus what the driver
+/// confirmed. Rejected rows are skipped before `consumed` increments, so they
+/// are not subtracted a second time here.
+pub(super) fn failed_row_count(consumed_rows: usize, inserted_rows: usize) -> usize {
+    consumed_rows.saturating_sub(inserted_rows)
+}
+
+/// Lets the UI show a "verifying" phase while `count_rows` runs, so a slow
+/// COUNT on a large table does not look like a stalled import.
+fn emit_verifying_phase(app: &AppHandle, operation_id: Option<&String>, processed_rows: u64) {
+    let _ = app.emit(
+        "csv-import-progress",
+        serde_json::json!({
+            "operationId": operation_id,
+            "processedRows": processed_rows,
+            "phase": "verifying",
+        }),
+    );
 }
 
 pub(super) fn quote_qualified_for(
@@ -324,6 +354,19 @@ where
         }
     }
 
+    // Baseline row count for the post-import verification. A COUNT failure
+    // never aborts the import — verification is skipped instead.
+    emit_verifying_phase(app, registered_operation_id.as_ref(), 0);
+    let (count_before, count_warning) = match driver.count_rows(table, None).await {
+        Ok(count) => (Some(count), None),
+        Err(error) => (
+            None,
+            Some(format!(
+                "Row-count verification skipped: baseline count failed: {error}"
+            )),
+        ),
+    };
+
     let batch = batch_size.unwrap_or(DEFAULT_BATCH_SIZE).clamp(1, 1_000);
     let style = placeholder_style_for_database(database_type);
     let rejection_path = rejection_path.map(|path| path.to_path_buf());
@@ -340,7 +383,7 @@ where
         let mut next_progress_at = PROGRESS_ROW_STRIDE;
         let mut was_cancelled = false;
         let mut abort_error: Option<String> = None;
-        let mut warnings: Vec<String> = Vec::new();
+        let mut warnings: Vec<String> = count_warning.into_iter().collect();
         let mut report = RejectionReport::new(rejection_path);
         #[allow(unused_assignments)]
         let mut last_byte = 0u64;
@@ -435,13 +478,39 @@ where
             }
         }
 
+        // Post-import verification: compare the measured delta against the
+        // driver-reported insert count. Only a clean finish is checked — an
+        // aborted or cancelled run is expected to land fewer rows.
+        let mut verified_rows = None;
+        let mut total_rows_after = None;
+        if abort_error.is_none() && !was_cancelled {
+            emit_verifying_phase(app, registered_operation_id.as_ref(), inserted_rows as u64);
+            match driver.count_rows(table, None).await {
+                Ok(after) => {
+                    total_rows_after = Some(after);
+                    if let Some(before) = count_before {
+                        let delta = after - before;
+                        verified_rows = Some(delta);
+                        if delta != inserted_rows as i64 {
+                            warnings.push(format!(
+                                "Verified row count differs: table grew by {delta} rows but the driver reported {inserted_rows} inserted (triggers or concurrent writes can cause this)."
+                            ));
+                        }
+                    }
+                }
+                Err(error) => warnings.push(format!(
+                    "Row-count verification skipped: post-import count failed: {error}"
+                )),
+            }
+        }
+
         // Rows read but never inserted: the failed batch plus whatever was
-        // still buffered when the run stopped.
-        let failed_rows = consumed_rows.saturating_sub(inserted_rows + rejected_rows);
+        // still buffered when the run stopped. Rejected rows were never
+        // consumed, so they are not subtracted here.
+        let failed_rows = failed_row_count(consumed_rows, inserted_rows);
         if was_cancelled && abort_error.is_none() {
             abort_error = Some("Import cancelled by user.".to_string());
         }
-
         let _ = app.emit(
             "csv-import-progress",
             serde_json::json!({
@@ -462,6 +531,8 @@ where
             error: abort_error,
             rejection_report: report.report_path(),
             warnings,
+            verified_rows,
+            total_rows_after,
         })
     }
     .await;

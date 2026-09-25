@@ -1,7 +1,8 @@
 /**
  * Change Tracking Preview Modal — shows staged changes as SQL diff before commit.
  */
-import { X, Copy, Check, AlertTriangle } from "lucide-react";
+import { X, Check, AlertTriangle } from "lucide-react";
+import { StagedChangeDetail } from "./StagedChangeDetail";
 import {
   useChangeTrackingStore,
   changeScopeKey,
@@ -36,11 +37,6 @@ export function ChangeTrackingPreviewModal({
   }
 
   const selectedChange = tableChanges.find((c) => c.id === selectedChangeId) ?? tableChanges[0];
-
-  const copySql = () => {
-    const allSql = tableChanges.map((c) => c.sqlPreview).join("\n");
-    void navigator.clipboard.writeText(allSql);
-  };
 
   return (
     <div className="change-tracking-modal-backdrop" onClick={closePreview}>
@@ -89,50 +85,13 @@ export function ChangeTrackingPreviewModal({
             ))}
           </div>
 
-          {/* SQL Preview */}
-          <div className="ct-sql-preview">
-            <div className="ct-sql-preview-header">
-              <span className="ct-sql-preview-label">SQL to execute</span>
-              <button type="button" className="ct-copy-btn" onClick={copySql} title="Copy all SQL">
-                <Copy className="!w-3 !h-3" />
-                <span>Copy all</span>
-              </button>
-            </div>
-            {selectedChange ? (
-              <div className="ct-sql-code">
-                <pre>{selectedChange.sqlPreview}</pre>
-              </div>
-            ) : (
-              <div className="ct-sql-code">
-                <pre>{tableChanges.map((c) => c.sqlPreview).join("\n")}</pre>
-              </div>
-            )}
-
-            {/* Diff detail */}
-            {selectedChange && selectedChange.type === "update" && (
-              <div className="ct-diff-detail">
-                <div className="ct-diff-header">
-                  <span className="ct-diff-title">Cell changes</span>
-                </div>
-                {Object.entries(selectedChange.columns).map(
-                  ([colName, { old: oldVal, new: newVal }]) => (
-                    <div key={colName} className="ct-diff-row">
-                      <span className="ct-diff-col">{colName}</span>
-                      <div className="ct-diff-values">
-                        <span className="ct-diff-old" title="Old value">
-                          {String(oldVal ?? "NULL")}
-                        </span>
-                        <span className="ct-diff-arrow">→</span>
-                        <span className="ct-diff-new" title="New value">
-                          {String(newVal ?? "NULL")}
-                        </span>
-                      </div>
-                    </div>
-                  ),
-                )}
-              </div>
-            )}
-          </div>
+          <StagedChangeDetail
+            selectedChange={selectedChange}
+            allChanges={tableChanges}
+            sqlLabel="SQL to execute"
+            copyAllLabel="Copy all"
+            cellChangesLabel="Cell changes"
+          />
         </div>
 
         {/* Footer */}

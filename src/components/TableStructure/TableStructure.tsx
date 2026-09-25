@@ -49,6 +49,7 @@ import {
 } from "../../utils/schema-diff";
 import { invalidateSchemaCache } from "../../utils/schema-cache";
 import { requestAppConfirmation } from "../../stores/confirmStore";
+import { useStructureReviewRegistry } from "../ReviewCenter/structure-review-registry";
 
 interface Props {
   connectionId: string;
@@ -646,6 +647,23 @@ export function TableStructure({
       content: `${schemaMigrationReview.statements.join(";\n")};`,
     });
   }, [addTab, connectionId, database, displayTableName, schemaMigrationReview]);
+
+  // Publish pending structure changes to the Review Center registry so the
+  // global review modal can list them and deep-link into this tab's review
+  // panel. The entry lives only while this tab is mounted.
+  useEffect(() => {
+    const register = useStructureReviewRegistry.getState().register;
+    register({
+      key: structureKey,
+      connectionId,
+      tableName,
+      database,
+      pendingCount: pendingChangeCount,
+      openReview: () => setIsReviewOpen(true),
+      openSchemaDiff: () => void compareSchemaSnapshot(),
+    });
+    return () => useStructureReviewRegistry.getState().unregister(structureKey);
+  }, [structureKey, connectionId, tableName, database, pendingChangeCount, compareSchemaSnapshot]);
 
   const applyStagedChanges = async () => {
     if (pendingChangeCount === 0) {

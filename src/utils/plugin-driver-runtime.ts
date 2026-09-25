@@ -24,11 +24,15 @@ export function getEnabledPluginDrivers(plugins: InstalledPluginRecord[]): Runti
  */
 export const PLUGIN_HTTP_PROTOCOLS = [
   "opensearch",
+  "elasticsearch",
   "clickhouse",
   "bigquery",
   "snowflake",
   "cloudflare_d1",
   "oracle",
+  "spanner",
+  "dynamodb",
+  "trino",
 ] as const;
 
 export type PluginHttpProtocol = (typeof PLUGIN_HTTP_PROTOCOLS)[number];

@@ -14,10 +14,19 @@ import { useAppLayoutStore } from "../stores/appLayoutStore";
 import { useTheme, ThemeEngine } from "../stores/useTheme";
 import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "../utils/ui-scale";
 import type { WindowMenuSectionKey, WindowMenuItem } from "../types/app-types";
+import { getAdminQueryPreset, killSessionMenuLabel } from "../utils/admin-query-presets";
+import type { DatabaseType } from "../types";
 import { useConnectionCapabilities } from "./useConnectionCapabilities";
 import { isCapabilitySupported } from "../types";
 import { getWindowMenuCopy } from "./window-menu-copy";
 import { openExternalUrl } from "../utils/tauri-utils";
+import { useChangeTrackingStore } from "../stores/change-tracking-store";
+import { useStructureReviewRegistry } from "../components/ReviewCenter/structure-review-registry";
+import { getReviewCenterCopy } from "../components/ReviewCenter/review-center-copy";
+import {
+  getReviewCenterShortcutLabel,
+  OPEN_REVIEW_CENTER_EVENT,
+} from "../components/ReviewCenter/review-center-store";
 
 /** GitHub targets for the Help menu's outbound links. */
 const ISSUES_NEW_URL = "https://github.com/minhe51805/TabLer/issues/new";
@@ -48,6 +57,7 @@ export interface WindowMenuActions {
   readonly onActivateTheme: (themeId: string) => void;
   readonly onOpenUserManagement: () => void;
   readonly onOpenProcessList: () => void;
+  readonly onOpenKillSession: () => void;
   readonly onOpenAISettings: () => void;
   readonly onOpenAISlidePanel: () => void;
   readonly onOpenPluginManager: () => void;
@@ -66,6 +76,8 @@ export interface WindowMenuState {
   readonly activeConnectionId: string | null;
   readonly supportsSqlFileActions: boolean;
   readonly activeTabType?: string;
+  /** Engine key of the active connection — drives preset-based menu gating. */
+  readonly activeDbType?: DatabaseType;
   readonly uiFontScale: number;
   readonly languagePreference: AppLanguagePreference;
   readonly connectionsCount: number;
@@ -96,10 +108,29 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
     languagePreference,
     connectionsCount,
   } = state;
+  // Process List and Kill Session gate on their own per-engine presets, not
+  // the broad administration capability — the preset table is already honest
+  // about which engines expose a process list / kill primitive, and engines
+  // like bigquery/trino/spanner have readable process lists without full
+  // administration support. User management keeps the capability gate.
+  const processListPreset = getAdminQueryPreset(state.activeDbType, "process-list");
+  const killSessionPreset = getAdminQueryPreset(state.activeDbType, "kill-session");
+  const killSessionLabel = killSessionMenuLabel(language);
   const capabilityProfile = useConnectionCapabilities(state.activeConnectionId);
   const canExport = isCapabilitySupported(capabilityProfile?.capabilities.dataExport);
   const canRestore = isCapabilitySupported(capabilityProfile?.capabilities.backupRestore);
   const canAdminister = isCapabilitySupported(capabilityProfile?.capabilities.administration);
+  const pendingEditCount = useChangeTrackingStore((s) => s.stagedChanges.length);
+  const pendingStructureCount = Object.values(useStructureReviewRegistry((s) => s.entries)).reduce(
+    (total, entry) => total + entry.pendingCount,
+    0,
+  );
+  const pendingReviewCount = pendingEditCount + pendingStructureCount;
+  const reviewCenterCopy = getReviewCenterCopy(language);
+  const reviewCenterLabel =
+    pendingReviewCount > 0
+      ? `${reviewCenterCopy.menuItem} (${pendingReviewCount})`
+      : reviewCenterCopy.menuItem;
 
   const closeMenu = actions.onWindowMenuClose;
 
@@ -372,8 +403,16 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
               actions.onOpenProcessList();
               closeMenu();
             },
-            disabled: !isConnected || !canAdminister,
+            disabled: !isConnected || !processListPreset.supported,
             shortcut: "Ctrl .",
+          },
+          {
+            label: killSessionLabel,
+            action: () => {
+              actions.onOpenKillSession();
+              closeMenu();
+            },
+            disabled: !isConnected || !killSessionPreset.supported,
           },
           { divider: true },
           {
@@ -383,6 +422,15 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
               closeMenu();
             },
             disabled: !isConnected,
+          },
+          {
+            key: "review-center",
+            label: reviewCenterLabel,
+            action: () => {
+              window.dispatchEvent(new CustomEvent(OPEN_REVIEW_CENTER_EVENT));
+              closeMenu();
+            },
+            shortcut: getReviewCenterShortcutLabel(),
           },
           { divider: true },
           {
@@ -586,6 +634,10 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
       canExport,
       canRestore,
       canAdminister,
+      reviewCenterLabel,
+      processListPreset.supported,
+      killSessionPreset.supported,
+      killSessionLabel,
     ],
   );
 

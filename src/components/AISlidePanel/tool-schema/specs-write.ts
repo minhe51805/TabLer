@@ -84,7 +84,7 @@ export const SPECS: Partial<Record<AIAgentToolName, AIAgentToolSpec>> = {
   create_checkpoint: {
     name: "create_checkpoint",
     description:
-      "Snapshot the current database (schema + data) into an app-managed checkpoint file — a SQL INSERT dump, so it only exists on engines that can replay SQL (not mongodb/redis/opensearch). Read-only for the database — it only writes a local file the user can restore with the /rollback command. Use it right before proposing a chain of risky mutations, or after the user says a change went wrong.",
+      "Snapshot the current database (schema + data) into an app-managed checkpoint file — a SQL INSERT dump, so it only exists on engines that can replay SQL (not mongodb/redis/opensearch/elasticsearch). Read-only for the database — it only writes a local file the user can restore with the /rollback command. Use it right before proposing a chain of risky mutations, or after the user says a change went wrong.",
     parameters: objectSchema(
       {
         label: {

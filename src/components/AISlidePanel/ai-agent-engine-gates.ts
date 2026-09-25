@@ -26,7 +26,11 @@ export const AGENT_QUERY_MODEL_BY_ENGINE: Record<DatabaseType, QueryModel> = {
   redis: "kv",
   mongodb: "document",
   opensearch: "search",
+  elasticsearch: "search",
   oracle: "sql",
+  spanner: "sql",
+  dynamodb: "sql",
+  trino: "sql",
 };
 
 const ENGINE_LABEL: Record<DatabaseType, string> = {
@@ -49,7 +53,11 @@ const ENGINE_LABEL: Record<DatabaseType, string> = {
   redis: "Redis",
   mongodb: "MongoDB",
   opensearch: "OpenSearch",
+  elasticsearch: "Elasticsearch",
   oracle: "Oracle (ORDS)",
+  spanner: "Google Spanner",
+  dynamodb: "Amazon DynamoDB",
+  trino: "Trino",
 };
 
 export interface AgentToolAvailability {
@@ -177,8 +185,8 @@ const AGENT_ENGINE_TOOL_FLAGS: Record<
     checkpointRestore: true,
   },
   snowflake: {
-    parameterizedRead: false,
-    previewWrite: false,
+    parameterizedRead: true,
+    previewWrite: true,
     schemaObjects: true,
     presets: true,
     checkpointRestore: true,
@@ -191,10 +199,10 @@ const AGENT_ENGINE_TOOL_FLAGS: Record<
     checkpointRestore: true,
   },
   bigquery: {
-    parameterizedRead: false,
-    previewWrite: false,
+    parameterizedRead: true,
+    previewWrite: true,
     schemaObjects: true,
-    presets: false,
+    presets: true,
     checkpointRestore: true,
   },
   libsql: {
@@ -216,14 +224,14 @@ const AGENT_ENGINE_TOOL_FLAGS: Record<
     previewWrite: false,
     schemaObjects: false,
     presets: false,
-    checkpointRestore: false,
+    checkpointRestore: true,
   },
   mongodb: {
     parameterizedRead: false,
-    previewWrite: false,
+    previewWrite: true,
     schemaObjects: false,
     presets: false,
-    checkpointRestore: false,
+    checkpointRestore: true,
   },
   opensearch: {
     parameterizedRead: false,
@@ -232,12 +240,40 @@ const AGENT_ENGINE_TOOL_FLAGS: Record<
     presets: false,
     checkpointRestore: false,
   },
-  oracle: {
+  elasticsearch: {
     parameterizedRead: false,
     previewWrite: false,
-    schemaObjects: true,
+    schemaObjects: false,
     presets: false,
     checkpointRestore: false,
+  },
+  oracle: {
+    parameterizedRead: true,
+    previewWrite: true,
+    schemaObjects: true,
+    presets: true,
+    checkpointRestore: true,
+  },
+  spanner: {
+    parameterizedRead: true,
+    previewWrite: true,
+    schemaObjects: true,
+    presets: true,
+    checkpointRestore: true,
+  },
+  dynamodb: {
+    parameterizedRead: true,
+    previewWrite: false,
+    schemaObjects: false,
+    presets: false,
+    checkpointRestore: true,
+  },
+  trino: {
+    parameterizedRead: true,
+    previewWrite: true,
+    schemaObjects: true,
+    presets: true,
+    checkpointRestore: true,
   },
 };
 

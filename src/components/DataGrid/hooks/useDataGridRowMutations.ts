@@ -7,6 +7,7 @@ import {
 } from "react";
 import type { ColumnDetail } from "../../../types";
 import type { StagedChangeInput } from "../../../stores/change-tracking-store";
+import type { AtomicCsvImportSummary } from "../../../stores/queryStore";
 import { parseEditorValue, buildRowPrimaryKeys, type ResolvedColumn } from "./useDataGrid";
 import { computeNewRowPlan, computeColumnPlan } from "./useInsertColumnPlan";
 import { type CsvFileSelection } from "../dialogs/PasteRowsDialog";
@@ -103,7 +104,7 @@ interface DataGridRowMutationsParams {
       mappings: Array<{ sourceIndex: number; targetColumn: string }>;
     },
     operationId: string,
-  ) => Promise<unknown>;
+  ) => Promise<AtomicCsvImportSummary>;
   cancelCsvImport: (operationId: string) => Promise<boolean>;
 
   /** Change-tracking queue: staged inserts land in the review modal. */
@@ -451,7 +452,7 @@ export function useDataGridRowMutations({
     csvImportOperationIdRef.current = operationId;
     try {
       if (csvFileSelection) {
-        await importCsvFileAtomically(
+        const importSummary = await importCsvFileAtomically(
           connectionId,
           {
             filePath: csvFileSelection.filePath,
@@ -466,6 +467,25 @@ export function useDataGridRowMutations({
           },
           operationId,
         );
+        // Post-import verification is advisory: the import itself already
+        // committed, so a count mismatch (or a failed COUNT) is only worth a
+        // toast, never a rollback.
+        const verifyMismatch =
+          importSummary.verifiedRows !== null &&
+          importSummary.verifiedRows !== importSummary.insertedRows;
+        const verifyWarnings = verifyMismatch
+          ? [
+              `Post-import verification counted ${importSummary.verifiedRows} new row(s); the driver reported ${importSummary.insertedRows} inserted.`,
+              ...importSummary.warnings,
+            ]
+          : importSummary.warnings;
+        for (const warning of verifyWarnings) {
+          emitAppToast({
+            title: "CSV import verification",
+            description: warning,
+            tone: "info",
+          });
+        }
       } else {
         await insertTableRowsAtomically(
           connectionId,

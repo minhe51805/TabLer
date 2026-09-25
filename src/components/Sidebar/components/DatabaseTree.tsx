@@ -56,6 +56,8 @@ interface DatabaseTreeProps {
   onTableDoubleClick?: (table: Pick<TableInfo, "name" | "schema">) => void;
   onStructureClick: (e: React.MouseEvent, table: Pick<TableInfo, "name" | "schema">) => void;
   onObjectSqlClick: (e: React.MouseEvent, object: SchemaObjectInfo) => void;
+  /** Opens the Routine Editor for procedure/function objects. */
+  onRoutineClick?: (object: SchemaObjectInfo) => void;
   onTableContextMenu: (
     event: React.MouseEvent,
     table: Pick<TableInfo, "name" | "schema" | "row_count" | "table_type">,
@@ -102,6 +104,7 @@ interface VirtualizedSchemaRowsProps {
   onTableDoubleClick?: DatabaseTreeProps["onTableDoubleClick"];
   onStructureClick: DatabaseTreeProps["onStructureClick"];
   onObjectSqlClick: DatabaseTreeProps["onObjectSqlClick"];
+  onRoutineClick?: DatabaseTreeProps["onRoutineClick"];
   onTableContextMenu: DatabaseTreeProps["onTableContextMenu"];
   selectedTableKeys?: ReadonlySet<string>;
   contextQualifiedName: string | null;
@@ -129,6 +132,7 @@ const VirtualizedSchemaRows = memo(function VirtualizedSchemaRows({
   onTableClick,
   onTableDoubleClick,
   onStructureClick,
+  onRoutineClick,
   onObjectSqlClick,
   onTableContextMenu,
   selectedTableKeys,
@@ -285,6 +289,14 @@ const VirtualizedSchemaRows = memo(function VirtualizedSchemaRows({
             item.group === "clr-types" ||
             item.group === "xml-schema-collections" ||
             item.group === "assemblies";
+          const isRoutineLike =
+            item.group === "procedures" ||
+            item.group === "system-procedures" ||
+            item.group === "routines" ||
+            item.group === "table-functions" ||
+            item.group === "scalar-functions" ||
+            item.group === "aggregate-functions" ||
+            item.group === "system-functions";
           return (
             <div style={{ paddingLeft: item.depth * 12 }}>
               <StaticObjectRow
@@ -298,6 +310,7 @@ const VirtualizedSchemaRows = memo(function VirtualizedSchemaRows({
                       : item.object.object_type
                 }
                 icon={isTriggerLike ? "GitBranch" : "FileCode"}
+                onOpen={isRoutineLike ? onRoutineClick : undefined}
                 onObjectSqlClick={onObjectSqlClick}
                 t={t}
               />
@@ -316,6 +329,7 @@ const VirtualizedSchemaRows = memo(function VirtualizedSchemaRows({
       onMixedStateToggle,
       onObjectSqlClick,
       onStructureClick,
+      onRoutineClick,
       onTableClick,
       onTableContextMenu,
       onTableDoubleClick,
@@ -371,6 +385,7 @@ export function DatabaseTree({
   onTableDoubleClick,
   onStructureClick,
   onObjectSqlClick,
+  onRoutineClick,
   onTableContextMenu,
   onSchemaFilterChange,
   onSchemaPickerToggle,
@@ -542,6 +557,7 @@ export function DatabaseTree({
                     onStructureClick={onStructureClick}
                     selectedTableKeys={selectedTableKeys}
                     onObjectSqlClick={onObjectSqlClick}
+                    onRoutineClick={onRoutineClick}
                     onTableContextMenu={onTableContextMenu}
                     contextQualifiedName={contextQualifiedName}
                     language={language}

@@ -700,6 +700,8 @@ export function buildExplainQuery(sql: string, dbType: DatabaseType, analyze = f
 
     case "snowflake":
     case "clickhouse":
+    case "trino":
+    case "spanner":
       return `EXPLAIN ${sql}`;
 
     case "redshift":

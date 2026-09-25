@@ -1,5 +1,6 @@
 use super::driver::DatabaseDriver;
 use super::models::*;
+use super::query_cancel::{request_cancel, CancelLookup, CancelScopeGuard, QueryCancelRegistry};
 use super::query_common::{statement_returns_rows, MAX_QUERY_RESULT_ROWS};
 use super::safety::{
     normalize_order_dir, qualify_postgres_table_name, quote_postgres_identifier,
@@ -9,17 +10,26 @@ use crate::utils::sql::split_sql_statements;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use duckdb::types::{Value as DuckValue, ValueRef as DuckValueRef};
-use duckdb::{AccessMode, Config, Connection as DuckConnection, OptionalExt, ToSql};
+use duckdb::{
+    AccessMode, Config, Connection as DuckConnection, InterruptHandle, OptionalExt, ToSql,
+};
 use std::collections::HashSet;
 use std::fs;
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 use tokio::task;
 
 pub struct DuckDbDriver {
     connection: Arc<Mutex<DuckConnection>>,
+    /// Connection-scoped interrupt handle: `interrupt()` aborts whatever
+    /// statement is in flight on `connection`. DuckDB interrupt granularity is
+    /// the connection, not the statement, so one handle covers every request.
+    interrupt_handle: Arc<InterruptHandle>,
+    /// request_id → running-query scope so `cancel_query_request` knows a
+    /// statement is in flight and can fire the interrupt handle.
+    cancel_registry: RwLock<QueryCancelRegistry>,
     file_path: String,
 }
 
@@ -69,8 +79,12 @@ impl DuckDbDriver {
         .await
         .map_err(|_| anyhow!("DuckDB connection task failed unexpectedly"))??;
 
+        let interrupt_handle = connection.interrupt_handle();
+
         Ok(Self {
             connection: Arc::new(Mutex::new(connection)),
+            interrupt_handle,
+            cancel_registry: RwLock::new(QueryCancelRegistry::new()),
             file_path,
         })
     }
@@ -583,6 +597,51 @@ impl DatabaseDriver for DuckDbDriver {
         .await
     }
 
+    /// Request-scoped execution: registers the request so `cancel_query_request`
+    /// can fire the connection's `InterruptHandle`. DuckDB interrupt is
+    /// connection-scoped — it aborts the statement currently in flight on this
+    /// connection, which is exactly the one this request is running (the
+    /// connection mutex serializes statements).
+    async fn execute_query_for_request(&self, request_id: &str, sql: &str) -> Result<QueryResult> {
+        if request_id.trim().is_empty() {
+            return self.execute_query(sql).await;
+        }
+        let guard = CancelScopeGuard::begin(&self.cancel_registry, request_id);
+        let flag = guard
+            .cancel_flag()
+            .context("DuckDB cancel scope missing its flag")?;
+        // The interrupt handle is connection-scoped, so there is no per-query
+        // backend id; the marker only resolves the pending-cancel race before
+        // the statement starts.
+        if guard.register_backend(0) {
+            return Err(anyhow!("Query cancelled."));
+        }
+        let result = self.execute_query(sql).await;
+        drop(guard);
+        match result {
+            Err(error) if flag.load(Ordering::SeqCst) => {
+                let _ = error;
+                Err(anyhow!("Query cancelled."))
+            }
+            result => result,
+        }
+    }
+
+    /// Cancel fires the connection's `InterruptHandle`, which makes the
+    /// in-flight statement fail with a DuckDB interrupted error. `Pending`
+    /// means the cancel landed before execution started; the shared flag
+    /// already aborts the scoped execute path, and firing the handle here
+    /// would be a no-op anyway since nothing is running yet.
+    async fn cancel_query_request(&self, request_id: &str) -> Result<bool> {
+        match request_cancel(&self.cancel_registry, request_id) {
+            CancelLookup::NotRunning => Ok(false),
+            CancelLookup::Pending => Ok(true),
+            CancelLookup::Backend(_) => {
+                self.interrupt_handle.interrupt();
+                Ok(true)
+            }
+        }
+    }
     async fn preview_write_transaction(&self, statements: &[String]) -> Result<Vec<QueryResult>> {
         let statements = statements.to_vec();
         self.with_connection(move |conn| {
@@ -1124,6 +1183,73 @@ mod tests {
         }
 
         let _ = fs::remove_file(temp_path);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn request_cancel_interrupts_a_running_statement() -> Result<()> {
+        let config = ConnectionConfig {
+            id: Uuid::new_v4().to_string(),
+            name: "DuckDB cancel".to_string(),
+            db_type: DatabaseType::DuckDB,
+            host: None,
+            port: None,
+            username: None,
+            password: None,
+            database: None,
+            file_path: Some(":memory:".to_string()),
+            use_ssl: false,
+            ssl_mode: None,
+            ssl_ca_cert_path: None,
+            ssl_client_cert_path: None,
+            ssl_client_key_path: None,
+            ssl_skip_host_verification: None,
+            color: None,
+            additional_fields: HashMap::new(),
+            startup_commands: None,
+            pre_connect_script: None,
+            query_timeout_seconds: None,
+            read_only: false,
+            ssh_config: None,
+        };
+        let driver = Arc::new(DuckDbDriver::connect(&config).await?);
+
+        // Unknown or finished requests report nothing to cancel.
+        assert!(!driver.cancel_query_request("req-absent").await?);
+
+        // A large cross join keeps the statement in flight long enough for the
+        // cancel to land; the interrupt aborts it server-side.
+        let running = {
+            let driver = driver.clone();
+            tokio::spawn(async move {
+                driver
+                    .execute_query_for_request(
+                        "req-cancel",
+                        "SELECT count(*) FROM range(500000) a, range(500000) b",
+                    )
+                    .await
+            })
+        };
+
+        let mut cancelled = false;
+        for _ in 0..100 {
+            if driver.cancel_query_request("req-cancel").await? {
+                cancelled = true;
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        assert!(cancelled, "cancel never observed the in-flight statement");
+
+        let outcome = running.await.expect("query task panicked");
+        let error = outcome.expect_err("interrupted query should fail");
+        assert!(
+            error.to_string().contains("cancelled"),
+            "unexpected error: {error}"
+        );
+
+        // The registry slot is cleaned up once the request finishes.
+        assert!(!driver.cancel_query_request("req-cancel").await?);
         Ok(())
     }
     #[tokio::test]

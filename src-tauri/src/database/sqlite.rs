@@ -1,12 +1,12 @@
 use super::driver::DatabaseDriver;
 use super::models::*;
+use super::query_cancel::{request_cancel, CancelLookup, CancelScopeGuard, QueryCancelRegistry};
 use super::query_common::MAX_TABLE_PAGE_ROWS;
 use super::safety::{
     normalize_order_dir, quote_sqlite_identifier, quote_sqlite_order_by,
     sanitize_sqlite_filter_clause,
 };
-use crate::utils::sql::split_sql_statements;
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use sqlx::sqlite::{
     SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqliteRow, SqliteSynchronous,
@@ -16,13 +16,21 @@ use std::fs;
 use std::path::Path;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
-    Arc,
+    Arc, RwLock,
 };
 use std::time::Instant;
+
+/// Virtual-machine instructions between SQLite progress-handler callbacks
+/// while a cancellable request runs — small enough that cancel lands quickly,
+/// large enough to stay off the hot path.
+const SQLITE_PROGRESS_CHECK_OPS: i32 = 1_000;
 
 pub struct SqliteDriver {
     pub(super) pool: SqlitePool,
     file_path: String,
+    /// request_id → running-statement scope; cancel flips a shared flag the
+    /// connection's progress handler polls, which interrupts the statement.
+    cancel_registry: RwLock<QueryCancelRegistry>,
 }
 
 #[cfg(test)]
@@ -284,6 +292,46 @@ mod tests {
         driver.pool.close().await;
         cleanup_db_file(&path);
     }
+
+    #[tokio::test]
+    async fn request_cancel_interrupts_a_running_statement() {
+        let driver = Arc::new(
+            SqliteDriver::connect("sqlite::memory:?cache=shared")
+                .await
+                .unwrap(),
+        );
+        // A 200k-row cross join keeps the VM busy long enough for the cancel
+        // to land; the progress handler interrupts it mid-execution.
+        let running = {
+            let driver = driver.clone();
+            tokio::spawn(async move {
+                driver
+                    .execute_query_for_request(
+                        "req-cancel",
+                        "WITH RECURSIVE seq(n) AS (\
+                             SELECT 1 UNION ALL SELECT n + 1 FROM seq WHERE n < 200000\
+                         ) SELECT COUNT(*) FROM seq a, seq b LIMIT 5",
+                    )
+                    .await
+            })
+        };
+        // Wait until the request slot exists, then cancel it.
+        for _ in 0..100 {
+            if driver.cancel_query_request("req-cancel").await.unwrap() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        let outcome = running.await.unwrap();
+        assert_eq!(
+            outcome.unwrap_err().to_string(),
+            "Query cancelled.",
+            "the progress handler must interrupt the statement"
+        );
+        // The pooled connection is healthy again after the interrupt.
+        let check = driver.execute_query("SELECT 1").await.unwrap();
+        assert_eq!(check.rows.len(), 1);
+    }
 }
 
 impl SqliteDriver {
@@ -323,6 +371,7 @@ impl SqliteDriver {
         Ok(Self {
             pool,
             file_path: file_path.to_string(),
+            cancel_registry: RwLock::new(QueryCancelRegistry::new()),
         })
     }
 }
@@ -389,70 +438,61 @@ impl DatabaseDriver for SqliteDriver {
     }
 
     async fn execute_query(&self, sql: &str) -> Result<QueryResult> {
-        let start = Instant::now();
-        let statements = split_sql_statements(sql);
+        let mut conn = self.pool.acquire().await.context("SQLite acquire failed")?;
+        Self::execute_query_on_conn(&mut conn, sql).await
+    }
 
-        if statements.len() <= 1 && Self::query_returns_rows(sql) {
-            let (rows, truncated) = Self::fetch_rows_limited(&self.pool, sql).await?;
-            let mut result =
-                Self::build_result_from_rows(&rows, 0, sql.to_string(), 0, false, truncated);
-            result.execution_time_ms = start.elapsed().as_millis();
-            Ok(result)
-        } else {
-            let mut total_affected: u64 = 0;
-            let mut last_result: Option<QueryResult> = None;
-
-            if statements.len() > 1 {
-                for statement in &statements {
-                    if Self::query_returns_rows(statement) {
-                        let (rows, truncated) =
-                            Self::fetch_rows_limited(&self.pool, statement).await?;
-                        last_result = Some(Self::build_result_from_rows(
-                            &rows,
-                            0,
-                            sql.to_string(),
-                            total_affected,
-                            false,
-                            truncated,
-                        ));
-                    } else {
-                        let result = sqlx::query(statement).execute(&self.pool).await?;
-                        total_affected += result.rows_affected();
-                    }
-                }
-            } else if let Some(statement) = statements.first() {
-                if Self::query_returns_rows(statement) {
-                    let (rows, truncated) = Self::fetch_rows_limited(&self.pool, statement).await?;
-                    last_result = Some(Self::build_result_from_rows(
-                        &rows,
-                        0,
-                        sql.to_string(),
-                        total_affected,
-                        false,
-                        truncated,
-                    ));
-                } else {
-                    let result = sqlx::query(statement).execute(&self.pool).await?;
-                    total_affected += result.rows_affected();
-                }
+    /// Request-scoped execution on a dedicated pooled connection. SQLite has
+    /// no killable backend id, so cancel rides a progress handler installed on
+    /// this connection that polls the request's shared cancel flag and
+    /// interrupts the running statement.
+    async fn execute_query_for_request(&self, request_id: &str, sql: &str) -> Result<QueryResult> {
+        if request_id.trim().is_empty() {
+            return self.execute_query(sql).await;
+        }
+        let mut conn = self.pool.acquire().await.context("SQLite acquire failed")?;
+        let guard = CancelScopeGuard::begin(&self.cancel_registry, request_id);
+        let flag = guard
+            .cancel_flag()
+            .context("SQLite cancel scope missing its flag")?;
+        // No backend id exists to register; the marker only resolves the
+        // pending-cancel race before the statement starts.
+        if guard.register_backend(0) {
+            return Err(anyhow!("Query cancelled."));
+        }
+        {
+            let mut handle = conn
+                .lock_handle()
+                .await
+                .context("SQLite lock_handle failed")?;
+            let flag = flag.clone();
+            handle.set_progress_handler(SQLITE_PROGRESS_CHECK_OPS, move || {
+                !flag.load(Ordering::SeqCst)
+            });
+        }
+        let result = Self::execute_query_on_conn(&mut conn, sql).await;
+        // Detach the handler so the pooled connection does not keep polling a
+        // dead flag on later checkouts.
+        if let Ok(mut handle) = conn.lock_handle().await {
+            handle.set_progress_handler(0, || true);
+        }
+        drop(guard);
+        match result {
+            Err(error) if flag.load(Ordering::SeqCst) => {
+                let _ = error;
+                Err(anyhow!("Query cancelled."))
             }
+            result => result,
+        }
+    }
 
-            let elapsed = start.elapsed().as_millis();
-            if let Some(mut result) = last_result {
-                result.execution_time_ms = elapsed;
-                result.affected_rows = total_affected;
-                return Ok(result);
-            }
-
-            Ok(QueryResult {
-                columns: Vec::new(),
-                rows: Vec::new(),
-                affected_rows: total_affected,
-                execution_time_ms: elapsed,
-                query: sql.to_string(),
-                sandboxed: false,
-                truncated: false,
-            })
+    /// Cancel flips the request's shared flag; the progress handler installed
+    /// by `execute_query_for_request` interrupts the statement at the next VM
+    /// checkpoint. There is no second-connection kill for an embedded engine.
+    async fn cancel_query_request(&self, request_id: &str) -> Result<bool> {
+        match request_cancel(&self.cancel_registry, request_id) {
+            CancelLookup::NotRunning => Ok(false),
+            CancelLookup::Pending | CancelLookup::Backend(_) => Ok(true),
         }
     }
 
@@ -511,26 +551,51 @@ impl DatabaseDriver for SqliteDriver {
         sql: &str,
         parameters: &[QueryParameter],
     ) -> Result<QueryResult> {
-        let start = Instant::now();
-        if Self::query_returns_rows(sql) {
-            let (rows, truncated) = self.fetch_parameterized_rows(sql, parameters).await?;
-            let mut result =
-                Self::build_result_from_rows(&rows, 0, sql.to_string(), 0, false, truncated);
-            result.execution_time_ms = start.elapsed().as_millis();
-            return Ok(result);
+        let mut conn = self.pool.acquire().await.context("SQLite acquire failed")?;
+        Self::execute_parameterized_on_conn(&mut conn, sql, parameters).await
+    }
+
+    /// Request-scoped parameterized execution: same progress-handler cancel
+    /// path as `execute_query_for_request`.
+    async fn execute_parameterized_query_for_request(
+        &self,
+        request_id: &str,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        if request_id.trim().is_empty() {
+            return self.execute_parameterized_query(sql, parameters).await;
         }
-        let outcome = Self::bind_parameterized_query(sqlx::query(sql), parameters)?
-            .execute(&self.pool)
-            .await?;
-        Ok(QueryResult {
-            columns: Vec::new(),
-            rows: Vec::new(),
-            affected_rows: outcome.rows_affected(),
-            execution_time_ms: start.elapsed().as_millis(),
-            query: sql.to_string(),
-            sandboxed: false,
-            truncated: false,
-        })
+        let mut conn = self.pool.acquire().await.context("SQLite acquire failed")?;
+        let guard = CancelScopeGuard::begin(&self.cancel_registry, request_id);
+        let flag = guard
+            .cancel_flag()
+            .context("SQLite cancel scope missing its flag")?;
+        if guard.register_backend(0) {
+            return Err(anyhow!("Query cancelled."));
+        }
+        {
+            let mut handle = conn
+                .lock_handle()
+                .await
+                .context("SQLite lock_handle failed")?;
+            let flag = flag.clone();
+            handle.set_progress_handler(SQLITE_PROGRESS_CHECK_OPS, move || {
+                !flag.load(Ordering::SeqCst)
+            });
+        }
+        let result = Self::execute_parameterized_on_conn(&mut conn, sql, parameters).await;
+        if let Ok(mut handle) = conn.lock_handle().await {
+            handle.set_progress_handler(0, || true);
+        }
+        drop(guard);
+        match result {
+            Err(error) if flag.load(Ordering::SeqCst) => {
+                let _ = error;
+                Err(anyhow!("Query cancelled."))
+            }
+            result => result,
+        }
     }
 
     async fn get_table_data(

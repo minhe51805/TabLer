@@ -9,6 +9,8 @@ pub mod cloudflare_d1;
 pub mod driver;
 #[cfg(feature = "duckdb-driver")]
 pub mod duckdb;
+pub mod dynamodb;
+pub mod elasticsearch;
 #[cfg(feature = "libsql-driver")]
 pub mod libsql;
 pub mod manager;
@@ -35,5 +37,7 @@ pub mod safety;
 pub mod sidecar;
 pub mod snowflake;
 mod snowflake_support;
+pub mod spanner;
 pub mod sqlite;
 mod sqlite_support;
+pub mod trino;

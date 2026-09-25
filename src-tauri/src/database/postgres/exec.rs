@@ -16,7 +16,9 @@ impl PostgresDriver {
     }
 
     pub(super) fn query_returns_rows(sql: &str) -> bool {
-        statement_returns_rows(sql, &["SELECT", "SHOW", "EXPLAIN", "WITH"])
+        // CALL: procedures with OUT/INOUT params return a row; without them the
+        // fetch path simply yields an empty result — safe either way.
+        statement_returns_rows(sql, &["SELECT", "SHOW", "EXPLAIN", "WITH", "CALL"])
     }
 
     pub(super) async fn execute_query_on_conn(

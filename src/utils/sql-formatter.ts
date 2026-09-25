@@ -29,6 +29,8 @@ function mapDialect(dbType: DatabaseType | undefined): SqlLanguage {
       return "snowflake";
     case "oracle":
       return "plsql";
+    case "trino":
+      return "trino";
     case "cassandra":
     case "vertica":
     case "mongodb":

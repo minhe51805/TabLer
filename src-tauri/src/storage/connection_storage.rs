@@ -33,6 +33,33 @@ struct ConnectionSecrets {
     ssh_private_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     ssh_passphrase: Option<String>,
+    /// DynamoDB STS session token. The driver reads it from
+    /// `additional_fields["session_token"]`, but as a credential it must not
+    /// persist plaintext in `connections.json`, so the storage layer moves it
+    /// here (see `SESSION_TOKEN_FIELD`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    session_token: Option<String>,
+}
+
+/// `additional_fields` key carrying the DynamoDB STS session token
+/// (matched case-insensitively). It is a credential, not metadata: on save it
+/// is moved into `ConnectionSecrets` (OS keyring) and stripped from the
+/// persisted config, exactly like `password`/SSH secrets; on load
+/// `apply_to` restores it into `additional_fields` under the canonical key
+/// the driver reads.
+const SESSION_TOKEN_FIELD: &str = "session_token";
+
+fn session_token_in(config: &ConnectionConfig) -> Option<String> {
+    config
+        .additional_fields
+        .iter()
+        .find(|(key, _)| key.eq_ignore_ascii_case(SESSION_TOKEN_FIELD))
+        .map(|(_, value)| value.clone())
+        .filter(|value| !value.trim().is_empty())
+}
+
+fn strip_session_token(fields: &mut HashMap<String, String>) {
+    fields.retain(|key, _| !key.eq_ignore_ascii_case(SESSION_TOKEN_FIELD));
 }
 
 impl ConnectionSecrets {
@@ -43,6 +70,7 @@ impl ConnectionSecrets {
             ssh_password: ssh.and_then(|value| value.password.clone()),
             ssh_private_key: ssh.and_then(|value| value.private_key.clone()),
             ssh_passphrase: ssh.and_then(|value| value.passphrase.clone()),
+            session_token: session_token_in(config),
         }
     }
 
@@ -51,6 +79,7 @@ impl ConnectionSecrets {
             && self.ssh_password.is_none()
             && self.ssh_private_key.is_none()
             && self.ssh_passphrase.is_none()
+            && self.session_token.is_none()
     }
 
     fn apply_to(&self, config: &mut ConnectionConfig) {
@@ -59,6 +88,12 @@ impl ConnectionSecrets {
             ssh.password = self.ssh_password.clone();
             ssh.private_key = self.ssh_private_key.clone();
             ssh.passphrase = self.ssh_passphrase.clone();
+        }
+        strip_session_token(&mut config.additional_fields);
+        if let Some(token) = &self.session_token {
+            config
+                .additional_fields
+                .insert(SESSION_TOKEN_FIELD.to_string(), token.clone());
         }
     }
 
@@ -78,6 +113,7 @@ fn redact_connection_secrets(config: &ConnectionConfig) -> ConnectionConfig {
         ssh.private_key = None;
         ssh.passphrase = None;
     }
+    strip_session_token(&mut safe.additional_fields);
     safe
 }
 
@@ -348,7 +384,7 @@ impl ConnectionStorage {
                             message: format!(
                                 "The saved credentials for '{}' are not in this device's secure \
                                  storage (they do not sync between machines). Re-enter the \
-                                 password/SSH secrets for this connection.",
+                                 password/SSH/session-token secrets for this connection.",
                                 connection.name
                             ),
                         });
@@ -542,6 +578,111 @@ mod tests {
         assert_eq!(listed[0].name, "Recovered");
 
         let _ = keyring::Entry::new("TableR", &connection.id)
+            .and_then(|entry| entry.delete_credential());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn session_token_is_moved_to_keyring_not_persisted() {
+        use_mock_keyring();
+        let root = std::env::temp_dir().join(format!("tabler-session-token-{}", Uuid::new_v4()));
+        let storage = ConnectionStorage::from_data_dir(root.clone()).unwrap();
+
+        let mut additional_fields = std::collections::HashMap::new();
+        // Case-insensitive match: the key can arrive in other casings and must
+        // still be treated as a secret.
+        additional_fields.insert("Session_Token".to_string(), "sts-token-xyz".to_string());
+        additional_fields.insert("region".to_string(), "us-west-2".to_string());
+        let connection = ConnectionConfig {
+            id: format!("ddb-{}", Uuid::new_v4()),
+            name: "Dynamo Prod".to_string(),
+            db_type: DatabaseType::DynamoDB,
+            host: Some("us-west-2".to_string()),
+            username: Some("AKIAEXAMPLE".to_string()),
+            password: Some("aws-secret".to_string()),
+            additional_fields,
+            ..ConnectionConfig::default()
+        };
+
+        storage.save_connection(&connection).unwrap();
+
+        // The persisted file holds no credential material.
+        let persisted = fs::read_to_string(root.join("connections.json")).unwrap();
+        assert!(!persisted.contains("sts-token-xyz"));
+        assert!(!persisted.contains("session_token"));
+        assert!(!persisted.contains("aws-secret"));
+        // Non-secret additional fields stay.
+        assert!(persisted.contains("us-west-2"));
+
+        // The list path returns the redacted view.
+        let listed = storage.load_connections().unwrap();
+        assert!(listed[0]
+            .additional_fields
+            .keys()
+            .all(|key| !key.eq_ignore_ascii_case("session_token")));
+
+        // The connect path restores the token under the canonical key the
+        // DynamoDB driver reads.
+        let restored = storage.load_connection_by_id(&connection.id).unwrap();
+        assert_eq!(
+            restored
+                .additional_fields
+                .get("session_token")
+                .map(String::as_str),
+            Some("sts-token-xyz")
+        );
+        assert_eq!(restored.password.as_deref(), Some("aws-secret"));
+
+        let _ = keyring::Entry::new("TableR", &connection.id)
+            .and_then(|entry| entry.delete_credential());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn legacy_file_plaintext_session_token_is_migrated_and_scrubbed() {
+        use_mock_keyring();
+        let root = std::env::temp_dir().join(format!("tabler-sts-migration-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+
+        // Pre-fix shape: the token sits plaintext in additional_fields.
+        let mut additional_fields = std::collections::HashMap::new();
+        additional_fields.insert("session_token".to_string(), "legacy-sts-token".to_string());
+        let connection_id = format!("ddb-legacy-{}", Uuid::new_v4());
+        let legacy = ConnectionConfig {
+            id: connection_id.clone(),
+            name: "Legacy Dynamo".to_string(),
+            db_type: DatabaseType::DynamoDB,
+            host: Some("us-east-1".to_string()),
+            additional_fields,
+            ..ConnectionConfig::default()
+        };
+        fs::write(
+            root.join("connections.json"),
+            serde_json::to_string_pretty(&vec![legacy]).unwrap(),
+        )
+        .unwrap();
+
+        let storage = ConnectionStorage::from_data_dir(root.clone()).unwrap();
+        let listed = storage.load_connections().unwrap();
+        assert!(listed[0]
+            .additional_fields
+            .keys()
+            .all(|key| !key.eq_ignore_ascii_case("session_token")));
+
+        // The migration rewrite scrubs the token from disk (and keeps no
+        // plaintext backup), while the token stays usable via the keyring.
+        let persisted = fs::read_to_string(root.join("connections.json")).unwrap();
+        assert!(!persisted.contains("legacy-sts-token"));
+        let restored = storage.load_connection_by_id(&connection_id).unwrap();
+        assert_eq!(
+            restored
+                .additional_fields
+                .get("session_token")
+                .map(String::as_str),
+            Some("legacy-sts-token")
+        );
+
+        let _ = keyring::Entry::new("TableR", &connection_id)
             .and_then(|entry| entry.delete_credential());
         let _ = fs::remove_dir_all(root);
     }

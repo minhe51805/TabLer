@@ -47,10 +47,14 @@ pub(super) fn build_restore_preview(
     sql: &str,
     db_type: DatabaseType,
 ) -> Result<RestorePreview, String> {
-    if db_type == DatabaseType::OpenSearch {
-        return Err(
-            "SQL restore is not supported by the read-only OpenSearch plugin driver.".to_string(),
-        );
+    if db_type == DatabaseType::OpenSearch || db_type == DatabaseType::Elasticsearch {
+        return Err(format!(
+            "SQL restore is not supported by the read-only {} plugin driver.",
+            match db_type {
+                DatabaseType::Elasticsearch => "Elasticsearch",
+                _ => "OpenSearch",
+            }
+        ));
     }
     let statements = split_sql_statements(sql);
     if statements.is_empty() {
@@ -190,10 +194,14 @@ pub(super) async fn run_sql_restore(
     // and NotApplicable still pass — for those engines plain SQL
     // re-execution IS the restore path, so blocking them would remove the
     // feature entirely rather than gate a native tool.
-    if db_type == DatabaseType::OpenSearch {
-        return Err(
-            "SQL restore is not supported by the read-only OpenSearch plugin driver.".to_string(),
-        );
+    if db_type == DatabaseType::OpenSearch || db_type == DatabaseType::Elasticsearch {
+        return Err(format!(
+            "SQL restore is not supported by the read-only {} plugin driver.",
+            match db_type {
+                DatabaseType::Elasticsearch => "Elasticsearch",
+                _ => "OpenSearch",
+            }
+        ));
     }
     if require_backup_restore_capability {
         let profile = db_manager
@@ -385,6 +393,17 @@ mod tests {
                 .unwrap_err();
 
         assert!(error.contains("read-only OpenSearch plugin driver"));
+    }
+
+    #[test]
+    fn elasticsearch_rejects_sql_restore_during_preview() {
+        let error = preview_database_restore(
+            "CREATE INDEX users".to_string(),
+            DatabaseType::Elasticsearch,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("read-only Elasticsearch plugin driver"));
     }
 
     #[tokio::test]

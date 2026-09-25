@@ -11,6 +11,7 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 
@@ -60,11 +61,19 @@ struct D1StatementResult {
     success: Option<bool>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 struct D1SingleQueryPayload<'a> {
     sql: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     params: Option<&'a [JsonValue]>,
+}
+
+/// One `{sql, params}` entry inside a `{batch: [...]}` payload. D1 executes
+/// the array inside an implicit transaction — all statements commit together
+/// or the whole batch rolls back.
+#[derive(Debug, Serialize)]
+struct D1BatchPayload<'a> {
+    batch: Vec<D1SingleQueryPayload<'a>>,
 }
 
 pub struct CloudflareD1Driver {
@@ -180,17 +189,78 @@ impl CloudflareD1Driver {
         sql: &str,
         params: &[JsonValue],
     ) -> Result<D1StatementResult> {
+        let mut results = self
+            .post_raw(&D1SingleQueryPayload {
+                sql,
+                params: (!params.is_empty()).then_some(params),
+            })
+            .await?;
+
+        let statement = results
+            .drain(..)
+            .next()
+            .ok_or_else(|| anyhow!("Cloudflare D1 did not return a statement result"))?;
+
+        if statement.success == Some(false) {
+            return Err(anyhow!("Cloudflare D1 reported an unsuccessful statement"));
+        }
+
+        Ok(statement)
+    }
+
+    /// Execute several statements in one `{batch: [...]}` request. D1 runs
+    /// the array inside an implicit transaction: every statement commits
+    /// together, and a failure in any statement rolls the whole batch back.
+    /// This is the only transaction primitive the D1 REST API exposes —
+    /// `BEGIN`/`COMMIT` are rejected as freeform SQL.
+    ///
+    /// Documented limits honoured by callers: each statement stays under the
+    /// 100 KB statement limit and the 100 bound-parameter limit; the whole
+    /// batch must finish inside the 30 s API request limit.
+    async fn execute_raw_batch(
+        &self,
+        statements: &[D1SingleQueryPayload<'_>],
+    ) -> Result<Vec<D1StatementResult>> {
+        if statements.is_empty() {
+            return Err(anyhow!("A D1 batch requires at least one statement"));
+        }
+
+        let results = self
+            .post_raw(&D1BatchPayload {
+                batch: statements.to_vec(),
+            })
+            .await?;
+
+        if results.len() != statements.len() {
+            return Err(anyhow!(
+                "Cloudflare D1 returned {} results for a {}-statement batch",
+                results.len(),
+                statements.len()
+            ));
+        }
+
+        for result in &results {
+            if result.success == Some(false) {
+                return Err(anyhow!(
+                    "Cloudflare D1 reported an unsuccessful statement in the batch"
+                ));
+            }
+        }
+
+        Ok(results)
+    }
+
+    /// POST one payload to the `/raw` endpoint and unwrap the Cloudflare
+    /// envelope into per-statement results.
+    async fn post_raw<B: Serialize>(&self, body: &B) -> Result<Vec<D1StatementResult>> {
         let response = self
             .client
             .post(&self.raw_url)
             .bearer_auth(&self.api_token)
-            .json(&D1SingleQueryPayload {
-                sql,
-                params: (!params.is_empty()).then_some(params),
-            })
+            .json(body)
             .send()
             .await
-            .with_context(|| format!("Failed to reach Cloudflare D1 for query: {sql}"))?;
+            .context("Failed to reach Cloudflare D1")?;
 
         let status = response.status();
         let body = response
@@ -227,17 +297,7 @@ impl CloudflareD1Driver {
             return Err(anyhow!(message));
         }
 
-        let statement = parsed
-            .result
-            .into_iter()
-            .next()
-            .ok_or_else(|| anyhow!("Cloudflare D1 did not return a statement result"))?;
-
-        if statement.success == Some(false) {
-            return Err(anyhow!("Cloudflare D1 reported an unsuccessful statement"));
-        }
-
-        Ok(statement)
+        Ok(parsed.result)
     }
 
     fn affected_rows(meta: &D1StatementMeta) -> u64 {
@@ -313,6 +373,76 @@ impl CloudflareD1Driver {
                 _ => parameter.value.clone(),
             })
             .collect()
+    }
+
+    /// Map a JSON cell value to a D1 bind value. D1 accepts null, number,
+    /// string, and boolean natively; arrays/objects travel as serialized
+    /// JSON text, matching `parameters_to_bind_values`.
+    fn json_to_bind_value(value: &JsonValue) -> JsonValue {
+        match value {
+            JsonValue::Array(_) | JsonValue::Object(_) => JsonValue::String(value.to_string()),
+            other => other.clone(),
+        }
+    }
+
+    /// Build one `UPDATE … SET col = ? WHERE pk = ? …` statement with
+    /// positional binds for a primary-key based cell edit. NULL key values
+    /// compare with `IS NULL` (no bind) since `= NULL` never matches.
+    fn cell_update_statement(request: &TableCellUpdateRequest) -> Result<(String, Vec<JsonValue>)> {
+        if request.primary_keys.is_empty() {
+            return Err(anyhow!(
+                "Inline update requires at least one primary key column"
+            ));
+        }
+
+        let mut sql = format!(
+            "UPDATE {} SET {} = ? WHERE ",
+            quote_sqlite_identifier(&request.table)?,
+            quote_sqlite_order_by(&request.target_column)?,
+        );
+        let mut params = vec![Self::json_to_bind_value(&request.value)];
+
+        for (index, primary_key) in request.primary_keys.iter().enumerate() {
+            if index > 0 {
+                sql.push_str(" AND ");
+            }
+            sql.push_str(&quote_sqlite_order_by(&primary_key.column)?);
+            if primary_key.value.is_null() {
+                sql.push_str(" IS NULL");
+            } else {
+                sql.push_str(" = ?");
+                params.push(Self::json_to_bind_value(&primary_key.value));
+            }
+        }
+
+        Ok((sql, params))
+    }
+
+    /// Build one `INSERT INTO … VALUES (?, …)` statement with positional
+    /// binds for a CSV import row.
+    fn row_insert_statement(request: &TableRowInsertRequest) -> Result<(String, Vec<JsonValue>)> {
+        if request.values.is_empty() {
+            return Err(anyhow!("Each CSV row requires at least one column value"));
+        }
+
+        let columns = request
+            .values
+            .iter()
+            .map(|(column, _)| quote_sqlite_identifier(column))
+            .collect::<Result<Vec<_>>>()?;
+        let sql = format!(
+            "INSERT INTO {} ({}) VALUES ({})",
+            quote_sqlite_identifier(&request.table)?,
+            columns.join(", "),
+            vec!["?"; request.values.len()].join(", "),
+        );
+        let params = request
+            .values
+            .iter()
+            .map(|(_, value)| Self::json_to_bind_value(value))
+            .collect();
+
+        Ok((sql, params))
     }
 
     async fn raw_rows_to_objects(&self, sql: &str) -> Result<Vec<JsonMap<String, JsonValue>>> {
@@ -820,6 +950,97 @@ impl DatabaseDriver for CloudflareD1Driver {
         Ok(Self::affected_rows(&result.meta))
     }
 
+    /// Apply the edit queue as one `{batch: [...]}` request — D1's only
+    /// transaction primitive. Every UPDATE travels with positional binds and
+    /// the batch commits all-or-nothing inside D1's implicit transaction.
+    async fn apply_table_updates_atomically(
+        &self,
+        updates: &[TableCellUpdateRequest],
+    ) -> Result<u64> {
+        if updates.is_empty() {
+            return Err(anyhow!("Atomic edit queue requires at least one update"));
+        }
+
+        let mut statements = Vec::with_capacity(updates.len());
+        let mut owned_params = Vec::with_capacity(updates.len());
+        for update in updates {
+            let (sql, params) = Self::cell_update_statement(update)?;
+            owned_params.push(params);
+            statements.push((sql, owned_params.len() - 1));
+        }
+
+        let batch = statements
+            .iter()
+            .map(|(sql, params_index)| D1SingleQueryPayload {
+                sql,
+                params: Some(owned_params[*params_index].as_slice()),
+            })
+            .collect::<Vec<_>>();
+
+        let results = self.execute_raw_batch(&batch).await?;
+        Ok(results
+            .iter()
+            .map(|result| Self::affected_rows(&result.meta))
+            .sum())
+    }
+
+    /// Import CSV rows as one `{batch: [...]}` request so the file lands
+    /// all-or-nothing. The cancel flag is honoured before the batch is sent;
+    /// once sent, D1 either commits every row or rolls the batch back.
+    async fn insert_table_rows_atomically(
+        &self,
+        requests: &[TableRowInsertRequest],
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        if requests.is_empty() {
+            return Err(anyhow!("CSV import requires at least one row"));
+        }
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+        }
+
+        let mut statements = Vec::with_capacity(requests.len());
+        let mut owned_params = Vec::with_capacity(requests.len());
+        for request in requests {
+            let (sql, params) = Self::row_insert_statement(request)?;
+            owned_params.push(params);
+            statements.push((sql, owned_params.len() - 1));
+        }
+
+        let batch = statements
+            .iter()
+            .map(|(sql, params_index)| D1SingleQueryPayload {
+                sql,
+                params: Some(owned_params[*params_index].as_slice()),
+            })
+            .collect::<Vec<_>>();
+
+        let results = self.execute_raw_batch(&batch).await?;
+        Ok(results
+            .iter()
+            .map(|result| Self::affected_rows(&result.meta))
+            .sum())
+    }
+
+    /// Consume the row stream, then commit it as one atomic batch. Nothing is
+    /// written until every row parses, so a parse failure, cancellation, or
+    /// early channel close leaves the table untouched.
+    async fn insert_table_row_stream_atomically(
+        &self,
+        mut rows: tokio::sync::mpsc::Receiver<crate::database::models::CsvImportRow>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        let mut requests = Vec::new();
+        while let Some(row) = rows.recv().await {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+            }
+            requests.push(row.map_err(anyhow::Error::msg)?);
+        }
+        self.insert_table_rows_atomically(&requests, cancelled)
+            .await
+    }
+
     async fn execute_structure_statements(&self, statements: &[String]) -> Result<u64> {
         let mut total_affected = 0u64;
         for statement in statements
@@ -951,6 +1172,7 @@ mod tests {
             QueryParameter {
                 name: "count".to_string(),
                 value: json!(42),
+
                 data_type: QueryParameterType::Integer,
             },
             QueryParameter {
@@ -979,6 +1201,82 @@ mod tests {
                 json!("{\"id\":1}"),
                 json!(null),
             ]
+        );
+    }
+
+    #[test]
+    fn builds_bound_cell_update_statement() {
+        use crate::database::models::{RowKeyValue, TableCellUpdateRequest};
+
+        let (sql, params) = CloudflareD1Driver::cell_update_statement(&TableCellUpdateRequest {
+            table: "users".to_string(),
+            database: None,
+            target_column: "name".to_string(),
+            value: json!("O'Reilly"),
+            primary_keys: vec![
+                RowKeyValue {
+                    column: "id".to_string(),
+                    value: json!(7),
+                },
+                RowKeyValue {
+                    column: "tenant".to_string(),
+                    value: json!(null),
+                },
+            ],
+        })
+        .unwrap();
+
+        // Values travel as binds; a NULL key compares with IS NULL, not a bind.
+        assert_eq!(
+            sql,
+            "UPDATE \"users\" SET \"name\" = ? WHERE \"id\" = ? AND \"tenant\" IS NULL"
+        );
+        assert_eq!(params, vec![json!("O'Reilly"), json!(7)]);
+
+        assert!(
+            CloudflareD1Driver::cell_update_statement(&TableCellUpdateRequest {
+                table: "users".to_string(),
+                database: None,
+                target_column: "name".to_string(),
+                value: json!(1),
+                primary_keys: vec![],
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn builds_bound_row_insert_statement() {
+        use crate::database::models::TableRowInsertRequest;
+
+        let (sql, params) = CloudflareD1Driver::row_insert_statement(&TableRowInsertRequest {
+            table: "users".to_string(),
+            database: None,
+            values: vec![
+                ("id".to_string(), json!(7)),
+                ("name".to_string(), json!("O'Reilly")),
+                ("meta".to_string(), json!({"a": 1})),
+            ],
+        })
+        .unwrap();
+
+        assert_eq!(
+            sql,
+            "INSERT INTO \"users\" (\"id\", \"name\", \"meta\") VALUES (?, ?, ?)"
+        );
+        // JSON objects travel as serialized text, matching the bind convention.
+        assert_eq!(
+            params,
+            vec![json!(7), json!("O'Reilly"), json!("{\"a\":1}")]
+        );
+
+        assert!(
+            CloudflareD1Driver::row_insert_statement(&TableRowInsertRequest {
+                table: "users".to_string(),
+                database: None,
+                values: vec![],
+            })
+            .is_err()
         );
     }
 }

@@ -31,8 +31,15 @@ import {
   type FilterOperator,
   type FilterCondition,
 } from "../../types/filter-presets";
-import { useRef, useEffect, useLayoutEffect, useState } from "react";
+import { useRef, useEffect, useLayoutEffect, useState, lazy, Suspense } from "react";
 import { createPortal } from "react-dom";
+
+// Lazy: the modal pulls in Monaco; keep it out of the sidebar's hot path.
+const RoutineEditorModal = lazy(() =>
+  import("../RoutineEditor/RoutineEditorModal").then((module) => ({
+    default: module.RoutineEditorModal,
+  })),
+);
 
 // ---------------------------------------------------------------------------
 // Filter operator selector dropdown
@@ -451,6 +458,7 @@ import { LinkedFoldersPanel } from "./LinkedFoldersPanel";
 import { FolderSearch } from "lucide-react";
 import { useConnectionCapabilities } from "../../hooks/useConnectionCapabilities";
 import { isCapabilitySupported } from "../../types";
+import { useRoutineEditorStore } from "../RoutineEditor/routineEditorStore";
 
 // ---------------------------------------------------------------------------
 // Sidebar
@@ -459,6 +467,7 @@ import { isCapabilitySupported } from "../../types";
 export function Sidebar() {
   const presetTriggerRef = useRef<HTMLDivElement>(null);
   const [activeSidebarTab, setActiveSidebarTab] = useState<"database" | "linked">("database");
+  const routineEditorOpen = useRoutineEditorStore((state) => state.isOpen);
   const { t } = useI18n();
   const {
     activeConnectionId,
@@ -499,6 +508,7 @@ export function Sidebar() {
     handleTableDoubleClick,
     handleStructureClick,
     handleObjectSqlClick,
+    handleRoutineClick,
     handleTableContextMenu,
     handleRefresh,
     handleDisconnect,
@@ -779,6 +789,7 @@ export function Sidebar() {
           onStructureClick={handleStructureClick}
           onObjectSqlClick={handleObjectSqlClick}
           onTableContextMenu={handleTableContextMenu}
+          onRoutineClick={handleRoutineClick}
           onSchemaFilterChange={setActiveSchemaFilter}
           onSchemaPickerToggle={() => setIsSchemaPickerOpen((prev) => !prev)}
           onSchemaPickerClose={() => setIsSchemaPickerOpen(false)}
@@ -893,6 +904,12 @@ export function Sidebar() {
           />
         )}
       </div>
+
+      {routineEditorOpen && (
+        <Suspense fallback={null}>
+          <RoutineEditorModal />
+        </Suspense>
+      )}
     </div>
   );
 }

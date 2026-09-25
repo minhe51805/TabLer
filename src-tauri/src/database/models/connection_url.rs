@@ -51,8 +51,12 @@ impl ParsedConnectionUrl {
             "sqlite" => DatabaseType::SQLite,
             "redis" | "rediss" => DatabaseType::Redis,
             "mongodb" => DatabaseType::MongoDB,
-            "opensearch" | "elasticsearch" => DatabaseType::OpenSearch,
+            "opensearch" => DatabaseType::OpenSearch,
+            "elasticsearch" | "elastic" => DatabaseType::Elasticsearch,
             "oracle" | "ords" => DatabaseType::Oracle,
+            "spanner" | "googlespanner" => DatabaseType::Spanner,
+            "dynamodb" | "dynamo" => DatabaseType::DynamoDB,
+            "trino" | "presto" => DatabaseType::Trino,
             _ => return Err(format!("Unsupported database scheme: {}", scheme)),
         };
 
@@ -202,7 +206,11 @@ impl ParsedConnectionUrl {
             DatabaseType::LibSQL => Some(8080),
             DatabaseType::CloudflareD1 => None,
             DatabaseType::OpenSearch => Some(9200),
+            DatabaseType::Elasticsearch => Some(9200),
             DatabaseType::Oracle => Some(443),
+            DatabaseType::Spanner => Some(443),
+            DatabaseType::DynamoDB => Some(443),
+            DatabaseType::Trino => Some(8080),
         });
 
         Ok(Self {
@@ -369,7 +377,11 @@ impl ConnectionConfig {
             DatabaseType::LibSQL => 8080,
             DatabaseType::CloudflareD1 => 0,
             DatabaseType::OpenSearch => 9200,
+            DatabaseType::Elasticsearch => 9200,
             DatabaseType::Oracle => 443,
+            DatabaseType::Spanner => 443,
+            DatabaseType::DynamoDB => 443,
+            DatabaseType::Trino => 8080,
         }
     }
 

@@ -56,7 +56,7 @@ use commands::connection_export::{
     export_connections_to_file, import_connections_from_file, import_external_connections,
 };
 use commands::data_export::{
-    cancel_table_export, export_table_data, export_tables_to_directory,
+    cancel_table_export, export_table_data, export_tables_to_directory, get_export_formats,
     TableExportCancellationState,
 };
 use commands::data_import::{
@@ -83,6 +83,7 @@ use commands::plugins::{
 use commands::profiler::{execute_profiler_sample, get_profiler_probe, get_top_queries_probe};
 use commands::query::*;
 use commands::restore::{preview_database_restore, restore_database_sql};
+use commands::routines::{execute_routine, get_routine_definition, list_routines};
 use commands::safe_mode::{set_safe_mode_policy, SafeModeState};
 use commands::schedule::spawn_scheduler;
 use commands::schema_diff::{compare_schemas, generate_migration_script};
@@ -461,8 +462,13 @@ pub fn run() {
             export_table_data,
             export_tables_to_directory,
             cancel_table_export,
+            get_export_formats,
             execute_structure_statements,
             get_foreign_key_lookup_values,
+            // Routine commands
+            list_routines,
+            get_routine_definition,
+            execute_routine,
             // AI commands
             ask_ai,
             ask_ai_stream,

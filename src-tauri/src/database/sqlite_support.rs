@@ -1,11 +1,13 @@
 use super::models::*;
 use super::query_common::{statement_returns_rows, MAX_QUERY_RESULT_ROWS};
 use super::sqlite::SqliteDriver;
+use crate::utils::sql::split_sql_statements;
 use anyhow::Result;
 use futures_util::TryStreamExt;
 use sqlx::query::Query;
-use sqlx::sqlite::{SqliteArguments, SqliteRow};
+use sqlx::sqlite::{SqliteArguments, SqliteConnection, SqliteRow};
 use sqlx::{Column, Executor, QueryBuilder, Row, Sqlite, TypeInfo};
+use std::time::Instant;
 
 /// Query execution helpers and sqlite_master/PRAGMA metadata reads for the
 /// SQLite driver, split into a second inherent impl block.
@@ -105,6 +107,116 @@ impl SqliteDriver {
         Ok((rows, false))
     }
 
+    /// Shared body of `execute_query`/`execute_query_for_request`: every
+    /// statement of the batch runs on this one connection so a progress
+    /// handler installed for cancel coverage sees the whole batch.
+    pub(super) async fn execute_query_on_conn(
+        conn: &mut SqliteConnection,
+        sql: &str,
+    ) -> Result<QueryResult> {
+        let start = Instant::now();
+        let statements = split_sql_statements(sql);
+
+        if statements.len() <= 1 && Self::query_returns_rows(sql) {
+            let (rows, truncated) = Self::fetch_rows_limited(&mut *conn, sql).await?;
+            let mut result =
+                Self::build_result_from_rows(&rows, 0, sql.to_string(), 0, false, truncated);
+            result.execution_time_ms = start.elapsed().as_millis();
+            return Ok(result);
+        }
+
+        let mut total_affected: u64 = 0;
+        let mut last_result: Option<QueryResult> = None;
+        let iterable: Vec<&String> = if statements.len() > 1 {
+            statements.iter().collect()
+        } else {
+            statements.first().into_iter().collect()
+        };
+
+        for statement in iterable {
+            if Self::query_returns_rows(statement) {
+                let (rows, truncated) = Self::fetch_rows_limited(&mut *conn, statement).await?;
+                last_result = Some(Self::build_result_from_rows(
+                    &rows,
+                    0,
+                    sql.to_string(),
+                    total_affected,
+                    false,
+                    truncated,
+                ));
+            } else {
+                let result = sqlx::query(statement).execute(&mut *conn).await?;
+                total_affected += result.rows_affected();
+            }
+        }
+
+        let elapsed = start.elapsed().as_millis();
+        if let Some(mut result) = last_result {
+            result.execution_time_ms = elapsed;
+            result.affected_rows = total_affected;
+            return Ok(result);
+        }
+
+        Ok(QueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            affected_rows: total_affected,
+            execution_time_ms: elapsed,
+            query: sql.to_string(),
+            sandboxed: false,
+            truncated: false,
+        })
+    }
+
+    /// `fetch_parameterized_rows` on an explicit connection so request-scoped
+    /// execution stays on the connection carrying the cancel progress handler.
+    pub(super) async fn fetch_parameterized_rows_on_conn(
+        conn: &mut SqliteConnection,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<(Vec<SqliteRow>, bool)> {
+        let mut stream =
+            Self::bind_parameterized_query(sqlx::query(sql), parameters)?.fetch(&mut *conn);
+        let mut rows = Vec::new();
+        while let Some(row) = stream.try_next().await? {
+            if rows.len() == MAX_QUERY_RESULT_ROWS {
+                return Ok((rows, true));
+            }
+            rows.push(row);
+        }
+        Ok((rows, false))
+    }
+
+    /// Shared body of `execute_parameterized_query` and its request-scoped
+    /// variant on an explicit connection.
+    pub(super) async fn execute_parameterized_on_conn(
+        conn: &mut SqliteConnection,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        let start = Instant::now();
+        if Self::query_returns_rows(sql) {
+            let (rows, truncated) =
+                Self::fetch_parameterized_rows_on_conn(conn, sql, parameters).await?;
+            let mut result =
+                Self::build_result_from_rows(&rows, 0, sql.to_string(), 0, false, truncated);
+            result.execution_time_ms = start.elapsed().as_millis();
+            return Ok(result);
+        }
+        let outcome = Self::bind_parameterized_query(sqlx::query(sql), parameters)?
+            .execute(&mut *conn)
+            .await?;
+        Ok(QueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            affected_rows: outcome.rows_affected(),
+            execution_time_ms: start.elapsed().as_millis(),
+            query: sql.to_string(),
+            sandboxed: false,
+            truncated: false,
+        })
+    }
+
     pub(super) fn bind_parameterized_query<'q>(
         mut query: Query<'q, Sqlite, SqliteArguments<'q>>,
         parameters: &[QueryParameter],
@@ -140,23 +252,6 @@ impl SqliteDriver {
             };
         }
         Ok(query)
-    }
-
-    pub(super) async fn fetch_parameterized_rows(
-        &self,
-        sql: &str,
-        parameters: &[QueryParameter],
-    ) -> Result<(Vec<SqliteRow>, bool)> {
-        let mut stream =
-            Self::bind_parameterized_query(sqlx::query(sql), parameters)?.fetch(&self.pool);
-        let mut rows = Vec::new();
-        while let Some(row) = stream.try_next().await? {
-            if rows.len() == MAX_QUERY_RESULT_ROWS {
-                return Ok((rows, true));
-            }
-            rows.push(row);
-        }
-        Ok((rows, false))
     }
 
     pub(super) fn push_bound_value(

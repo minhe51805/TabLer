@@ -5267,7 +5267,7 @@ a {
     border: none;
     border-radius: 10px;
     background: transparent;
-    color: var(--neu-muted, var(--muted));
+    color: var(--neu-muted);
     cursor: pointer;
     transition:
       box-shadow 0.2s ease,
@@ -5275,13 +5275,13 @@ a {
   }
 
   .neu .mobile-nav-toggle:hover {
-    color: var(--neu-ink, var(--ink));
-    box-shadow: var(--neu-shadow-in, inset 0 1px 3px rgba(16, 24, 33, 0.08));
+    color: var(--neu-ink);
+    box-shadow: var(--neu-shadow-in);
   }
 
   .neu .mobile-nav-toggle[aria-expanded="true"] {
-    color: var(--neu-ink, var(--ink));
-    box-shadow: var(--neu-shadow-in, inset 0 1px 3px rgba(16, 24, 33, 0.08));
+    color: var(--neu-ink);
+    box-shadow: var(--neu-shadow-in);
   }
 
   .neu .mobile-nav-panel {
@@ -5291,23 +5291,19 @@ a {
     min-width: 210px;
     padding: 8px;
     border-radius: 16px;
-    background: var(--neu-surface, var(--paper));
+    background: var(--neu-surface);
     box-shadow:
-      var(--neu-shadow-out, 0 14px 34px rgba(16, 24, 33, 0.12)),
-      0 0 0 1px var(--line, #e6eaef);
+      var(--neu-shadow-out),
+      0 0 0 1px var(--line);
     z-index: 60;
     animation: mobile-nav-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
-  }
-
-  .neu .mobile-nav-panel[hidden] {
-    display: none;
   }
 
   .neu .mobile-nav-panel a {
     display: block;
     padding: 11px 14px;
     border-radius: 10px;
-    color: var(--neu-ink, var(--ink));
+    color: var(--neu-ink);
     font-size: 14.5px;
     font-weight: 500;
     text-decoration: none;
@@ -5315,8 +5311,8 @@ a {
   }
 
   .neu .mobile-nav-panel a:hover {
-    box-shadow: var(--neu-shadow-in, inset 0 1px 3px rgba(16, 24, 33, 0.08));
-    color: var(--neu-accent-deep, var(--blue));
+    box-shadow: var(--neu-shadow-in);
+    color: var(--neu-accent-deep);
   }
 }
 

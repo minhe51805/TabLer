@@ -30,6 +30,7 @@ const SQL_ENGINES_WITH_PREVIEW: DatabaseType[] = [
   "oracle",
   "spanner",
   "trino",
+  "surrealdb",
 ];
 
 // SQL dialects without a rollback-preview driver impl — preview_write is gated.
@@ -46,7 +47,16 @@ const SQL_ENGINES: DatabaseType[] = [...SQL_ENGINES_WITH_PREVIEW, ...SQL_ENGINES
 describe("agent engine tool gates", () => {
   it("classifies every configured engine", () => {
     expect(Object.keys(AGENT_QUERY_MODEL_BY_ENGINE).sort()).toEqual(
-      [...SQL_ENGINES, "cassandra", "redis", "mongodb", "opensearch", "elasticsearch"].sort(),
+      [
+        ...SQL_ENGINES,
+        "cassandra",
+        "redis",
+        "mongodb",
+        "opensearch",
+        "elasticsearch",
+        "typesense",
+        "weaviate",
+      ].sort(),
     );
   });
 
@@ -92,7 +102,7 @@ describe("agent engine tool gates", () => {
     expect(catalog).not.toContain('"action":"preview_write"');
   });
 
-  it.each(["redis", "opensearch", "elasticsearch"] as const)(
+  it.each(["redis", "opensearch", "elasticsearch", "typesense"] as const)(
     "hides SQL tools on non-SQL engine %s",
     (engine) => {
       const availability = agentToolAvailability(engine);
@@ -158,8 +168,7 @@ describe("agent engine tool gates", () => {
     // Cassandra speaks CQL INSERT — seed proposals are enabled.
     const cassandra = agentToolAvailability("cassandra");
     expect(isAgentToolEnabled("propose_seed_data", cassandra)).toBe(true);
-
-    for (const engine of ["redis", "opensearch", "elasticsearch"] as const) {
+    for (const engine of ["redis", "opensearch", "elasticsearch", "typesense"] as const) {
       const availability = agentToolAvailability(engine);
       expect(availability.documentPropose).toBe(false);
       expect(availability.sqlWritePreview).toBe(false);
@@ -246,6 +255,9 @@ describe("agent engine tool gates", () => {
       "cloudflare_d1",
       "opensearch",
       "elasticsearch",
+      "typesense",
+      "surrealdb",
+      "weaviate",
     ]) {
       expect(byKey[key]).toBe("plugin_http");
     }

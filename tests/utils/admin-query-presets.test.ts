@@ -61,6 +61,9 @@ describe("kill-session admin presets", () => {
       "cassandra",
       "opensearch",
       "elasticsearch",
+      "typesense",
+      "surrealdb",
+      "weaviate",
     ] as const) {
       const preset = getAdminQueryPreset(engine, "kill-session");
       expect(preset.supported, engine).toBe(false);
@@ -87,6 +90,13 @@ describe("process-list preset gating is engine-honest", () => {
   it("cloud IAM engines keep user management unsupported", () => {
     expect(getAdminQueryPreset("bigquery", "user-management").supported).toBe(false);
     expect(getAdminQueryPreset("spanner", "user-management").supported).toBe(false);
+  });
+  it("typesense, weaviate and surrealdb keep all admin surfaces unsupported", () => {
+    for (const engine of ["typesense", "surrealdb", "weaviate"] as const) {
+      expect(getAdminQueryPreset(engine, "process-list").supported).toBe(false);
+      expect(getAdminQueryPreset(engine, "user-management").supported).toBe(false);
+      expect(getAdminQueryPreset(engine, "kill-session").supported).toBe(false);
+    }
   });
 });
 

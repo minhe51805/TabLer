@@ -57,6 +57,9 @@ impl ParsedConnectionUrl {
             "spanner" | "googlespanner" => DatabaseType::Spanner,
             "dynamodb" | "dynamo" => DatabaseType::DynamoDB,
             "trino" | "presto" => DatabaseType::Trino,
+            "typesense" => DatabaseType::Typesense,
+            "surrealdb" | "surreal" | "surrealql" => DatabaseType::SurrealDB,
+            "weaviate" => DatabaseType::Weaviate,
             _ => return Err(format!("Unsupported database scheme: {}", scheme)),
         };
 
@@ -211,6 +214,9 @@ impl ParsedConnectionUrl {
             DatabaseType::Spanner => Some(443),
             DatabaseType::DynamoDB => Some(443),
             DatabaseType::Trino => Some(8080),
+            DatabaseType::Typesense => Some(8108),
+            DatabaseType::SurrealDB => Some(8000),
+            DatabaseType::Weaviate => Some(8080),
         });
 
         Ok(Self {
@@ -382,6 +388,9 @@ impl ConnectionConfig {
             DatabaseType::Spanner => 443,
             DatabaseType::DynamoDB => 443,
             DatabaseType::Trino => 8080,
+            DatabaseType::Typesense => 8108,
+            DatabaseType::SurrealDB => 8000,
+            DatabaseType::Weaviate => 8080,
         }
     }
 

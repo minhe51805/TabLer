@@ -94,6 +94,23 @@ const PROCESS_LIST_PRESETS: Partial<Record<DatabaseType, AdminQueryPreset>> = {
     supported: true,
     content: "GET /_cat/tasks?format=json",
   },
+  typesense: {
+    supported: false,
+    content: "",
+    reason:
+      "Typesense exposes no statement surface for live operations; task inspection is a per-node /operations GET the query surface cannot run.",
+  },
+  surrealdb: {
+    supported: false,
+    content: "",
+    reason:
+      "SurrealDB has no process list — INFO FOR DB reports schema structure, not running statements or sessions.",
+  },
+  weaviate: {
+    supported: false,
+    content: "",
+    reason: "Weaviate exposes no process list or statement surface for running queries.",
+  },
 };
 
 const USER_MANAGEMENT_PRESETS: Partial<Record<DatabaseType, AdminQueryPreset>> = {
@@ -182,6 +199,24 @@ const USER_MANAGEMENT_PRESETS: Partial<Record<DatabaseType, AdminQueryPreset>> =
     reason:
       "Elasticsearch security runs through the X-Pack _security REST API; user administration is not integrated.",
   },
+  typesense: {
+    supported: false,
+    content: "",
+    reason:
+      "Typesense authentication is API-key based; key administration lives in the /keys REST API, not in-database users.",
+  },
+  surrealdb: {
+    supported: false,
+    content: "",
+    reason:
+      "SurrealDB authentication runs through scoped access definitions and system users; user administration is not integrated.",
+  },
+  weaviate: {
+    supported: false,
+    content: "",
+    reason:
+      "Weaviate uses a static API key (or external OIDC); there is no in-database user catalog to query.",
+  },
 };
 
 /**
@@ -269,6 +304,22 @@ const KILL_SESSION_PRESETS: Partial<Record<DatabaseType, AdminQueryPreset>> = {
     supported: false,
     content: "",
     reason: "DynamoDB exposes no session or query kill primitive.",
+  },
+  typesense: {
+    supported: false,
+    content: "",
+    reason: "Typesense has no session or statement kill primitive the query surface can run.",
+  },
+  surrealdb: {
+    supported: false,
+    content: "",
+    reason:
+      "SurrealDB exposes no KILL primitive over the HTTP /rpc endpoint; cancellation is client-side only.",
+  },
+  weaviate: {
+    supported: false,
+    content: "",
+    reason: "Weaviate has no session or query kill primitive.",
   },
 };
 

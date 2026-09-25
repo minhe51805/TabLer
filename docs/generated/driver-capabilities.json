@@ -656,5 +656,98 @@
       "Prepared parameters run through PREPARE/EXECUTE with escaped literals — Trino has no wire-level binds.",
       "Cancel issues HTTP DELETE on the running query URI."
     ]
+  },
+  {
+    "key": "typesense",
+    "label": "Typesense",
+    "tier": "specialized",
+    "queryModel": "search",
+    "distribution": "plugin_http",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "not_applicable",
+      "queryCancellation": "unsupported",
+      "pagination": "supported",
+      "inlineEdit": "supported",
+      "atomicEditQueue": "unsupported",
+      "atomicCsvImport": "limited",
+      "dataExport": "supported",
+      "explain": "unsupported",
+      "schemaEdit": "limited",
+      "backupRestore": "limited",
+      "administration": "unsupported"
+    },
+    "limitations": [
+      "Atomic mutations are unsupported: Typesense has no multi-document transaction primitive; edit queues are rejected and documents/import reports partial application honestly (per-line JSONL, not a transaction).",
+      "CSV imports use documents/import?action=emplace bounded per batch; a mid-batch failure leaves earlier lines imported and reports the count.",
+      "No server-side query cancellation: cancel is a client-side abort honoured before send and between statements.",
+      "The SQL editor accepts a documented subset (SELECT/SEARCH/INSERT/UPDATE/DELETE/DDL); OR, LIKE, IS [NOT] NULL, joins, and aggregates are rejected — Typesense omits optional fields instead of storing NULLs.",
+      "UPDATE/DELETE resolve WHERE id = <literal> to a document; DELETE also accepts arbitrary filter predicates; grid row selectors use the implicit id field.",
+      "Prepared parameters, EXPLAIN, and admin/user endpoints are unavailable; the API key is configured as the connection password and TLS is required for non-loopback hosts.",
+      "Restore replays CREATE/INSERT statements via execute_query — per-statement, no transactional pin."
+    ]
+  },
+  {
+    "key": "surrealdb",
+    "label": "SurrealDB",
+    "tier": "specialized",
+    "queryModel": "sql",
+    "distribution": "plugin_http",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "supported",
+      "queryCancellation": "limited",
+      "pagination": "supported",
+      "inlineEdit": "supported",
+      "atomicEditQueue": "supported",
+      "atomicCsvImport": "supported",
+      "dataExport": "supported",
+      "explain": "limited",
+      "schemaEdit": "limited",
+      "backupRestore": "supported",
+      "administration": "unsupported"
+    },
+    "limitations": [
+      "Runs over the HTTP /rpc query endpoint so $name binds travel as typed vars; requests are stateless — transactions must fit inside one request body (default body cap bounds atomic queues and restores).",
+      "Atomic edits/imports and write previews run inside a single-request BEGIN…COMMIT (BEGIN…CANCEL for preview) script; any statement error or THROW rolls the whole transaction back server-side.",
+      "Inline edits address records by the id selector's table:id record link (numeric/UUID/datetime id parts keep their types); other selector columns bind as field equality.",
+      "Cancel aborts the HTTP request client-side only; SurrealDB offers no statement kill over HTTP, so the engine may keep running it.",
+      "Quick filters translate LIKE to string::starts_with/ends_with/contains by wildcard shape and <> to !=; _ and interior-% LIKE patterns are rejected.",
+      "Schema edits run DEFINE TABLE/FIELD/INDEX statements sequentially; SurrealDB has no DDL transaction.",
+      "Explain is limited to SELECT … EXPLAIN inside the query path; EXPLAIN FULL is untranslated."
+    ]
+  },
+  {
+    "key": "weaviate",
+    "label": "Weaviate",
+    "tier": "specialized",
+    "queryModel": "document",
+    "distribution": "plugin_http",
+    "capabilities": {
+      "connect": "supported",
+      "query": "supported",
+      "preparedParameters": "supported",
+      "queryCancellation": "limited",
+      "pagination": "supported",
+      "inlineEdit": "supported",
+      "atomicEditQueue": "unsupported",
+      "atomicCsvImport": "limited",
+      "dataExport": "supported",
+      "explain": "unsupported",
+      "schemaEdit": "limited",
+      "backupRestore": "unsupported",
+      "administration": "unsupported"
+    },
+    "limitations": [
+      "No transactions anywhere in the Weaviate API: atomic edit queues and write previews reject; the batch objects endpoint is not used for CSV import because it is not atomic.",
+      "GraphQL sort requires Weaviate 1.24+; older servers surface the raw GraphQL error.",
+      "SQL LIKE %/_ map to Weaviate wildcards */? unescaped (no escape exists).",
+      "Single-schema engine: the database is fixed; multi-tenancy is per-class and out of scope.",
+      "Inline edits address objects by their uuid id; PATCH merges properties server-side and DELETE of a missing object counts as not-deleted.",
+      "No explain, administration, or backup/restore surface; static API key auth only.",
+      "Cancel aborts the HTTP request client-side only; Weaviate cannot kill a running query server-side."
+    ]
   }
 ]

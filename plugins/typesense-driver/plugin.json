@@ -1,0 +1,36 @@
+{
+  "apiVersion": 1,
+  "id": "typesense-driver",
+  "name": "Typesense driver",
+  "version": "1.0.0",
+  "publishedAt": "2026-09-25T00:00:00.000Z",
+  "kind": "adapter",
+  "description": "Adds Typesense connectivity — collection browsing, filtered document search, inline document edits, and JSONL batch import — over the declarative HTTP driver host.",
+  "author": "TableR Team",
+  "entry": null,
+  "capabilities": ["database"],
+  "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+  "compatibility": {
+    "minAppVersion": "0.1.4",
+    "maxAppVersion": null,
+    "platforms": [],
+    "architectures": []
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "digest": "83b0376335d5d9c7afdfe10d300cc3cc3f437492183cf82572cc96e2d537ee0b"
+  },
+  "updateUrl": null,
+  "contributes": {
+    "formats": [],
+    "drivers": [
+      {
+        "id": "typesense",
+        "label": "Typesense",
+        "protocol": "typesense",
+        "runtime": "declarative-http-v1",
+        "status": "stable"
+      }
+    ]
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "apiVersion": 1,
+  "id": "surrealdb-driver",
+  "name": "SurrealDB driver",
+  "version": "1.0.0",
+  "publishedAt": "2026-09-25T00:00:00.000Z",
+  "kind": "adapter",
+  "description": "Adds SurrealDB connectivity (SurrealQL over the HTTP /rpc endpoint) through the declarative HTTP driver host.",
+  "author": "TableR Team",
+  "entry": null,
+  "capabilities": ["database"],
+  "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+  "compatibility": {
+    "minAppVersion": "0.1.4",
+    "maxAppVersion": null,
+    "platforms": [],
+    "architectures": []
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "digest": "16be79c650105f77b3a624565c48cf1bd5196e664114818ebcd47d44ebef1df7"
+  },
+  "updateUrl": null,
+  "contributes": {
+    "formats": [],
+    "drivers": [
+      {
+        "id": "surrealdb",
+        "label": "SurrealDB",
+        "protocol": "surrealdb",
+        "runtime": "declarative-http-v1",
+        "status": "stable"
+      }
+    ]
+  }
+}

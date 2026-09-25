@@ -20,8 +20,13 @@ This project and everyone participating in it is governed by the [TabLer Code of
 
 ### Prerequisites
 
-- Node.js 18+ and npm
+- Node.js 20+ and npm (`npm ci --legacy-peer-deps` — the flag is required)
+- Rust stable and the [Tauri 2 system prerequisites](https://v2.tauri.app/start/prerequisites/)
 - Git
+
+> First contribution? Read [ONBOARDING.md](ONBOARDING.md) first — it walks the
+> architecture docs in order and lists the repo traps (sidecar layout, release
+> label contract, i18n copy modules) that are easy to trip on.
 
 ### Local Development Setup
 
@@ -35,13 +40,14 @@ This project and everyone participating in it is governed by the [TabLer Code of
 2. **Install dependencies**
 
    ```bash
-   npm install
+   npm ci --legacy-peer-deps
    ```
 
-3. **Run the development server**
+3. **Run the desktop app** (not just the web dev server — most of the app needs
+   the Tauri backend)
 
    ```bash
-   npm run dev
+   npm run tauri -- dev
    ```
 
 4. **Verify everything works**
@@ -294,7 +300,7 @@ npm run typecheck       # Type check
 
 ## License
 
-By contributing to TabLer, you agree that your contributions will be licensed under the terms of the [GNU General Public License v3.0](LICENSE).
+By contributing to TabLer, you agree that your contributions will be licensed under the terms of the [GNU Affero General Public License v3.0](LICENSE).
 
 ---
 

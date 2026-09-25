@@ -2004,6 +2004,7 @@ export function DataGrid({
           }
           onUnmaskColumn={columnMasks.unmaskColumn}
           onUnmaskAll={columnMasks.unmaskAll}
+          connectionId={connectionId}
         />
 
         <div

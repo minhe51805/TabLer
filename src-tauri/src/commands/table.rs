@@ -19,6 +19,10 @@ use tauri::{AppHandle, Emitter, State};
 use tokio::sync::mpsc;
 use tokio::time::{timeout, Duration};
 
+use crate::commands::rewind::capture_rewind_checkpoint;
+use crate::database::models::RowKeyValue;
+use crate::storage::checkpoint_store::CheckpointKind;
+
 const TABLE_QUERY_TIMEOUT: Duration = Duration::from_secs(120);
 const TABLE_METADATA_TIMEOUT: Duration = Duration::from_secs(60);
 const CSV_FILE_IMPORT_TIMEOUT: Duration = Duration::from_secs(30 * 60);
@@ -62,6 +66,40 @@ pub struct AtomicCsvImportSummary {
 pub struct CsvImportCancellationState {
     imports: Mutex<HashMap<String, Arc<AtomicBool>>>,
 }
+/// Verify the driver-reported affected-row count for inline write commands.
+/// A write that reports fewer rows than the UI asked for is a silent partial
+/// failure — the engine skipped rows or the selector no longer matches. Surfacing
+/// `Ok(0)`/a shortfall as success would let the grid believe the write landed, so
+/// the mismatch is a hard error here. Engines that synthesize the count
+/// (Cassandra: 1 or batch len) pass trivially; SQL engines report real
+/// `rows_affected()`. `hint` explains the most likely cause for the UI.
+pub(crate) fn ensure_rows_affected(
+    operation: &str,
+    expected: u64,
+    affected: u64,
+    hint: &str,
+) -> Result<u64, String> {
+    if expected == 0 {
+        return Ok(affected);
+    }
+    if affected == 0 {
+        return Err(format!("{operation} affected no rows. {hint}"));
+    }
+    if affected < expected {
+        return Err(format!(
+            "{operation} affected {affected} of {expected} requested row(s). {hint}"
+        ));
+    }
+    Ok(affected)
+}
+
+/// Explanation for UPDATE/DELETE shortfalls: the stored primary-key selector
+/// no longer matches live data (row edited or deleted elsewhere).
+const STALE_PK_HINT: &str = "The selected row(s) no longer match the stored primary-key values (changed or deleted by another session). Reload the table and retry.";
+
+/// Explanation for INSERT shortfalls: the engine accepted the statement but
+/// reported fewer inserted rows than requested (e.g. upsert-style skips).
+const INSERT_SKIP_HINT: &str = "The engine reported fewer inserted rows than were sent — part of the write was skipped. Check for constraint or conflict handling and verify the table contents.";
 
 impl CsvImportCancellationState {
     pub fn start(&self, operation_id: &str) -> Result<Arc<AtomicBool>, String> {
@@ -282,8 +320,19 @@ pub async fn update_table_cell(
         .get_driver(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
+    // Capture the pre-image before the write so Rewind can undo it.
+    capture_rewind_checkpoint(
+        &driver,
+        &connection_id,
+        &request.table,
+        request.database.as_deref(),
+        CheckpointKind::Update,
+        vec![request.primary_keys.clone()],
+        vec![request.target_column.clone()],
+    )
+    .await;
     let window = table_query_timeout(db_manager.inner(), &connection_id).await;
-    timeout(window, driver.update_table_cell(&request))
+    let affected = timeout(window, driver.update_table_cell(&request))
         .await
         .map_err(|_| {
             format!(
@@ -291,9 +340,9 @@ pub async fn update_table_cell(
                 window.as_secs()
             )
         })?
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    ensure_rows_affected("The cell update", 1, affected, STALE_PK_HINT)
 }
-
 #[tauri::command]
 pub async fn apply_table_updates_atomically(
     connection_id: String,
@@ -320,8 +369,31 @@ pub async fn apply_table_updates_atomically(
         .get_driver(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
+    let rewind_selectors: Vec<Vec<RowKeyValue>> =
+        updates.iter().map(|u| u.primary_keys.clone()).collect();
+    let rewind_columns: Vec<String> = {
+        let mut seen = std::collections::BTreeSet::new();
+        updates
+            .iter()
+            .map(|u| u.target_column.clone())
+            .filter(|c| seen.insert(c.clone()))
+            .collect()
+    };
+    let rewind_table = updates.first().map(|u| u.table.clone()).unwrap_or_default();
+    let rewind_database = updates.first().and_then(|u| u.database.clone());
+    capture_rewind_checkpoint(
+        &driver,
+        &connection_id,
+        &rewind_table,
+        rewind_database.as_deref(),
+        CheckpointKind::Update,
+        rewind_selectors,
+        rewind_columns,
+    )
+    .await;
     let window = table_query_timeout(db_manager.inner(), &connection_id).await;
-    timeout(window, driver.apply_table_updates_atomically(&updates))
+    let expected = updates.len() as u64;
+    let affected = timeout(window, driver.apply_table_updates_atomically(&updates))
         .await
         .map_err(|_| {
             format!(
@@ -329,7 +401,8 @@ pub async fn apply_table_updates_atomically(
                 window.as_secs()
             )
         })?
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    ensure_rows_affected("The edit queue", expected, affected, STALE_PK_HINT)
 }
 
 #[tauri::command]
@@ -355,11 +428,24 @@ pub async fn delete_table_rows(
         .get_driver(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
+    // Capture the pre-image before the write so Rewind can undo it.
+    capture_rewind_checkpoint(
+        &driver,
+        &connection_id,
+        &request.table,
+        request.database.as_deref(),
+        CheckpointKind::Delete,
+        request.rows.clone(),
+        Vec::new(),
+    )
+    .await;
     let window = table_query_timeout(db_manager.inner(), &connection_id).await;
-    timeout(window, driver.delete_table_rows(&request))
+    let expected = request.rows.len() as u64;
+    let affected = timeout(window, driver.delete_table_rows(&request))
         .await
         .map_err(|_| format!("Row deletion timed out after {} seconds.", window.as_secs()))?
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    ensure_rows_affected("The row deletion", expected, affected, STALE_PK_HINT)
 }
 
 #[tauri::command]
@@ -390,7 +476,7 @@ pub async fn insert_table_row(
         .await
         .map_err(|e| e.to_string())?;
     let window = table_query_timeout(db_manager.inner(), &connection_id).await;
-    timeout(window, driver.insert_table_row(&request))
+    let affected = timeout(window, driver.insert_table_row(&request))
         .await
         .map_err(|_| {
             format!(
@@ -398,7 +484,8 @@ pub async fn insert_table_row(
                 window.as_secs()
             )
         })?
-        .map_err(|e| e.to_string())
+        .map_err(|e| e.to_string())?;
+    ensure_rows_affected("The row insert", 1, affected, INSERT_SKIP_HINT)
 }
 
 #[tauri::command]
@@ -503,13 +590,16 @@ pub async fn insert_table_rows_atomically(
         .map_err(|e| e.to_string())?;
     let cancelled = cancellation_state.start(&operation_id)?;
     let window = table_query_timeout(db_manager.inner(), &connection_id).await;
+    let expected = requests.len() as u64;
     let result = match timeout(
         window,
         driver.insert_table_rows_atomically(&requests, cancelled),
     )
     .await
     {
-        Ok(result) => result.map_err(|e| e.to_string()),
+        Ok(result) => result.map_err(|e| e.to_string()).and_then(|affected| {
+            ensure_rows_affected("The CSV import", expected, affected, INSERT_SKIP_HINT)
+        }),
         Err(_) => Err(format!(
             "CSV import timed out after {} seconds.",
             window.as_secs()
@@ -902,6 +992,48 @@ pub fn cancel_csv_import(
     cancellation_state: State<'_, CsvImportCancellationState>,
 ) -> bool {
     cancellation_state.cancel(&operation_id)
+}
+
+#[cfg(test)]
+mod affected_rows_tests {
+    use super::{ensure_rows_affected, INSERT_SKIP_HINT, STALE_PK_HINT};
+
+    #[test]
+    fn zero_affected_rows_is_an_error_not_silent_success() {
+        let error = ensure_rows_affected("The cell update", 1, 0, STALE_PK_HINT)
+            .expect_err("a no-row update must surface, not report success");
+        assert!(error.contains("affected no rows"));
+        assert!(error.contains("primary-key"));
+    }
+
+    #[test]
+    fn partial_affected_count_is_an_error() {
+        let error = ensure_rows_affected("The row deletion", 3, 2, STALE_PK_HINT)
+            .expect_err("a partial delete must surface");
+        assert!(error.contains("2 of 3"));
+    }
+
+    #[test]
+    fn exact_and_over_counts_pass_unchanged() {
+        assert_eq!(
+            ensure_rows_affected("The row insert", 1, 1, INSERT_SKIP_HINT),
+            Ok(1)
+        );
+        // Engines that count matched rows twice (MySQL update-touched semantics)
+        // or synthesize batch length must not trip the guard.
+        assert_eq!(
+            ensure_rows_affected("The cell update", 1, 2, STALE_PK_HINT),
+            Ok(2)
+        );
+    }
+
+    #[test]
+    fn empty_requests_skip_verification() {
+        assert_eq!(
+            ensure_rows_affected("The edit queue", 0, 0, STALE_PK_HINT),
+            Ok(0)
+        );
+    }
 }
 
 #[cfg(test)]

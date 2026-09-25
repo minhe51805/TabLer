@@ -271,6 +271,27 @@ compile_ back into the rule that was requested before anything is written. A rul
 loader cannot compile is refused rather than installed inert, and an existing file is never
 overwritten, so the loop cannot clobber a hand-authored guardrail.
 
+## 6a. Memory on disk — threat model (deliberate)
+
+`MEMORY.md` files under `<data_dir>/agent-memory/<conn>/<db>/` are **plaintext
+Markdown by design**: they must stay inspectable, hand-editable and diffable —
+the same contract `claude-code`'s `.claude/agent-memory/` and `opencode`'s
+memory packs follow. Encrypting them would break that workflow for a marginal
+gain, since anything sensitive enough to need encryption should not be written
+to agent memory at all (connection credentials live in the OS keyring, not here).
+
+The hardening that _does_ apply, without breaking the contract:
+
+- memory-scope directory is created `0700` on Unix (`write_memory_file`);
+  Windows inherits the profile ACL, which is already owner-only;
+- `MEMORY.md` writes refuse to follow symlinks and go through a staging file +
+  atomic rename, so a planted link or a mid-write crash cannot leak or tear it;
+- memory names are slug-sanitized — a name can never escape the scope dir.
+
+**Do not** store secrets in memory bodies. The `check:secrets` gate scans the
+repo, not the data dir; if a user dumps credentials into a memory note, that is
+their file — same trust boundary as a `.env` they committed themselves.
+
 ## 7. Scheduled agent tasks (P10)
 
 Implementation: `src-tauri/src/storage/schedule_storage.rs` (row model + outcome write-back),

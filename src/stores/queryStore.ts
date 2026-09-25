@@ -6,6 +6,8 @@ import type {
   ColumnDetail,
   QueryParameter,
   QueryResult,
+  RewindCheckpointInfo,
+  RewindRestoreOutcome,
   TableCellUpdateRequest,
   TableRowDeleteRequest,
   TableStructure,
@@ -129,6 +131,12 @@ export interface QueryState {
     operationId: string,
   ) => Promise<AtomicCsvImportSummary>;
   cancelCsvImport: (operationId: string) => Promise<boolean>;
+  listRewindCheckpoints: (connectionId: string) => Promise<RewindCheckpointInfo[]>;
+  restoreRewindCheckpoint: (
+    connectionId: string,
+    checkpointId: string,
+  ) => Promise<RewindRestoreOutcome>;
+  deleteRewindCheckpoint: (connectionId: string, checkpointId: string) => Promise<boolean>;
   exportTableData: (
     connectionId: string,
     request: {
@@ -634,6 +642,22 @@ export const useQueryStore = create<QueryState>((set, get) => ({
 
   cancelCsvImport: async (operationId) =>
     invokeMutation<boolean>("cancel_csv_import", { operationId }),
+
+  listRewindCheckpoints: async (connectionId) =>
+    invokeMutation<RewindCheckpointInfo[]>("list_rewind_checkpoints", { connectionId }),
+
+  restoreRewindCheckpoint: async (connectionId, checkpointId) => {
+    const outcome = await invokeMutation<RewindRestoreOutcome>("restore_rewind_checkpoint", {
+      connectionId,
+      checkpointId,
+    });
+    // Refusals never mutate data, so only a real restore touches the cache.
+    if (outcome.restored !== null) invalidateQueryResultCache(connectionId);
+    return outcome;
+  },
+
+  deleteRewindCheckpoint: async (connectionId, checkpointId) =>
+    invokeMutation<boolean>("delete_rewind_checkpoint", { connectionId, checkpointId }),
 
   exportTableData: async (connectionId, request, operationId) =>
     invokeMutation<{ filePath: string; format: string; rowCount: number }>("export_table_data", {

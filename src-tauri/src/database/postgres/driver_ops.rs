@@ -508,6 +508,50 @@ impl DatabaseDriver for PostgresDriver {
         tx.commit().await?;
         Ok(total_affected)
     }
+    async fn select_rows_by_keys(
+        &self,
+        table: &str,
+        _database: Option<&str>,
+        selectors: &[Vec<RowKeyValue>],
+    ) -> Result<Vec<QueryResult>> {
+        let mut results = Vec::with_capacity(selectors.len());
+        for selector in selectors {
+            if selector.is_empty() {
+                return Err(anyhow!(
+                    "A rewind selector must include at least one key column"
+                ));
+            }
+            let mut builder = QueryBuilder::<Postgres>::new("SELECT * FROM ");
+            builder.push(qualify_postgres_table_name(table, "public")?);
+            builder.push(" WHERE ");
+            for (index, key) in selector.iter().enumerate() {
+                if index > 0 {
+                    builder.push(" AND ");
+                }
+                builder.push(quote_postgres_order_by(&key.column)?);
+                if key.value.is_null() {
+                    builder.push(" IS NULL");
+                } else {
+                    builder.push(" = ");
+                    Self::push_bound_value(&mut builder, &key.value)?;
+                }
+            }
+            let mut query_rows = Vec::new();
+            let mut stream = builder.build().fetch(&self.pool());
+            while let Some(row) = stream.try_next().await? {
+                query_rows.push(row);
+            }
+            results.push(Self::build_result_from_rows(
+                &query_rows,
+                0,
+                String::new(),
+                0,
+                false,
+                false,
+            ));
+        }
+        Ok(results)
+    }
 
     async fn use_database(&self, database: &str) -> Result<()> {
         let database = database.trim();

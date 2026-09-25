@@ -27672,6 +27672,12 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   /* Dropdown pills keep the chevron — the icon alone would look like a dead
      button, and icon+⌄ still fits the collapsed pill. */
 }
+/* The Table/Chart toggle lives inside .datagrid-topbar-actions; keep its two
+   segments on one line even when the actions row wraps. */
+.datagrid-topbar-actions .datagrid-view-toggle {
+  flex-wrap: nowrap;
+  flex: 0 0 auto;
+}
 
 @media (max-width: 980px) {
   .datagrid-topbar {

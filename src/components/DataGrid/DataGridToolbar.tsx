@@ -1073,7 +1073,8 @@ export function DataGridToolbar({
           />
         </div>
 
-        {/* View mode toggle: Table / Chart (after the action buttons) */}
+        {/* View mode toggle — inside the actions row so it flows/wraps with
+            the buttons instead of detaching as a floating box. */}
         <div className="datachart-toggle-group datagrid-view-toggle">
           <button
             type="button"

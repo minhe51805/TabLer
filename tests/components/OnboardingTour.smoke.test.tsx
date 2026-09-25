@@ -51,7 +51,7 @@ describe("OnboardingTour", () => {
     seedLauncherDom();
     render(<OnboardingTour />);
     expect(screen.getByText("Start with the sample data")).toBeTruthy();
-    expect(screen.getByText("1 / 3")).toBeTruthy();
+    expect(screen.getByLabelText("1 / 3")).toBeTruthy();
   });
 
   it("clicking the sample CTA advances to the creating step", () => {

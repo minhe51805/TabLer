@@ -52,44 +52,109 @@
 .onboarding-popover {
   position: fixed;
   width: 320px;
-  padding: 16px 18px 14px;
+  padding: 18px 18px 14px;
   background: var(--bg-panel, #151a26);
   border: 1px solid var(--border, #2a3346);
-  border-radius: 10px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+  border-radius: 12px;
+  box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.55),
+    0 0 0 1px rgba(56, 189, 248, 0.12);
   color: var(--text-primary, #e8ecf4);
   outline: none;
+}
+
+/* Arrow pointing at the cutout — the edge flips with `data-placement`. */
+.onboarding-arrow {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  background: inherit;
+  border: inherit;
+  transform: rotate(45deg);
+}
+
+.onboarding-popover[data-placement="bottom"] .onboarding-arrow {
+  top: -5px;
+  left: calc(50% - 5px);
+  border-right: none;
+  border-bottom: none;
+}
+
+.onboarding-popover[data-placement="top"] .onboarding-arrow {
+  bottom: -5px;
+  left: calc(50% - 5px);
+  border-left: none;
+  border-top: none;
+}
+
+.onboarding-popover[data-placement="right"] .onboarding-arrow {
+  left: -5px;
+  top: calc(50% - 5px);
+  border-right: none;
+  border-top: none;
+}
+
+.onboarding-popover[data-placement="left"] .onboarding-arrow {
+  right: -5px;
+  top: calc(50% - 5px);
+  border-left: none;
+  border-bottom: none;
 }
 
 .onboarding-skip {
   position: absolute;
   top: 8px;
   right: 10px;
-  padding: 2px 8px;
-  font-size: 11px;
+  padding: 3px 9px;
+  font-size: 11.5px;
   color: var(--text-muted, #7a8499);
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: 5px;
   cursor: pointer;
+  transition:
+    color 120ms ease,
+    background 120ms ease;
 }
 
-.onboarding-skip:hover {
+.onboarding-skip:hover,
+.onboarding-skip:focus-visible {
   color: var(--text-primary, #e8ecf4);
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.08);
 }
 
+/* Step dots — a progress strip reads better than "3 / 8" text. */
 .onboarding-step-count {
-  font-size: 11px;
-  color: var(--text-muted, #7a8499);
-  letter-spacing: 0.04em;
-  margin-bottom: 4px;
+  display: flex;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+
+.onboarding-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--border, #2a3346);
+  transition:
+    background 200ms ease,
+    transform 200ms ease;
+}
+
+.onboarding-dot.done {
+  background: var(--accent, #38bdf8);
+  opacity: 0.45;
+}
+
+.onboarding-dot.active {
+  background: var(--accent, #38bdf8);
+  transform: scale(1.3);
 }
 
 .onboarding-title {
   margin: 0 0 6px;
   font-size: 15px;
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .onboarding-body {
@@ -97,6 +162,16 @@
   font-size: 13px;
   line-height: 1.55;
   color: var(--text-secondary, #b6bfd1);
+}
+
+.onboarding-code {
+  padding: 1px 5px;
+  font-family: var(--font-mono, "Cascadia Code", Consolas, monospace);
+  font-size: 12px;
+  background: rgba(56, 189, 248, 0.12);
+  border: 1px solid rgba(56, 189, 248, 0.22);
+  border-radius: 4px;
+  color: var(--accent, #38bdf8);
 }
 
 .onboarding-actions {
@@ -111,8 +186,19 @@
   font-size: 12.5px;
 }
 
+/* Click-through steps: a pointer icon + hint instead of a button. */
 .onboarding-click-hint {
-  font-size: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-muted, #7a8499);
+}
+
+.onboarding-click-icon {
+  width: 15px;
+  height: 15px;
+  color: var(--accent, #38bdf8);
   animation: onboarding-hint-bounce 1.2s ease-in-out infinite;
 }
 
@@ -122,7 +208,7 @@
     transform: translateY(0);
   }
   50% {
-    transform: translateY(-4px);
+    transform: translateY(-3px);
   }
 }
 

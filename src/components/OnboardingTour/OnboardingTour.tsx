@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { MousePointerClick } from "lucide-react";
 import { createPortal } from "react-dom";
 import { getCurrentAppLanguage } from "../../i18n";
 import { useConnectionStore } from "../../stores/connectionStore";
@@ -220,12 +221,20 @@ export function OnboardingTour() {
 
   const isLast = tourStepIndex === steps.length - 1;
   const clickable = step.advanceOn === "click";
-
   // Popover placement: preferred side, flipped when it would clip the
-  // viewport; centered when there is no spotlight target.
-  const popoverStyle: React.CSSProperties = rect
+  // viewport; centered when there is no spotlight target. The resolved
+  // placement drives the arrow edge via `data-placement`.
+  const { style: popoverStyle, placement: effectivePlacement } = rect
     ? placePopover(rect, step.placement ?? "bottom")
-    : { position: "fixed", top: "50%", left: "50%", transform: "translate(-50%, -50%)" };
+    : {
+        style: {
+          position: "fixed",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+        } as React.CSSProperties,
+        placement: "none" as const,
+      };
 
   return createPortal(
     <div className="onboarding-tour" role="dialog" aria-modal="true" aria-label={stepCopy.title}>
@@ -275,7 +284,14 @@ export function OnboardingTour() {
         <div className="onboarding-dim onboarding-dim--full" />
       )}
 
-      <div ref={popoverRef} className="onboarding-popover" style={popoverStyle} tabIndex={-1}>
+      <div
+        ref={popoverRef}
+        className="onboarding-popover"
+        style={popoverStyle}
+        data-placement={rect ? effectivePlacement : "none"}
+        tabIndex={-1}
+      >
+        {rect && <span className="onboarding-arrow" aria-hidden="true" />}
         <button
           type="button"
           className="onboarding-skip"
@@ -284,9 +300,21 @@ export function OnboardingTour() {
         >
           {copy.skip}
         </button>
-        <div className="onboarding-step-count">{copy.stepOf(tourStepIndex + 1, steps.length)}</div>
+        <div
+          className="onboarding-step-count"
+          aria-label={copy.stepOf(tourStepIndex + 1, steps.length)}
+        >
+          {steps.map((s, i) => (
+            <span
+              key={s.id}
+              className={`onboarding-dot ${
+                i < tourStepIndex ? "done" : i === tourStepIndex ? "active" : ""
+              }`}
+            />
+          ))}
+        </div>
         <h3 className="onboarding-title">{stepCopy.title}</h3>
-        <p className="onboarding-body">{stepCopy.body}</p>
+        <p className="onboarding-body">{renderCopyBody(stepCopy.body)}</p>
         <div className="onboarding-actions">
           {tourStepIndex > 0 && (
             <button type="button" className="btn" onClick={back}>
@@ -304,7 +332,8 @@ export function OnboardingTour() {
           )}
           {clickable && (
             <span className="onboarding-click-hint" aria-hidden="true">
-              👆
+              <MousePointerClick className="onboarding-click-icon" />
+              <span>{copy.clickHint}</span>
             </span>
           )}
           {step.advanceOn === "auto" && <span className="onboarding-spinner" aria-hidden="true" />}
@@ -345,7 +374,10 @@ function copyForStep(id: string, copy: ReturnType<typeof getOnboardingCopy>) {
 }
 
 /** Position the popover beside the cutout, flipping when it would clip. */
-function placePopover(rect: CutoutRect, preferred: string): React.CSSProperties {
+function placePopover(
+  rect: CutoutRect,
+  preferred: string,
+): { style: React.CSSProperties; placement: string } {
   const vw = window.innerWidth;
   const vh = window.innerHeight;
   const w = Math.min(POPOVER_W, vw - 32);
@@ -362,32 +394,60 @@ function placePopover(rect: CutoutRect, preferred: string): React.CSSProperties 
   let top: number;
   let leftPos: number;
   let transform: string | undefined;
+  let placement: string;
+  const centerX = () => clamp(rect.left + rect.width / 2 - w / 2, 16, vw - w - 16);
+  const centerY = () => clamp(rect.top + rect.height / 2 - 70, 16, vh - 180);
+
   if (preferred === "bottom" && fitsBelow) {
     top = below;
-    leftPos = clamp(rect.left + rect.width / 2 - w / 2, 16, vw - w - 16);
+    leftPos = centerX();
+    placement = "bottom";
   } else if (preferred === "top" && fitsAbove) {
     top = above;
     transform = "translateY(-100%)";
-    leftPos = clamp(rect.left + rect.width / 2 - w / 2, 16, vw - w - 16);
+    leftPos = centerX();
+    placement = "top";
   } else if (preferred === "right" && fitsRight) {
-    top = clamp(rect.top + rect.height / 2 - 70, 16, vh - 180);
+    top = centerY();
     leftPos = right;
+    placement = "right";
   } else if (preferred === "left" && fitsLeft) {
-    top = clamp(rect.top + rect.height / 2 - 70, 16, vh - 180);
+    top = centerY();
     leftPos = left - w;
+    placement = "left";
   } else if (fitsBelow) {
     top = below;
-    leftPos = clamp(rect.left + rect.width / 2 - w / 2, 16, vw - w - 16);
+    leftPos = centerX();
+    placement = "bottom";
   } else if (fitsAbove) {
     top = above;
     transform = "translateY(-100%)";
-    leftPos = clamp(rect.left + rect.width / 2 - w / 2, 16, vw - w - 16);
+    leftPos = centerX();
+    placement = "top";
   } else {
     top = vh / 2;
     leftPos = vw / 2 - w / 2;
     transform = "translateY(-50%)";
+    placement = "none";
   }
-  return { position: "fixed", top, left: leftPos, width: w, transform };
+  return { style: { position: "fixed", top, left: leftPos, width: w, transform }, placement };
+}
+
+/**
+ * Render `inline code` spans inside step copy — markdown-lite for the tour
+ * so identifiers don't show raw backticks.
+ */
+function renderCopyBody(body: string): React.ReactNode {
+  const parts = body.split(/`([^`]+)`/);
+  return parts.map((part, i) =>
+    i % 2 === 1 ? (
+      <code key={i} className="onboarding-code">
+        {part}
+      </code>
+    ) : (
+      part
+    ),
+  );
 }
 
 function clamp(value: number, min: number, max: number): number {

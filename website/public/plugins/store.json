@@ -1,14 +1,14 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-24T06:52:05.441Z",
-  "repoBaseUrl": "https://www.tablerapp.id.vn",
-  "registryUrl": "https://www.tablerapp.id.vn/plugins/registry.json",
+  "generatedAt": "2026-09-25T11:55:10.985Z",
+  "repoBaseUrl": "https://tabler.app",
+  "registryUrl": "https://tabler.app/plugins/registry.json",
   "counts": {
-    "total": 10,
-    "http": 5,
+    "total": 15,
+    "http": 10,
     "native": 4,
     "format": 1,
-    "installable": 6
+    "installable": 11
   },
   "plugins": [
     {
@@ -210,6 +210,86 @@
       "digest": "4af1a22ae4057943b16d9dc4132d346d80b9e24294f494258e1d0829da297113"
     },
     {
+      "id": "dynamodb-driver",
+      "name": "Amazon DynamoDB driver",
+      "version": "1.0.0",
+      "description": "Adds Amazon DynamoDB connectivity (PartiQL) over the declarative HTTP driver host.",
+      "author": "TableR Team",
+      "category": "http",
+      "runtime": "declarative-http-v1",
+      "engine": {
+        "id": "dynamodb",
+        "label": "Amazon DynamoDB",
+        "protocol": "dynamodb",
+        "status": "stable"
+      },
+      "engines": [
+        {
+          "id": "dynamodb",
+          "label": "Amazon DynamoDB",
+          "protocol": "dynamodb",
+          "status": "stable"
+        }
+      ],
+      "formats": [],
+      "permissions": [
+        "connection.metadata",
+        "query.read",
+        "query.execute",
+        "network.fetch"
+      ],
+      "minAppVersion": "0.1.4",
+      "installMode": "registry",
+      "binaryPending": false,
+      "bundle": {
+        "path": "/plugins/bundles/dynamodb-driver-1.0.0.zip",
+        "size": 623,
+        "sha256": "8dd1be7df6e948fa9e6f458cb3b108be360d746cc7c72a71639b33d70c727e23"
+      },
+      "docsSlug": null,
+      "digest": "7674a5d26a6f2478a3d00c387f0d9afb99fa69a129ce5b1d9af4df932517be05"
+    },
+    {
+      "id": "elasticsearch-driver",
+      "name": "Elasticsearch read-only driver",
+      "version": "1.0.0",
+      "description": "Adds bounded, read-only Elasticsearch index browsing and JSON search through the declarative HTTP driver host.",
+      "author": "TableR Team",
+      "category": "http",
+      "runtime": "declarative-http-v1",
+      "engine": {
+        "id": "elasticsearch",
+        "label": "Elasticsearch",
+        "protocol": "elasticsearch",
+        "status": "stable"
+      },
+      "engines": [
+        {
+          "id": "elasticsearch",
+          "label": "Elasticsearch",
+          "protocol": "elasticsearch",
+          "status": "stable"
+        }
+      ],
+      "formats": [],
+      "permissions": [
+        "connection.metadata",
+        "query.read",
+        "query.execute",
+        "network.fetch"
+      ],
+      "minAppVersion": "0.1.4",
+      "installMode": "registry",
+      "binaryPending": false,
+      "bundle": {
+        "path": "/plugins/bundles/elasticsearch-driver-1.0.0.zip",
+        "size": 640,
+        "sha256": "95b65f7b976a3c033cf9d73d024b0895d970d96b7e79c4e992085807e95888a2"
+      },
+      "docsSlug": null,
+      "digest": "fccce8a32aeac3d2946621d2a41660758ad1b9cfe43362e68c4158307958b3d6"
+    },
+    {
       "id": "libsql-driver",
       "name": "LibSQL native driver",
       "version": "1.0.0",
@@ -287,6 +367,46 @@
       },
       "docsSlug": null,
       "digest": "8db6d8e892c7151a63ede9ff223021eaf472eeec0df36d485a82a612127b6150"
+    },
+    {
+      "id": "oracle-driver",
+      "name": "Oracle (ORDS) read-only driver",
+      "version": "1.0.0",
+      "description": "Adds read-only Oracle Database connectivity over Oracle REST Data Services (ORDS) through the declarative HTTP driver host.",
+      "author": "TableR Team",
+      "category": "http",
+      "runtime": "declarative-http-v1",
+      "engine": {
+        "id": "oracle",
+        "label": "Oracle (ORDS)",
+        "protocol": "oracle",
+        "status": "stable"
+      },
+      "engines": [
+        {
+          "id": "oracle",
+          "label": "Oracle (ORDS)",
+          "protocol": "oracle",
+          "status": "stable"
+        }
+      ],
+      "formats": [],
+      "permissions": [
+        "connection.metadata",
+        "query.read",
+        "query.execute",
+        "network.fetch"
+      ],
+      "minAppVersion": "0.1.4",
+      "installMode": "registry",
+      "binaryPending": false,
+      "bundle": {
+        "path": "/plugins/bundles/oracle-driver-1.0.0.zip",
+        "size": 646,
+        "sha256": "cc2fccb04931bc515ed48507f113c1acdf3398662afed13f1fccc851e322749d"
+      },
+      "docsSlug": null,
+      "digest": "455b39ea9edf370530c8914ea7668fa55fe214fc0c9062af33a2f1c5b04f263d"
     },
     {
       "id": "portable-formats",
@@ -393,6 +513,86 @@
       },
       "docsSlug": "snowflake",
       "digest": "b2d1f9abfea4bb59117e571a0983279b6ca3daaebdc881b64881f0b359454d52"
+    },
+    {
+      "id": "spanner-driver",
+      "name": "Google Spanner driver",
+      "version": "1.0.0",
+      "description": "Adds Google Cloud Spanner connectivity over the declarative HTTP driver host.",
+      "author": "TableR Team",
+      "category": "http",
+      "runtime": "declarative-http-v1",
+      "engine": {
+        "id": "spanner",
+        "label": "Google Spanner",
+        "protocol": "spanner",
+        "status": "stable"
+      },
+      "engines": [
+        {
+          "id": "spanner",
+          "label": "Google Spanner",
+          "protocol": "spanner",
+          "status": "stable"
+        }
+      ],
+      "formats": [],
+      "permissions": [
+        "connection.metadata",
+        "query.read",
+        "query.execute",
+        "network.fetch"
+      ],
+      "minAppVersion": "0.1.4",
+      "installMode": "registry",
+      "binaryPending": false,
+      "bundle": {
+        "path": "/plugins/bundles/spanner-driver-1.0.0.zip",
+        "size": 609,
+        "sha256": "e64b1a67199c02768782dc72e6cbce7568d86370828ff6ecb2fcb0addabead1e"
+      },
+      "docsSlug": null,
+      "digest": "ae528460a05e6b54d671d0ee4d3e8a2d541ecf50c9f2f50c24bc17d1190b0e55"
+    },
+    {
+      "id": "trino-driver",
+      "name": "Trino driver",
+      "version": "1.0.0",
+      "description": "Adds Trino connectivity over the declarative HTTP driver host.",
+      "author": "TableR Team",
+      "category": "http",
+      "runtime": "declarative-http-v1",
+      "engine": {
+        "id": "trino",
+        "label": "Trino",
+        "protocol": "trino",
+        "status": "stable"
+      },
+      "engines": [
+        {
+          "id": "trino",
+          "label": "Trino",
+          "protocol": "trino",
+          "status": "stable"
+        }
+      ],
+      "formats": [],
+      "permissions": [
+        "connection.metadata",
+        "query.read",
+        "query.execute",
+        "network.fetch"
+      ],
+      "minAppVersion": "0.1.4",
+      "installMode": "registry",
+      "binaryPending": false,
+      "bundle": {
+        "path": "/plugins/bundles/trino-driver-1.0.0.zip",
+        "size": 597,
+        "sha256": "bc67ef34b76d28933ea63ddc7a4013e00393fda4146dbe75ed282654768545c7"
+      },
+      "docsSlug": null,
+      "digest": "b35f1ab0f7ec7a9d390c1235b0e5f3f45e9a7cf504733820fc80bb15040a3aff"
     }
   ]
 }

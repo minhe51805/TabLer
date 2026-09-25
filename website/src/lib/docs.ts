@@ -95,6 +95,7 @@ export const docsSlugs = [
   "mongodb",
   "libsql",
   "cloudflare-d1",
+  "oracle",
   "plugins",
   "sql-workspace",
   "exploring-data",
@@ -134,6 +135,7 @@ export const engineOrder: { key: string; label: string }[] = [
   { key: "mongodb", label: "MongoDB" },
   { key: "libsql", label: "LibSQL" },
   { key: "cloudflare-d1", label: "Cloudflare D1" },
+  { key: "oracle", label: "Oracle (ORDS)" },
 ];
 
 /**
@@ -2306,6 +2308,117 @@ const EN_CLOUDFLARE_D1: EngineSpec = {
   ],
 };
 
+const EN_ORACLE: EngineSpec = {
+  slug: "oracle",
+  icon: "PlugZap",
+  title: "Oracle (ORDS)",
+  description:
+    "Connect TableR to Oracle Database over Oracle REST Data Services (ORDS) with the oracle-driver plugin: connection fields, schema alias, SSL/TLS, verifying the connection, and troubleshooting.",
+  intro:
+    "Oracle is reached through Oracle REST Data Services (ORDS) over HTTP/HTTPS — the connection is provided by the oracle-driver plugin (install it from the plugins page). Provide the ORDS host, a schema-enabled user, and that user's password.",
+  overviewText:
+    "TableR connects to Oracle through the ORDS SQL endpoint at {host}:{port}/{base path}/{schema}/_/sql — it does not use the Oracle wire protocol (1521) or a service name/SID. Authentication is HTTP Basic over the ORDS endpoint, so HTTPS is strongly recommended for any remote database. The {schema} segment is an ORDS schema alias, not the service name.",
+  overviewBullets: [
+    "ORDS endpoint — the database is reached at http(s)://host:port/ords, not over the 1521 wire protocol.",
+    "Plugin-gated — the Oracle card appears once the oracle-driver plugin is installed.",
+    "Basic auth — the ORDS schema-enabled username and password authenticate every request; keep them in the keyring.",
+    "Read-only — the oracle-driver is a read-only driver; browsing and SELECT are supported.",
+  ],
+  beforeYouStart: [
+    "The oracle-driver plugin installed (Plugins → Oracle (ORDS) → Install).",
+    "Oracle REST Data Services (ORDS) running and schema-enabled for your user.",
+    "The ORDS host and port (default 8080 for HTTP, 443 for HTTPS).",
+    "An ORDS schema-enabled username and its password.",
+    "Optionally, the ORDS schema alias and base path when they differ from the defaults.",
+  ],
+  connFieldsIntro:
+    "These fields match TableR's Oracle (ORDS) connection form. The password is stored in the operating system keyring, never in plain configuration files.",
+  fieldRows: [
+    ["Host", "Yes", "—", "The ORDS host — the machine running ORDS, not the database listener."],
+    ["Port", "No", "8080 / 443", "ORDS HTTP port (default 8080); 443 when SSL/TLS is enabled."],
+    ["Username", "Yes", "—", "An ORDS schema-enabled database user; authenticates via HTTP Basic."],
+    ["Password", "Yes", "—", "The ORDS user's password; stored in the OS keyring."],
+    [
+      "Schema",
+      "No",
+      "—",
+      "ORDS schema alias (the Database field, or ords_schema); defaults to the username.",
+    ],
+    [
+      "Base path",
+      "No",
+      "ords",
+      "The ORDS base path segment (ords_base_path) when ORDS is not mapped at /ords.",
+    ],
+    ["SSL/TLS", "No", "Off", "Enable for HTTPS; required for any remote ORDS endpoint."],
+  ],
+  formSteps: [
+    {
+      title: "Install the Oracle plugin",
+      text: "Open Plugins, find Oracle (ORDS), and install the oracle-driver plugin.",
+    },
+    { title: "Choose Oracle (ORDS)", text: "Open the launcher and pick the Oracle (ORDS) card." },
+    {
+      title: "Enter the ORDS host and port",
+      text: "Use your ORDS host and port (8080 for HTTP, 443 for HTTPS).",
+    },
+    {
+      title: "Add credentials",
+      text: "Type the ORDS schema-enabled username and password; the password is saved to the keyring.",
+    },
+    {
+      title: "Set the schema (optional)",
+      text: "Use the Database field for the ORDS schema alias; it defaults to the username.",
+    },
+    {
+      title: "Enable SSL/TLS for remote",
+      text: "Turn on SSL/TLS to reach ORDS over HTTPS on port 443.",
+    },
+    {
+      title: "Save and connect",
+      text: "Save the profile so it reappears in the launcher, then connect.",
+    },
+  ],
+  sslIntro:
+    "The Oracle plugin authenticates with HTTP Basic, so credentials travel in every request. Always enable SSL/TLS so the ORDS endpoint is HTTPS — only skip it for a local, trusted ORDS install.",
+  sslBullets: [
+    "Off — plain HTTP to the ORDS endpoint (local development only).",
+    "On — HTTPS to the ORDS endpoint on port 443.",
+    "Enable it for any remote or shared database.",
+  ],
+  verifyLead: "Once connected, open a query tab and run SQL against the schema:",
+  verifyCode: "SELECT 1 FROM DUAL;\nSELECT banner FROM v$version;",
+  verifyTrail:
+    "If both statements return rows, the ORDS endpoint, credentials, and schema alias are all correct.",
+  troubleshootRows: [
+    [
+      "Oracle card missing",
+      "The oracle-driver plugin is not installed.",
+      "Open Plugins and install the Oracle (ORDS) driver, then retry.",
+    ],
+    [
+      "Oracle ORDS username/password is required",
+      "The username or password field is empty.",
+      "ORDS uses HTTP Basic auth — both fields are required.",
+    ],
+    [
+      "404 / path not found",
+      "Wrong ORDS base path or schema alias.",
+      "Re-check ords_base_path (default ords) and the schema alias; it must be schema-enabled.",
+    ],
+    [
+      "401 / authentication failed",
+      "Wrong username or password, or the user is not schema-enabled.",
+      "Re-check the ORDS credentials and confirm the user is REST-enabled in ORDS.",
+    ],
+    [
+      "Connection refused",
+      "ORDS not running, wrong host/port, or a firewall.",
+      "Confirm ORDS is up and reachable on the configured port.",
+    ],
+  ],
+};
+
 const VI_POSTGRESQL: EngineSpec = {
   slug: "postgresql",
   icon: "PlugZap",
@@ -3962,6 +4075,117 @@ const VI_CLOUDFLARE_D1: EngineSpec = {
   ],
 };
 
+const VI_ORACLE: EngineSpec = {
+  slug: "oracle",
+  icon: "PlugZap",
+  title: "Oracle (ORDS)",
+  description:
+    "Kết nối TableR tới Oracle Database qua Oracle REST Data Services (ORDS) bằng plugin oracle-driver: các trường kết nối, schema alias, SSL/TLS, kiểm tra kết nối và khắc phục sự cố.",
+  intro:
+    "Oracle được truy cập qua Oracle REST Data Services (ORDS) trên HTTP/HTTPS — kết nối do plugin oracle-driver cung cấp (cài nó từ trang plugins). Cung cấp ORDS host, một user đã schema-enabled, và mật khẩu của user đó.",
+  overviewText:
+    "TableR kết nối Oracle qua endpoint ORDS SQL tại {host}:{port}/{base path}/{schema}/_/sql — không dùng wire protocol Oracle (1521) hay service name/SID. Xác thực là HTTP Basic trên endpoint ORDS, nên HTTPS rất được khuyến nghị cho mọi database từ xa. Phân đoạn {schema} là một ORDS schema alias, không phải service name.",
+  overviewBullets: [
+    "Endpoint ORDS — database được truy cập tại http(s)://host:port/ords, không qua wire protocol 1521.",
+    "Cần plugin — thẻ Oracle xuất hiện sau khi plugin oracle-driver được cài.",
+    "Basic auth — username và password ORDS schema-enabled xác thực mọi request; giữ chúng trong keyring.",
+    "Chỉ đọc — oracle-driver là driver chỉ đọc; hỗ trợ duyệt và SELECT.",
+  ],
+  beforeYouStart: [
+    "Plugin oracle-driver đã cài (Plugins → Oracle (ORDS) → Install).",
+    "Oracle REST Data Services (ORDS) đang chạy và đã schema-enabled cho user của bạn.",
+    "ORDS host và port (mặc định 8080 cho HTTP, 443 cho HTTPS).",
+    "Username ORDS schema-enabled và mật khẩu của nó.",
+    "Tùy chọn, ORDS schema alias và base path khi chúng khác mặc định.",
+  ],
+  connFieldsIntro:
+    "Các trường dưới đây khớp với form kết nối Oracle (ORDS) của TableR. Mật khẩu được lưu trong keyring của hệ điều hành, không bao giờ vào tệp cấu hình dạng văn bản.",
+  fieldRows: [
+    ["Host", "Có", "—", "ORDS host — máy chạy ORDS, không phải database listener."],
+    ["Port", "Không", "8080 / 443", "Port ORDS HTTP (mặc định 8080); 443 khi bật SSL/TLS."],
+    ["Username", "Có", "—", "User database ORDS schema-enabled; xác thực qua HTTP Basic."],
+    ["Password", "Có", "—", "Mật khẩu user ORDS; lưu trong keyring."],
+    [
+      "Schema",
+      "Không",
+      "—",
+      "ORDS schema alias (trường Database, hoặc ords_schema); mặc định là username.",
+    ],
+    [
+      "Base path",
+      "Không",
+      "ords",
+      "Phân đoạn ORDS base path (ords_base_path) khi ORDS không map tại /ords.",
+    ],
+    ["SSL/TLS", "Không", "Tắt", "Bật cho HTTPS; bắt buộc cho mọi endpoint ORDS từ xa."],
+  ],
+  formSteps: [
+    {
+      title: "Cài plugin Oracle",
+      text: "Mở Plugins, tìm Oracle (ORDS), và cài plugin oracle-driver.",
+    },
+    { title: "Chọn Oracle (ORDS)", text: "Mở trình khởi chạy và chọn thẻ Oracle (ORDS)." },
+    {
+      title: "Nhập ORDS host và port",
+      text: "Dùng ORDS host và port của bạn (8080 cho HTTP, 443 cho HTTPS).",
+    },
+    {
+      title: "Thêm credentials",
+      text: "Nhập username và password ORDS schema-enabled; mật khẩu được lưu vào keyring.",
+    },
+    {
+      title: "Đặt schema (tùy chọn)",
+      text: "Dùng trường Database cho ORDS schema alias; mặc định là username.",
+    },
+    {
+      title: "Bật SSL/TLS cho remote",
+      text: "Bật SSL/TLS để truy cập ORDS qua HTTPS trên port 443.",
+    },
+    {
+      title: "Lưu và kết nối",
+      text: "Lưu profile để nó xuất hiện lại trong trình khởi chạy, rồi kết nối.",
+    },
+  ],
+  sslIntro:
+    "Plugin Oracle xác thực bằng HTTP Basic, nên credentials đi kèm mọi request. Luôn bật SSL/TLS để endpoint ORDS là HTTPS — chỉ bỏ qua cho một ORDS cục bộ tin cậy.",
+  sslBullets: [
+    "Tắt — HTTP thuần tới endpoint ORDS (chỉ phát triển cục bộ).",
+    "Bật — HTTPS tới endpoint ORDS trên port 443.",
+    "Bật nó cho mọi database từ xa hoặc dùng chung.",
+  ],
+  verifyLead: "Sau khi kết nối, mở một tab query và chạy SQL trên schema:",
+  verifyCode: "SELECT 1 FROM DUAL;\nSELECT banner FROM v$version;",
+  verifyTrail:
+    "Nếu cả hai câu lệnh trả về dòng, endpoint ORDS, credentials và schema alias đều đúng.",
+  troubleshootRows: [
+    [
+      "Không thấy thẻ Oracle",
+      "Plugin oracle-driver chưa được cài.",
+      "Mở Plugins và cài driver Oracle (ORDS), rồi thử lại.",
+    ],
+    [
+      "Oracle ORDS username/password is required",
+      "Trường username hoặc password đang trống.",
+      "ORDS dùng HTTP Basic auth — cả hai trường đều bắt buộc.",
+    ],
+    [
+      "404 / path not found",
+      "Sai ORDS base path hoặc schema alias.",
+      "Kiểm tra lại ords_base_path (mặc định ords) và schema alias; nó phải được schema-enabled.",
+    ],
+    [
+      "401 / authentication failed",
+      "Sai username hoặc password, hoặc user chưa được schema-enabled.",
+      "Kiểm tra lại credentials ORDS và xác nhận user đã được REST-enable trong ORDS.",
+    ],
+    [
+      "Connection refused",
+      "ORDS không chạy, sai host/port, hoặc firewall.",
+      "Xác nhận ORDS đang chạy và truy cập được trên port đã cấu hình.",
+    ],
+  ],
+};
+
 /* ------------------------------------------------------------------ */
 /* English content                                                     */
 /* ------------------------------------------------------------------ */
@@ -4532,6 +4756,11 @@ const en: DocsBundle = {
               text: "Serverless SQLite via the Cloudflare API: account ID, database ID, API token, verifying the connection, and troubleshooting — on its own page.",
               href: "/docs/cloudflare-d1",
             },
+            {
+              title: "Oracle (ORDS) — in-depth guide",
+              text: "Oracle Database over REST Data Services via the oracle-driver plugin: connection fields, schema alias, SSL/TLS, verifying the connection, and troubleshooting — on its own page.",
+              href: "/docs/oracle",
+            },
           ],
         },
       ],
@@ -4554,6 +4783,7 @@ const en: DocsBundle = {
     buildEnginePage(EN_ENGINE_LABELS, EN_MONGODB),
     buildEnginePage(EN_ENGINE_LABELS, EN_LIBSQL),
     buildEnginePage(EN_ENGINE_LABELS, EN_CLOUDFLARE_D1),
+    buildEnginePage(EN_ENGINE_LABELS, EN_ORACLE),
     {
       slug: "plugins",
       icon: "Puzzle",
@@ -5995,6 +6225,11 @@ const vi: DocsBundle = {
               text: "SQLite serverless qua Cloudflare API: account ID, database ID, API token, kiểm tra kết nối và khắc phục sự cố — trên một trang riêng.",
               href: "/docs/cloudflare-d1",
             },
+            {
+              title: "Oracle (ORDS) — hướng dẫn chuyên sâu",
+              text: "Oracle Database qua REST Data Services bằng plugin oracle-driver: các trường kết nối, schema alias, SSL/TLS, kiểm tra kết nối và khắc phục sự cố — trên một trang riêng.",
+              href: "/docs/oracle",
+            },
           ],
         },
       ],
@@ -6017,6 +6252,7 @@ const vi: DocsBundle = {
     buildEnginePage(VI_ENGINE_LABELS, VI_MONGODB),
     buildEnginePage(VI_ENGINE_LABELS, VI_LIBSQL),
     buildEnginePage(VI_ENGINE_LABELS, VI_CLOUDFLARE_D1),
+    buildEnginePage(VI_ENGINE_LABELS, VI_ORACLE),
     {
       slug: "plugins",
       icon: "Puzzle",

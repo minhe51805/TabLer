@@ -1,37 +1,35 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Check, CircleDashed, Loader2, ShieldCheck, Table2 } from "lucide-react";
+import { Bot, Check, ShieldCheck, UserRound } from "lucide-react";
 
 /**
- * Live agent-loop demo inside the agent section's product frame. Replays the
- * real tool chain on a fixed script: the user's question types in, the agent
- * inspects the schema, drafts SQL line by line, marks it verified/read-only,
- * runs it, and rows stream in. Loops with a pause. Pure CSS/timeout motion —
- * no animation library; renders the finished state for reduced-motion users
- * and only animates while the frame is on screen.
- *
- * Timing model: a single `phase` state drives everything; each phase owns its
- * duration via a timeout registered per phase change.
+ * Live agent-loop storyboard inside the agent section's product frame.
+ * The scene replays the real tool chain as a little performance:
+ *   1. the user's question types into the prompt bar
+ *   2. the agent avatar drops into center stage — scales up, spins once,
+ *      then settles onto the work track
+ *   3. it walks station to station (inspect → draft → verify → run); each
+ *      station pops a thought bubble showing what the agent is doing,
+ *      then closes as the agent moves on
+ *   4. at the last station it slides right to the client avatar and a chat
+ *      bubble pops open — the handover message slides out, then the result
+ *      table streams in row by row
+ *   5. pause, fade, replay
+ * Pure CSS/timeout choreography — no animation library. The loop only runs
+ * while the frame is on screen (IntersectionObserver); reduced-motion users
+ * see the finished scene.
  */
-type Phase = "prompt" | "inspect" | "draft" | "verify" | "run" | "done";
+type Phase = "prompt" | "arrive" | "station" | "handover" | "done";
 
-const PHASE_MS: Record<Exclude<Phase, "prompt">, number> = {
-  inspect: 1300,
-  draft: 2100,
-  verify: 1000,
-  run: 1400,
-  done: 2600,
-};
+const ARRIVE_MS = 1700;
+const STATION_MS = 1600;
+const HANDOVER_MS = 3400;
+const DONE_MS = 2400;
 
-const SQL_LINES = [
-  "SELECT c.name, SUM(oi.amount) AS revenue",
-  "FROM customers c",
-  "JOIN orders o ON o.customer_id = c.id",
-  "JOIN order_items oi ON oi.order_id = o.id",
-  "WHERE o.created_at >= date_trunc('quarter', now())",
-  "GROUP BY 1 ORDER BY revenue DESC LIMIT 5",
-];
+/** Track x-positions (%) for the four stations and the client avatar. */
+const STATION_X = [12, 31, 50, 69];
+const CLIENT_X = 90;
 
 const RESULT_ROWS: [string, string][] = [
   ["Acme Corporation", "$48,210"],
@@ -41,19 +39,21 @@ const RESULT_ROWS: [string, string][] = [
   ["Umbrella Ltd", "$24,908"],
 ];
 
+const STATION_ICONS = ["schema", "sql", "check", "rows"] as const;
+
 export type AgentDemoCopy = {
   prompt: string;
-  steps: [string, string, string, string, string];
-  inspecting: string;
-  verified: string;
-  running: string;
+  steps: [string, string, string, string];
+  /** one-line activity shown inside each station's thought bubble */
+  activities: [string, string, string, string];
+  handover: string;
   done: string;
 };
 
 export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
   const [phase, setPhase] = useState<Phase>("prompt");
+  const [station, setStation] = useState(0);
   const [typed, setTyped] = useState(0);
-  const [sqlCount, setSqlCount] = useState(0);
   const [rowCount, setRowCount] = useState(0);
   const [active, setActive] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
@@ -61,7 +61,7 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
   const reduced =
     typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  // Only run the loop while the frame is visible — no background timers.
+  // Only perform while the frame is on screen.
   useEffect(() => {
     const el = rootRef.current;
     if (!el) return;
@@ -72,157 +72,154 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
     return () => observer.disconnect();
   }, []);
 
-  // Prompt types character by character, then hands off to the inspect phase.
+  // Prompt types character by character, then the agent arrives.
   useEffect(() => {
     if (!active || reduced || phase !== "prompt") return;
     if (typed >= copy.prompt.length) {
-      const t = setTimeout(() => setPhase("inspect"), 500);
+      const t = setTimeout(() => setPhase("arrive"), 550);
       return () => clearTimeout(t);
     }
     const t = setTimeout(() => setTyped((n) => n + 1), 26);
     return () => clearTimeout(t);
   }, [active, reduced, phase, typed, copy.prompt]);
 
-  // Each later phase waits its slot, then advances. `done` loops the script.
+  // Phase machine: arrive → stations 0..3 → handover → done → loop.
   useEffect(() => {
     if (!active || reduced || phase === "prompt") return;
-    const next: Phase =
-      phase === "inspect"
-        ? "draft"
-        : phase === "draft"
-          ? "verify"
-          : phase === "verify"
-            ? "run"
-            : phase === "run"
-              ? "done"
-              : "prompt";
+    if (phase === "arrive") {
+      const t = setTimeout(() => {
+        setStation(0);
+        setPhase("station");
+      }, ARRIVE_MS);
+      return () => clearTimeout(t);
+    }
+    if (phase === "station") {
+      const t = setTimeout(() => {
+        if (station < STATION_X.length - 1) {
+          setStation((s) => s + 1);
+        } else {
+          setPhase("handover");
+        }
+      }, STATION_MS);
+      return () => clearTimeout(t);
+    }
+    if (phase === "handover") {
+      const t = setTimeout(() => setPhase("done"), HANDOVER_MS);
+      return () => clearTimeout(t);
+    }
+    // done → reset everything and replay
     const t = setTimeout(() => {
-      if (phase === "done") {
-        setTyped(0);
-        setSqlCount(0);
-        setRowCount(0);
-      }
-      setPhase(next);
-    }, PHASE_MS[phase]);
+      setTyped(0);
+      setRowCount(0);
+      setStation(0);
+      setPhase("prompt");
+    }, DONE_MS);
     return () => clearTimeout(t);
-  }, [active, reduced, phase]);
+  }, [active, reduced, phase, station]);
 
-  // SQL reveals line by line during draft; result rows stream during run.
+  // Result rows stream in during the handover.
   useEffect(() => {
-    if (!active || reduced) return;
-    if (phase === "draft" && sqlCount < SQL_LINES.length) {
-      const t = setTimeout(() => setSqlCount((n) => n + 1), 260);
-      return () => clearTimeout(t);
-    }
-    if (phase === "run" && rowCount < RESULT_ROWS.length) {
-      const t = setTimeout(() => setRowCount((n) => n + 1), 220);
-      return () => clearTimeout(t);
-    }
-  }, [active, reduced, phase, sqlCount, rowCount]);
+    if (!active || reduced || phase !== "handover") return;
+    if (rowCount >= RESULT_ROWS.length) return;
+    const t = setTimeout(() => setRowCount((n) => n + 1), 240);
+    return () => clearTimeout(t);
+  }, [active, reduced, phase, rowCount]);
 
-  const shown = reduced ? copy.prompt : copy.prompt.slice(0, typed);
-  const order: Phase[] = ["prompt", "inspect", "draft", "verify", "run"];
-  const phaseIdx = reduced || phase === "done" ? order.length : order.indexOf(phase);
-  const sqlVisible = reduced || phaseIdx > 3 ? SQL_LINES.length : phase === "draft" ? sqlCount : 0;
-  const rowsVisible =
-    reduced || phase === "done" ? RESULT_ROWS.length : phase === "run" ? rowCount : 0;
+  const done = reduced || phase === "done" || phase === "handover";
+
+  // Avatar x-position per scene: hidden above center → center → stations → client.
+  const avatarX =
+    phase === "station"
+      ? STATION_X[station]
+      : phase === "handover" || phase === "done"
+        ? CLIENT_X - 12
+        : 50;
+  const avatarGone = !reduced && phase === "prompt";
+  const avatarDropping = !reduced && phase === "arrive";
 
   return (
     <div className="agent-demo" ref={rootRef} aria-label={copy.prompt}>
-      {/* step rail — the agent loop as five visible beats */}
-      <ol className="agent-demo-steps">
-        {copy.steps.map((label, i) => {
-          const state = i < phaseIdx ? "done" : i === phaseIdx ? "active" : "todo";
-          return (
-            <li className={`agent-demo-step is-${state}`} key={label}>
-              <span className="agent-demo-step-icon" aria-hidden="true">
-                {state === "done" ? (
-                  <Check size={12} strokeWidth={3} />
-                ) : state === "active" ? (
-                  <Loader2 size={12} className="agent-demo-spin" />
-                ) : (
-                  <CircleDashed size={12} />
-                )}
-              </span>
-              <span>{label}</span>
-            </li>
-          );
-        })}
-      </ol>
-
       {/* typed user request */}
       <div className="agent-demo-prompt">
-        <span className="agent-demo-prompt-text">{shown}</span>
+        <span className="agent-demo-prompt-text">
+          {reduced ? copy.prompt : copy.prompt.slice(0, typed)}
+        </span>
         {!reduced && phase === "prompt" && <span className="agent-demo-caret" aria-hidden="true" />}
       </div>
 
-      {/* schema chips the agent discovered */}
-      <div
-        className={`agent-demo-zone ${phaseIdx >= 1 || reduced ? "is-on" : ""}`}
-        aria-hidden={phaseIdx < 1 && !reduced}
-      >
-        <div className="agent-demo-status">
-          <Table2 size={13} aria-hidden="true" />
-          {copy.inspecting}
-        </div>
-        <div className="agent-demo-chips">
-          {["customers", "orders", "order_items"].map((table, i) => (
-            <span
-              className="agent-demo-chip"
-              key={table}
-              style={{ transitionDelay: `${i * 140}ms` }}
-            >
-              {table}
-            </span>
-          ))}
-        </div>
-      </div>
+      {/* the stage — track, stations, agent, client, bubbles */}
+      <div className="agent-demo-stage">
+        <div className="agent-demo-track" aria-hidden="true" />
 
-      {/* drafted SQL, revealed line by line */}
-      <div
-        className={`agent-demo-zone ${phaseIdx >= 2 || reduced ? "is-on" : ""}`}
-        aria-hidden={phaseIdx < 2 && !reduced}
-      >
-        <pre className="agent-demo-sql">
-          {SQL_LINES.slice(0, sqlVisible).map((line, i) => (
-            <code key={i} style={{ transitionDelay: `${i * 90}ms` }}>
-              {line}
-            </code>
-          ))}
-        </pre>
-        <div className={`agent-demo-verified ${phaseIdx >= 3 || reduced ? "is-on" : ""}`}>
-          <ShieldCheck size={13} aria-hidden="true" />
-          {copy.verified}
+        {/* stations the agent walks through */}
+        <ol className="agent-demo-stations">
+          {copy.steps.map((label, i) => {
+            const visited =
+              reduced || done || phase === "station"
+                ? i <= (done ? STATION_X.length : station)
+                : i < 0;
+            const current = !reduced && phase === "station" && i === station;
+            return (
+              <li
+                className={`agent-demo-station ${visited ? "is-visited" : ""} ${current ? "is-current" : ""}`}
+                style={{ left: `${STATION_X[i]}%` }}
+                key={label}
+              >
+                <span className="agent-demo-node" aria-hidden="true">
+                  {visited && !current && <Check size={10} strokeWidth={3.5} />}
+                </span>
+                <span className="agent-demo-station-label">{label}</span>
+
+                {/* thought bubble — opens while the agent works this station */}
+                <span
+                  className={`agent-demo-bubble ${current ? "is-open" : ""}`}
+                  aria-hidden={!current}
+                >
+                  <span className="agent-demo-bubble-icon" aria-hidden="true">
+                    {STATION_ICONS[i] === "check" ? <ShieldCheck size={12} /> : <Bot size={12} />}
+                  </span>
+                  <span className="agent-demo-bubble-text">{copy.activities[i]}</span>
+                </span>
+              </li>
+            );
+          })}
+        </ol>
+
+        {/* client avatar — the handover target */}
+        <div className="agent-demo-client" style={{ left: `${CLIENT_X}%` }} aria-hidden="true">
+          <UserRound size={16} />
         </div>
-      </div>
-      {/* streamed result rows */}
-      <div
-        className={`agent-demo-zone ${phaseIdx >= 4 || reduced ? "is-on" : ""}`}
-        aria-hidden={phaseIdx < 4 && !reduced}
-      >
-        <div className="agent-demo-status">
-          {phase === "done" || reduced ? (
-            <>
-              <Check size={13} aria-hidden="true" />
-              {copy.done}
-            </>
-          ) : (
-            <>
-              <Loader2 size={13} className="agent-demo-spin" aria-hidden="true" />
-              {copy.running}…
-            </>
-          )}
+
+        {/* agent avatar — drops in, walks the track, hands off */}
+        <div
+          className={`agent-demo-avatar ${avatarGone ? "is-gone" : ""} ${avatarDropping ? "is-arriving" : ""}`}
+          style={{ left: `${avatarX}%` }}
+          aria-hidden="true"
+        >
+          <span className="agent-demo-avatar-icon">
+            <Bot size={18} />
+          </span>
         </div>
-        <table className="agent-demo-rows">
-          <tbody>
-            {RESULT_ROWS.slice(0, rowsVisible).map(([name, revenue], i) => (
-              <tr key={name} style={{ transitionDelay: `${i * 130}ms` }}>
-                <td>{name}</td>
-                <td>{revenue}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+
+        {/* handover chat bubble — text slides out, rows stream in */}
+        <div
+          className={`agent-demo-chat ${done ? "is-open" : ""}`}
+          style={{ left: `${CLIENT_X}%` }}
+          aria-hidden={!done}
+        >
+          <span className="agent-demo-chat-text">{copy.handover}</span>
+          <table className="agent-demo-chat-rows">
+            <tbody>
+              {(reduced ? RESULT_ROWS : RESULT_ROWS.slice(0, rowCount)).map(([name, revenue]) => (
+                <tr key={name}>
+                  <td>{name}</td>
+                  <td>{revenue}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <span className="agent-demo-chat-foot">{copy.done}</span>
+        </div>
       </div>
     </div>
   );

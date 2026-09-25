@@ -431,10 +431,9 @@ export default async function Home() {
             <AgentDemo
               copy={{
                 prompt: t.agent.demo.prompt,
-                steps: t.agent.demo.steps as [string, string, string, string, string],
-                inspecting: t.agent.demo.inspecting,
-                verified: t.agent.demo.verified,
-                running: t.agent.demo.running,
+                steps: t.agent.demo.steps as [string, string, string, string],
+                activities: t.agent.demo.activities as [string, string, string, string],
+                handover: t.agent.demo.handover,
                 done: t.agent.demo.done,
               }}
             />

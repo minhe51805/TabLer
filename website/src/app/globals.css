@@ -3723,74 +3723,20 @@ a {
   }
 }
 
-/* ---------- agent demo: live loop inside the agent-mock frame ---------- */
+/* ---------- agent demo: live agent-loop storyboard in the agent frame --- */
+/* scene: prompt types → agent drops in (grow + spin) → settles on the
+   track → walks station to station with thought bubbles → slides right to
+   the client avatar → chat bubble pops with the handover + result rows */
 .neu .agent-demo {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 16px;
   padding: 20px 22px 24px;
-  min-height: 430px;
+  min-height: 460px;
   background:
     radial-gradient(120% 90% at 15% 0%, rgba(255, 255, 255, 0.5), transparent 55%),
     var(--neu-bg-soft);
   font-size: 14px;
-}
-
-.neu .agent-demo-steps {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.neu .agent-demo-step {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 6px 12px;
-  border-radius: 999px;
-  background: var(--neu-bg-soft);
-  box-shadow: var(--neu-shadow-out-sm);
-  color: var(--neu-muted);
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.02em;
-  transition:
-    color 0.3s ease,
-    box-shadow 0.3s ease;
-}
-
-.neu .agent-demo-step-icon {
-  display: inline-flex;
-  width: 16px;
-  height: 16px;
-  align-items: center;
-  justify-content: center;
-}
-
-.neu .agent-demo-step.is-active {
-  color: var(--neu-accent-deep);
-  box-shadow: var(--neu-shadow-in);
-}
-
-.neu .agent-demo-step.is-done {
-  color: var(--neu-ink);
-}
-
-.neu .agent-demo-step.is-done .agent-demo-step-icon {
-  color: var(--green);
-}
-
-.neu .agent-demo-spin {
-  animation: agent-demo-spin 0.9s linear infinite;
-}
-
-@keyframes agent-demo-spin {
-  to {
-    transform: rotate(360deg);
-  }
 }
 
 .neu .agent-demo-prompt {
@@ -3819,170 +3765,308 @@ a {
   }
 }
 
-.neu .agent-demo-zone {
+.neu .agent-demo-stage {
+  position: relative;
+  flex: 1;
+  min-height: 340px;
+}
+
+/* work track — a recessed line the stations sit on */
+.neu .agent-demo-track {
+  position: absolute;
+  left: 6%;
+  right: 4%;
+  bottom: 122px;
+  height: 4px;
+  border-radius: 999px;
+  background: var(--neu-surface);
+  box-shadow: var(--neu-shadow-in);
+}
+
+/* stations -------------------------------------------------------- */
+.neu .agent-demo-stations {
+  position: absolute;
+  inset: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.neu .agent-demo-station {
+  position: absolute;
+  bottom: 92px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  opacity: 0;
-  transform: translateY(8px);
-  transition:
-    opacity 0.45s ease,
-    transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+  align-items: center;
+  transform: translateX(-50%);
 }
 
-.neu .agent-demo-zone.is-on {
-  opacity: 1;
-  transform: none;
+.neu .agent-demo-node {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--neu-surface);
+  box-shadow: var(--neu-shadow-out-sm);
+  color: var(--green);
+  transition: box-shadow 0.3s ease;
 }
 
-.neu .agent-demo-status {
-  display: inline-flex;
+.neu .agent-demo-station.is-current .agent-demo-node {
+  box-shadow:
+    var(--neu-shadow-in),
+    0 0 0 5px rgba(8, 126, 252, 0.14);
+}
+
+.neu .agent-demo-station-label {
+  margin-top: 8px;
+  color: var(--neu-muted);
+  font-size: 11.5px;
+  font-weight: 650;
+  white-space: nowrap;
+  transition: color 0.3s ease;
+}
+
+.neu .agent-demo-station.is-current .agent-demo-station-label,
+.neu .agent-demo-station.is-visited .agent-demo-station-label {
+  color: var(--neu-ink);
+}
+
+/* thought bubble — pops open above the active station */
+.neu .agent-demo-bubble {
+  position: absolute;
+  bottom: calc(100% + 56px);
+  left: 50%;
+  display: flex;
   align-items: center;
   gap: 7px;
-  color: var(--neu-muted);
-  font-size: 12px;
-  font-weight: 650;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-}
-
-.neu .agent-demo-chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.neu .agent-demo-chip {
-  padding: 6px 13px;
-  border-radius: 999px;
+  width: max-content;
+  max-width: 230px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border-bottom-left-radius: 4px;
   background: var(--neu-surface);
   box-shadow: var(--neu-shadow-out-sm);
   color: var(--neu-ink);
-  font-family: var(--font-geist-mono), monospace;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 550;
   opacity: 0;
-  transform: scale(0.9);
+  transform: translateX(-50%) translateY(8px) scale(0.85);
   transition:
-    opacity 0.3s ease,
-    transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    opacity 0.28s ease,
+    transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
+  pointer-events: none;
+  z-index: 2;
 }
 
-.neu .agent-demo-zone.is-on .agent-demo-chip {
+.neu .agent-demo-station.is-current .agent-demo-bubble {
   opacity: 1;
-  transform: scale(1);
+  transform: translateX(-50%) translateY(0) scale(1);
 }
 
-.neu .agent-demo-sql {
-  margin: 0;
-  padding: 14px 16px;
-  border-radius: 12px;
-  background: #141a22;
-  box-shadow: var(--neu-shadow-in);
-  color: #c9d6e2;
-  font-family: var(--font-geist-mono), monospace;
-  font-size: 12.5px;
-  line-height: 1.75;
-  overflow-x: auto;
-}
-
-.neu .agent-demo-sql code {
-  display: block;
-  opacity: 0;
-  transform: translateX(-8px);
-  transition:
-    opacity 0.25s ease,
-    transform 0.25s ease;
-}
-
-.neu .agent-demo-zone.is-on .agent-demo-sql code {
-  opacity: 1;
-  transform: none;
-}
-
-.neu .agent-demo-verified {
+.neu .agent-demo-bubble-icon {
   display: inline-flex;
-  align-items: center;
-  align-self: flex-start;
-  gap: 7px;
-  padding: 5px 12px;
-  border-radius: 999px;
-  background: var(--green-soft, #e9f8f1);
-  color: var(--green);
-  font-size: 12px;
-  font-weight: 650;
-  opacity: 0;
-  transform: translateY(4px);
-  transition:
-    opacity 0.3s ease,
-    transform 0.3s ease;
+  flex: 0 0 auto;
+  color: var(--neu-accent-deep);
 }
 
-.neu .agent-demo-verified.is-on {
+/* client avatar — sits at the right end, the handover target */
+.neu .agent-demo-client {
+  position: absolute;
+  bottom: 130px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--neu-surface);
+  box-shadow: var(--neu-shadow-out-sm);
+  color: var(--neu-muted);
+  transform: translateX(-50%);
+}
+
+/* agent avatar — drops into center, walks the track, delivers */
+.neu .agent-demo-avatar {
+  position: absolute;
+  bottom: 134px;
+  z-index: 3;
+  transform: translateX(-50%);
+  transition:
+    left 0.7s cubic-bezier(0.45, 0, 0.25, 1),
+    bottom 0.8s cubic-bezier(0.34, 1.3, 0.64, 1),
+    opacity 0.25s ease;
+}
+
+.neu .agent-demo-avatar-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  background: var(--blue);
+  box-shadow:
+    0 10px 24px rgba(8, 126, 252, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  color: #fff;
+}
+
+/* arrival: teleport in above center, scale + one spin, then settle */
+.neu .agent-demo-avatar.is-gone {
+  bottom: 300px;
+  opacity: 0;
+}
+
+.neu .agent-demo-avatar.is-arriving {
+  bottom: 210px;
+}
+
+.neu .agent-demo-avatar.is-arriving .agent-demo-avatar-icon {
+  animation: agent-demo-arrive 1.15s cubic-bezier(0.34, 1.3, 0.64, 1) forwards;
+}
+
+@keyframes agent-demo-arrive {
+  0% {
+    opacity: 0;
+    transform: translateY(-46px) scale(0.35) rotate(0deg);
+  }
+  55% {
+    opacity: 1;
+    transform: translateY(0) scale(1.28) rotate(360deg);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0) scale(1) rotate(360deg);
+  }
+}
+
+/* handover chat bubble — pops over the client, text slides out, rows stream */
+.neu .agent-demo-chat {
+  position: absolute;
+  bottom: 196px;
+  width: 250px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  border-bottom-right-radius: 4px;
+  background: var(--paper);
+  box-shadow: var(--neu-shadow-out);
+  transform: translateX(-88%) translateY(10px) scale(0.8);
+  transform-origin: bottom right;
+  opacity: 0;
+  transition:
+    opacity 0.3s ease,
+    transform 0.32s cubic-bezier(0.34, 1.56, 0.64, 1);
+  pointer-events: none;
+  z-index: 4;
+}
+
+.neu .agent-demo-chat.is-open {
+  opacity: 1;
+  transform: translateX(-88%) translateY(0) scale(1);
+}
+
+.neu .agent-demo-chat-text {
+  display: block;
+  color: var(--neu-ink);
+  font-size: 12.5px;
+  font-weight: 550;
+  line-height: 1.5;
+  opacity: 0;
+  transform: translateX(14px);
+  transition:
+    opacity 0.35s ease 0.15s,
+    transform 0.35s cubic-bezier(0.16, 1, 0.3, 1) 0.15s;
+}
+
+.neu .agent-demo-chat.is-open .agent-demo-chat-text {
   opacity: 1;
   transform: none;
 }
 
-.neu .agent-demo-rows {
+.neu .agent-demo-chat-rows {
   width: 100%;
+  margin-top: 9px;
   border-collapse: collapse;
-  font-size: 13px;
+  font-size: 11.5px;
 }
 
-.neu .agent-demo-rows td {
-  padding: 8px 12px;
+.neu .agent-demo-chat-rows td {
+  padding: 5px 8px;
   border-bottom: 1px solid rgba(163, 177, 198, 0.22);
   color: var(--neu-ink);
 }
 
-.neu .agent-demo-rows td:last-child {
+.neu .agent-demo-chat-rows tr:first-child td {
+  border-top: 1px solid rgba(163, 177, 198, 0.35);
+}
+
+.neu .agent-demo-chat-rows td:last-child {
   text-align: right;
   font-family: var(--font-geist-mono), monospace;
-  font-weight: 600;
+  font-weight: 650;
   color: var(--neu-accent-deep);
 }
 
-.neu .agent-demo-rows tr {
+.neu .agent-demo-chat-rows tr {
   opacity: 0;
-  transform: translateY(6px);
+  transform: translateY(5px);
   transition:
     opacity 0.3s ease,
     transform 0.3s ease;
 }
 
-.neu .agent-demo-zone.is-on .agent-demo-rows tr {
+.neu .agent-demo-chat.is-open .agent-demo-chat-rows tr {
   opacity: 1;
   transform: none;
 }
 
+.neu .agent-demo-chat-foot {
+  display: block;
+  margin-top: 7px;
+  color: var(--neu-muted);
+  font-size: 10.5px;
+  font-weight: 650;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
 @media (prefers-reduced-motion: reduce) {
-  .neu .agent-demo-zone,
-  .neu .agent-demo-chip,
-  .neu .agent-demo-sql code,
-  .neu .agent-demo-verified,
-  .neu .agent-demo-rows tr {
+  .neu .agent-demo-avatar,
+  .neu .agent-demo-bubble,
+  .neu .agent-demo-chat,
+  .neu .agent-demo-chat-text,
+  .neu .agent-demo-chat-rows tr,
+  .neu .agent-demo-node,
+  .neu .agent-demo-station-label {
     transition: none;
   }
 
-  .neu .agent-demo-spin,
-  .neu .agent-demo-caret {
+  .neu .agent-demo-caret,
+  .neu .agent-demo-avatar.is-arriving .agent-demo-avatar-icon {
     animation: none;
   }
 }
 
 @media (max-width: 720px) {
   .neu .agent-demo {
-    min-height: 0;
-    padding: 16px;
+    min-height: 380px;
+    padding: 14px;
   }
 
-  .neu .agent-demo-steps {
-    gap: 6px;
+  .neu .agent-demo-station-label {
+    font-size: 10px;
   }
 
-  .neu .agent-demo-step {
-    padding: 5px 10px;
+  .neu .agent-demo-bubble {
+    max-width: 170px;
     font-size: 11px;
+  }
+
+  .neu .agent-demo-chat {
+    width: 205px;
   }
 }
 

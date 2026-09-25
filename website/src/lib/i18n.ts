@@ -133,6 +133,14 @@ const en = {
         copy: "If an AI endpoint rate-limits or drops, the agent fails over to your next configured provider and keeps the run alive.",
       },
     ],
+    demo: {
+      prompt: "Top 5 customers by revenue this quarter",
+      steps: ["Ask", "Inspect schema", "Draft SQL", "Verify", "Run"],
+      inspecting: "Inspecting schema",
+      verified: "Verified — read-only",
+      running: "Running",
+      done: "5 rows in 38 ms",
+    },
   },
   erd: {
     eyebrow: "ENTITY RELATIONSHIPS",
@@ -405,6 +413,14 @@ const vi: typeof en = {
         copy: "Nếu một AI endpoint bị rate limit hoặc ngắt, agent tự chuyển sang provider kế tiếp bạn đã cấu hình và giữ phiên chạy tiếp.",
       },
     ],
+    demo: {
+      prompt: "Top 5 khách hàng theo doanh thu quý này",
+      steps: ["Hỏi", "Đọc schema", "Soạn SQL", "Xác minh", "Chạy"],
+      inspecting: "Đang đọc schema",
+      verified: "Đã xác minh — chỉ đọc",
+      running: "Đang chạy",
+      done: "5 dòng trong 38 ms",
+    },
   },
   erd: {
     eyebrow: "QUAN HỆ THỰC THỂ",

@@ -3723,6 +3723,269 @@ a {
   }
 }
 
+/* ---------- agent demo: live loop inside the agent-mock frame ---------- */
+.neu .agent-demo {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 20px 22px 24px;
+  min-height: 430px;
+  background:
+    radial-gradient(120% 90% at 15% 0%, rgba(255, 255, 255, 0.5), transparent 55%),
+    var(--neu-bg-soft);
+  font-size: 14px;
+}
+
+.neu .agent-demo-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.neu .agent-demo-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--neu-bg-soft);
+  box-shadow: var(--neu-shadow-out-sm);
+  color: var(--neu-muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  transition:
+    color 0.3s ease,
+    box-shadow 0.3s ease;
+}
+
+.neu .agent-demo-step-icon {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+}
+
+.neu .agent-demo-step.is-active {
+  color: var(--neu-accent-deep);
+  box-shadow: var(--neu-shadow-in);
+}
+
+.neu .agent-demo-step.is-done {
+  color: var(--neu-ink);
+}
+
+.neu .agent-demo-step.is-done .agent-demo-step-icon {
+  color: var(--green);
+}
+
+.neu .agent-demo-spin {
+  animation: agent-demo-spin 0.9s linear infinite;
+}
+
+@keyframes agent-demo-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.neu .agent-demo-prompt {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 11px 15px;
+  border-radius: 12px;
+  background: var(--neu-surface);
+  box-shadow: var(--neu-shadow-in);
+  color: var(--neu-ink);
+  font-weight: 550;
+}
+
+.neu .agent-demo-caret {
+  width: 2px;
+  height: 18px;
+  margin-left: 3px;
+  background: var(--neu-accent-deep);
+  animation: agent-demo-blink 0.85s step-end infinite;
+}
+
+@keyframes agent-demo-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.neu .agent-demo-zone {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  opacity: 0;
+  transform: translateY(8px);
+  transition:
+    opacity 0.45s ease,
+    transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.neu .agent-demo-zone.is-on {
+  opacity: 1;
+  transform: none;
+}
+
+.neu .agent-demo-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--neu-muted);
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.neu .agent-demo-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.neu .agent-demo-chip {
+  padding: 6px 13px;
+  border-radius: 999px;
+  background: var(--neu-surface);
+  box-shadow: var(--neu-shadow-out-sm);
+  color: var(--neu-ink);
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 12px;
+  font-weight: 600;
+  opacity: 0;
+  transform: scale(0.9);
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.neu .agent-demo-zone.is-on .agent-demo-chip {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.neu .agent-demo-sql {
+  margin: 0;
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: #141a22;
+  box-shadow: var(--neu-shadow-in);
+  color: #c9d6e2;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 12.5px;
+  line-height: 1.75;
+  overflow-x: auto;
+}
+
+.neu .agent-demo-sql code {
+  display: block;
+  opacity: 0;
+  transform: translateX(-8px);
+  transition:
+    opacity 0.25s ease,
+    transform 0.25s ease;
+}
+
+.neu .agent-demo-zone.is-on .agent-demo-sql code {
+  opacity: 1;
+  transform: none;
+}
+
+.neu .agent-demo-verified {
+  display: inline-flex;
+  align-items: center;
+  align-self: flex-start;
+  gap: 7px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  background: var(--green-soft, #e9f8f1);
+  color: var(--green);
+  font-size: 12px;
+  font-weight: 650;
+  opacity: 0;
+  transform: translateY(4px);
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s ease;
+}
+
+.neu .agent-demo-verified.is-on {
+  opacity: 1;
+  transform: none;
+}
+
+.neu .agent-demo-rows {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.neu .agent-demo-rows td {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgba(163, 177, 198, 0.22);
+  color: var(--neu-ink);
+}
+
+.neu .agent-demo-rows td:last-child {
+  text-align: right;
+  font-family: var(--font-geist-mono), monospace;
+  font-weight: 600;
+  color: var(--neu-accent-deep);
+}
+
+.neu .agent-demo-rows tr {
+  opacity: 0;
+  transform: translateY(6px);
+  transition:
+    opacity 0.3s ease,
+    transform 0.3s ease;
+}
+
+.neu .agent-demo-zone.is-on .agent-demo-rows tr {
+  opacity: 1;
+  transform: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .neu .agent-demo-zone,
+  .neu .agent-demo-chip,
+  .neu .agent-demo-sql code,
+  .neu .agent-demo-verified,
+  .neu .agent-demo-rows tr {
+    transition: none;
+  }
+
+  .neu .agent-demo-spin,
+  .neu .agent-demo-caret {
+    animation: none;
+  }
+}
+
+@media (max-width: 720px) {
+  .neu .agent-demo {
+    min-height: 0;
+    padding: 16px;
+  }
+
+  .neu .agent-demo-steps {
+    gap: 6px;
+  }
+
+  .neu .agent-demo-step {
+    padding: 5px 10px;
+    font-size: 11px;
+  }
+}
+
 /* On small screens the IntersectionObserver reveal can leave sections
    invisible when the user flicks past them quickly — show content
    immediately instead of gating it behind the animation. */

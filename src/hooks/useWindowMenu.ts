@@ -14,10 +14,13 @@ import { useAppLayoutStore } from "../stores/appLayoutStore";
 import { useTheme, ThemeEngine } from "../stores/useTheme";
 import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "../utils/ui-scale";
 import type { WindowMenuSectionKey, WindowMenuItem } from "../types/app-types";
-import { getAdminQueryPreset, killSessionMenuLabel } from "../utils/admin-query-presets";
-import type { DatabaseType } from "../types";
+import {
+  getAdminQueryPreset,
+  killSessionMenuLabel,
+  adminQueryMenuLabel,
+} from "../utils/admin-query-presets";
 import { useConnectionCapabilities } from "./useConnectionCapabilities";
-import { isCapabilitySupported } from "../types";
+import { isCapabilitySupported, type DatabaseType } from "../types";
 import { getWindowMenuCopy } from "./window-menu-copy";
 import { openExternalUrl } from "../utils/tauri-utils";
 import { useChangeTrackingStore } from "../stores/change-tracking-store";
@@ -58,6 +61,11 @@ export interface WindowMenuActions {
   readonly onOpenUserManagement: () => void;
   readonly onOpenProcessList: () => void;
   readonly onOpenKillSession: () => void;
+  readonly onOpenServerInfo: () => void;
+  readonly onOpenLocks: () => void;
+  readonly onOpenTableStats: () => void;
+  readonly onOpenIndexUsage: () => void;
+  readonly onOpenSlowQueries: () => void;
   readonly onOpenAISettings: () => void;
   readonly onOpenAISlidePanel: () => void;
   readonly onOpenPluginManager: () => void;
@@ -114,6 +122,11 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
   // like bigquery/trino/spanner have readable process lists without full
   // administration support. User management keeps the capability gate.
   const processListPreset = getAdminQueryPreset(state.activeDbType, "process-list");
+  const serverInfoPreset = getAdminQueryPreset(state.activeDbType, "server-info");
+  const locksPreset = getAdminQueryPreset(state.activeDbType, "locks");
+  const tableStatsPreset = getAdminQueryPreset(state.activeDbType, "table-stats");
+  const indexUsagePreset = getAdminQueryPreset(state.activeDbType, "index-usage");
+  const slowQueriesPreset = getAdminQueryPreset(state.activeDbType, "slow-queries");
   const killSessionPreset = getAdminQueryPreset(state.activeDbType, "kill-session");
   const killSessionLabel = killSessionMenuLabel(language);
   const capabilityProfile = useConnectionCapabilities(state.activeConnectionId);
@@ -414,6 +427,46 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
             },
             disabled: !isConnected || !killSessionPreset.supported,
           },
+          {
+            label: adminQueryMenuLabel(language, "server-info"),
+            action: () => {
+              actions.onOpenServerInfo();
+              closeMenu();
+            },
+            disabled: !isConnected || !serverInfoPreset.supported,
+          },
+          {
+            label: adminQueryMenuLabel(language, "locks"),
+            action: () => {
+              actions.onOpenLocks();
+              closeMenu();
+            },
+            disabled: !isConnected || !locksPreset.supported,
+          },
+          {
+            label: adminQueryMenuLabel(language, "table-stats"),
+            action: () => {
+              actions.onOpenTableStats();
+              closeMenu();
+            },
+            disabled: !isConnected || !tableStatsPreset.supported,
+          },
+          {
+            label: adminQueryMenuLabel(language, "index-usage"),
+            action: () => {
+              actions.onOpenIndexUsage();
+              closeMenu();
+            },
+            disabled: !isConnected || !indexUsagePreset.supported,
+          },
+          {
+            label: adminQueryMenuLabel(language, "slow-queries"),
+            action: () => {
+              actions.onOpenSlowQueries();
+              closeMenu();
+            },
+            disabled: !isConnected || !slowQueriesPreset.supported,
+          },
           { divider: true },
           {
             label: t("menu.item.searchInDatabase"),
@@ -638,6 +691,11 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
       processListPreset.supported,
       killSessionPreset.supported,
       killSessionLabel,
+      serverInfoPreset.supported,
+      locksPreset.supported,
+      tableStatsPreset.supported,
+      indexUsagePreset.supported,
+      slowQueriesPreset.supported,
     ],
   );
 

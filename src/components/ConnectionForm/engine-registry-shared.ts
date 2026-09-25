@@ -83,6 +83,7 @@ type DbFieldProfileKey =
   | "optionalUserSecretNoDatabase"
   | "optionalUserSecretWithDatabase"
   | "tokenNoDatabase"
+  | "requiredTokenNoDatabase"
   | "tokenWithDatabase";
 
 type DbEntryInput = Omit<DbEntry, keyof DbFieldConfig | "extraFields"> & {
@@ -158,6 +159,13 @@ const FIELD_PROFILES: Record<DbFieldProfileKey, DbFieldConfig> = {
     passwordPlaceholder: "credential_value",
     databaseMode: "optional",
     databasePlaceholder: "database_name",
+  },
+  requiredTokenNoDatabase: {
+    usernameMode: "hidden",
+    passwordMode: "required",
+    passwordKind: "token",
+    passwordPlaceholder: "api_key",
+    databaseMode: "hidden",
   },
 };
 
@@ -356,6 +364,17 @@ export const ENGINE_EXTRA_FIELDS = {
       placeholder: "ords",
       hint: 'Optional. Single path segment; defaults to "ords".',
       hintVi: 'Tuy chon. Mot doan path duy nhat; mac dinh la "ords".',
+    },
+  ] satisfies EngineExtraField[],
+  surrealdb: [
+    {
+      key: "namespace",
+      label: "Namespace",
+      labelVi: "Namespace",
+      placeholder: "namespace_name",
+      hint: "Optional. SurrealDB namespace sent as the Surreal-NS header; leave empty for a root-level login.",
+      hintVi:
+        "Tuy chon. Namespace SurrealDB gui kem header Surreal-NS; de trong neu dang nhap root.",
     },
   ] satisfies EngineExtraField[],
 } as const;

@@ -8,18 +8,14 @@ import {
   Braces,
   Settings2,
   X,
-  ClipboardPaste,
-  FileUp,
   List,
-  BarChart3,
   Download,
   ChevronDown,
   Search,
   RefreshCw,
-  Timer,
   ArrowUpDown,
-  Dices,
-  PanelRight,
+  BarChart3,
+  Wrench,
 } from "lucide-react";
 import { DataGridMaskIndicator } from "./DataGridMaskIndicator";
 import { DataGridAnonymizerModal } from "./dialogs/DataGridAnonymizerModal";
@@ -72,10 +68,11 @@ import { ResultDiffControls } from "../ResultDiff/ResultDiffControls";
 import {
   DataGridCopyMenu,
   DataGridExportMenu,
-  DataGridRefreshMenu,
+  DataGridRowsMenu,
   DataGridSettingsMenu,
   DataGridSortMenu,
   DataGridSqlMenu,
+  DataGridToolsMenu,
 } from "./DataGridToolbarMenus";
 
 interface DataGridToolbarProps {
@@ -236,15 +233,16 @@ export function DataGridToolbar({
   const [showSeedRows, setShowSeedRows] = useState(false);
   const [showSqlMenu, setShowSqlMenu] = useState(false);
   const [showSortMenu, setShowSortMenu] = useState(false);
-  const [showRefreshMenu, setShowRefreshMenu] = useState(false);
+  const [showRowsMenu, setShowRowsMenu] = useState(false);
+  const [showToolsMenu, setShowToolsMenu] = useState(false);
   const [showChartModal, setShowChartModal] = useState(false);
-  const [autoRefreshRemainingSec, setAutoRefreshRemainingSec] = useState(0);
   const settingsBtnRef = useRef<HTMLSpanElement>(null);
   const exportBtnRef = useRef<HTMLSpanElement>(null);
   const copyBtnRef = useRef<HTMLSpanElement>(null);
   const sqlBtnRef = useRef<HTMLSpanElement>(null);
   const sortBtnRef = useRef<HTMLSpanElement>(null);
-  const refreshBtnRef = useRef<HTMLSpanElement>(null);
+  const rowsBtnRef = useRef<HTMLSpanElement>(null);
+  const toolsBtnRef = useRef<HTMLSpanElement>(null);
   const { settings, updateSettings } = useDataGridSettings();
   const { t, language } = useI18n();
   const chartCopy = getDataGridChartCopy(language);
@@ -285,11 +283,9 @@ export function DataGridToolbar({
   });
   useEffect(() => {
     if (!canAutoRefresh || autoRefreshMs <= 0) {
-      setAutoRefreshRemainingSec(0);
       return;
     }
     let nextRefreshAt = Date.now() + autoRefreshMs;
-    setAutoRefreshRemainingSec(Math.ceil(autoRefreshMs / 1000));
     const intervalId = window.setInterval(() => {
       // Hidden page or background tab: push the deadline out instead of
       // burning the countdown, so refresh resumes where it left off.
@@ -299,11 +295,9 @@ export function DataGridToolbar({
       }
       const remaining = nextRefreshAt - Date.now();
       if (remaining > 0) {
-        setAutoRefreshRemainingSec(Math.ceil(remaining / 1000));
         return;
       }
       nextRefreshAt = Date.now() + autoRefreshMs;
-      setAutoRefreshRemainingSec(Math.ceil(autoRefreshMs / 1000));
       if (!autoRefreshBusyRef.current) autoRefreshTickRef.current?.();
     }, 1000);
     return () => window.clearInterval(intervalId);
@@ -344,7 +338,8 @@ export function DataGridToolbar({
       !showCopyMenu &&
       !showSqlMenu &&
       !showSortMenu &&
-      !showRefreshMenu
+      !showRowsMenu &&
+      !showToolsMenu
     )
       return;
     const handlePointerDown = (event: MouseEvent) => {
@@ -354,7 +349,8 @@ export function DataGridToolbar({
       if (target && copyBtnRef.current?.contains(target)) return;
       if (target && sqlBtnRef.current?.contains(target)) return;
       if (target && sortBtnRef.current?.contains(target)) return;
-      if (target && refreshBtnRef.current?.contains(target)) return;
+      if (target && rowsBtnRef.current?.contains(target)) return;
+      if (target && toolsBtnRef.current?.contains(target)) return;
       const inPopover =
         target instanceof Element &&
         target.closest(".datagrid-export-menu, .datagrid-settings-popover");
@@ -364,11 +360,20 @@ export function DataGridToolbar({
       setShowCopyMenu(false);
       setShowSqlMenu(false);
       setShowSortMenu(false);
-      setShowRefreshMenu(false);
+      setShowRowsMenu(false);
+      setShowToolsMenu(false);
     };
     window.addEventListener("mousedown", handlePointerDown, true);
     return () => window.removeEventListener("mousedown", handlePointerDown, true);
-  }, [showExportMenu, showSettings, showCopyMenu, showSqlMenu, showSortMenu, showRefreshMenu]);
+  }, [
+    showExportMenu,
+    showSettings,
+    showCopyMenu,
+    showSqlMenu,
+    showSortMenu,
+    showRowsMenu,
+    showToolsMenu,
+  ]);
 
   // Filter input: rendered on the left side of the grid toolbar.
   const showFilter = Boolean((tableName || externalResult) && onFilterChange);
@@ -659,57 +664,34 @@ export function DataGridToolbar({
         )}
 
         <div className="datagrid-topbar-actions">
-          {isTableEditable && structureStatus === "ready" && (
-            <span className="popover-container" data-popover={t("datagrid.insertRowTitle")}>
+          {((isTableEditable && structureStatus === "ready") ||
+            (isTableEditable && canImportCsv && tableName)) && (
+            <span
+              ref={rowsBtnRef}
+              className="popover-container"
+              data-popover={powerCopy.toolbar.rows}
+            >
               <button
                 type="button"
-                className="datagrid-footer-action"
-                onClick={() => void handleInsertRow()}
-                title={t("datagrid.insertRowTitle")}
+                className={`datagrid-footer-action ${showRowsMenu ? "active" : ""}`}
+                onClick={() => {
+                  setShowRowsMenu((v) => !v);
+                  setShowSqlMenu(false);
+                  setShowExportMenu(false);
+                  setShowCopyMenu(false);
+                  setShowSortMenu(false);
+                  setShowToolsMenu(false);
+                  setShowSettings(false);
+                }}
+                title={powerCopy.toolbar.rows}
+                aria-haspopup="menu"
+                aria-expanded={showRowsMenu}
               >
                 <Plus className="!w-3.5 !h-3.5" />
-                <span>{t("datagrid.insertRow")}</span>
+                <span>{powerCopy.toolbar.rows}</span>
+                <ChevronDown className="!w-3 !h-3" />
               </button>
             </span>
-          )}
-
-          {isTableEditable && structureStatus === "ready" && tableName && (
-            <span className="popover-container" data-popover={getSeedRowsCopy(language).menuItem}>
-              <button
-                type="button"
-                className="datagrid-footer-action"
-                onClick={() => setShowSeedRows(true)}
-                title={getSeedRowsCopy(language).menuItem}
-              >
-                <Dices className="!w-3.5 !h-3.5" />
-                <span>{getSeedRowsCopy(language).menuItem}</span>
-              </button>
-            </span>
-          )}
-
-          {isTableEditable && canImportCsv && tableName && (
-            <span className="popover-container" data-popover={t("datagrid.pasteRowsPopover")}>
-              <button
-                type="button"
-                className="datagrid-footer-action"
-                onClick={() => void onPasteRows?.()}
-                title={t("datagrid.pasteRowsTitle")}
-              >
-                <ClipboardPaste className="!w-3.5 !h-3.5" />
-                <span>{t("datagrid.pasteRows")}</span>
-              </button>
-            </span>
-          )}
-          {isTableEditable && canImportCsv && tableName && (
-            <button
-              type="button"
-              className="datagrid-footer-action"
-              onClick={() => void onImportCsv?.()}
-              title={t("datagrid.importCsvTitle")}
-            >
-              <FileUp className="!w-3.5 !h-3.5" />
-              <span>{t("datagrid.importCsv")}</span>
-            </button>
           )}
 
           {selectedRowCount > 0 && tableName && (
@@ -807,6 +789,38 @@ export function DataGridToolbar({
             onClose={() => setShowSqlMenu(false)}
           />
 
+          <DataGridRowsMenu
+            open={showRowsMenu}
+            anchorRef={rowsBtnRef}
+            canInsert={isTableEditable && structureStatus === "ready"}
+            canSeed={isTableEditable && structureStatus === "ready" && Boolean(tableName)}
+            canPaste={Boolean(isTableEditable && canImportCsv && tableName)}
+            canImportCsv={Boolean(isTableEditable && canImportCsv && tableName)}
+            t={t}
+            seedLabel={getSeedRowsCopy(language).menuItem}
+            onInsertRow={() => void handleInsertRow()}
+            onSeedRows={() => setShowSeedRows(true)}
+            onPasteRows={() => void onPasteRows?.()}
+            onImportCsv={() => void onImportCsv?.()}
+            onClose={() => setShowRowsMenu(false)}
+          />
+
+          <DataGridToolsMenu
+            open={showToolsMenu}
+            anchorRef={toolsBtnRef}
+            canChart={hasNumericColumn}
+            canInspect={Boolean(onToggleRowInspector)}
+            rowInspectorOpen={rowInspectorOpen}
+            canAutoRefresh={canAutoRefresh}
+            autoRefreshMs={autoRefreshMs}
+            chartCopy={chartCopy}
+            powerCopy={powerCopy}
+            onChart={() => setShowChartModal(true)}
+            onToggleRowInspector={onToggleRowInspector}
+            onAutoRefreshMsChange={onAutoRefreshMsChange}
+            onClose={() => setShowToolsMenu(false)}
+          />
+
           <span
             ref={exportBtnRef}
             className="popover-container"
@@ -896,68 +910,34 @@ export function DataGridToolbar({
               )}
             </button>
           )}
-          {canAutoRefresh && (
+          {(hasNumericColumn || onToggleRowInspector || canAutoRefresh) && (
             <span
-              ref={refreshBtnRef}
+              ref={toolsBtnRef}
               className="popover-container"
-              data-popover={chartCopy.autoRefresh.title}
+              data-popover={powerCopy.toolbar.tools}
             >
               <button
                 type="button"
-                className={`datagrid-footer-action${autoRefreshMs > 0 ? " active" : ""}${showRefreshMenu ? " active" : ""}`}
+                className={`datagrid-footer-action${autoRefreshMs > 0 ? " active" : ""}${showToolsMenu ? " active" : ""}`}
                 onClick={() => {
-                  setShowRefreshMenu((v) => !v);
+                  setShowToolsMenu((v) => !v);
                   setShowSqlMenu(false);
                   setShowExportMenu(false);
                   setShowCopyMenu(false);
                   setShowSortMenu(false);
+                  setShowRowsMenu(false);
                   setShowSettings(false);
                 }}
-                title={chartCopy.autoRefresh.title}
-                aria-label={chartCopy.autoRefresh.title}
+                title={powerCopy.toolbar.tools}
                 aria-haspopup="menu"
-                aria-expanded={showRefreshMenu}
+                aria-expanded={showToolsMenu}
               >
-                <Timer className="!w-3.5 !h-3.5" />
-                {autoRefreshMs > 0 && (
-                  <span>{chartCopy.autoRefresh.countdown(autoRefreshRemainingSec)}</span>
-                )}
+                <Wrench className="!w-3.5 !h-3.5" />
+                <span>{powerCopy.toolbar.tools}</span>
                 <ChevronDown className="!w-3 !h-3" />
               </button>
             </span>
           )}
-          {hasNumericColumn && (
-            <button
-              type="button"
-              className="datagrid-footer-action"
-              onClick={() => setShowChartModal(true)}
-              title={chartCopy.chart.buttonTitle}
-              aria-label={chartCopy.chart.buttonTitle}
-            >
-              <BarChart3 className="!w-3.5 !h-3.5" />
-              <span>{chartCopy.chart.title}</span>
-            </button>
-          )}
-          {onToggleRowInspector && (
-            <button
-              type="button"
-              className={`datagrid-footer-action datagrid-icon-action${rowInspectorOpen ? " active" : ""}`}
-              onClick={onToggleRowInspector}
-              title={powerCopy.rowInspector.button}
-              aria-label={powerCopy.rowInspector.button}
-              aria-pressed={rowInspectorOpen}
-            >
-              <PanelRight className="!w-3.5 !h-3.5" />
-            </button>
-          )}
-          <DataGridRefreshMenu
-            open={showRefreshMenu}
-            anchorRef={refreshBtnRef}
-            autoRefreshMs={autoRefreshMs}
-            chartCopy={chartCopy}
-            onAutoRefreshMsChange={onAutoRefreshMsChange}
-            onClose={() => setShowRefreshMenu(false)}
-          />
           {isExportingFull && onCancelExport && (
             <button
               type="button"
@@ -1093,7 +1073,8 @@ export function DataGridToolbar({
           />
         </div>
 
-        {/* View mode toggle: Table / Chart (after the action buttons) */}
+        {/* View mode toggle — inside the actions row so it flows/wraps with
+            the buttons instead of detaching as a floating box. */}
         <div className="datachart-toggle-group datagrid-view-toggle">
           <button
             type="button"

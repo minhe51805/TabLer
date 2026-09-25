@@ -39,6 +39,8 @@ export const EN_BUNDLE_COPY: BundleCopy = {
     schedules: "Saved schedules",
     aiProviders: "AI provider settings (without API keys)",
     uiPrefs: "UI preferences (theme, layouts, shortcuts)",
+    encryptLabel: "Encrypt export (AES-256-GCM)",
+    encryptNote: "The bundle is written as an encrypted .texp file instead of plain JSON.",
     button: "Export Bundle",
     working: "Exporting...",
     done: "Workspace bundle exported to",

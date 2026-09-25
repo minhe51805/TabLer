@@ -17,6 +17,7 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
   const { language } = useI18n();
   const bundleCopy = useMemo(() => getBundleCopy(language), [language]);
   const [mode, setMode] = useState<"connections" | "bundle">("connections");
+  const [bundleEncrypt, setBundleEncrypt] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set(connections.map((c) => c.id)));
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -72,14 +73,26 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
 
   const handleBundleExport = async () => {
     setError(null);
+    if (bundleEncrypt) {
+      if (password.length < 10) {
+        setError(bundleCopy.connectionsExport.errorPasswordShort);
+        return;
+      }
+      if (password !== confirmPassword) {
+        setError(bundleCopy.connectionsExport.errorPasswordMismatch);
+        return;
+      }
+    }
     try {
       const path = await save({
-        defaultPath: "workspace.tabler-bundle",
-        filters: [{ name: "TableR Workspace Bundle", extensions: ["tabler-bundle"] }],
+        defaultPath: bundleEncrypt ? "workspace.tabler-bundle.texp" : "workspace.tabler-bundle",
+        filters: bundleEncrypt
+          ? [{ name: "Encrypted TableR Export", extensions: ["texp"] }]
+          : [{ name: "TableR Workspace Bundle", extensions: ["tabler-bundle"] }],
       });
       if (!path) return;
       setIsExporting(true);
-      const written = await exportWorkspaceBundle(path);
+      const written = await exportWorkspaceBundle(path, bundleEncrypt ? password : undefined);
       setResult({ success: true, message: `${bundleCopy.export.done} ${written}` });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -210,6 +223,59 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
                 <li>{bundleCopy.export.uiPrefs}</li>
               </ul>
             </div>
+            <label className="export-encrypt-toggle">
+              <input
+                type="checkbox"
+                checked={bundleEncrypt}
+                onChange={(e) => {
+                  setBundleEncrypt(e.target.checked);
+                  setError(null);
+                }}
+              />
+              <span>{bundleCopy.export.encryptLabel}</span>
+            </label>
+            {bundleEncrypt && (
+              <div className="cex-fieldset">
+                <p className="export-encrypt-note">{bundleCopy.export.encryptNote}</p>
+                <div className="connection-form-field">
+                  <label className="form-label uppercase tracking-wide">
+                    {bundleCopy.connectionsExport.passwordLabel}{" "}
+                    <span className="text-red-400">*</span>
+                  </label>
+                  <div className="connection-form-password">
+                    <input
+                      type={showPassword ? "text" : "password"}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder={bundleCopy.connectionsExport.passwordPlaceholder}
+                      className="input h-11 pr-11"
+                      minLength={10}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="connection-form-password-toggle"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+                <div className="connection-form-field">
+                  <label className="form-label uppercase tracking-wide">
+                    {bundleCopy.connectionsExport.confirmLabel}{" "}
+                    <span className="text-red-400">*</span>
+                  </label>
+                  <input
+                    type={showPassword ? "text" : "password"}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder={bundleCopy.connectionsExport.confirmPlaceholder}
+                    className="input h-11"
+                    minLength={10}
+                  />
+                </div>
+              </div>
+            )}
             {error && (
               <div className="cex-error">
                 <AlertCircle className="w-4 h-4" />

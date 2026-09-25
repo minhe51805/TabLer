@@ -30,6 +30,9 @@ pub enum DatabaseType {
     Spanner,
     DynamoDB,
     Trino,
+    Typesense,
+    SurrealDB,
+    Weaviate,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

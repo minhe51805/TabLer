@@ -477,6 +477,7 @@ describe("queryStore", () => {
         orderDir: "ASC",
         filter: null,
         overwrite: false,
+        encryptPassword: null,
       },
     });
   });

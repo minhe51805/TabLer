@@ -7,6 +7,7 @@ import {
   type AIAgentToolSpec,
 } from "./constants";
 import { objectSchema, TOOL_ERROR_SHAPE_NOTE } from "./specs-shared";
+import { ADMIN_PRESET_KINDS } from "../../../utils/admin-query-presets";
 
 export const SPECS: Partial<Record<AIAgentToolName, AIAgentToolSpec>> = {
   list_tables: {
@@ -223,13 +224,13 @@ export const SPECS: Partial<Record<AIAgentToolName, AIAgentToolSpec>> = {
   run_preset: {
     name: "run_preset",
     description:
-      "Run a pre-vetted operational query written per engine: process-list shows currently running queries/sessions; user-management lists database users and roles. These are the ONLY sanctioned way to inspect server state — catalog SQL like pg_stat_activity remains blocked in run_readonly_sql on purpose." +
+      "Run a pre-vetted operational query written per engine: process-list shows running queries/sessions; user-management lists database users/roles; server-info reports the engine build and uptime; locks reports lock/contention state; table-stats lists per-table size and row counts; index-usage surfaces unused or rarely used indexes; slow-queries lists the heaviest or longest-running statements. These are the ONLY sanctioned way to inspect server state — catalog SQL like pg_stat_activity remains blocked in run_readonly_sql on purpose." +
       TOOL_ERROR_SHAPE_NOTE,
     parameters: objectSchema(
       {
         presetId: {
           type: "string",
-          enum: ["process-list", "user-management"],
+          enum: [...ADMIN_PRESET_KINDS],
           description: "Which vetted preset to run.",
         },
         list: {

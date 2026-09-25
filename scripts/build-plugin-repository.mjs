@@ -85,6 +85,14 @@ const DOC_SLUGS = new Set([
   "mongodb",
   "libsql",
   "cloudflare-d1",
+  "oracle",
+  "dynamodb",
+  "elasticsearch",
+  "opensearch",
+  "spanner",
+  "trino",
+  "surrealdb",
+  "weaviate",
 ]);
 
 async function readManifest(bundleDir) {
@@ -196,8 +204,7 @@ async function main() {
     });
 
     // Store entry (web-facing). Bundle link is site-relative.
-    const docsSlug =
-      primaryDriver && DOC_SLUGS.has(primaryDriver.id) ? primaryDriver.id : null;
+    const docsSlug = primaryDriver && DOC_SLUGS.has(primaryDriver.id) ? primaryDriver.id : null;
     storePlugins.push({
       id: manifest.id,
       name: manifest.name,
@@ -245,11 +252,7 @@ async function main() {
     generatedAt,
     packages,
   };
-  await writeFile(
-    join(OUT_DIR, "registry.json"),
-    `${JSON.stringify(registry, null, 2)}\n`,
-    "utf8",
-  );
+  await writeFile(join(OUT_DIR, "registry.json"), `${JSON.stringify(registry, null, 2)}\n`, "utf8");
 
   // Web-facing catalog for the /plugins store page.
   const counts = {
@@ -267,19 +270,13 @@ async function main() {
     counts,
     plugins: storePlugins,
   };
-  await writeFile(
-    join(OUT_DIR, "store.json"),
-    `${JSON.stringify(store, null, 2)}\n`,
-    "utf8",
-  );
+  await writeFile(join(OUT_DIR, "store.json"), `${JSON.stringify(store, null, 2)}\n`, "utf8");
 
   // Console report.
   console.log(`Plugin repository -> website/public/plugins/  (base ${REPO_BASE_URL})\n`);
   for (const p of storePlugins) {
     const tag = p.binaryPending ? "binary-pending" : "ready";
-    console.log(
-      `  [${p.category.padEnd(6)}] ${p.id.padEnd(22)} v${p.version}  (${tag})`,
-    );
+    console.log(`  [${p.category.padEnd(6)}] ${p.id.padEnd(22)} v${p.version}  (${tag})`);
   }
   if (skipped.length) {
     console.log("\n  Skipped:");

@@ -42,7 +42,7 @@ import {
 } from "../../../utils/export-formats";
 import { useRoutineEditorStore } from "../../RoutineEditor/routineEditorStore";
 import { useTableFilterActions } from "./useTableFilterActions";
-import { requestAppConfirmation } from "../../../stores/confirmStore";
+import { requestAppConfirmation, requestAppExportEncryption } from "../../../stores/confirmStore";
 
 export type CheckboxFilterState = "checked" | "unchecked" | "indeterminate";
 
@@ -752,6 +752,10 @@ export function useSidebar() {
   const handleBulkExport = useCallback(
     async (format: TableExportFormat) => {
       if (!activeConnectionId || selectedTables.length === 0 || isBulkExporting) return;
+      const encrypt = await requestAppExportEncryption({
+        fileLabel: `${selectedTables.length} × .${format}`,
+      });
+      if (!encrypt.confirmed) return;
       const directory = await openDirectoryDialog({ directory: true, multiple: false });
       if (typeof directory !== "string" || !directory) return;
       setIsBulkExporting(true);
@@ -768,6 +772,7 @@ export function useSidebar() {
             database: currentDatabase || null,
             format,
             directory,
+            encryptPassword: encrypt.password,
           },
         });
         if (result.cancelled) {

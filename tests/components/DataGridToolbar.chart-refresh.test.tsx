@@ -41,16 +41,19 @@ const textOnlyColumns = [
 ];
 
 describe("DataGridToolbar chart button", () => {
-  it("shows the Chart button only when a numeric column exists", () => {
+  it("shows the Chart entry inside the Tools menu only when a numeric column exists", async () => {
+    const user = userEvent.setup();
     const { rerender } = render(
       <DataGridToolbar {...baseProps} resolvedColumns={textOnlyColumns} dataRows={[["Hanoi"]]} />,
     );
-    expect(screen.queryByRole("button", { name: "Chart this result" })).not.toBeInTheDocument();
+    // No numeric column and no inspector/refresh props -> no Tools button at all.
+    expect(screen.queryByRole("button", { name: "Tools" })).not.toBeInTheDocument();
 
     rerender(
       <DataGridToolbar {...baseProps} resolvedColumns={numericColumns} dataRows={numericRows} />,
     );
-    expect(screen.getByRole("button", { name: "Chart this result" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Tools" }));
+    expect(screen.getByText("Chart this result")).toBeInTheDocument();
   });
 
   it("opens the chart modal with type picker and axis controls", async () => {
@@ -59,7 +62,8 @@ describe("DataGridToolbar chart button", () => {
       <DataGridToolbar {...baseProps} resolvedColumns={numericColumns} dataRows={numericRows} />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Chart this result" }));
+    await user.click(screen.getByRole("button", { name: "Tools" }));
+    await user.click(screen.getByText("Chart this result"));
 
     const dialog = screen.getByRole("dialog", { name: "Chart" });
     expect(dialog).toBeInTheDocument();
@@ -83,7 +87,9 @@ describe("DataGridToolbar auto-refresh", () => {
     const { rerender } = render(
       <DataGridToolbar {...baseProps} resolvedColumns={numericColumns} dataRows={numericRows} />,
     );
-    expect(screen.queryByRole("button", { name: "Auto-refresh" })).not.toBeInTheDocument();
+    // Chart is still available for numeric columns — the auto-refresh picker
+    // alone is what stays hidden until the props arrive.
+    expect(screen.queryByText("Every 5 seconds")).not.toBeInTheDocument();
 
     const tick = vi.fn();
     const onChange = vi.fn();
@@ -98,17 +104,13 @@ describe("DataGridToolbar auto-refresh", () => {
       />,
     );
 
-    // Countdown starts at the full interval and ticks down each second.
-    expect(screen.getByText("5s")).toBeInTheDocument();
-    act(() => void vi.advanceTimersByTime(1000));
-    expect(screen.getByText("4s")).toBeInTheDocument();
-    act(() => void vi.advanceTimersByTime(4000));
+    act(() => void vi.advanceTimersByTime(5000));
     expect(tick).toHaveBeenCalledTimes(1);
     act(() => void vi.advanceTimersByTime(5000));
     expect(tick).toHaveBeenCalledTimes(2);
   });
 
-  it("pauses the countdown while the page is hidden", () => {
+  it("pauses the tick while the page is hidden", () => {
     vi.useFakeTimers();
     const tick = vi.fn();
     render(
@@ -125,7 +127,6 @@ describe("DataGridToolbar auto-refresh", () => {
     Object.defineProperty(document, "hidden", { value: true, configurable: true });
     act(() => void vi.advanceTimersByTime(10000));
     expect(tick).not.toHaveBeenCalled();
-    expect(screen.getByText("5s")).toBeInTheDocument();
 
     Object.defineProperty(document, "hidden", { value: false, configurable: true });
     act(() => void vi.advanceTimersByTime(5000));

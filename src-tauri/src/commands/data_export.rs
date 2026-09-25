@@ -1,4 +1,6 @@
-use super::export_support::{build_insert_statement_batch, qualify_name};
+use super::export_support::{
+    build_insert_statement_batch, encrypt_export_file, qualify_name, temporary_export_path,
+};
 use crate::database::capabilities::DriverCapability;
 use crate::database::manager::DatabaseManager;
 use crate::database::models::{DatabaseType, QueryResult};
@@ -204,6 +206,10 @@ pub struct TableDataExportRequest {
     /// dialog and retry with this flag set.
     #[serde(default)]
     overwrite: bool,
+    /// Optional AES-256-GCM envelope password. When set, the finished export
+    /// bytes are encrypted and written to `<chosen>.texp`; `None` writes the
+    /// plaintext format exactly as before.
+    encrypt_password: Option<String>,
 }
 
 /// Error prefix the frontend matches to trigger its overwrite-confirm flow.
@@ -226,6 +232,9 @@ pub struct BulkTableExportRequest {
     format: String,
     /// Directory the frontend picked once for the whole batch.
     directory: String,
+    /// Optional AES-256-GCM envelope password applied to every written file
+    /// (each lands as `<table>.<ext>.texp` inside `directory`).
+    encrypt_password: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -267,7 +276,16 @@ pub async fn export_tables_to_directory(
         .await
         .map_err(|e| e.to_string())?;
     let format = TableExportFormat::parse(&request.format)?;
-    let extension = format.extension();
+    if let Some(password) = request.encrypt_password.as_deref() {
+        crate::commands::export_crypto::validate_export_password(password)?;
+    }
+    // Encrypted files land as `<table>.<ext>.texp` so the inner format stays
+    // visible in the name.
+    let extension = if request.encrypt_password.is_some() {
+        format!("{}.texp", format.extension())
+    } else {
+        format.extension().to_string()
+    };
     // SQL export needs the engine's identifier-quoting dialect.
     let db_type = db_manager
         .connection_database_type(&connection_id)
@@ -291,7 +309,7 @@ pub async fn export_tables_to_directory(
             was_cancelled = true;
             break;
         }
-        let target_path = unique_export_path(&directory, table, extension);
+        let target_path = unique_export_path(&directory, table, &extension);
         let temporary_path = temporary_export_path(&target_path);
         let table_request = TableDataExportRequest {
             table: table.clone(),
@@ -302,6 +320,7 @@ pub async fn export_tables_to_directory(
             filter: None,
             // unique_export_path already picked a non-clobbering name.
             overwrite: true,
+            encrypt_password: request.encrypt_password.clone(),
         };
         let result = stream_table_export(TableExportJob {
             driver: &*driver,
@@ -315,20 +334,38 @@ pub async fn export_tables_to_directory(
         })
         .await;
         match result {
-            Ok(row_count) => match tokio::fs::rename(&temporary_path, &target_path).await {
-                Ok(()) => exported.push(TableDataExportResult {
-                    file_path: target_path.to_string_lossy().to_string(),
-                    format: format.id().to_string(),
-                    row_count,
-                }),
-                Err(e) => {
-                    let _ = tokio::fs::remove_file(&temporary_path).await;
-                    failed.push(BulkTableExportFailure {
-                        table: table.clone(),
-                        error: format!("Failed to publish completed export: {e}"),
-                    });
+            Ok(row_count) => {
+                let published = match table_request.encrypt_password.as_deref() {
+                    Some(password) => {
+                        let source = temporary_path.clone();
+                        let destination = target_path.clone();
+                        let password = password.to_string();
+                        tokio::task::spawn_blocking(move || {
+                            encrypt_export_file(&source, &destination, &password, "table")
+                        })
+                        .await
+                        .map_err(|_| "Export encryption task failed unexpectedly.".to_string())
+                        .and_then(|result| result)
+                    }
+                    None => tokio::fs::rename(&temporary_path, &target_path)
+                        .await
+                        .map_err(|e| format!("Failed to publish completed export: {e}")),
+                };
+                match published {
+                    Ok(()) => exported.push(TableDataExportResult {
+                        file_path: target_path.to_string_lossy().to_string(),
+                        format: format.id().to_string(),
+                        row_count,
+                    }),
+                    Err(error) => {
+                        let _ = tokio::fs::remove_file(&temporary_path).await;
+                        failed.push(BulkTableExportFailure {
+                            table: table.clone(),
+                            error,
+                        });
+                    }
                 }
-            },
+            }
             Err(error) => {
                 let _ = tokio::fs::remove_file(&temporary_path).await;
                 if cancelled.load(Ordering::Relaxed) {
@@ -397,20 +434,31 @@ pub async fn export_table_data(
         .await
         .map_err(|e| e.to_string())?;
     let format = TableExportFormat::parse(&request.format)?;
+    if let Some(password) = request.encrypt_password.as_deref() {
+        crate::commands::export_crypto::validate_export_password(password)?;
+    }
     // SQL export needs the engine's identifier-quoting dialect.
     let db_type = db_manager
         .connection_database_type(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
-    let target_path = FileDialog::new()
-        .set_file_name(format!(
-            "{}.{}",
+    let suggested_name = if request.encrypt_password.is_some() {
+        format!(
+            "{}.{}.texp",
             safe_filename(&request.table),
             format.extension()
-        ))
+        )
+    } else {
+        format!("{}.{}", safe_filename(&request.table), format.extension())
+    };
+    let target_path = FileDialog::new()
+        .set_file_name(suggested_name)
         .add_filter(format.dialog_label(), &[format.extension()])
         .save_file()
         .ok_or_else(|| "No export destination selected.".to_string())?;
+    // Encrypted output is written to `<chosen>.texp`; the overwrite check and
+    // temp-file placement both target that final path.
+    let target_path = crate::commands::export_crypto::encrypted_export_path(&target_path);
     if target_path.exists() && !request.overwrite {
         return Err(format!(
             "{EXPORT_FILE_EXISTS_CODE}: '{}' already exists. Confirm overwrite to replace it.",
@@ -434,9 +482,24 @@ pub async fn export_table_data(
 
     match result {
         Ok(row_count) => {
-            tokio::fs::rename(&temporary_path, &target_path)
-                .await
-                .map_err(|e| format!("Failed to publish completed export: {e}"))?;
+            match request.encrypt_password.as_deref() {
+                Some(password) => {
+                    let source = temporary_path.clone();
+                    let destination = target_path.clone();
+                    let password = password.to_string();
+                    tokio::task::spawn_blocking(move || {
+                        encrypt_export_file(&source, &destination, &password, "table")
+                    })
+                    .await
+                    .map_err(|_| "Export encryption task failed unexpectedly.".to_string())
+                    .and_then(|result| result)?;
+                }
+                None => {
+                    tokio::fs::rename(&temporary_path, &target_path)
+                        .await
+                        .map_err(|e| format!("Failed to publish completed export: {e}"))?;
+                }
+            }
             Ok(TableDataExportResult {
                 file_path: target_path.to_string_lossy().to_string(),
                 format: format.id().to_string(),
@@ -1378,14 +1441,6 @@ fn csv_escape(value: &str) -> String {
     }
 }
 
-fn temporary_export_path(target_path: &Path) -> PathBuf {
-    let file_name = target_path
-        .file_name()
-        .and_then(|value| value.to_str())
-        .unwrap_or("export");
-    target_path.with_file_name(format!(".{file_name}.{}.part", Uuid::new_v4()))
-}
-
 fn safe_filename(value: &str) -> String {
     let safe = value
         .chars()
@@ -1489,6 +1544,7 @@ mod tests {
             order_dir: None,
             filter: None,
             overwrite: false,
+            encrypt_password: None,
         }
     }
 

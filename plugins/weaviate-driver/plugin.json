@@ -1,0 +1,36 @@
+{
+  "apiVersion": 1,
+  "id": "weaviate-driver",
+  "name": "Weaviate driver",
+  "version": "1.0.0",
+  "publishedAt": "2026-09-25T00:00:00.000Z",
+  "kind": "adapter",
+  "description": "Adds Weaviate connectivity (REST + GraphQL on :8080) through the declarative HTTP driver host: class browsing, a SELECT subset, inline edits, and schema edits.",
+  "author": "TableR Team",
+  "entry": null,
+  "capabilities": ["database"],
+  "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+  "compatibility": {
+    "minAppVersion": "0.1.4",
+    "maxAppVersion": null,
+    "platforms": [],
+    "architectures": []
+  },
+  "integrity": {
+    "algorithm": "sha256",
+    "digest": "37ce66015ffcb3642b8eb96accd477931de90529e50019cfeb4edc979f951118"
+  },
+  "updateUrl": null,
+  "contributes": {
+    "formats": [],
+    "drivers": [
+      {
+        "id": "weaviate",
+        "label": "Weaviate",
+        "protocol": "weaviate",
+        "runtime": "declarative-http-v1",
+        "status": "stable"
+      }
+    ]
+  }
+}

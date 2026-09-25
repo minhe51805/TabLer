@@ -39,6 +39,8 @@ export const KO_BUNDLE_COPY: BundleCopy = {
     schedules: "저장된 일정",
     aiProviders: "AI 제공자 설정 (API 키 제외)",
     uiPrefs: "UI 환경 설정 (테마, 레이아웃, 단축키)",
+    encryptLabel: "보내기 암호화 (AES-256-GCM)",
+    encryptNote: "번들이 일반 JSON 대신 암호화된 .texp 파일로 저장됩니다.",
     button: "번들보내기",
     working: "보내는 중...",
     done: "워크스페이스 번들을 다음 위치에보냈습니다:",

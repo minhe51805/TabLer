@@ -14,6 +14,7 @@ import { ImportWizard } from "../DataImport/ImportWizard";
 import { ThemeCustomizer } from "../ThemeCustomizer/ThemeCustomizer";
 import { SafeModeConfirmDialog } from "../SafeMode/SafeModeConfirmDialog";
 import { ConfirmDialog } from "../ConfirmDialog";
+import { ExportEncryptDialog } from "../ExportEncryptDialog";
 import { useConfirmStore, setAppConfirmHostMounted } from "../../stores/confirmStore";
 import { useI18n } from "../../i18n";
 import { ConnectionExporter, ConnectionImporter } from "../ConnectionExporter";
@@ -198,6 +199,7 @@ export function AppGlobalModals({
         onConfirm={() => respondConfirm(true)}
         onCancel={() => respondConfirm(false)}
       />
+      <ExportEncryptDialog />
       {showConnectionExporter && (
         <ConnectionExporter
           connections={connections}

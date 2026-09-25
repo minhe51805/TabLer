@@ -10,7 +10,11 @@ import {
   agentSqlErrorHint,
   isRetryableAgentToolError,
 } from "../agent-tool-executor-helpers";
-import { getAdminQueryPreset, type AdminQueryKind } from "../../../utils/admin-query-presets";
+import {
+  ADMIN_PRESET_KINDS,
+  getAdminQueryPreset,
+  type AdminQueryKind,
+} from "../../../utils/admin-query-presets";
 import { stringifyAgentObservation, type AgentToolModule } from "./shared";
 
 export const tool: AgentToolModule = {
@@ -20,11 +24,10 @@ export const tool: AgentToolModule = {
       return agentSqlToolBlockedMessage("run_preset", ctx.toolAvailability);
     }
     const wantsList = args?.list === true || typeof args?.presetId !== "string";
-    const presetKinds: AdminQueryKind[] = ["process-list", "user-management"];
     if (wantsList) {
       return stringifyAgentObservation(frame, {
         engine: ctx.toolAvailability?.engineLabel ?? "current engine",
-        availablePresets: presetKinds.map((kind) => ({
+        availablePresets: ADMIN_PRESET_KINDS.map((kind) => ({
           presetId: kind,
           ...(() => {
             const preset = getAdminQueryPreset(ctx.dbType, kind);
@@ -34,7 +37,10 @@ export const tool: AgentToolModule = {
         note: "Call again with args.presetId to run a preset. Preset SQL is pre-vetted per engine - catalog guards do not apply to it.",
       });
     }
-    const presetId = args?.presetId === "user-management" ? "user-management" : "process-list";
+    const rawId = typeof args?.presetId === "string" ? args.presetId : "process-list";
+    const presetId: AdminQueryKind = ADMIN_PRESET_KINDS.includes(rawId as AdminQueryKind)
+      ? (rawId as AdminQueryKind)
+      : "process-list";
     const preset = getAdminQueryPreset(ctx.dbType, presetId as AdminQueryKind);
     if (!preset.supported) {
       return `Tool blocked: the "${presetId}" preset is not available on this engine${preset.reason ? `: ${preset.reason}` : "."}`;

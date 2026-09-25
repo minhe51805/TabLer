@@ -38,6 +38,8 @@ export const ZH_BUNDLE_COPY: BundleCopy = {
     schedules: "已保存的计划",
     aiProviders: "AI 提供方设置（不含 API 密钥）",
     uiPrefs: "界面偏好（主题、布局、快捷键）",
+    encryptLabel: "加密导出（AES-256-GCM）",
+    encryptNote: "包将以加密的 .texp 文件形式保存，而不是纯 JSON。",
     button: "导出包",
     working: "正在导出...",
     done: "工作区包已导出到",

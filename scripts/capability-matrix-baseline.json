@@ -358,5 +358,50 @@
     "schema_edit": "S",
     "backup_restore": "S",
     "administration": "U"
+  },
+  "typesense": {
+    "connect": "S",
+    "query": "S",
+    "prepared_parameters": "N",
+    "query_cancellation": "U",
+    "pagination": "S",
+    "inline_edit": "S",
+    "atomic_edit_queue": "U",
+    "atomic_csv_import": "L",
+    "data_export": "S",
+    "explain": "U",
+    "schema_edit": "L",
+    "backup_restore": "L",
+    "administration": "U"
+  },
+  "surrealdb": {
+    "connect": "S",
+    "query": "S",
+    "prepared_parameters": "S",
+    "query_cancellation": "L",
+    "pagination": "S",
+    "inline_edit": "S",
+    "atomic_edit_queue": "S",
+    "atomic_csv_import": "S",
+    "data_export": "S",
+    "explain": "L",
+    "schema_edit": "L",
+    "backup_restore": "S",
+    "administration": "U"
+  },
+  "weaviate": {
+    "connect": "S",
+    "query": "S",
+    "prepared_parameters": "S",
+    "query_cancellation": "L",
+    "pagination": "S",
+    "inline_edit": "S",
+    "atomic_edit_queue": "U",
+    "atomic_csv_import": "L",
+    "data_export": "S",
+    "explain": "U",
+    "schema_edit": "L",
+    "backup_restore": "U",
+    "administration": "U"
   }
 }

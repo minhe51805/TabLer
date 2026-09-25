@@ -7,6 +7,12 @@
 import type { AppLanguage } from "../../i18n";
 
 export interface DataGridPowerCopy {
+  toolbar: {
+    /** "Rows" dropdown — insert / seed / paste / CSV import. */
+    rows: string;
+    /** "Tools" dropdown — chart, row inspector, auto-refresh. */
+    tools: string;
+  };
   rowInspector: {
     /** Toolbar toggle button label + tooltip. */
     button: string;
@@ -67,6 +73,10 @@ export interface DataGridPowerCopy {
 }
 
 const EN_COPY: DataGridPowerCopy = {
+  toolbar: {
+    rows: "Rows",
+    tools: "Tools",
+  },
   rowInspector: {
     button: "Inspect row",
   },
@@ -120,6 +130,10 @@ const EN_COPY: DataGridPowerCopy = {
 };
 
 const VI_COPY: DataGridPowerCopy = {
+  toolbar: {
+    rows: "Dòng",
+    tools: "Công cụ",
+  },
   rowInspector: {
     button: "Xem dòng",
   },
@@ -174,6 +188,10 @@ const VI_COPY: DataGridPowerCopy = {
 };
 
 const KO_COPY: DataGridPowerCopy = {
+  toolbar: {
+    rows: "행",
+    tools: "도구",
+  },
   rowInspector: {
     button: "행 검사",
   },
@@ -227,6 +245,10 @@ const KO_COPY: DataGridPowerCopy = {
 };
 
 const TR_COPY: DataGridPowerCopy = {
+  toolbar: {
+    rows: "Satırlar",
+    tools: "Araçlar",
+  },
   rowInspector: {
     button: "Satırı incele",
   },
@@ -282,6 +304,10 @@ const TR_COPY: DataGridPowerCopy = {
 };
 
 const ZH_COPY: DataGridPowerCopy = {
+  toolbar: {
+    rows: "行",
+    tools: "工具",
+  },
   rowInspector: {
     button: "检查行",
   },

@@ -3679,7 +3679,7 @@ a {
 
 /* tall scroll track; only when JS FX is active (.fx-on added by HeroScrollFX) */
 .neu .hero.fx-on {
-  height: 460vh;
+  height: 300vh;
   overflow: clip;
   padding-top: 0;
 }
@@ -5244,6 +5244,98 @@ a {
   box-shadow: var(--neu-shadow-out-sm, 0 2px 8px rgba(16, 24, 33, 0.08));
 }
 
+/* ---------- mobile nav (home header) ---------- */
+/* .main-nav is hidden below 980px; the hamburger exposes the same links in a
+   drop-down panel anchored under the header pill's right edge. Desktop keeps
+   it hidden entirely. */
+.neu .mobile-nav {
+  display: none;
+  position: relative;
+}
+
+@media (max-width: 980px) {
+  .neu .mobile-nav {
+    display: block;
+  }
+
+  .neu .mobile-nav-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 38px;
+    height: 38px;
+    border: none;
+    border-radius: 10px;
+    background: transparent;
+    color: var(--neu-muted, var(--muted));
+    cursor: pointer;
+    transition:
+      box-shadow 0.2s ease,
+      color 0.2s ease;
+  }
+
+  .neu .mobile-nav-toggle:hover {
+    color: var(--neu-ink, var(--ink));
+    box-shadow: var(--neu-shadow-in, inset 0 1px 3px rgba(16, 24, 33, 0.08));
+  }
+
+  .neu .mobile-nav-toggle[aria-expanded="true"] {
+    color: var(--neu-ink, var(--ink));
+    box-shadow: var(--neu-shadow-in, inset 0 1px 3px rgba(16, 24, 33, 0.08));
+  }
+
+  .neu .mobile-nav-panel {
+    position: absolute;
+    top: calc(100% + 10px);
+    right: 0;
+    min-width: 210px;
+    padding: 8px;
+    border-radius: 16px;
+    background: var(--neu-surface, var(--paper));
+    box-shadow:
+      var(--neu-shadow-out, 0 14px 34px rgba(16, 24, 33, 0.12)),
+      0 0 0 1px var(--line, #e6eaef);
+    z-index: 60;
+    animation: mobile-nav-in 0.18s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  .neu .mobile-nav-panel[hidden] {
+    display: none;
+  }
+
+  .neu .mobile-nav-panel a {
+    display: block;
+    padding: 11px 14px;
+    border-radius: 10px;
+    color: var(--neu-ink, var(--ink));
+    font-size: 14.5px;
+    font-weight: 500;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .neu .mobile-nav-panel a:hover {
+    box-shadow: var(--neu-shadow-in, inset 0 1px 3px rgba(16, 24, 33, 0.08));
+    color: var(--neu-accent-deep, var(--blue));
+  }
+}
+
+@keyframes mobile-nav-in {
+  from {
+    opacity: 0;
+    transform: translateY(-6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .neu .mobile-nav-panel {
+    animation: none;
+  }
+}
 /* print: docs articles flatten to clean black-on-white — no shadows,
    no nav chrome, links show their href, code blocks keep their border */
 @media print {
@@ -5254,6 +5346,7 @@ a {
   .back-to-top,
   .mobile-cta,
   .doc-pager,
+  .mobile-nav,
   .site-footer,
   .footer-wordmark {
     display: none !important;

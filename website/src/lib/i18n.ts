@@ -18,6 +18,7 @@ const en = {
     docs: "Docs",
     plugins: "Plugins",
     download: "Download",
+    menu: "Menu",
   },
   hero: {
     kicker: "Open-source database workspace",
@@ -27,7 +28,7 @@ const en = {
     download: "Download",
     viewOnGitHub: "View on GitHub",
     note: "Windows, macOS, and Linux",
-    revealEyebrow: "18 ENGINES, ONE WORKSPACE",
+    revealEyebrow: "26 ENGINES, ONE WORKSPACE",
     revealHeading: "Connect to anything.",
     phases: [
       {
@@ -49,7 +50,7 @@ const en = {
   },
   signal: {
     items: [
-      { strong: "18", span: "database engines" },
+      { strong: "26", span: "database engines" },
       { strong: "One", span: "unified workspace" },
       { strong: "Local", span: "desktop experience" },
       { strong: "GPLv3", span: "open-source license" },
@@ -289,6 +290,7 @@ const vi: typeof en = {
     docs: "Tài liệu",
     plugins: "Plugin",
     download: "Tải xuống",
+    menu: "Menu",
   },
   hero: {
     kicker: "Không gian làm việc CSDL mã nguồn mở",
@@ -298,7 +300,7 @@ const vi: typeof en = {
     download: "Tải xuống",
     viewOnGitHub: "Xem trên GitHub",
     note: "Windows, macOS và Linux",
-    revealEyebrow: "18 ENGINE, MỘT WORKSPACE",
+    revealEyebrow: "26 ENGINE, MỘT WORKSPACE",
     revealHeading: "Kết nối với mọi thứ.",
     phases: [
       {
@@ -320,7 +322,7 @@ const vi: typeof en = {
   },
   signal: {
     items: [
-      { strong: "18", span: "hệ CSDL" },
+      { strong: "26", span: "hệ CSDL" },
       { strong: "Một", span: "workspace thống nhất" },
       { strong: "Local", span: "trải nghiệm desktop" },
       { strong: "GPLv3", span: "giấy phép mã nguồn mở" },

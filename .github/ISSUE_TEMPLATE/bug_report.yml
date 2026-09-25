@@ -1,0 +1,99 @@
+name: Bug report
+description: Something in TableR is broken or behaves unexpectedly
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting — the more precise the report, the faster the fix.
+        Before filing, please search [existing issues](https://github.com/minhe51805/TabLer/issues)
+        to avoid duplicates.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug.
+      placeholder: "When I click Run on a SELECT that returns zero rows, the grid shows the previous result instead of clearing."
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened instead?
+      placeholder: "The grid should clear and show '0 rows'."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Numbered, minimal steps another person can follow.
+      placeholder: |
+        1. Connect to …
+        2. Open table …
+        3. Run `SELECT …`
+        4. Observe …
+    validations:
+      required: true
+
+  - type: dropdown
+    id: db-engine
+    attributes:
+      label: Database engine
+      description: Which engine were you connected to?
+      options:
+        - SQLite
+        - PostgreSQL
+        - MySQL
+        - SQL Server
+        - DuckDB
+        - Cassandra
+        - Redis
+        - libSQL
+        - MongoDB
+        - Not connected / N/A
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: TableR version
+      description: Titlebar version label, e.g. v0.1.6b
+      placeholder: "v0.1.6b"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows 11
+        - Windows 10
+        - macOS
+        - Linux
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs / console output
+      description: "DevTools console errors or backend output. Wrap in ``` fences."
+      render: shell
+    validations:
+      required: false
+
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots / recordings
+      description: Drag images or videos here. A visual repro is worth a page of text.
+    validations:
+      required: false

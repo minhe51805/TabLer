@@ -1,0 +1,5 @@
+# CODEOWNERS — auto-requested reviewers on pull requests.
+# The repo is a solo project; every path routes to the maintainer until
+# more owners exist.
+
+* @minhe51805

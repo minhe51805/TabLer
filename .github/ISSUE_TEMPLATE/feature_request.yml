@@ -1,0 +1,53 @@
+name: Feature request
+description: Propose a new capability or improvement
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Focused proposals land fastest. One feature per issue — split
+        multi-part ideas into separate requests.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: The pain point or workflow gap — not the solution.
+      placeholder: "When comparing two schemas I have to export DDL to text and diff by hand…"
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+      description: What TableR should do. Concrete UI/behavior beats abstraction.
+      placeholder: "A Schema → Compare menu that picks two connections and shows a side-by-side diff…"
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Other tools or workarounds you use today.
+      placeholder: "pgAdmin's schema diff — requires Postgres only."
+    validations:
+      required: false
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      description: Roughly which part of the app this touches.
+      options:
+        - Data grid / editing
+        - SQL editor
+        - AI agent / assistant
+        - Connections / drivers
+        - Import / export
+        - Workspace / tabs
+        - Other
+    validations:
+      required: true

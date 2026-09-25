@@ -20,7 +20,9 @@
       "backupRestore": "supported",
       "administration": "supported"
     },
-    "limitations": ["Restore can retain earlier statements after a failure."]
+    "limitations": [
+      "Restore can retain earlier statements after a failure."
+    ]
   },
   {
     "key": "mariadb",
@@ -43,7 +45,9 @@
       "backupRestore": "supported",
       "administration": "supported"
     },
-    "limitations": ["MariaDB currently shares the MySQL driver and capability tests."]
+    "limitations": [
+      "MariaDB currently shares the MySQL driver and capability tests."
+    ]
   },
   {
     "key": "postgresql",

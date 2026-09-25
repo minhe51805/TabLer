@@ -707,6 +707,7 @@ export function AppWorkspacePanel({
                         type="button"
                         onClick={onNewQuery}
                         className="toolbar-btn primary icon-only"
+                        data-tour="new-query"
                         title={t("toolbar.newQueryShortcut")}
                         aria-label={t("toolbar.newQuery")}
                       >
@@ -728,6 +729,7 @@ export function AppWorkspacePanel({
                         type="button"
                         onClick={() => onOpenAISlidePanel()}
                         className="toolbar-btn icon-only"
+                        data-tour="ai-trigger"
                         title={t("toolbar.askAiShortcut")}
                       >
                         <Sparkles className="w-3.5 h-3.5" />

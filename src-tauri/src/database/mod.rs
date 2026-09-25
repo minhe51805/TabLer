@@ -40,4 +40,7 @@ mod snowflake_support;
 pub mod spanner;
 pub mod sqlite;
 mod sqlite_support;
+pub mod surrealdb;
 pub mod trino;
+pub mod typesense;
+pub mod weaviate;

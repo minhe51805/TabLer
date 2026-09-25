@@ -16,6 +16,10 @@
 //! indices per section and reports per-section counts.
 
 use crate::commands::connection_export::{is_same_connection, ExportableConnection};
+use crate::commands::export_crypto::{
+    decrypt_export_payload, encrypt_export_payload, encrypted_export_path, is_export_envelope,
+    validate_export_password, ENCRYPTED_EXPORT_CODE,
+};
 use crate::database::ai_models::AIProviderConfig;
 use crate::database::models::ConnectionConfig;
 use crate::storage::ai_storage::AIStorage;
@@ -169,9 +173,26 @@ fn schedule_identity(schedule: &QuerySchedule) -> (String, String) {
     (schedule.name.clone(), schedule.sql.clone())
 }
 
-fn load_bundle(path: &str) -> Result<WorkspaceBundle, String> {
+/// Error returned (prefixed with `ENCRYPTED_EXPORT_CODE`) when the file is an
+/// encrypted bundle but no password was supplied — the frontend matches the
+/// prefix and shows the password prompt instead of a failure.
+fn load_bundle(path: &str, password: Option<&str>) -> Result<WorkspaceBundle, String> {
     let raw = std::fs::read_to_string(path)
         .map_err(|error| format!("Failed to read bundle file: {error}"))?;
+    // Encrypted bundles are `tabler.export` envelopes — decrypt first so the
+    // format checks below see the plain bundle JSON.
+    let raw = if is_export_envelope(&raw) {
+        let Some(password) = password else {
+            return Err(format!(
+                "{ENCRYPTED_EXPORT_CODE}: This bundle is encrypted. Enter its export password."
+            ));
+        };
+        let decrypted = decrypt_export_payload(&raw, password, "bundle")?;
+        String::from_utf8(decrypted)
+            .map_err(|_| "Decrypted bundle is not valid UTF-8.".to_string())?
+    } else {
+        raw
+    };
     // Check the format marker before full deserialization so a foreign JSON
     // file gets a clear "not a bundle" error instead of a field-level parse
     // failure.
@@ -309,13 +330,16 @@ fn build_preview(
 /// Writes the whole shareable workspace to a single `.tabler-bundle` JSON file
 /// at `path`. Secrets are stripped: connections keep a `hasPassword` flag and
 /// AI providers a `hasApiKey` flag, but keyring material never leaves the
-/// machine.
+/// machine. With `encrypt_password` the bundle JSON is wrapped in the
+/// `tabler.export` AES-256-GCM envelope and written to `<path>.texp` (or
+/// `path` itself when it already ends in `.texp`); `None` writes plaintext.
 #[tauri::command]
 pub fn export_workspace_bundle(
     path: String,
     conn_storage: State<'_, ConnectionStorage>,
     ai_storage: State<'_, AIStorage>,
     ui_prefs: Option<BTreeMap<String, String>>,
+    encrypt_password: Option<String>,
 ) -> Result<String, String> {
     export_workspace_bundle_core(
         &path,
@@ -324,6 +348,7 @@ pub fn export_workspace_bundle(
         &ScheduleStorage::new()?,
         &ai_storage,
         ui_prefs.unwrap_or_default(),
+        encrypt_password.as_deref(),
     )
 }
 
@@ -334,6 +359,7 @@ fn export_workspace_bundle_core(
     schedule_storage: &ScheduleStorage,
     ai_storage: &AIStorage,
     ui_prefs: BTreeMap<String, String>,
+    encrypt_password: Option<&str>,
 ) -> Result<String, String> {
     let connections = conn_storage
         .load_connections()
@@ -390,8 +416,17 @@ fn export_workspace_bundle_core(
 
     let json = serde_json::to_string_pretty(&bundle)
         .map_err(|error| format!("Failed to serialize workspace bundle: {error}"))?;
-    std::fs::write(path, &json).map_err(|error| format!("Failed to write bundle file: {error}"))?;
-    Ok(path.to_string())
+    let (written_path, payload) = match encrypt_password {
+        Some(password) => {
+            validate_export_password(password)?;
+            let envelope = encrypt_export_payload(json.as_bytes(), password, "bundle")?;
+            (encrypted_export_path(std::path::Path::new(path)), envelope)
+        }
+        None => (std::path::PathBuf::from(path), json),
+    };
+    std::fs::write(&written_path, payload)
+        .map_err(|error| format!("Failed to write bundle file: {error}"))?;
+    Ok(written_path.to_string_lossy().to_string())
 }
 
 /// Two-phase bundle import.
@@ -405,7 +440,8 @@ fn export_workspace_bundle_core(
 /// its id is remapped so dependent favorites/schedules point at the local row.
 /// Returns the preview plus per-section imported counts.
 /// `ui_pref_keys` carries the importer's current `tabler.*` localStorage keys —
-/// used to flag existing prefs in the preview and to return only missing entries.
+/// `password` decrypts `tabler.export`-encrypted bundles; omitting it on an
+/// encrypted file returns `ENCRYPTED_EXPORT_CODE` so the UI can prompt.
 #[tauri::command]
 pub fn import_workspace_bundle(
     path: String,
@@ -413,6 +449,7 @@ pub fn import_workspace_bundle(
     conn_storage: State<'_, ConnectionStorage>,
     ai_storage: State<'_, AIStorage>,
     ui_pref_keys: Option<Vec<String>>,
+    password: Option<String>,
 ) -> Result<WorkspaceBundleImportResult, String> {
     import_workspace_bundle_core(
         &path,
@@ -422,9 +459,11 @@ pub fn import_workspace_bundle(
         &mut ScheduleStorage::new()?,
         &ai_storage,
         ui_pref_keys.unwrap_or_default().into_iter().collect(),
+        password.as_deref(),
     )
 }
 
+#[allow(clippy::too_many_arguments)]
 fn import_workspace_bundle_core(
     path: &str,
     selection: Option<WorkspaceBundleSelection>,
@@ -433,8 +472,9 @@ fn import_workspace_bundle_core(
     schedule_storage: &mut ScheduleStorage,
     ai_storage: &AIStorage,
     existing_ui_pref_keys: HashSet<String>,
+    password: Option<&str>,
 ) -> Result<WorkspaceBundleImportResult, String> {
-    let bundle = load_bundle(path)?;
+    let bundle = load_bundle(path, password)?;
 
     let existing_connections = conn_storage
         .load_connections()
@@ -683,6 +723,7 @@ mod tests {
                 ),
                 ("tabler.connectionGroups".to_string(), "[]".to_string()),
             ]),
+            None,
         )
         .unwrap();
 
@@ -705,6 +746,7 @@ mod tests {
             &ai_storage,
             // Simulate the importer already having one of the bundled keys.
             HashSet::from(["tabler.activeTheme".to_string()]),
+            None,
         )
         .unwrap();
         assert!(preview.counts.is_none());
@@ -734,6 +776,7 @@ mod tests {
             &mut schedules,
             &ai_storage,
             HashSet::from(["tabler.activeTheme".to_string()]),
+            None,
         )
         .unwrap();
         let counts = result.counts.unwrap();
@@ -767,6 +810,7 @@ mod tests {
             &mut schedules,
             &ai_storage,
             HashSet::from(["tabler.activeTheme".to_string()]),
+            None,
         )
         .unwrap();
         assert!(again.preview.connections[0].exists);
@@ -781,7 +825,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("bad.tabler-bundle");
         std::fs::write(&path, r#"{"format":"other","version":1}"#).unwrap();
-        let error = load_bundle(path.to_str().unwrap()).unwrap_err();
+        let error = load_bundle(path.to_str().unwrap(), None).unwrap_err();
         assert!(error.contains("Not a TableR workspace bundle"));
         std::fs::remove_dir_all(&dir).ok();
     }
@@ -794,7 +838,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("newer.tabler-bundle");
         std::fs::write(&path, serde_json::to_string(&bundle).unwrap()).unwrap();
-        let error = load_bundle(path.to_str().unwrap()).unwrap_err();
+        let error = load_bundle(path.to_str().unwrap(), None).unwrap_err();
         assert!(error.contains("newer than this app supports"));
         std::fs::remove_dir_all(&dir).ok();
     }

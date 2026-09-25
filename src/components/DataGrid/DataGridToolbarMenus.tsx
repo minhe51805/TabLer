@@ -11,6 +11,12 @@ import {
   ShieldCheck,
   Table2,
   Timer,
+  Plus,
+  Dices,
+  ClipboardPaste,
+  FileUp,
+  BarChart3,
+  PanelRight,
   X,
 } from "lucide-react";
 import type { useI18n } from "../../i18n";
@@ -35,6 +41,9 @@ interface MenuOption {
   run: () => void;
   /** Render a divider line above this option. */
   separator?: boolean;
+  /** Highlights the row when the feature it opens is already on (row
+   *  inspector toggle). */
+  active?: boolean;
 }
 
 /** Fixed-position dropdown anchored under a toolbar button, portaled to
@@ -75,7 +84,7 @@ function MenuOptionButton({ opt, onDone }: { opt: MenuOption; onDone: () => void
       )}
       <button
         type="button"
-        className="datagrid-export-menu-item"
+        className={`datagrid-export-menu-item${opt.active ? " active" : ""}`}
         onClick={() => {
           opt.run();
           onDone();
@@ -157,45 +166,6 @@ export function DataGridSqlMenu({
     <ToolbarMenu anchorRef={anchorRef}>
       {sqlOptions.map((opt) => (
         <MenuOptionButton key={opt.label} opt={opt} onDone={onClose} />
-      ))}
-    </ToolbarMenu>
-  );
-}
-
-/** Auto-refresh interval picker: off / 5s / 15s / 30s / 60s. */
-export function DataGridRefreshMenu({
-  open,
-  anchorRef,
-  autoRefreshMs,
-  chartCopy,
-  onAutoRefreshMsChange,
-  onClose,
-}: {
-  open: boolean;
-  anchorRef: RefObject<HTMLElement | null>;
-  autoRefreshMs: number;
-  chartCopy: ChartCopy;
-  onAutoRefreshMsChange?: (ms: number) => void;
-  onClose: () => void;
-}) {
-  if (!open) return null;
-  return (
-    <ToolbarMenu anchorRef={anchorRef} className="datagrid-export-menu datagrid-sort-menu">
-      {[0, 5000, 15000, 30000, 60000].map((ms) => (
-        <button
-          key={ms}
-          type="button"
-          className={`datagrid-sort-menu-item${autoRefreshMs === ms ? " active" : ""}`}
-          onClick={() => {
-            onAutoRefreshMsChange?.(ms);
-            onClose();
-          }}
-        >
-          <Timer className="!w-3.5 !h-3.5" />
-          <span>
-            {ms === 0 ? chartCopy.autoRefresh.off : chartCopy.autoRefresh.everySeconds(ms / 1000)}
-          </span>
-        </button>
       ))}
     </ToolbarMenu>
   );
@@ -577,6 +547,179 @@ export function DataGridSettingsMenu({
           {t(settings.alternatingRows ? "datagrid.on" : "datagrid.off")}
         </button>
       </div>
+    </ToolbarMenu>
+  );
+}
+
+/** "Rows" dropdown: the four add-a-row actions (insert, seed generator,
+ *  clipboard paste, CSV import) collapsed out of the toolbar row. Rendered
+ *  only when the grid has at least one row-writing surface. */
+export function DataGridRowsMenu({
+  open,
+  anchorRef,
+  canInsert,
+  canSeed,
+  canPaste,
+  canImportCsv,
+  t,
+  seedLabel,
+  onInsertRow,
+  onSeedRows,
+  onPasteRows,
+  onImportCsv,
+  onClose,
+}: {
+  open: boolean;
+  anchorRef: RefObject<HTMLElement | null>;
+  canInsert: boolean;
+  canSeed: boolean;
+  canPaste: boolean;
+  canImportCsv: boolean;
+  t: TFunction;
+  seedLabel: string;
+  onInsertRow: () => void;
+  onSeedRows: () => void;
+  onPasteRows?: () => void;
+  onImportCsv?: () => void;
+  onClose: () => void;
+}) {
+  if (!open) return null;
+  const options: MenuOption[] = [
+    ...(canInsert
+      ? [
+          {
+            label: t("datagrid.insertRow"),
+            hint: t("datagrid.insertRowTitle"),
+            icon: Plus,
+            run: () => void onInsertRow(),
+          },
+        ]
+      : []),
+    ...(canSeed
+      ? [
+          {
+            label: seedLabel,
+            hint: seedLabel,
+            icon: Dices,
+            run: onSeedRows,
+          },
+        ]
+      : []),
+    ...(canPaste
+      ? [
+          {
+            label: t("datagrid.pasteRows"),
+            hint: t("datagrid.pasteRowsTitle"),
+            icon: ClipboardPaste,
+            run: () => void onPasteRows?.(),
+          },
+        ]
+      : []),
+    ...(canImportCsv
+      ? [
+          {
+            label: t("datagrid.importCsv"),
+            hint: t("datagrid.importCsvTitle"),
+            icon: FileUp,
+            run: () => void onImportCsv?.(),
+          },
+        ]
+      : []),
+  ];
+  return (
+    <ToolbarMenu anchorRef={anchorRef}>
+      {options.map((opt) => (
+        <MenuOptionButton key={opt.label} opt={opt} onDone={onClose} />
+      ))}
+    </ToolbarMenu>
+  );
+}
+
+/** "Tools" dropdown: chart, row-inspector toggle, and the auto-refresh
+ *  interval picker (which used to be its own Timer button). */
+export function DataGridToolsMenu({
+  open,
+  anchorRef,
+  canChart,
+  canInspect,
+  rowInspectorOpen,
+  canAutoRefresh,
+  autoRefreshMs,
+  chartCopy,
+  powerCopy,
+  onChart,
+  onToggleRowInspector,
+  onAutoRefreshMsChange,
+  onClose,
+}: {
+  open: boolean;
+  anchorRef: RefObject<HTMLElement | null>;
+  canChart: boolean;
+  canInspect: boolean;
+  rowInspectorOpen: boolean;
+  canAutoRefresh: boolean;
+  autoRefreshMs: number;
+  chartCopy: ChartCopy;
+  powerCopy: PowerCopy;
+  onChart: () => void;
+  onToggleRowInspector?: () => void;
+  onAutoRefreshMsChange?: (ms: number) => void;
+  onClose: () => void;
+}) {
+  if (!open) return null;
+  return (
+    <ToolbarMenu anchorRef={anchorRef}>
+      {canChart && (
+        <MenuOptionButton
+          opt={{
+            label: chartCopy.chart.title,
+            hint: chartCopy.chart.buttonTitle,
+            icon: BarChart3,
+            run: onChart,
+          }}
+          onDone={onClose}
+        />
+      )}
+      {canInspect && (
+        <MenuOptionButton
+          opt={{
+            label: powerCopy.rowInspector.button,
+            hint: powerCopy.rowInspector.button,
+            icon: PanelRight,
+            run: () => onToggleRowInspector?.(),
+            active: rowInspectorOpen,
+          }}
+          onDone={onClose}
+        />
+      )}
+      {canAutoRefresh && (
+        <>
+          {(canChart || canInspect) && (
+            <div
+              role="separator"
+              style={{ borderTop: "1px solid var(--border-color, #444)", margin: "4px 0" }}
+            />
+          )}
+          {[0, 5000, 15000, 30000, 60000].map((ms) => (
+            <button
+              key={ms}
+              type="button"
+              className={`datagrid-sort-menu-item${autoRefreshMs === ms ? " active" : ""}`}
+              onClick={() => {
+                onAutoRefreshMsChange?.(ms);
+                onClose();
+              }}
+            >
+              <Timer className="!w-3.5 !h-3.5" />
+              <span>
+                {ms === 0
+                  ? chartCopy.autoRefresh.off
+                  : chartCopy.autoRefresh.everySeconds(ms / 1000)}
+              </span>
+            </button>
+          ))}
+        </>
+      )}
     </ToolbarMenu>
   );
 }

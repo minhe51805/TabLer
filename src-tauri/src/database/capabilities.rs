@@ -54,7 +54,10 @@ pub const fn query_model_for(database_type: DatabaseType) -> QueryModel {
     match database_type {
         DatabaseType::Redis => QueryModel::Kv,
         DatabaseType::MongoDB => QueryModel::Document,
-        DatabaseType::OpenSearch | DatabaseType::Elasticsearch => QueryModel::Search,
+        DatabaseType::OpenSearch | DatabaseType::Elasticsearch | DatabaseType::Typesense => {
+            QueryModel::Search
+        }
+        DatabaseType::Weaviate => QueryModel::Document,
         DatabaseType::Cassandra => QueryModel::Cql,
         _ => QueryModel::Sql,
     }
@@ -88,7 +91,10 @@ pub const fn driver_distribution(database_type: DatabaseType) -> DriverDistribut
         | DatabaseType::Oracle
         | DatabaseType::Spanner
         | DatabaseType::DynamoDB
-        | DatabaseType::Trino => DriverDistribution::PluginHttp,
+        | DatabaseType::Trino
+        | DatabaseType::Typesense
+        | DatabaseType::SurrealDB
+        | DatabaseType::Weaviate => DriverDistribution::PluginHttp,
         DatabaseType::DuckDB
         | DatabaseType::Cassandra
         | DatabaseType::Redis
@@ -133,6 +139,7 @@ pub const fn agent_allows_sql_write_preview(database_type: DatabaseType) -> bool
             | DatabaseType::MSSQL
             | DatabaseType::DuckDB
             | DatabaseType::LibSQL
+            | DatabaseType::SurrealDB
     )
 }
 
@@ -267,7 +274,7 @@ impl DriverCapabilityProfile {
         }
     }
 }
-pub const ALL_DATABASE_TYPES: [DatabaseType; 24] = [
+pub const ALL_DATABASE_TYPES: [DatabaseType; 27] = [
     DatabaseType::MySQL,
     DatabaseType::MariaDB,
     DatabaseType::PostgreSQL,
@@ -292,6 +299,9 @@ pub const ALL_DATABASE_TYPES: [DatabaseType; 24] = [
     DatabaseType::Spanner,
     DatabaseType::DynamoDB,
     DatabaseType::Trino,
+    DatabaseType::Typesense,
+    DatabaseType::SurrealDB,
+    DatabaseType::Weaviate,
 ];
 
 const S: CapabilitySupport = CapabilitySupport::Supported;
@@ -537,6 +547,30 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             S, S, S, S, S, S, S, S, S, S, S, S, U,
             &["Runs over the Trino HTTP protocol (/v1/statement); the driver follows nextUri pages until the coordinator reports no more data.", "Atomic edits/imports and write previews pin statements to a coordinator transaction (X-Trino-Transaction-Id); connectors without transaction support reject START TRANSACTION honestly.", "Prepared parameters run through PREPARE/EXECUTE with escaped literals — Trino has no wire-level binds.", "Cancel issues HTTP DELETE on the running query URI."],
         ),
+        DatabaseType::Typesense => profile(
+            database_type,
+            "typesense",
+            "Typesense",
+            DriverTier::Specialized,
+            S, S, N, U, S, S, U, L, S, U, L, L, U,
+            &["Atomic mutations are unsupported: Typesense has no multi-document transaction primitive; edit queues are rejected and documents/import reports partial application honestly (per-line JSONL, not a transaction).", "CSV imports use documents/import?action=emplace bounded per batch; a mid-batch failure leaves earlier lines imported and reports the count.", "No server-side query cancellation: cancel is a client-side abort honoured before send and between statements.", "The SQL editor accepts a documented subset (SELECT/SEARCH/INSERT/UPDATE/DELETE/DDL); OR, LIKE, IS [NOT] NULL, joins, and aggregates are rejected — Typesense omits optional fields instead of storing NULLs.", "UPDATE/DELETE resolve WHERE id = <literal> to a document; DELETE also accepts arbitrary filter predicates; grid row selectors use the implicit id field.", "Prepared parameters, EXPLAIN, and admin/user endpoints are unavailable; the API key is configured as the connection password and TLS is required for non-loopback hosts.", "Restore replays CREATE/INSERT statements via execute_query — per-statement, no transactional pin."],
+        ),
+        DatabaseType::SurrealDB => profile(
+            database_type,
+            "surrealdb",
+            "SurrealDB",
+            DriverTier::Specialized,
+            S, S, S, L, S, S, S, S, S, L, L, S, U,
+            &["Runs over the HTTP /rpc query endpoint so $name binds travel as typed vars; requests are stateless — transactions must fit inside one request body (default body cap bounds atomic queues and restores).", "Atomic edits/imports and write previews run inside a single-request BEGIN…COMMIT (BEGIN…CANCEL for preview) script; any statement error or THROW rolls the whole transaction back server-side.", "Inline edits address records by the id selector's table:id record link (numeric/UUID/datetime id parts keep their types); other selector columns bind as field equality.", "Cancel aborts the HTTP request client-side only; SurrealDB offers no statement kill over HTTP, so the engine may keep running it.", "Quick filters translate LIKE to string::starts_with/ends_with/contains by wildcard shape and <> to !=; _ and interior-% LIKE patterns are rejected.", "Schema edits run DEFINE TABLE/FIELD/INDEX statements sequentially; SurrealDB has no DDL transaction.", "Explain is limited to SELECT … EXPLAIN inside the query path; EXPLAIN FULL is untranslated."],
+        ),
+        DatabaseType::Weaviate => profile(
+            database_type,
+            "weaviate",
+            "Weaviate",
+            DriverTier::Specialized,
+            S, S, S, L, S, S, U, L, S, U, L, U, U,
+            &["No transactions anywhere in the Weaviate API: atomic edit queues and write previews reject; the batch objects endpoint is not used for CSV import because it is not atomic.", "GraphQL sort requires Weaviate 1.24+; older servers surface the raw GraphQL error.", "SQL LIKE %/_ map to Weaviate wildcards */? unescaped (no escape exists).", "Single-schema engine: the database is fixed; multi-tenancy is per-class and out of scope.", "Inline edits address objects by their uuid id; PATCH merges properties server-side and DELETE of a missing object counts as not-deleted.", "No explain, administration, or backup/restore surface; static API key auth only.", "Cancel aborts the HTTP request client-side only; Weaviate cannot kill a running query server-side."],
+        ),
     }
 }
 
@@ -726,6 +760,7 @@ mod tests {
                     | DatabaseType::Snowflake
                     | DatabaseType::BigQuery
                     | DatabaseType::Oracle
+                    | DatabaseType::SurrealDB
             );
             match model {
                 QueryModel::Sql => {
@@ -796,7 +831,10 @@ mod tests {
                 | DatabaseType::Oracle
                 | DatabaseType::Spanner
                 | DatabaseType::DynamoDB
-                | DatabaseType::Trino => PluginHttp,
+                | DatabaseType::Trino
+                | DatabaseType::Typesense
+                | DatabaseType::SurrealDB
+                | DatabaseType::Weaviate => PluginHttp,
                 DatabaseType::DuckDB
                 | DatabaseType::Cassandra
                 | DatabaseType::Redis
@@ -865,6 +903,9 @@ mod tests {
             "spanner",
             "dynamodb",
             "trino",
+            "typesense",
+            "surrealdb",
+            "weaviate",
         ] {
             assert!(
                 !builtin.contains(key),

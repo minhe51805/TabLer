@@ -39,6 +39,8 @@ export const VI_BUNDLE_COPY: BundleCopy = {
     schedules: "Lịch trình đã lưu",
     aiProviders: "Cài đặt nhà cung cấp AI (không kèm khóa API)",
     uiPrefs: "Tùy chọn giao diện (chủ đề, bố cục, phím tắt)",
+    encryptLabel: "Mã hóa tệp xuất (AES-256-GCM)",
+    encryptNote: "Gói được ghi dưới dạng tệp .texp mã hóa thay vì JSON thuần.",
     button: "Xuất gói",
     working: "Đang xuất...",
     done: "Đã xuất gói workspace tới",

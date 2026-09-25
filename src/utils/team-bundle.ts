@@ -126,19 +126,33 @@ export function applyUiPrefs(prefs: Record<string, string>): number {
   return written;
 }
 
-/** Write the whole shareable workspace to a .tabler-bundle file at `path`. */
-export async function exportWorkspaceBundle(path: string): Promise<string> {
+/** Error prefix the backend emits when a picked bundle file is encrypted. */
+export const ENCRYPTED_BUNDLE_CODE = "TABLER_EXPORT_ENCRYPTED";
+
+/** Write the whole shareable workspace to a .tabler-bundle file at `path`.
+ *  With `encryptPassword` the bundle is wrapped in the AES-256-GCM export
+ *  envelope and lands at `<path>.texp`; the returned path is the real one. */
+export async function exportWorkspaceBundle(
+  path: string,
+  encryptPassword?: string,
+): Promise<string> {
   return invoke<string>("export_workspace_bundle", {
     path,
     uiPrefs: collectUiPrefs(),
+    encryptPassword: encryptPassword ?? null,
   });
 }
 
-/** Preview a bundle without saving anything. */
-export async function previewWorkspaceBundle(path: string): Promise<TeamBundleImportResult> {
+/** Preview a bundle without saving anything. `password` decrypts
+ *  `tabler.export` envelopes; a missing one throws ENCRYPTED_BUNDLE_CODE. */
+export async function previewWorkspaceBundle(
+  path: string,
+  password?: string,
+): Promise<TeamBundleImportResult> {
   return invoke<TeamBundleImportResult>("import_workspace_bundle", {
     path,
     uiPrefKeys: uiPrefKeys(),
+    password: password ?? null,
   });
 }
 
@@ -146,10 +160,12 @@ export async function previewWorkspaceBundle(path: string): Promise<TeamBundleIm
 export async function importWorkspaceBundle(
   path: string,
   selection: TeamBundleSelection,
+  password?: string,
 ): Promise<TeamBundleImportResult> {
   return invoke<TeamBundleImportResult>("import_workspace_bundle", {
     path,
     selection,
     uiPrefKeys: uiPrefKeys(),
+    password: password ?? null,
   });
 }

@@ -50,6 +50,9 @@ const DATABASE_TYPES: readonly DatabaseType[] = [
   "spanner",
   "dynamodb",
   "trino",
+  "typesense",
+  "surrealdb",
+  "weaviate",
 ];
 
 /**

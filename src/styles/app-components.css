@@ -17701,6 +17701,10 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  /* Pill labels never wrap — a wrapped label stretches the whole topbar
+     (the "Tạo dữ liệu mẫu" three-line pill bug). */
+  white-space: nowrap;
+  flex-shrink: 0;
   min-height: 24px;
   padding: 0 10px;
   border-radius: 999px;
@@ -19226,18 +19230,9 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
     min-width: max-content;
   }
 
-  .datagrid-topbar {
-    flex-direction: column;
-  }
-
-  .datagrid-topbar-side {
-    width: 100%;
-    align-items: flex-start;
-  }
-
-  .datagrid-topbar-actions {
-    justify-content: flex-start;
-  }
+  /* Toolbar responsiveness lives in a single <980px media block at the
+     bottom of this file (stacked layout + wrapped actions). The old
+     duplicate here is removed — it could never win the cascade anyway. */
 
   .datagrid-footer {
     flex-direction: column;
@@ -27661,19 +27656,44 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   opacity: 0.6;
   cursor: not-allowed;
 }
+/* Medium tier: the toolbar still fits on one row once the text labels
+   collapse — every action keeps its tooltip, so no affordance is lost. */
+@media (min-width: 901px) and (max-width: 1100px) {
+  .datagrid-topbar-actions .datagrid-footer-action:not(.datagrid-icon-action) {
+    width: 28px;
+    min-width: 28px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .datagrid-topbar-actions .datagrid-footer-action:not(.datagrid-icon-action) > span {
+    display: none;
+  }
+  /* Dropdown pills keep the chevron — the icon alone would look like a dead
+     button, and icon+⌄ still fits the collapsed pill. */
+}
+/* The Table/Chart toggle lives inside .datagrid-topbar-actions; keep its two
+   segments on one line even when the actions row wraps. */
+.datagrid-topbar-actions .datagrid-view-toggle {
+  flex-wrap: nowrap;
+  flex: 0 0 auto;
+}
 
 @media (max-width: 980px) {
   .datagrid-topbar {
     flex-direction: column;
     align-items: stretch;
   }
-
   .datagrid-topbar-side {
     align-items: flex-start;
   }
 
   .datagrid-topbar-actions {
     justify-content: flex-start;
+    /* Stacked layout gives the actions the full row — wrap instead of
+       hiding them behind a horizontal scrollbar. */
+    flex-wrap: wrap;
+    overflow-x: visible;
   }
 
   .datagrid-insert-dialog-backdrop {
@@ -30071,6 +30091,47 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
 
 .confirm-dialog-btn-confirm:hover {
   border-color: var(--mm-border);
+}
+
+/* ExportEncryptDialog — checkbox + password inside the shared confirm shell. */
+.export-encrypt-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 12px;
+  font-size: var(--mm-fs-body);
+  color: var(--text-primary);
+  cursor: pointer;
+  -webkit-user-select: none;
+  user-select: none;
+}
+
+.export-encrypt-toggle input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--mm-accent, #6366f1);
+  cursor: pointer;
+}
+
+.export-encrypt-password {
+  margin-top: 12px;
+}
+
+.export-encrypt-password .input {
+  width: 100%;
+  margin-top: 6px;
+}
+
+.export-encrypt-note {
+  margin: 8px 0 0;
+  font-size: var(--mm-fs-small);
+  color: var(--text-secondary);
+}
+
+.export-encrypt-error {
+  margin: 6px 0 0;
+  font-size: var(--mm-fs-small);
+  color: rgba(239, 68, 68, 0.95);
 }
 
 .app-root .ai-workspace-stage--sidebar .ai-workspace-commandbar {

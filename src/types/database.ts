@@ -23,7 +23,10 @@ export type DatabaseType =
   | "oracle"
   | "spanner"
   | "dynamodb"
-  | "trino";
+  | "trino"
+  | "typesense"
+  | "surrealdb"
+  | "weaviate";
 
 export interface ConnectionConfig {
   id: string;

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-24T00:00:00.000Z",
+  "generatedAt": "2026-09-25T00:00:00.000Z",
   "packages": [
     {
       "manifest": {
@@ -206,6 +206,88 @@
       "assets": [],
       "publishedAt": "2026-07-16T00:00:00.000Z",
       "releaseNotes": "Built-in registry package for DuckDB native driver 1.0.0."
+    },
+    {
+      "manifest": {
+        "apiVersion": 1,
+        "version": "1.0.0",
+        "publishedAt": "2026-09-25T00:00:00.000Z",
+        "kind": "adapter",
+        "author": "TableR Team",
+        "entry": null,
+        "capabilities": ["database"],
+        "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+        "compatibility": {
+          "minAppVersion": "0.1.4",
+          "maxAppVersion": null,
+          "platforms": [],
+          "architectures": []
+        },
+        "updateUrl": null,
+        "id": "dynamodb-driver",
+        "name": "Amazon DynamoDB driver",
+        "description": "Adds Amazon DynamoDB connectivity (PartiQL) over the declarative HTTP driver host.",
+        "integrity": {
+          "algorithm": "sha256",
+          "digest": "7674a5d26a6f2478a3d00c387f0d9afb99fa69a129ce5b1d9af4df932517be05"
+        },
+        "contributes": {
+          "formats": [],
+          "drivers": [
+            {
+              "id": "dynamodb",
+              "label": "Amazon DynamoDB",
+              "protocol": "dynamodb",
+              "runtime": "declarative-http-v1",
+              "status": "stable"
+            }
+          ]
+        }
+      },
+      "assets": [],
+      "publishedAt": "2026-09-25T00:00:00.000Z",
+      "releaseNotes": "Built-in registry package for Amazon DynamoDB driver 1.0.0."
+    },
+    {
+      "manifest": {
+        "apiVersion": 1,
+        "id": "elasticsearch-driver",
+        "name": "Elasticsearch read-only driver",
+        "version": "1.0.0",
+        "publishedAt": "2026-09-25T00:00:00.000Z",
+        "kind": "adapter",
+        "description": "Adds bounded, read-only Elasticsearch index browsing and JSON search through the declarative HTTP driver host.",
+        "author": "TableR Team",
+        "entry": null,
+        "capabilities": ["database"],
+        "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+        "compatibility": {
+          "minAppVersion": "0.1.4",
+          "maxAppVersion": null,
+          "platforms": [],
+          "architectures": []
+        },
+        "integrity": {
+          "algorithm": "sha256",
+          "digest": "fccce8a32aeac3d2946621d2a41660758ad1b9cfe43362e68c4158307958b3d6"
+        },
+        "updateUrl": null,
+        "contributes": {
+          "formats": [],
+          "drivers": [
+            {
+              "id": "elasticsearch",
+              "label": "Elasticsearch",
+              "protocol": "elasticsearch",
+              "runtime": "declarative-http-v1",
+              "status": "stable"
+            }
+          ]
+        }
+      },
+      "assets": [],
+      "publishedAt": "2026-09-25T00:00:00.000Z",
+      "releaseNotes": "Built-in registry package for Elasticsearch read-only driver 1.0.0."
     },
     {
       "manifest": {
@@ -475,6 +557,211 @@
       "assets": [],
       "publishedAt": "2026-07-16T00:00:00.000Z",
       "releaseNotes": "Built-in registry package for Snowflake driver 1.0.0."
+    },
+    {
+      "manifest": {
+        "apiVersion": 1,
+        "version": "1.0.0",
+        "publishedAt": "2026-09-25T00:00:00.000Z",
+        "kind": "adapter",
+        "author": "TableR Team",
+        "entry": null,
+        "capabilities": ["database"],
+        "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+        "compatibility": {
+          "minAppVersion": "0.1.4",
+          "maxAppVersion": null,
+          "platforms": [],
+          "architectures": []
+        },
+        "updateUrl": null,
+        "id": "spanner-driver",
+        "name": "Google Spanner driver",
+        "description": "Adds Google Cloud Spanner connectivity over the declarative HTTP driver host.",
+        "integrity": {
+          "algorithm": "sha256",
+          "digest": "ae528460a05e6b54d671d0ee4d3e8a2d541ecf50c9f2f50c24bc17d1190b0e55"
+        },
+        "contributes": {
+          "formats": [],
+          "drivers": [
+            {
+              "id": "spanner",
+              "label": "Google Spanner",
+              "protocol": "spanner",
+              "runtime": "declarative-http-v1",
+              "status": "stable"
+            }
+          ]
+        }
+      },
+      "assets": [],
+      "publishedAt": "2026-09-25T00:00:00.000Z",
+      "releaseNotes": "Built-in registry package for Google Spanner driver 1.0.0."
+    },
+    {
+      "manifest": {
+        "apiVersion": 1,
+        "id": "surrealdb-driver",
+        "name": "SurrealDB driver",
+        "version": "1.0.0",
+        "publishedAt": "2026-09-25T00:00:00.000Z",
+        "kind": "adapter",
+        "description": "Adds SurrealDB connectivity (SurrealQL over the HTTP /rpc endpoint) through the declarative HTTP driver host.",
+        "author": "TableR Team",
+        "entry": null,
+        "capabilities": ["database"],
+        "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+        "compatibility": {
+          "minAppVersion": "0.1.4",
+          "maxAppVersion": null,
+          "platforms": [],
+          "architectures": []
+        },
+        "integrity": {
+          "algorithm": "sha256",
+          "digest": "16be79c650105f77b3a624565c48cf1bd5196e664114818ebcd47d44ebef1df7"
+        },
+        "updateUrl": null,
+        "contributes": {
+          "formats": [],
+          "drivers": [
+            {
+              "id": "surrealdb",
+              "label": "SurrealDB",
+              "protocol": "surrealdb",
+              "runtime": "declarative-http-v1",
+              "status": "stable"
+            }
+          ]
+        }
+      },
+      "assets": [],
+      "publishedAt": "2026-09-25T00:00:00.000Z",
+      "releaseNotes": "Built-in registry package for SurrealDB driver 1.0.0."
+    },
+    {
+      "manifest": {
+        "apiVersion": 1,
+        "version": "1.0.0",
+        "publishedAt": "2026-09-25T00:00:00.000Z",
+        "kind": "adapter",
+        "author": "TableR Team",
+        "entry": null,
+        "capabilities": ["database"],
+        "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+        "compatibility": {
+          "minAppVersion": "0.1.4",
+          "maxAppVersion": null,
+          "platforms": [],
+          "architectures": []
+        },
+        "updateUrl": null,
+        "id": "trino-driver",
+        "name": "Trino driver",
+        "description": "Adds Trino connectivity over the declarative HTTP driver host.",
+        "integrity": {
+          "algorithm": "sha256",
+          "digest": "b35f1ab0f7ec7a9d390c1235b0e5f3f45e9a7cf504733820fc80bb15040a3aff"
+        },
+        "contributes": {
+          "formats": [],
+          "drivers": [
+            {
+              "id": "trino",
+              "label": "Trino",
+              "protocol": "trino",
+              "runtime": "declarative-http-v1",
+              "status": "stable"
+            }
+          ]
+        }
+      },
+      "assets": [],
+      "publishedAt": "2026-09-25T00:00:00.000Z",
+      "releaseNotes": "Built-in registry package for Trino driver 1.0.0."
+    },
+    {
+      "manifest": {
+        "apiVersion": 1,
+        "id": "typesense-driver",
+        "name": "Typesense driver",
+        "version": "1.0.0",
+        "publishedAt": "2026-09-25T00:00:00.000Z",
+        "kind": "adapter",
+        "description": "Adds Typesense connectivity — collection browsing, filtered document search, inline document edits, and JSONL batch import — over the declarative HTTP driver host.",
+        "author": "TableR Team",
+        "entry": null,
+        "capabilities": ["database"],
+        "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+        "compatibility": {
+          "minAppVersion": "0.1.4",
+          "maxAppVersion": null,
+          "platforms": [],
+          "architectures": []
+        },
+        "integrity": {
+          "algorithm": "sha256",
+          "digest": "83b0376335d5d9c7afdfe10d300cc3cc3f437492183cf82572cc96e2d537ee0b"
+        },
+        "updateUrl": null,
+        "contributes": {
+          "formats": [],
+          "drivers": [
+            {
+              "id": "typesense",
+              "label": "Typesense",
+              "protocol": "typesense",
+              "runtime": "declarative-http-v1",
+              "status": "stable"
+            }
+          ]
+        }
+      },
+      "assets": [],
+      "publishedAt": "2026-09-25T00:00:00.000Z",
+      "releaseNotes": "Built-in registry package for Typesense driver 1.0.0."
+    },
+    {
+      "manifest": {
+        "apiVersion": 1,
+        "id": "weaviate-driver",
+        "name": "Weaviate driver",
+        "version": "1.0.0",
+        "publishedAt": "2026-09-25T00:00:00.000Z",
+        "kind": "adapter",
+        "description": "Adds Weaviate connectivity (REST + GraphQL on :8080) through the declarative HTTP driver host: class browsing, a SELECT subset, inline edits, and schema edits.",
+        "author": "TableR Team",
+        "entry": null,
+        "capabilities": ["database"],
+        "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+        "compatibility": {
+          "minAppVersion": "0.1.4",
+          "maxAppVersion": null,
+          "platforms": [],
+          "architectures": []
+        },
+        "integrity": {
+          "algorithm": "sha256",
+          "digest": "37ce66015ffcb3642b8eb96accd477931de90529e50019cfeb4edc979f951118"
+        },
+        "updateUrl": null,
+        "contributes": {
+          "formats": [],
+          "drivers": [
+            {
+              "id": "weaviate",
+              "label": "Weaviate",
+              "protocol": "weaviate",
+              "runtime": "declarative-http-v1",
+              "status": "stable"
+            }
+          ]
+        }
+      },
+      "assets": [],
+      "publishedAt": "2026-09-25T00:00:00.000Z",
+      "releaseNotes": "Built-in registry package for Weaviate driver 1.0.0."
     }
   ]
 }

@@ -33,6 +33,9 @@ export const PLUGIN_HTTP_PROTOCOLS = [
   "spanner",
   "dynamodb",
   "trino",
+  "typesense",
+  "surrealdb",
+  "weaviate",
 ] as const;
 
 export type PluginHttpProtocol = (typeof PLUGIN_HTTP_PROTOCOLS)[number];

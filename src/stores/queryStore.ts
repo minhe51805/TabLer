@@ -140,6 +140,8 @@ export interface QueryState {
       filter?: string;
       /** Retry after the user confirmed replacing an existing file. */
       overwrite?: boolean;
+      /** AES-256-GCM envelope password; omitted exports plaintext. */
+      encryptPassword?: string;
     },
     operationId: string,
   ) => Promise<{ filePath: string; format: string; rowCount: number }>;
@@ -644,6 +646,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
         orderDir: request.orderDir || null,
         filter: request.filter || null,
         overwrite: request.overwrite ?? false,
+        encryptPassword: request.encryptPassword ?? null,
       },
     }),
 

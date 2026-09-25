@@ -23,7 +23,10 @@ use super::redis::RedisDriver;
 use super::snowflake::SnowflakeDriver;
 use super::spanner::SpannerDriver;
 use super::sqlite::SqliteDriver;
+use super::surrealdb::SurrealDbDriver;
 use super::trino::TrinoDriver;
+use super::typesense::TypesenseDriver;
+use super::weaviate::WeaviateDriver;
 use crate::ssh::ssh_tunnel::{SshTunnelManager, TunnelHandle};
 use crate::storage::plugin_storage::PluginStorage;
 use anyhow::{anyhow, Result};
@@ -445,6 +448,29 @@ impl DatabaseManager {
                 require_installed_http_plugin(&self.plugin_storage, &mut actual_config, "trino")
                     .await?;
                 Arc::new(TrinoDriver::connect(&actual_config).await?)
+            }
+            DatabaseType::Typesense => {
+                require_installed_http_plugin(
+                    &self.plugin_storage,
+                    &mut actual_config,
+                    "typesense",
+                )
+                .await?;
+                Arc::new(TypesenseDriver::connect(&actual_config).await?)
+            }
+            DatabaseType::SurrealDB => {
+                require_installed_http_plugin(
+                    &self.plugin_storage,
+                    &mut actual_config,
+                    "surrealdb",
+                )
+                .await?;
+                Arc::new(SurrealDbDriver::connect(&actual_config).await?)
+            }
+            DatabaseType::Weaviate => {
+                require_installed_http_plugin(&self.plugin_storage, &mut actual_config, "weaviate")
+                    .await?;
+                Arc::new(WeaviateDriver::connect(&actual_config).await?)
             }
         };
 

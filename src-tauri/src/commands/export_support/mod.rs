@@ -41,7 +41,9 @@ pub(super) fn preferred_export_format(db_type: DatabaseType) -> DatabaseExportFo
         DatabaseType::Redis
         | DatabaseType::MongoDB
         | DatabaseType::OpenSearch
-        | DatabaseType::Elasticsearch => DatabaseExportFormat::JsonSnapshot,
+        | DatabaseType::Elasticsearch
+        | DatabaseType::Typesense
+        | DatabaseType::Weaviate => DatabaseExportFormat::JsonSnapshot,
         _ => DatabaseExportFormat::Sql,
     }
 }
@@ -67,6 +69,46 @@ pub(super) fn open_export_save_dialog(
     dialog
         .save_file()
         .ok_or_else(|| "No file selected.".to_string())
+}
+
+/// Temporary sibling path an export streams into before it is published to
+/// the user-visible destination (rename, or encrypt-then-delete).
+pub(super) fn temporary_export_path(target_path: &Path) -> PathBuf {
+    let file_name = target_path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("export");
+    target_path.with_file_name(format!(".{file_name}.{}.part", uuid::Uuid::new_v4()))
+}
+
+/// Encrypt an already-written export file into the `tabler.export` envelope
+/// at `destination`, then remove the plaintext source. Any failure removes
+/// `source` as well so plaintext material never lingers beside the output.
+pub(super) fn encrypt_export_file(
+    source: &Path,
+    destination: &Path,
+    password: &str,
+    kind: &str,
+) -> Result<(), String> {
+    let run = || -> Result<(), String> {
+        let plaintext =
+            std::fs::read(source).map_err(|e| format!("Failed to read exported data: {e}"))?;
+        let envelope =
+            crate::commands::export_crypto::encrypt_export_payload(&plaintext, password, kind)?;
+        std::fs::write(destination, envelope)
+            .with_context(|| format!("Failed to write export file '{}'", destination.display()))
+            .map_err(|e| e.to_string())?;
+        Ok(())
+    };
+    let result = run();
+    if let Err(e) = std::fs::remove_file(source) {
+        // Removal only matters for the plaintext path; a missing source on
+        // failure is fine, a cleanup error on success is worth surfacing.
+        if result.is_ok() {
+            return Err(format!("Export written but plaintext cleanup failed: {e}"));
+        }
+    }
+    result
 }
 
 pub(super) fn build_export_filename(

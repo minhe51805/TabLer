@@ -44,6 +44,9 @@ export interface BundleCopy {
     schedules: string;
     aiProviders: string;
     uiPrefs: string;
+    /** Optional AES-256-GCM encryption (writes a .texp envelope file). */
+    encryptLabel: string;
+    encryptNote: string;
     button: string;
     working: string;
     done: string;

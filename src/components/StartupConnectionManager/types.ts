@@ -92,6 +92,9 @@ export const DB_LABELS: Record<string, DbLabel> = {
   elasticsearch: { abbr: "Es", color: "#005571" },
   dynamodb: { abbr: "Dy", color: "#4053d6" },
   trino: { abbr: "Tr", color: "#dd00a1" },
+  typesense: { abbr: "Ty", color: "#d42f4a" },
+  surrealdb: { abbr: "Su", color: "#ff00a0" },
+  weaviate: { abbr: "We", color: "#038b8b" },
 };
 
 // ─── Hover Preview ─────────────────────────────────────────────────────────────

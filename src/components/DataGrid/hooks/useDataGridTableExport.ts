@@ -1,5 +1,5 @@
 import { useCallback, type Dispatch, type RefObject, type SetStateAction } from "react";
-import { requestAppConfirmation } from "../../../stores/confirmStore";
+import { requestAppConfirmation, requestAppExportEncryption } from "../../../stores/confirmStore";
 import type { TableFilterPlan } from "./useDataGrid";
 import { getCurrentAppLanguage } from "../../../i18n";
 import { getDataGridMaskingCopy } from "../datagrid-masking-copy";
@@ -30,6 +30,8 @@ interface DataGridTableExportParams {
       orderDir?: "ASC" | "DESC";
       filter?: string;
       overwrite?: boolean;
+      /** AES-256-GCM envelope password; omitted/undefined exports plaintext. */
+      encryptPassword?: string;
     },
     operationId: string,
   ) => Promise<unknown>;
@@ -77,6 +79,10 @@ export function useDataGridTableExport({
         return;
       }
       const operationId = `export-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+      const encrypt = await requestAppExportEncryption({
+        fileLabel: `${tableName}.${format}`,
+      });
+      if (!encrypt.confirmed) return;
       tableExportOperationIdRef.current = operationId;
       setExportedRowCount(0);
       setIsExportingFull(true);
@@ -91,6 +97,7 @@ export function useDataGridTableExport({
             orderDir: sortColumn ? sortDir : undefined,
             filter: filterPlan.serverFilter || undefined,
             overwrite,
+            encryptPassword: encrypt.password ?? undefined,
           },
           operationId,
         );

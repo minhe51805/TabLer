@@ -31,6 +31,7 @@ import { repositoryUrl } from "@/lib/site";
 import { LanguageToggle } from "./LanguageToggle";
 import {
   DockToggle,
+  MobileNav,
   HeroScrollFX,
   ScrollReveal,
   TiltFrame,
@@ -111,6 +112,14 @@ const engines = [
   "BigQuery",
   "LibSQL",
   "Cloudflare D1",
+  "Oracle",
+  "DynamoDB",
+  "Elasticsearch",
+  "OpenSearch",
+  "Spanner",
+  "Trino",
+  "SurrealDB",
+  "Weaviate",
 ];
 
 const architectureIcons = [Layers3, Workflow, ShieldCheck, Code2, GitBranch, Zap];
@@ -181,6 +190,10 @@ export default async function Home() {
               <Download size={16} aria-hidden="true" />
               <span className="download-label">{t.nav.download}</span>
             </a>
+            <MobileNav
+              links={navLinks(t).map(({ href, label }) => ({ href, label }))}
+              label={t.nav.menu}
+            />
             <DockToggle />
           </div>
         </div>

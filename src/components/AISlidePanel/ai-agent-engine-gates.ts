@@ -31,6 +31,9 @@ export const AGENT_QUERY_MODEL_BY_ENGINE: Record<DatabaseType, QueryModel> = {
   spanner: "sql",
   dynamodb: "sql",
   trino: "sql",
+  typesense: "search",
+  surrealdb: "sql",
+  weaviate: "document",
 };
 
 const ENGINE_LABEL: Record<DatabaseType, string> = {
@@ -58,6 +61,9 @@ const ENGINE_LABEL: Record<DatabaseType, string> = {
   spanner: "Google Spanner",
   dynamodb: "Amazon DynamoDB",
   trino: "Trino",
+  typesense: "Typesense",
+  surrealdb: "SurrealDB",
+  weaviate: "Weaviate",
 };
 
 export interface AgentToolAvailability {
@@ -274,6 +280,27 @@ const AGENT_ENGINE_TOOL_FLAGS: Record<
     schemaObjects: true,
     presets: true,
     checkpointRestore: true,
+  },
+  typesense: {
+    parameterizedRead: false,
+    previewWrite: false,
+    schemaObjects: true,
+    presets: false,
+    checkpointRestore: false,
+  },
+  surrealdb: {
+    parameterizedRead: true,
+    previewWrite: true,
+    schemaObjects: true,
+    presets: false,
+    checkpointRestore: true,
+  },
+  weaviate: {
+    parameterizedRead: true,
+    previewWrite: false,
+    schemaObjects: true,
+    presets: false,
+    checkpointRestore: false,
   },
 };
 

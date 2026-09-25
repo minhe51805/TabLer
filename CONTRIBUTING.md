@@ -294,7 +294,7 @@ npm run typecheck       # Type check
 
 ## License
 
-By contributing to TabLer, you agree that your contributions will be licensed under the terms of the [GNU General Public License v3.0](LICENSE).
+By contributing to TabLer, you agree that your contributions will be licensed under the terms of the [GNU Affero General Public License v3.0](LICENSE).
 
 ---
 

@@ -14,7 +14,7 @@
     <img src="https://img.shields.io/badge/version-0.1.6b-087EA4" alt="TableR version 0.1.6b" />
   </a>
   <a href="LICENSE">
-    <img src="https://img.shields.io/badge/license-GPLv3-2563EB" alt="GPLv3 license" />
+    <img src="https://img.shields.io/badge/license-AGPLv3-2563EB" alt="AGPLv3 license" />
   </a>
   <a href="https://tauri.app">
     <img src="https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white" alt="Built with Tauri 2" />
@@ -228,7 +228,7 @@ npm run build
 ## License
 
 TableR is distributed under the
-[GNU General Public License v3.0](LICENSE).
+[GNU Affero General Public License v3.0](LICENSE).
 
 ## Support
 

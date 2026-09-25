@@ -432,7 +432,7 @@ export default async function Home() {
               copy={{
                 prompt: t.agent.demo.prompt,
                 steps: t.agent.demo.steps as [string, string, string, string],
-                activities: t.agent.demo.activities as [string, string, string, string],
+                term: t.agent.demo.term,
                 handover: t.agent.demo.handover,
                 done: t.agent.demo.done,
               }}

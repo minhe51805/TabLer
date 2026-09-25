@@ -1,35 +1,39 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Bot, Check, ShieldCheck, UserRound } from "lucide-react";
+import { Bot, Check, Code2, Play, ShieldCheck, Table2, UserRound } from "lucide-react";
 
 /**
  * Live agent-loop storyboard inside the agent section's product frame.
- * The scene replays the real tool chain as a little performance:
- *   1. the user's question types into the prompt bar
- *   2. the agent avatar drops into center stage — scales up, spins once,
- *      then settles onto the work track
- *   3. it walks station to station (inspect → draft → verify → run); each
- *      station pops a thought bubble showing what the agent is doing,
- *      then closes as the agent moves on
- *   4. at the last station it slides right to the client avatar and a chat
- *      bubble pops open — the handover message slides out, then the result
- *      table streams in row by row
- *   5. pause, fade, replay
- * Pure CSS/timeout choreography — no animation library. The loop only runs
- * while the frame is on screen (IntersectionObserver); reduced-motion users
- * see the finished scene.
+ *
+ * Scene sequence:
+ *   1. prompt — only the input bar exists; the user's question types in,
+ *      then the bar fades away entirely
+ *   2. arrive — the agent avatar drops into the left pane center, scales
+ *      up, spins once, and settles onto the work line
+ *   3. station ×4 — the pane splits: on the left the current step node
+ *      (unreached and finished steps stay out of sight — a thin progress
+ *      rail tracks them) with the agent beside it; on the right a mock
+ *      terminal streams what the agent is doing at that step. The step
+ *      advances and the terminal swaps its log.
+ *   4. handover — the node fades out, the agent slides right toward the
+ *      client avatar, and the terminal crossfades into a chat bubble:
+ *      the handover line slides out and the result table streams in
+ *   5. done — hold, then reset and replay
+ *
+ * Pure CSS/timeout choreography — no animation library. Runs only while
+ * on screen (IntersectionObserver); reduced-motion users get the final
+ * scene rendered statically.
  */
 type Phase = "prompt" | "arrive" | "station" | "handover" | "done";
 
 const ARRIVE_MS = 1700;
-const STATION_MS = 1600;
-const HANDOVER_MS = 3400;
+const STATION_MS = 2400;
+const HANDOVER_MS = 3600;
 const DONE_MS = 2400;
+const STATION_COUNT = 4;
 
-/** Track x-positions (%) for the four stations and the client avatar. */
-const STATION_X = [12, 31, 50, 69];
-const CLIENT_X = 90;
+const STEP_ICONS = [Table2, Code2, ShieldCheck, Play];
 
 const RESULT_ROWS: [string, string][] = [
   ["Acme Corporation", "$48,210"],
@@ -39,13 +43,11 @@ const RESULT_ROWS: [string, string][] = [
   ["Umbrella Ltd", "$24,908"],
 ];
 
-const STATION_ICONS = ["schema", "sql", "check", "rows"] as const;
-
 export type AgentDemoCopy = {
   prompt: string;
   steps: [string, string, string, string];
-  /** one-line activity shown inside each station's thought bubble */
-  activities: [string, string, string, string];
+  /** terminal log lines per step — first char "$" renders as a command */
+  term: string[][];
   handover: string;
   done: string;
 };
@@ -72,18 +74,19 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
     return () => observer.disconnect();
   }, []);
 
-  // Prompt types character by character, then the agent arrives.
+  // Prompt types character by character, then the bar exits and the
+  // agent drops in.
   useEffect(() => {
     if (!active || reduced || phase !== "prompt") return;
     if (typed >= copy.prompt.length) {
-      const t = setTimeout(() => setPhase("arrive"), 550);
+      const t = setTimeout(() => setPhase("arrive"), 600);
       return () => clearTimeout(t);
     }
     const t = setTimeout(() => setTyped((n) => n + 1), 26);
     return () => clearTimeout(t);
   }, [active, reduced, phase, typed, copy.prompt]);
 
-  // Phase machine: arrive → stations 0..3 → handover → done → loop.
+  // Phase machine: arrive → station 0..3 → handover → done → replay.
   useEffect(() => {
     if (!active || reduced || phase === "prompt") return;
     if (phase === "arrive") {
@@ -95,11 +98,8 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
     }
     if (phase === "station") {
       const t = setTimeout(() => {
-        if (station < STATION_X.length - 1) {
-          setStation((s) => s + 1);
-        } else {
-          setPhase("handover");
-        }
+        if (station < STATION_COUNT - 1) setStation((s) => s + 1);
+        else setPhase("handover");
       }, STATION_MS);
       return () => clearTimeout(t);
     }
@@ -107,7 +107,6 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
       const t = setTimeout(() => setPhase("done"), HANDOVER_MS);
       return () => clearTimeout(t);
     }
-    // done → reset everything and replay
     const t = setTimeout(() => {
       setTyped(0);
       setRowCount(0);
@@ -117,7 +116,7 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
     return () => clearTimeout(t);
   }, [active, reduced, phase, station]);
 
-  // Result rows stream in during the handover.
+  // Result rows stream into the chat during the handover.
   useEffect(() => {
     if (!active || reduced || phase !== "handover") return;
     if (rowCount >= RESULT_ROWS.length) return;
@@ -125,100 +124,126 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
     return () => clearTimeout(t);
   }, [active, reduced, phase, rowCount]);
 
-  const done = reduced || phase === "done" || phase === "handover";
+  const inScene = phase !== "prompt";
+  const inStation = phase === "station";
+  const handedOff = phase === "handover" || phase === "done";
+  const StepIcon = STEP_ICONS[Math.min(station, STEP_ICONS.length - 1)];
 
-  // Avatar x-position per scene: hidden above center → center → stations → client.
-  const avatarX =
-    phase === "station"
-      ? STATION_X[station]
-      : phase === "handover" || phase === "done"
-        ? CLIENT_X - 12
-        : 50;
-  const avatarGone = !reduced && phase === "prompt";
-  const avatarDropping = !reduced && phase === "arrive";
+  // Left pane, % coordinates: avatar parks beside the node, then slides
+  // to the client avatar for the handover.
+  const avatarX = handedOff ? 82 : inStation ? 62 : 50;
+  const avatarGone = !inScene;
 
   return (
     <div className="agent-demo" ref={rootRef} aria-label={copy.prompt}>
-      {/* typed user request */}
-      <div className="agent-demo-prompt">
-        <span className="agent-demo-prompt-text">
-          {reduced ? copy.prompt : copy.prompt.slice(0, typed)}
-        </span>
-        {!reduced && phase === "prompt" && <span className="agent-demo-caret" aria-hidden="true" />}
+      {/* intro: the prompt bar alone — it leaves once the question lands */}
+      <div className={`agent-demo-intro ${inScene || reduced ? "is-out" : ""}`}>
+        <div className="agent-demo-prompt">
+          <span className="agent-demo-prompt-text">
+            {reduced ? copy.prompt : copy.prompt.slice(0, typed)}
+          </span>
+          {!reduced && phase === "prompt" && (
+            <span className="agent-demo-caret" aria-hidden="true" />
+          )}
+        </div>
       </div>
 
-      {/* the stage — track, stations, agent, client, bubbles */}
-      <div className="agent-demo-stage">
-        <div className="agent-demo-track" aria-hidden="true" />
+      {/* main scene: node + agent (left) | terminal → chat (right) */}
+      <div className={`agent-demo-scene ${inScene || reduced ? "is-on" : ""}`}>
+        <div className="agent-demo-left">
+          {/* thin progress rail — the only trace of past/future steps */}
+          <ol className="agent-demo-progress" aria-hidden="true">
+            {copy.steps.map((label, i) => {
+              const state =
+                reduced || handedOff || i < station ? "done" : i === station ? "on" : "todo";
+              return <li className={`agent-demo-dot is-${state}`} key={label} title={label} />;
+            })}
+          </ol>
 
-        {/* stations the agent walks through */}
-        <ol className="agent-demo-stations">
-          {copy.steps.map((label, i) => {
-            const visited =
-              reduced || done || phase === "station"
-                ? i <= (done ? STATION_X.length : station)
-                : i < 0;
-            const current = !reduced && phase === "station" && i === station;
-            return (
-              <li
-                className={`agent-demo-station ${visited ? "is-visited" : ""} ${current ? "is-current" : ""}`}
-                style={{ left: `${STATION_X[i]}%` }}
-                key={label}
-              >
-                <span className="agent-demo-node" aria-hidden="true">
-                  {visited && !current && <Check size={10} strokeWidth={3.5} />}
-                </span>
-                <span className="agent-demo-station-label">{label}</span>
+          {/* current step node — swaps content each station */}
+          {inScene && !handedOff && !reduced && (
+            <div className="agent-demo-node-card" key={station}>
+              <span className="agent-demo-node-icon">
+                <StepIcon size={20} strokeWidth={1.9} aria-hidden="true" />
+              </span>
+              <span className="agent-demo-node-label">{copy.steps[station]}</span>
+            </div>
+          )}
+          {reduced && (
+            <div className="agent-demo-node-card">
+              <span className="agent-demo-node-icon">
+                <Check size={20} strokeWidth={2} aria-hidden="true" />
+              </span>
+              <span className="agent-demo-node-label">{copy.steps[3]}</span>
+            </div>
+          )}
 
-                {/* thought bubble — opens while the agent works this station */}
-                <span
-                  className={`agent-demo-bubble ${current ? "is-open" : ""}`}
-                  aria-hidden={!current}
+          {/* client avatar — appears for the handover */}
+          <div
+            className={`agent-demo-client ${handedOff || reduced ? "is-on" : ""}`}
+            aria-hidden="true"
+          >
+            <UserRound size={16} />
+          </div>
+          {/* agent avatar */}
+          <div
+            className={`agent-demo-avatar ${avatarGone && !reduced ? "is-gone" : ""} ${
+              phase === "arrive" && !reduced ? "is-arriving" : ""
+            } ${inStation && !reduced ? "is-working" : ""}`}
+            style={{ left: `${avatarX}%` }}
+            aria-hidden="true"
+          >
+            <span className="agent-demo-avatar-icon">
+              <Bot size={18} />
+            </span>
+          </div>
+        </div>
+
+        <div className="agent-demo-right">
+          {/* mock terminal — one log per station, swapped on advance */}
+          <div
+            className={`agent-demo-terminal ${handedOff || reduced ? "is-off" : ""}`}
+            aria-hidden={handedOff}
+          >
+            <div className="agent-demo-term-bar">
+              <span />
+              <span />
+              <span />
+              <strong>{reduced ? copy.steps[3] : copy.steps[Math.min(station, 3)]}</strong>
+            </div>
+            <div className="agent-demo-term-body" key={reduced ? 3 : station}>
+              {(reduced ? copy.term[3] : copy.term[Math.min(station, 3)]).map((line, i) => (
+                <div
+                  className={`agent-demo-term-line ${line.startsWith("$") ? "is-cmd" : ""} ${
+                    line.includes("✓") ? "is-ok" : ""
+                  }`}
+                  style={{ animationDelay: `${0.3 + i * 0.55}s` }}
+                  key={i}
                 >
-                  <span className="agent-demo-bubble-icon" aria-hidden="true">
-                    {STATION_ICONS[i] === "check" ? <ShieldCheck size={12} /> : <Bot size={12} />}
-                  </span>
-                  <span className="agent-demo-bubble-text">{copy.activities[i]}</span>
-                </span>
-              </li>
-            );
-          })}
-        </ol>
-
-        {/* client avatar — the handover target */}
-        <div className="agent-demo-client" style={{ left: `${CLIENT_X}%` }} aria-hidden="true">
-          <UserRound size={16} />
-        </div>
-
-        {/* agent avatar — drops in, walks the track, hands off */}
-        <div
-          className={`agent-demo-avatar ${avatarGone ? "is-gone" : ""} ${avatarDropping ? "is-arriving" : ""}`}
-          style={{ left: `${avatarX}%` }}
-          aria-hidden="true"
-        >
-          <span className="agent-demo-avatar-icon">
-            <Bot size={18} />
-          </span>
-        </div>
-
-        {/* handover chat bubble — text slides out, rows stream in */}
-        <div
-          className={`agent-demo-chat ${done ? "is-open" : ""}`}
-          style={{ left: `${CLIENT_X}%` }}
-          aria-hidden={!done}
-        >
-          <span className="agent-demo-chat-text">{copy.handover}</span>
-          <table className="agent-demo-chat-rows">
-            <tbody>
-              {(reduced ? RESULT_ROWS : RESULT_ROWS.slice(0, rowCount)).map(([name, revenue]) => (
-                <tr key={name}>
-                  <td>{name}</td>
-                  <td>{revenue}</td>
-                </tr>
+                  {line}
+                </div>
               ))}
-            </tbody>
-          </table>
-          <span className="agent-demo-chat-foot">{copy.done}</span>
+            </div>
+          </div>
+
+          {/* handover chat — replaces the terminal for the final beat */}
+          <div
+            className={`agent-demo-chat ${handedOff || reduced ? "is-open" : ""}`}
+            aria-hidden={!handedOff && !reduced}
+          >
+            <span className="agent-demo-chat-text">{copy.handover}</span>
+            <table className="agent-demo-chat-rows">
+              <tbody>
+                {(reduced ? RESULT_ROWS : RESULT_ROWS.slice(0, rowCount)).map(([name, revenue]) => (
+                  <tr key={name}>
+                    <td>{name}</td>
+                    <td>{revenue}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <span className="agent-demo-chat-foot">{copy.done}</span>
+          </div>
         </div>
       </div>
     </div>

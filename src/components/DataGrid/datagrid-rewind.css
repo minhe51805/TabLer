@@ -8,6 +8,12 @@
   color: var(--text-muted);
 }
 
+/* qs-item wrapper: stack the row above any inline refusal text. */
+.datagrid-rewind-row {
+  flex-direction: column;
+  align-items: stretch;
+}
+
 /* One checkpoint row inside the qs-list shell. */
 .datagrid-rewind-item {
   display: flex;
@@ -100,4 +106,23 @@
 .datagrid-rewind-action:disabled {
   opacity: 0.5;
   cursor: default;
+}
+
+/* Amber badge on checkpoints past the 7-day retention window. */
+.datagrid-rewind-expired {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 4px;
+  color: var(--warning, #d97706);
+  border: 1px solid color-mix(in srgb, var(--warning, #d97706) 45%, transparent);
+}
+
+/* Inline refusal explanation under a checkpoint row — the backend declined
+   the restore without mutating data, so this replaces an error toast. */
+.datagrid-rewind-refusal {
+  padding: 0 12px 8px 78px;
+  font-size: 11px;
+  color: var(--warning, #d97706);
 }

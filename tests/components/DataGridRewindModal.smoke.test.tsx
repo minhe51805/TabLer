@@ -38,6 +38,15 @@ const checkpoints: RewindCheckpointInfo[] = [
     rowCount: 12,
     createdAtMs: Date.now() - 60_000,
   },
+  {
+    id: "cp-3",
+    tableName: "public.archive",
+    database: null,
+    kind: "insert",
+    rowCount: 1,
+    // Older than the 7-day retention window → "expired" badge.
+    createdAtMs: Date.now() - 8 * 24 * 60 * 60 * 1000,
+  },
 ];
 
 function renderToolbar(overrides: Record<string, unknown> = {}) {
@@ -70,7 +79,7 @@ describe("DataGridRewindModal", () => {
     invokeMock.mockReset();
     invokeMock.mockImplementation(async (command: string) => {
       if (command === "list_rewind_checkpoints") return checkpoints;
-      if (command === "restore_rewind_checkpoint") return 3;
+      if (command === "restore_rewind_checkpoint") return { restored: 3, refusals: [] };
       if (command === "delete_rewind_checkpoint") return true;
       throw new Error(`Unexpected command: ${command}`);
     });
@@ -91,6 +100,7 @@ describe("DataGridRewindModal", () => {
     expect(invokeMock).toHaveBeenCalledWith("list_rewind_checkpoints", {
       connectionId: "conn-1",
     });
+    expect(screen.getByText("expired")).toBeInTheDocument();
   });
 
   it("restores a confirmed checkpoint and fires onRestored", async () => {
@@ -108,6 +118,26 @@ describe("DataGridRewindModal", () => {
       });
       expect(onRestored).toHaveBeenCalledOnce();
     });
+  });
+
+  it("shows a refusal inline and does not fire onRestored", async () => {
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === "list_rewind_checkpoints") return checkpoints;
+      if (command === "restore_rewind_checkpoint")
+        return { restored: null, refusals: ["rowDriftDetected"] };
+      throw new Error(`Unexpected command: ${command}`);
+    });
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    const onRestored = vi.fn();
+    render(<DataGridRewindModal connectionId="conn-1" onClose={noop} onRestored={onRestored} />);
+
+    await screen.findByText("public.users");
+    fireEvent.click(screen.getAllByRole("button", { name: /^Restore/ })[0]);
+
+    // Amber inline reason under the row; the checkpoint stays listed.
+    expect(await screen.findByText(/rows changed since capture/)).toBeInTheDocument();
+    expect(screen.getByText("public.users")).toBeInTheDocument();
+    expect(onRestored).not.toHaveBeenCalled();
   });
 
   it("does not restore when the confirmation is declined", async () => {

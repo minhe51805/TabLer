@@ -93,25 +93,110 @@ pub async fn delete_rewind_checkpoint(
     checkpoint_store::delete_checkpoint(&connection_id, &checkpoint_id)
 }
 
+/// Structured refusal — TablePro's `RewindRefusal` equivalent. A restore can
+/// be denied before it touches the database; the reason tells the user which
+/// guardrail stopped it (and whether the checkpoint survives).
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum RefusalCode {
+    /// The engine cannot run the inverse write (missing capability).
+    CapabilityMissing,
+    /// Safe Mode / read-only policy forbids mutations on this connection.
+    SafeModeBlocked,
+    /// The connection itself is flagged read-only by the manager.
+    ConnectionReadOnly,
+    /// The checkpoint is older than `CHECKPOINT_TTL_MS` — its pre-image is
+    /// too stale to trust over live rows.
+    CheckpointExpired,
+    /// The checkpoint belongs to another connection (should not happen — AAD
+    /// binds blobs, but a foreign file may have been copied in).
+    ConnectionMismatch,
+    /// The payload decoded but has no rows to replay.
+    EmptyCheckpoint,
+    /// The inverse write ran but touched fewer rows than the checkpoint
+    /// recorded — live data drifted. The checkpoint is KEPT so the user can
+    /// reconcile manually instead of pretending the restore happened.
+    RowDriftDetected,
+}
+
+/// Structured outcome of a restore attempt — `restored` is only set when the
+/// inverse write fully verified. `refusals` is empty on success.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RewindRestoreOutcome {
+    pub restored: Option<u64>,
+    pub refusals: Vec<RefusalCode>,
+}
+
+impl RewindRestoreOutcome {
+    fn ok(restored: u64) -> Self {
+        Self {
+            restored: Some(restored),
+            refusals: Vec::new(),
+        }
+    }
+    fn refused(code: RefusalCode) -> Self {
+        Self {
+            restored: None,
+            refusals: vec![code],
+        }
+    }
+}
+
+/// Pre-flight checks shared by restore; returns `Some(code)` on the first
+/// refusal, `None` when the restore may proceed.
+async fn rewind_refusal_reason(
+    db_manager: &DatabaseManager,
+    connection_id: &str,
+    capability: DriverCapability,
+) -> Option<RefusalCode> {
+    if db_manager
+        .assert_write_allowed(connection_id)
+        .await
+        .is_err()
+    {
+        return Some(RefusalCode::ConnectionReadOnly);
+    }
+    if db_manager
+        .require_capability(connection_id, capability)
+        .await
+        .is_err()
+    {
+        return Some(RefusalCode::CapabilityMissing);
+    }
+    None
+}
+
 /// Replay the inverse of a checkpointed write. The checkpoint file is consumed
-/// on success — a failed restore keeps it so the user can retry.
+/// on success — refusals keep it so the user can retry after fixing the cause.
 #[tauri::command]
 pub async fn restore_rewind_checkpoint(
     connection_id: String,
     checkpoint_id: String,
     db_manager: State<'_, DatabaseManager>,
     safe_mode: State<'_, SafeModeState>,
-) -> Result<u64, String> {
+) -> Result<RewindRestoreOutcome, String> {
     let checkpoint: RewindCheckpoint =
         checkpoint_store::load_checkpoint(&connection_id, &checkpoint_id)?;
     if checkpoint.connection_id != connection_id {
-        return Err("Checkpoint belongs to a different connection.".to_string());
+        return Ok(RewindRestoreOutcome::refused(
+            RefusalCode::ConnectionMismatch,
+        ));
     }
     if checkpoint.rows.is_empty() {
-        return Err("Checkpoint contains no rows to restore.".to_string());
+        return Ok(RewindRestoreOutcome::refused(RefusalCode::EmptyCheckpoint));
+    }
+    let age_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+        .saturating_sub(checkpoint.created_at_ms);
+    if age_ms > crate::storage::checkpoint_store::CHECKPOINT_TTL_MS {
+        return Ok(RewindRestoreOutcome::refused(
+            RefusalCode::CheckpointExpired,
+        ));
     }
 
-    db_manager.assert_write_allowed(&connection_id).await?;
     let database_type = db_manager
         .connection_database_type(&connection_id)
         .await
@@ -126,13 +211,22 @@ pub async fn restore_rewind_checkpoint(
     let restored = match checkpoint.kind {
         // Restore = set the changed columns back to their captured values.
         CheckpointKind::Update => {
-            safe_mode
+            if let Some(code) = rewind_refusal_reason(
+                db_manager.inner(),
+                &connection_id,
+                DriverCapability::AtomicEditQueue,
+            )
+            .await
+            {
+                return Ok(RewindRestoreOutcome::refused(code));
+            }
+            if safe_mode
                 .ensure_mutation_allowed(&connection_id, "UPDATE t SET c = NULL", database_type)
-                .await?;
-            db_manager
-                .require_capability(&connection_id, DriverCapability::AtomicEditQueue)
                 .await
-                .map_err(|e| e.to_string())?;
+                .is_err()
+            {
+                return Ok(RewindRestoreOutcome::refused(RefusalCode::SafeModeBlocked));
+            }
             let mut updates = Vec::new();
             for row in &checkpoint.rows {
                 for column in &checkpoint.changed_columns {
@@ -156,26 +250,38 @@ pub async fn restore_rewind_checkpoint(
                 .apply_table_updates_atomically(&updates)
                 .await
                 .map_err(|e| e.to_string())?;
-            crate::commands::table::ensure_rows_affected(
+            match crate::commands::table::ensure_rows_affected(
                 "The rewind restore",
                 expected,
                 affected,
-                "Some rows changed since the checkpoint was captured — reload the table and retry.",
-            )?
+                "Some rows changed since the checkpoint was captured.",
+            ) {
+                Ok(count) => count,
+                Err(_) => return Ok(RewindRestoreOutcome::refused(RefusalCode::RowDriftDetected)),
+            }
         }
         // Restore = re-insert the captured rows.
         CheckpointKind::Delete => {
-            safe_mode
+            if let Some(code) = rewind_refusal_reason(
+                db_manager.inner(),
+                &connection_id,
+                DriverCapability::AtomicCsvImport,
+            )
+            .await
+            {
+                return Ok(RewindRestoreOutcome::refused(code));
+            }
+            if safe_mode
                 .ensure_mutation_allowed(
                     &connection_id,
                     "INSERT INTO t (c) VALUES (NULL)",
                     database_type,
                 )
-                .await?;
-            db_manager
-                .require_capability(&connection_id, DriverCapability::AtomicCsvImport)
                 .await
-                .map_err(|e| e.to_string())?;
+                .is_err()
+            {
+                return Ok(RewindRestoreOutcome::refused(RefusalCode::SafeModeBlocked));
+            }
             let requests: Vec<TableRowInsertRequest> = checkpoint
                 .rows
                 .iter()
@@ -191,23 +297,35 @@ pub async fn restore_rewind_checkpoint(
                 .insert_table_rows_atomically(&requests, cancelled)
                 .await
                 .map_err(|e| e.to_string())?;
-            crate::commands::table::ensure_rows_affected(
+            match crate::commands::table::ensure_rows_affected(
                 "The rewind restore",
                 expected,
                 affected,
-                "Some rows could not be re-inserted — check for conflicts with rows added since the delete.",
-            )?
+                "Some rows could not be re-inserted.",
+            ) {
+                Ok(count) => count,
+                Err(_) => return Ok(RewindRestoreOutcome::refused(RefusalCode::RowDriftDetected)),
+            }
         }
         // Restore = delete the rows the original write inserted, by their
         // captured PK selectors.
         CheckpointKind::Insert => {
-            safe_mode
+            if let Some(code) = rewind_refusal_reason(
+                db_manager.inner(),
+                &connection_id,
+                DriverCapability::InlineEdit,
+            )
+            .await
+            {
+                return Ok(RewindRestoreOutcome::refused(code));
+            }
+            if safe_mode
                 .ensure_mutation_allowed(&connection_id, "DELETE FROM t", database_type)
-                .await?;
-            db_manager
-                .require_capability(&connection_id, DriverCapability::InlineEdit)
                 .await
-                .map_err(|e| e.to_string())?;
+                .is_err()
+            {
+                return Ok(RewindRestoreOutcome::refused(RefusalCode::SafeModeBlocked));
+            }
             let request = TableRowDeleteRequest {
                 table: table.to_string(),
                 database: database.map(str::to_string),
@@ -222,17 +340,19 @@ pub async fn restore_rewind_checkpoint(
                 .delete_table_rows(&request)
                 .await
                 .map_err(|e| e.to_string())?;
-            crate::commands::table::ensure_rows_affected(
+            match crate::commands::table::ensure_rows_affected(
                 "The rewind restore",
                 expected,
                 affected,
-                "Some inserted rows are already gone or changed — verify the table contents.",
-            )?
+                "Some inserted rows are already gone or changed.",
+            ) {
+                Ok(count) => count,
+                Err(_) => return Ok(RewindRestoreOutcome::refused(RefusalCode::RowDriftDetected)),
+            }
         }
     };
-
     // The checkpoint served its purpose; remove it so a second restore does
     // not replay stale values over newer data.
     checkpoint_store::delete_checkpoint(&connection_id, &checkpoint_id)?;
-    Ok(restored)
+    Ok(RewindRestoreOutcome::ok(restored))
 }

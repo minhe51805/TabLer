@@ -31,6 +31,10 @@ pub enum CheckpointKind {
     Insert,
 }
 
+/// Checkpoints older than this are refused at restore — a pre-image that is a
+/// week old is almost certainly stale relative to the live table.
+pub const CHECKPOINT_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1000;
+
 /// One captured row: the primary-key selector that found it plus the cell
 /// values captured at write time.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +71,19 @@ pub struct RewindCheckpointInfo {
     pub kind: CheckpointKind,
     pub row_count: usize,
     pub created_at_ms: u64,
+    /// True when older than `CHECKPOINT_TTL_MS` — restore will refuse it.
+    pub expired: bool,
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+fn checkpoint_expired(created_at_ms: u64) -> bool {
+    now_ms().saturating_sub(created_at_ms) > CHECKPOINT_TTL_MS
 }
 
 fn connection_checkpoint_dir(data_dir: &Path, connection_id: &str) -> PathBuf {
@@ -168,6 +185,7 @@ pub fn save_checkpoint_in(
         kind: checkpoint.kind,
         row_count: checkpoint.rows.len(),
         created_at_ms: checkpoint.created_at_ms,
+        expired: checkpoint_expired(checkpoint.created_at_ms),
     })
 }
 
@@ -215,6 +233,7 @@ pub fn list_checkpoints_in(
                 kind: checkpoint.kind,
                 row_count: checkpoint.rows.len(),
                 created_at_ms: checkpoint.created_at_ms,
+                expired: checkpoint_expired(checkpoint.created_at_ms),
             }),
             Err(error) => {
                 eprintln!("[tabler] skipping unreadable rewind checkpoint {name}: {error}");

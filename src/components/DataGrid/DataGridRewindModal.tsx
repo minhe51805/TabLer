@@ -4,7 +4,7 @@ import { History, RotateCcw, Trash2, X } from "lucide-react";
 import { useI18n } from "../../i18n";
 import { emitAppToast } from "../../utils/app-toast";
 import { useQueryStore } from "../../stores/queryStore";
-import type { RewindCheckpointInfo } from "../../types";
+import type { RefusalCode, RewindCheckpointInfo } from "../../types";
 import { getRewindCopy, type RewindCopy } from "./rewind-copy";
 import "./datagrid-rewind.css";
 
@@ -15,6 +15,10 @@ interface DataGridRewindModalProps {
   /** Called after a successful restore so the parent can reload the grid. */
   onRestored?: () => void | Promise<void>;
 }
+
+/** Backend retention window: checkpoints older than this are shown with an
+ *  "expired" badge; the backend still decides whether restore is refused. */
+const REWIND_EXPIRY_MS = 7 * 24 * 60 * 60 * 1000;
 
 function relativeTime(createdAtMs: number, copy: RewindCopy): string {
   const deltaSeconds = Math.max(0, Math.round((Date.now() - createdAtMs) / 1000));
@@ -39,6 +43,9 @@ export function DataGridRewindModal({
   const [checkpoints, setCheckpoints] = useState<RewindCheckpointInfo[] | null>(null);
   /** Checkpoint id currently being restored or deleted; disables its buttons. */
   const [busyId, setBusyId] = useState<string | null>(null);
+  /** Refusal codes from the last restore attempt, per checkpoint id —
+   *  rendered inline under the row; the checkpoint stays listed. */
+  const [refusalsById, setRefusalsById] = useState<Record<string, RefusalCode[]>>({});
 
   const reload = useCallback(async () => {
     try {
@@ -72,11 +79,22 @@ export function DataGridRewindModal({
     if (!confirmed) return;
     setBusyId(checkpoint.id);
     try {
-      const restored = await useQueryStore
+      const outcome = await useQueryStore
         .getState()
         .restoreRewindCheckpoint(connectionId, checkpoint.id);
+      if (outcome.refusals.length > 0) {
+        // Refusal, not a transport error: explain inline and keep the row —
+        // the backend kept the checkpoint too.
+        setRefusalsById((current) => ({ ...current, [checkpoint.id]: outcome.refusals }));
+        return;
+      }
+      setRefusalsById((current) => {
+        const next = { ...current };
+        delete next[checkpoint.id];
+        return next;
+      });
       emitAppToast({
-        title: copy.restoredToast(restored, checkpoint.tableName),
+        title: copy.restoredToast(outcome.restored ?? checkpoint.rowCount, checkpoint.tableName),
         tone: "success",
       });
       await reload();
@@ -134,45 +152,57 @@ export function DataGridRewindModal({
           <div className="qs-empty">{copy.empty}</div>
         ) : (
           <div className="qs-list schema-diff-results">
-            {checkpoints.map((checkpoint) => (
-              <div key={checkpoint.id} className="qs-item static">
-                <div className="datagrid-rewind-item">
-                  <span className={`datagrid-rewind-kind ${checkpoint.kind}`}>
-                    {copy.kinds[checkpoint.kind]}
-                  </span>
-                  <span className="datagrid-rewind-name" title={checkpoint.tableName}>
-                    {checkpoint.tableName}
-                  </span>
-                  {checkpoint.database && (
-                    <span className="datagrid-rewind-db">{checkpoint.database}</span>
+            {checkpoints.map((checkpoint) => {
+              const refusals = refusalsById[checkpoint.id];
+              const isExpired = Date.now() - checkpoint.createdAtMs > REWIND_EXPIRY_MS;
+              return (
+                <div key={checkpoint.id} className="qs-item static datagrid-rewind-row">
+                  <div className="datagrid-rewind-item">
+                    <span className={`datagrid-rewind-kind ${checkpoint.kind}`}>
+                      {copy.kinds[checkpoint.kind]}
+                    </span>
+                    <span className="datagrid-rewind-name" title={checkpoint.tableName}>
+                      {checkpoint.tableName}
+                    </span>
+                    {checkpoint.database && (
+                      <span className="datagrid-rewind-db">{checkpoint.database}</span>
+                    )}
+                    {isExpired && (
+                      <span className="datagrid-rewind-expired">{copy.expiredBadge}</span>
+                    )}
+                    <span className="datagrid-rewind-meta">
+                      {copy.rowsCount(checkpoint.rowCount)} ·{" "}
+                      {relativeTime(checkpoint.createdAtMs, copy)}
+                    </span>
+                    <span className="datagrid-rewind-actions">
+                      <button
+                        type="button"
+                        className="datagrid-rewind-action"
+                        disabled={busyId !== null}
+                        aria-label={`${copy.restore} ${checkpoint.tableName}`}
+                        onClick={() => void handleRestore(checkpoint)}
+                      >
+                        <RotateCcw size={12} /> {copy.restore}
+                      </button>
+                      <button
+                        type="button"
+                        className="datagrid-rewind-action danger"
+                        disabled={busyId !== null}
+                        aria-label={`${copy.delete} ${checkpoint.tableName}`}
+                        onClick={() => void handleDelete(checkpoint)}
+                      >
+                        <Trash2 size={12} /> {copy.delete}
+                      </button>
+                    </span>
+                  </div>
+                  {refusals && refusals.length > 0 && (
+                    <div className="datagrid-rewind-refusal" role="status">
+                      {refusals.map((code) => copy.refusals[code]).join(" · ")}
+                    </div>
                   )}
-                  <span className="datagrid-rewind-meta">
-                    {copy.rowsCount(checkpoint.rowCount)} ·{" "}
-                    {relativeTime(checkpoint.createdAtMs, copy)}
-                  </span>
-                  <span className="datagrid-rewind-actions">
-                    <button
-                      type="button"
-                      className="datagrid-rewind-action"
-                      disabled={busyId !== null}
-                      aria-label={`${copy.restore} ${checkpoint.tableName}`}
-                      onClick={() => void handleRestore(checkpoint)}
-                    >
-                      <RotateCcw size={12} /> {copy.restore}
-                    </button>
-                    <button
-                      type="button"
-                      className="datagrid-rewind-action danger"
-                      disabled={busyId !== null}
-                      aria-label={`${copy.delete} ${checkpoint.tableName}`}
-                      onClick={() => void handleDelete(checkpoint)}
-                    >
-                      <Trash2 size={12} /> {copy.delete}
-                    </button>
-                  </span>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>

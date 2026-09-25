@@ -21,6 +21,7 @@
     "build:plugin-repository": "node scripts/build-plugin-repository.mjs",
     "check:sql-splitter": "node scripts/check-sql-splitter.mjs && cargo test sql_splitter_contract --manifest-path src-tauri/Cargo.toml",
     "check:capability-matrix": "node scripts/check-capability-matrix.mjs",
+    "check:test-discipline": "node scripts/check-test-discipline.mjs",
     "build:release": "node scripts/prepare-release-config.mjs && tauri build --config src-tauri/tauri.release.conf.json --config src-tauri/tauri.runtime-release.conf.json",
     "build:release:full": "node scripts/prepare-release-config.mjs && tauri build --features duckdb-driver,cassandra-driver,redis-driver,libsql-driver --config src-tauri/tauri.release.conf.json --config src-tauri/tauri.runtime-release.conf.json",
     "tauri:full": "tauri dev --features duckdb-driver,cassandra-driver,redis-driver,libsql-driver",

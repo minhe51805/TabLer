@@ -1,0 +1,5 @@
+{
+  "ratio": 0.18,
+  "updatedAt": "2026-09-25",
+  "note": "test/code LOC floor; raised only via --ratchet after tests land"
+}

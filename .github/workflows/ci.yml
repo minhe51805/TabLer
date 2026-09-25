@@ -52,6 +52,12 @@ jobs:
       - name: Check capability matrix
         run: npm run check:capability-matrix
 
+      # LOC test/code ratchet: a PR may not drop the measured ratio below the
+      # committed baseline (scripts/test-discipline-baseline.json). Raise it
+      # only via --ratchet after landing tests.
+      - name: Check test discipline
+        run: npm run check:test-discipline
+
       - name: Agent golden-set eval
         run: npm run eval:agent
 

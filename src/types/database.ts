@@ -139,6 +139,24 @@ export interface RewindCheckpointInfo {
   createdAtMs: number;
 }
 
+/** Why a rewind restore was refused without mutating data — returned in
+ *  `RewindRestoreOutcome.refusals`, never thrown. */
+export type RefusalCode =
+  | "capabilityMissing"
+  | "safeModeBlocked"
+  | "connectionReadOnly"
+  | "checkpointExpired"
+  | "connectionMismatch"
+  | "emptyCheckpoint"
+  | "rowDriftDetected";
+
+/** Result of `restore_rewind_checkpoint`. `restored` is the row count on
+ *  success; it is null whenever `refusals` explains why nothing was written. */
+export interface RewindRestoreOutcome {
+  restored: number | null;
+  refusals: RefusalCode[];
+}
+
 export interface TableInfo {
   name: string;
   schema?: string;

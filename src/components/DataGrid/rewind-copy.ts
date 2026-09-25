@@ -5,6 +5,7 @@
  */
 
 import type { AppLanguage } from "../../i18n";
+import type { RefusalCode } from "../../types";
 
 export interface RewindCopy {
   /** Modal title. */
@@ -45,6 +46,11 @@ export interface RewindCopy {
   actionFailed: string;
   /** Close-button aria label. */
   close: string;
+  /** Inline reason shown under a checkpoint row when a restore is refused.
+   *  Short cause plus what to do; the checkpoint itself stays listed. */
+  refusals: Record<RefusalCode, string>;
+  /** Badge on checkpoints older than the 7-day retention window. */
+  expiredBadge: string;
 }
 
 const EN_COPY: RewindCopy = {
@@ -76,6 +82,17 @@ const EN_COPY: RewindCopy = {
   loadFailed: "Could not load rewind checkpoints",
   actionFailed: "Rewind action failed",
   close: "Close",
+  refusals: {
+    capabilityMissing:
+      "this engine does not support rewind — run the write again with a transaction-safe backup",
+    safeModeBlocked: "restore blocked by safe mode — approve it or raise the safety level",
+    connectionReadOnly: "connection is read-only — restore needs write access",
+    checkpointExpired: "older than 7 days — pre-image too stale",
+    connectionMismatch: "captured on a different connection — open the checkpoint from its source",
+    emptyCheckpoint: "checkpoint has no rows — nothing to restore",
+    rowDriftDetected: "rows changed since capture — checkpoint kept",
+  },
+  expiredBadge: "expired",
 };
 
 const VI_COPY: RewindCopy = {
@@ -106,6 +123,16 @@ const VI_COPY: RewindCopy = {
   loadFailed: "Không tải được điểm khôi phục",
   actionFailed: "Thao tác Rewind thất bại",
   close: "Đóng",
+  refusals: {
+    capabilityMissing: "engine này không hỗ trợ rewind — hãy ghi lại kèm bản sao lưu an toàn",
+    safeModeBlocked: "safe mode chặn khôi phục — hãy phê duyệt hoặc nâng mức an toàn",
+    connectionReadOnly: "kết nối chỉ đọc — khôi phục cần quyền ghi",
+    checkpointExpired: "cũ hơn 7 ngày — dữ liệu gốc đã quá lạc hậu",
+    connectionMismatch: "được ghi trên kết nối khác — hãy mở điểm kiểm tra từ nguồn của nó",
+    emptyCheckpoint: "điểm kiểm tra không có hàng — không có gì để khôi phục",
+    rowDriftDetected: "các hàng đã thay đổi kể từ khi ghi — giữ nguyên điểm kiểm tra",
+  },
+  expiredBadge: "hết hạn",
 };
 
 const KO_COPY: RewindCopy = {
@@ -136,6 +163,17 @@ const KO_COPY: RewindCopy = {
   loadFailed: "Rewind 체크포인트를 불러오지 못했습니다",
   actionFailed: "Rewind 작업 실패",
   close: "닫기",
+  refusals: {
+    capabilityMissing:
+      "이 엔진은 Rewind를 지원하지 않습니다 — 트랜잭션 안전 백업과 함께 쓰기를 다시 실행하세요",
+    safeModeBlocked: "세이프 모드가 복원을 차단했습니다 — 승인하거나 안전 수준을 높이세요",
+    connectionReadOnly: "연결이 읽기 전용입니다 — 복원에는 쓰기 권한이 필요합니다",
+    checkpointExpired: "7일이 지남 — 캡처된 이미지가 너무 오래되었습니다",
+    connectionMismatch: "다른 연결에서 캡처됨 — 원본 연결에서 체크포인트를 여세요",
+    emptyCheckpoint: "체크포인트에 행이 없습니다 — 복원할 내용이 없습니다",
+    rowDriftDetected: "캡처 이후 행이 변경됨 — 체크포인트는 유지됩니다",
+  },
+  expiredBadge: "만료됨",
 };
 
 const TR_COPY: RewindCopy = {
@@ -166,6 +204,18 @@ const TR_COPY: RewindCopy = {
   loadFailed: "Rewind denetim noktaları yüklenemedi",
   actionFailed: "Rewind işlemi başarısız",
   close: "Kapat",
+  refusals: {
+    capabilityMissing:
+      "bu motor rewind desteklemiyor — yazma işlemini işlem güvenli bir yedekle tekrarlayın",
+    safeModeBlocked:
+      "güvenli mod geri yüklemeyi engelledi — onaylayın veya güvenlik seviyesini yükseltin",
+    connectionReadOnly: "bağlantı salt-okunur — geri yükleme yazma erişimi gerektirir",
+    checkpointExpired: "7 günden eski — görüntü çok bayat",
+    connectionMismatch: "farklı bir bağlantıda yakalandı — denetim noktasını kaynağından açın",
+    emptyCheckpoint: "denetim noktasında satır yok — geri yüklenecek bir şey yok",
+    rowDriftDetected: "yakalamadan sonra satırlar değişti — denetim noktası korundu",
+  },
+  expiredBadge: "süresi doldu",
 };
 
 const ZH_COPY: RewindCopy = {
@@ -194,6 +244,16 @@ const ZH_COPY: RewindCopy = {
   loadFailed: "无法加载 Rewind 检查点",
   actionFailed: "Rewind 操作失败",
   close: "关闭",
+  refusals: {
+    capabilityMissing: "此引擎不支持 Rewind — 请在安全事务备份下重新执行写入",
+    safeModeBlocked: "安全模式阻止了恢复 — 请批准或提高安全级别",
+    connectionReadOnly: "连接为只读 — 恢复需要写入权限",
+    checkpointExpired: "超过 7 天 — 前置映像过于陈旧",
+    connectionMismatch: "在其他连接上捕获 — 请从其来源打开检查点",
+    emptyCheckpoint: "检查点没有行 — 没有可恢复的内容",
+    rowDriftDetected: "捕获后行已更改 — 检查点已保留",
+  },
+  expiredBadge: "已过期",
 };
 
 const COPY: Record<AppLanguage, RewindCopy> = {

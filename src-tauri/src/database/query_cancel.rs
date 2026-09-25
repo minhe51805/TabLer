@@ -1,11 +1,17 @@
 use std::collections::HashMap;
-use std::sync::{RwLock, RwLockWriteGuard};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 /// In-flight request slot used so cancel can race ahead of backend-id registration.
-#[derive(Clone, Debug, PartialEq, Eq)]
+///
+/// `cancel_flag` is shared with engines that cannot be killed by id (SQLite's
+/// progress handler polls it from inside the running statement), so a cancel
+/// recorded before the backend id lands still reaches the executor.
+#[derive(Clone, Debug)]
 struct Slot {
     backend_id: Option<i64>,
     cancel_requested: bool,
+    cancel_flag: Arc<AtomicBool>,
 }
 
 /// Per-driver registry mapping a frontend `request_id` to a live backend
@@ -31,21 +37,28 @@ impl QueryCancelRegistry {
     }
 
     pub fn begin(&mut self, request_id: &str) {
-        self.slots.entry(request_id.to_string()).or_insert(Slot {
-            backend_id: None,
-            cancel_requested: false,
-        });
+        self.slots
+            .entry(request_id.to_string())
+            .or_insert_with(Slot::new);
     }
 
     /// Record the live backend id. Returns true when cancel already won the race
     /// and the caller must not start the user SQL.
     pub fn register_backend(&mut self, request_id: &str, backend_id: i64) -> bool {
-        let slot = self.slots.entry(request_id.to_string()).or_insert(Slot {
-            backend_id: None,
-            cancel_requested: false,
-        });
+        let slot = self
+            .slots
+            .entry(request_id.to_string())
+            .or_insert_with(Slot::new);
         slot.backend_id = Some(backend_id);
         slot.cancel_requested
+    }
+
+    /// Shared flag flipped by `request_cancel`. Drivers without a killable
+    /// backend id (e.g. SQLite's progress handler) poll this instead.
+    pub fn cancel_flag(&self, request_id: &str) -> Option<Arc<AtomicBool>> {
+        self.slots
+            .get(request_id)
+            .map(|slot| slot.cancel_flag.clone())
     }
 
     pub fn request_cancel(&mut self, request_id: &str) -> CancelLookup {
@@ -53,6 +66,7 @@ impl QueryCancelRegistry {
             None => CancelLookup::NotRunning,
             Some(slot) => {
                 slot.cancel_requested = true;
+                slot.cancel_flag.store(true, Ordering::SeqCst);
                 match slot.backend_id {
                     Some(id) => CancelLookup::Backend(id),
                     None => CancelLookup::Pending,
@@ -67,6 +81,15 @@ impl QueryCancelRegistry {
 
     pub fn is_empty(&self) -> bool {
         self.slots.is_empty()
+    }
+}
+impl Slot {
+    fn new() -> Self {
+        Self {
+            backend_id: None,
+            cancel_requested: false,
+            cancel_flag: Arc::new(AtomicBool::new(false)),
+        }
     }
 }
 
@@ -87,6 +110,11 @@ impl<'a> CancelScopeGuard<'a> {
     pub fn register_backend(&self, backend_id: i64) -> bool {
         write_registry(self.lock).register_backend(&self.request_id, backend_id)
     }
+
+    /// Shared cancel flag for the request, if the slot is still open.
+    pub fn cancel_flag(&self) -> Option<Arc<AtomicBool>> {
+        read_registry(self.lock).cancel_flag(&self.request_id)
+    }
 }
 
 impl Drop for CancelScopeGuard<'_> {
@@ -97,6 +125,18 @@ impl Drop for CancelScopeGuard<'_> {
 
 pub fn request_cancel(lock: &RwLock<QueryCancelRegistry>, request_id: &str) -> CancelLookup {
     write_registry(lock).request_cancel(request_id)
+}
+
+/// Read-side helper for drivers that poll the shared cancel flag.
+pub fn cancel_flag(
+    lock: &RwLock<QueryCancelRegistry>,
+    request_id: &str,
+) -> Option<Arc<AtomicBool>> {
+    read_registry(lock).cancel_flag(request_id)
+}
+
+fn read_registry(lock: &RwLock<QueryCancelRegistry>) -> RwLockReadGuard<'_, QueryCancelRegistry> {
+    lock.read().unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 fn write_registry(lock: &RwLock<QueryCancelRegistry>) -> RwLockWriteGuard<'_, QueryCancelRegistry> {
@@ -163,5 +203,16 @@ mod tests {
         };
         assert!(result.is_err());
         assert!(write_registry(&lock).is_empty());
+    }
+
+    #[test]
+    fn request_cancel_flips_the_shared_flag() {
+        let lock = RwLock::new(QueryCancelRegistry::new());
+        let guard = CancelScopeGuard::begin(&lock, "req-flag");
+        let flag = guard.cancel_flag().expect("slot flag");
+        assert!(!flag.load(Ordering::SeqCst));
+        assert_eq!(request_cancel(&lock, "req-flag"), CancelLookup::Pending);
+        assert!(flag.load(Ordering::SeqCst));
+        assert!(cancel_flag(&lock, "missing").is_none());
     }
 }

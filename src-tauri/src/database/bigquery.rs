@@ -1,6 +1,9 @@
-use super::bigquery_support::BigQueryDatasetListResponse;
+use super::bigquery_support::{BigQueryDatasetListResponse, BigQueryJobReference};
 use super::driver::DatabaseDriver;
 use super::models::*;
+use super::query_cancel::{
+    cancel_flag, request_cancel, CancelLookup, CancelScopeGuard, QueryCancelRegistry,
+};
 use super::query_common::statement_returns_rows;
 use super::safety::{
     normalize_order_dir, quote_bigquery_identifier, quote_bigquery_order_by,
@@ -11,8 +14,9 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::Value as JsonValue;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, RwLock as StdRwLock};
 use std::time::Instant;
 use tokio::sync::RwLock;
 
@@ -27,6 +31,12 @@ pub struct BigQueryDriver {
     pub(super) project_id: String,
     pub(super) location: Option<String>,
     pub(super) current_dataset: Arc<RwLock<Option<String>>>,
+    /// request_id → running-query scope so `cancel_query_request` can abort
+    /// the in-flight job over a second HTTP request.
+    cancel_registry: StdRwLock<QueryCancelRegistry>,
+    /// request_id → job reference of the BigQuery job currently in flight
+    /// for that request.
+    pending_jobs: Mutex<HashMap<String, BigQueryJobReference>>,
 }
 
 impl BigQueryDriver {
@@ -79,6 +89,8 @@ impl BigQueryDriver {
             project_id,
             location,
             current_dataset: Arc::new(RwLock::new(initial_dataset)),
+            cancel_registry: StdRwLock::new(QueryCancelRegistry::new()),
+            pending_jobs: Mutex::new(HashMap::new()),
         };
 
         driver.ping().await?;
@@ -91,6 +103,275 @@ impl BigQueryDriver {
             .try_read()
             .ok()
             .and_then(|guard| guard.clone())
+    }
+
+    /// Whether a cancel was already requested for this request scope.
+    fn cancel_requested(&self, request_id: &str) -> bool {
+        cancel_flag(&self.cancel_registry, request_id)
+            .map(|flag| flag.load(Ordering::SeqCst))
+            .unwrap_or(false)
+    }
+
+    fn store_pending_job(&self, request_id: &str, job: &BigQueryJobReference) {
+        let mut jobs = self
+            .pending_jobs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        jobs.insert(request_id.to_string(), job.clone());
+    }
+
+    fn take_pending_job(&self, request_id: &str) -> Option<BigQueryJobReference> {
+        let mut jobs = self
+            .pending_jobs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        jobs.remove(request_id)
+    }
+
+    /// API path of the job cancel endpoint (`POST
+    /// projects/{project}/jobs/{jobId}/cancel`). The job reference returned
+    /// by `jobs.query` carries the owning project and location, so the cancel
+    /// targets the same job the query is polling.
+    fn job_cancel_path(job: &BigQueryJobReference) -> String {
+        format!("projects/{}/jobs/{}/cancel", job.project_id, job.job_id)
+    }
+
+    /// Abort a running job through `POST
+    /// /bigquery/v2/projects/{project}/jobs/{jobId}/cancel`.
+    async fn cancel_job(&self, job: &BigQueryJobReference) -> Result<()> {
+        let mut request = self
+            .client
+            .post(self.api_url(&Self::job_cancel_path(job)))
+            .bearer_auth(&self.access_token)
+            .header("x-goog-user-project", &self.project_id);
+        if let Some(location) = job
+            .location
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            request = request.query(&[("location", location)]);
+        }
+
+        let response = request
+            .send()
+            .await
+            .context("Failed to reach BigQuery job cancel endpoint")?;
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .context("Failed to read BigQuery cancel response")?;
+
+        if status.is_success() {
+            return Ok(());
+        }
+
+        // A job that already finished cannot be cancelled, but the caller's
+        // goal — nothing left running — is still met.
+        let lowered = body.to_ascii_lowercase();
+        if lowered.contains("not found")
+            || lowered.contains("already")
+            || lowered.contains("completed")
+        {
+            return Ok(());
+        }
+
+        Err(anyhow!(
+            "{}",
+            Self::format_api_error(status.as_u16(), &body)
+        ))
+    }
+
+    /// `execute_parameterized_single_query` scoped to a request: the job
+    /// reference is registered as soon as `jobs.query` returns it (before
+    /// polling) so `cancel_query_request` can abort the in-flight job.
+    async fn execute_parameterized_single_query_scoped(
+        &self,
+        request_id: &str,
+        sql: &str,
+        dataset_override: Option<&str>,
+        preserve_query_text: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        if self.cancel_requested(request_id) {
+            return Err(anyhow!("Query cancelled."));
+        }
+
+        // EXPLAIN resolves to a synchronous dry run: there is no job to
+        // register or cancel, so it bypasses the pending-job machinery.
+        if let Some(inner) = Self::strip_explain_prefix(sql) {
+            return self
+                .execute_explain(inner, dataset_override, parameters, preserve_query_text)
+                .await;
+        }
+
+        let started_at = Instant::now();
+        let (response, job_reference) = self
+            .submit_query_job(sql, dataset_override, parameters)
+            .await?;
+        self.store_pending_job(request_id, &job_reference);
+
+        // A cancel that raced ahead of the job registration still reaches the
+        // job: abort it now instead of polling to completion.
+        if self.cancel_requested(request_id) {
+            if let Err(error) = self.cancel_job(&job_reference).await {
+                log::warn!(
+                    "BigQuery cancel for job {} failed: {error}",
+                    job_reference.job_id
+                );
+            }
+            self.take_pending_job(request_id);
+            return Err(anyhow!("Query cancelled."));
+        }
+
+        let result = self
+            .collect_query_result(response, job_reference, preserve_query_text, started_at)
+            .await;
+        self.take_pending_job(request_id);
+        result
+    }
+
+    /// `execute_query` scoped to a request: every statement of a
+    /// multi-statement script registers its own job so a cancel aborts
+    /// whichever job is currently running.
+    async fn execute_query_scoped(&self, request_id: &str, sql: &str) -> Result<QueryResult> {
+        let started_at = Instant::now();
+        let statements = split_sql_statements(sql);
+
+        if statements.len() <= 1 {
+            return self
+                .execute_parameterized_single_query_scoped(request_id, sql, None, sql, &[])
+                .await;
+        }
+
+        let mut total_affected = 0u64;
+        let mut last_result = None;
+
+        for statement in statements
+            .iter()
+            .filter(|statement| !statement.trim().is_empty())
+        {
+            let result = self
+                .execute_parameterized_single_query_scoped(request_id, statement, None, sql, &[])
+                .await?;
+            total_affected += result.affected_rows;
+
+            if Self::query_returns_rows(statement) || !result.rows.is_empty() {
+                last_result = Some(result);
+            }
+        }
+
+        if let Some(mut result) = last_result {
+            result.execution_time_ms = started_at.elapsed().as_millis();
+            result.affected_rows = total_affected;
+            return Ok(result);
+        }
+
+        Ok(QueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            affected_rows: total_affected,
+            execution_time_ms: started_at.elapsed().as_millis(),
+            query: sql.to_string(),
+            sandboxed: false,
+            truncated: false,
+        })
+    }
+
+    /// Wrap statements in one BigQuery scripting transaction:
+    /// `BEGIN TRANSACTION; <s1>; <s2>; COMMIT TRANSACTION;` submitted as a
+    /// single `jobs.query` call. BigQuery runs multi-statement scripts
+    /// atomically — a failure anywhere rolls the transaction back
+    /// server-side. Trailing semicolons are stripped so the join never
+    /// emits an empty statement.
+    fn transaction_script(statements: &[String]) -> String {
+        let mut script = String::from("BEGIN TRANSACTION");
+        for statement in statements {
+            script.push_str("; ");
+            script.push_str(statement.trim().trim_end_matches(';').trim_end());
+        }
+        script.push_str("; COMMIT TRANSACTION;");
+        script
+    }
+
+    /// Build the rollback-only preview script:
+    /// `BEGIN TRANSACTION; <s1>; SET counts…; <s2>; …; ROLLBACK TRANSACTION;
+    /// SELECT …`. A script job only returns its last statement's rows, so
+    /// `@@row_count` is captured after every statement and reported by the
+    /// trailing SELECT — the only per-statement data a rolled-back script
+    /// can surface (SELECT result rows are not recoverable).
+    fn preview_transaction_script(statements: &[String]) -> String {
+        let mut script =
+            String::from("DECLARE preview_row_counts ARRAY<INT64> DEFAULT []; BEGIN TRANSACTION");
+        for statement in statements {
+            script.push_str("; ");
+            script.push_str(statement.trim().trim_end_matches(';').trim_end());
+            script.push_str("; SET preview_row_counts = preview_row_counts || [@@row_count]");
+        }
+        script.push_str(
+            "; ROLLBACK TRANSACTION; SELECT statement_index, affected_rows \
+             FROM UNNEST(preview_row_counts) AS affected_rows \
+             WITH OFFSET AS statement_index ORDER BY statement_index;",
+        );
+        script
+    }
+
+    /// Strip a leading `EXPLAIN`/`EXPLAIN ANALYZE` prefix (comments and
+    /// whitespace tolerated) so the inner statement can run as a dry-run
+    /// job. Returns the inner SQL or `None` when the statement is not an
+    /// EXPLAIN. ANALYZE is accepted but ignored — BigQuery dry runs never
+    /// execute.
+    pub(super) fn strip_explain_prefix(sql: &str) -> Option<&str> {
+        let mut rest = sql.trim_start();
+        loop {
+            if let Some(after) = rest.strip_prefix("--") {
+                rest = after.split_once('\n').map(|(_, tail)| tail).unwrap_or("");
+                rest = rest.trim_start();
+                continue;
+            }
+            if let Some(after) = rest.strip_prefix('#') {
+                rest = after.split_once('\n').map(|(_, tail)| tail).unwrap_or("");
+                rest = rest.trim_start();
+                continue;
+            }
+            if let Some(after) = rest.strip_prefix("/*") {
+                rest = match after.find("*/") {
+                    Some(end) => &after[end + 2..],
+                    None => "",
+                };
+                rest = rest.trim_start();
+                continue;
+            }
+            break;
+        }
+        let head = rest.get(..7)?;
+        if !head.eq_ignore_ascii_case("EXPLAIN") {
+            return None;
+        }
+        let after = &rest[7..];
+        if !after.starts_with(|ch: char| ch.is_whitespace() || ch == '(') {
+            return None;
+        }
+        let mut inner = after.trim_start();
+        // Tolerate a Postgres-style option list: EXPLAIN (ANALYZE, COSTS) …
+        if let Some(options) = inner.strip_prefix('(') {
+            if let Some(close) = options.find(')') {
+                inner = options[close + 1..].trim_start();
+            }
+        }
+        if let Some(head) = inner.get(..7) {
+            if head.eq_ignore_ascii_case("ANALYZE") {
+                let tail = &inner[7..];
+                if tail.starts_with(|ch: char| ch.is_whitespace()) {
+                    inner = tail.trim_start();
+                }
+            }
+        }
+        if inner.is_empty() {
+            return None;
+        }
+        Some(inner)
     }
 }
 
@@ -267,6 +548,71 @@ impl DatabaseDriver for BigQueryDriver {
             .await
     }
 
+    /// Request-scoped execution: the job reference returned by `jobs.query`
+    /// is registered before polling so `cancel_query_request` can abort the
+    /// in-flight job over a second HTTP request.
+    async fn execute_query_for_request(&self, request_id: &str, sql: &str) -> Result<QueryResult> {
+        if request_id.trim().is_empty() {
+            return self.execute_query(sql).await;
+        }
+        let guard = CancelScopeGuard::begin(&self.cancel_registry, request_id);
+        // The backend id is a job reference tracked in `pending_jobs`, so
+        // registering a marker only resolves the pending race.
+        if guard.register_backend(0) {
+            return Err(anyhow!("Query cancelled."));
+        }
+        let result = self.execute_query_scoped(request_id, sql).await;
+        drop(guard);
+        result
+    }
+
+    /// Cancels by POSTing to `projects/{p}/jobs/{jobId}/cancel` — the job
+    /// reference stored by `execute_query_for_request` carries the owning
+    /// project and location. The in-flight request is blocked polling, so the
+    /// cancel rides a second HTTP request.
+    async fn cancel_query_request(&self, request_id: &str) -> Result<bool> {
+        match request_cancel(&self.cancel_registry, request_id) {
+            CancelLookup::NotRunning => Ok(false),
+            // Cancel was recorded before the job reference landed; the scoped
+            // execute path aborts as soon as it arrives.
+            CancelLookup::Pending => Ok(true),
+            CancelLookup::Backend(_) => {
+                match self.take_pending_job(request_id) {
+                    Some(job) => {
+                        self.cancel_job(&job).await?;
+                        Ok(true)
+                    }
+                    // The job finished between submission and the cancel;
+                    // nothing is left running.
+                    None => Ok(true),
+                }
+            }
+        }
+    }
+
+    /// Request-scoped parameterized execution: same job registration as
+    /// `execute_query_for_request`, with values travelling through
+    /// `queryParameters` binds.
+    async fn execute_parameterized_query_for_request(
+        &self,
+        request_id: &str,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        if request_id.trim().is_empty() {
+            return self.execute_parameterized_query(sql, parameters).await;
+        }
+        let guard = CancelScopeGuard::begin(&self.cancel_registry, request_id);
+        if guard.register_backend(0) {
+            return Err(anyhow!("Query cancelled."));
+        }
+        let result = self
+            .execute_parameterized_single_query_scoped(request_id, sql, None, sql, parameters)
+            .await;
+        drop(guard);
+        result
+    }
+
     async fn get_table_data(
         &self,
         table: &str,
@@ -354,6 +700,83 @@ impl DatabaseDriver for BigQueryDriver {
         Ok(result.affected_rows)
     }
 
+    /// Apply the inline edit queue inside one BigQuery scripting
+    /// transaction: `BEGIN TRANSACTION; UPDATE…; COMMIT TRANSACTION;` sent
+    /// as a single `jobs.query` call. BigQuery runs multi-statement
+    /// scripts atomically, so a failure anywhere rolls the whole queue
+    /// back server-side. Values travel as positional `queryParameters`
+    /// binds — never interpolated into the script text.
+    async fn apply_table_updates_atomically(
+        &self,
+        updates: &[TableCellUpdateRequest],
+    ) -> Result<u64> {
+        if updates.is_empty() {
+            return Err(anyhow!("Applying edits requires at least one update"));
+        }
+
+        let dataset = self
+            .resolve_dataset_name(updates[0].database.as_deref())
+            .await?;
+
+        let mut statements = Vec::with_capacity(updates.len());
+        let mut parameters = Vec::new();
+        for (index, request) in updates.iter().enumerate() {
+            if request.primary_keys.is_empty() {
+                return Err(anyhow!(
+                    "Inline update requires at least one primary key column"
+                ));
+            }
+            let table_reference = self.parse_table_reference(&request.table, Some(&dataset))?;
+
+            let mut statement = format!(
+                "UPDATE {} SET {} = ? WHERE ",
+                Self::qualify_table_name(&table_reference)?,
+                quote_bigquery_order_by(&request.target_column)?,
+            );
+            parameters.push(QueryParameter {
+                name: format!("value_{index}"),
+                value: request.value.clone(),
+                data_type: Self::json_value_parameter_type(&request.value),
+            });
+
+            for (key_index, primary_key) in request.primary_keys.iter().enumerate() {
+                if key_index > 0 {
+                    statement.push_str(" AND ");
+                }
+                statement.push_str(&quote_bigquery_order_by(&primary_key.column)?);
+                if primary_key.value.is_null() {
+                    statement.push_str(" IS NULL");
+                } else {
+                    statement.push_str(" = ?");
+                    parameters.push(QueryParameter {
+                        name: format!("key_{index}_{key_index}"),
+                        value: primary_key.value.clone(),
+                        data_type: Self::json_value_parameter_type(&primary_key.value),
+                    });
+                }
+            }
+
+            // Same contract as the other engines' edit queues: a stale
+            // primary-key selector (0 rows matched) must fail the batch,
+            // not silently commit the remaining updates. `@@row_count`
+            // reads the UPDATE that immediately precedes it; RAISE aborts
+            // the script and rolls the transaction back.
+            statement.push_str(
+                "; IF @@row_count = 0 THEN RAISE USING MESSAGE = \
+                 'An edit queue row no longer matches its primary-key selector'; END IF",
+            );
+            statements.push(statement);
+        }
+
+        let sql = Self::transaction_script(&statements);
+        self.execute_parameterized_single_query(&sql, Some(&dataset), &sql, &parameters)
+            .await?;
+        // Script jobs do not report per-statement DML counts; the queue
+        // either committed fully or the job failed, so the applied count
+        // is the queue length.
+        Ok(updates.len() as u64)
+    }
+
     async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64> {
         if request.rows.is_empty() {
             return Err(anyhow!("Deleting rows requires at least one selected row"));
@@ -432,9 +855,12 @@ impl DatabaseDriver for BigQueryDriver {
 
         // One scripted query keeps every INSERT inside a single server-side
         // transaction: BEGIN TRANSACTION; INSERT…; COMMIT TRANSACTION.
-        let mut sql = String::from("BEGIN TRANSACTION");
+        let mut statements = Vec::with_capacity(requests.len());
         let mut parameters = Vec::new();
         for request in requests {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+            }
             if request.values.is_empty() {
                 return Err(anyhow!("Each CSV row requires at least one column value"));
             }
@@ -445,13 +871,12 @@ impl DatabaseDriver for BigQueryDriver {
                 .map(|(column, _)| quote_bigquery_identifier(column))
                 .collect::<Result<Vec<_>>>()?;
 
-            sql.push_str("; INSERT INTO ");
-            sql.push_str(&Self::qualify_table_name(&table_reference)?);
-            sql.push_str(" (");
-            sql.push_str(&columns.join(", "));
-            sql.push_str(") VALUES (");
-            sql.push_str(&vec!["?"; request.values.len()].join(", "));
-            sql.push(')');
+            statements.push(format!(
+                "INSERT INTO {} ({}) VALUES ({})",
+                Self::qualify_table_name(&table_reference)?,
+                columns.join(", "),
+                vec!["?"; request.values.len()].join(", ")
+            ));
 
             parameters.extend(request.values.iter().map(|(column, value)| QueryParameter {
                 name: column.clone(),
@@ -459,8 +884,8 @@ impl DatabaseDriver for BigQueryDriver {
                 data_type: Self::json_value_parameter_type(value),
             }));
         }
-        sql.push_str("; COMMIT TRANSACTION;");
 
+        let sql = Self::transaction_script(&statements);
         self.execute_parameterized_single_query(&sql, Some(&dataset), &sql, &parameters)
             .await?;
         Ok(requests.len() as u64)
@@ -480,6 +905,61 @@ impl DatabaseDriver for BigQueryDriver {
         }
         self.insert_table_rows_atomically(&requests, cancelled)
             .await
+    }
+
+    /// Preview mutating statements inside a rolled-back BigQuery scripting
+    /// transaction: `BEGIN TRANSACTION; <stmts>; ROLLBACK TRANSACTION;` in
+    /// one `jobs.query` call. A script job only returns its last
+    /// statement's rows, so per-statement SELECT output is NOT available —
+    /// the script captures `@@row_count` after each statement and a
+    /// trailing SELECT reports one `affected_rows` per statement (for a
+    /// SELECT that is its returned-row count). Any failure aborts the
+    /// script and rolls the transaction back, so nothing persists.
+    async fn preview_write_transaction(&self, statements: &[String]) -> Result<Vec<QueryResult>> {
+        let started_at = Instant::now();
+        let mut cleaned = Vec::with_capacity(statements.len());
+        for statement in statements {
+            let trimmed = statement.trim().trim_end_matches(';').trim_end();
+            if trimmed.is_empty() {
+                return Err(anyhow!("Write preview statements cannot be empty"));
+            }
+            cleaned.push(trimmed.to_string());
+        }
+
+        let sql = Self::preview_transaction_script(&cleaned);
+        let result = self.execute_single_query(&sql, None, &sql).await?;
+
+        // The trailing SELECT yields one (statement_index, affected_rows)
+        // row per previewed statement; align results by index so callers
+        // see one QueryResult per input statement.
+        let mut counts: Vec<Option<u64>> = vec![None; cleaned.len()];
+        for row in &result.rows {
+            let index = row
+                .first()
+                .and_then(|value| value.as_u64().or_else(|| value.as_i64().map(|v| v as u64)));
+            let affected = row
+                .get(1)
+                .and_then(|value| value.as_u64().or_else(|| value.as_i64().map(|v| v as u64)));
+            if let (Some(index), Some(affected)) = (index, affected) {
+                if let Some(slot) = counts.get_mut(index as usize) {
+                    *slot = Some(affected);
+                }
+            }
+        }
+
+        Ok(cleaned
+            .into_iter()
+            .enumerate()
+            .map(|(index, statement)| QueryResult {
+                columns: Vec::new(),
+                rows: Vec::new(),
+                affected_rows: counts[index].unwrap_or(0),
+                execution_time_ms: started_at.elapsed().as_millis(),
+                query: statement,
+                sandboxed: true,
+                truncated: false,
+            })
+            .collect())
     }
 
     async fn use_database(&self, database: &str) -> Result<()> {
@@ -560,7 +1040,8 @@ impl DatabaseDriver for BigQueryDriver {
 #[cfg(test)]
 mod tests {
     use super::super::bigquery_support::{
-        BigQueryTableCell, BigQueryTableFieldSchema, BigQueryTableRow,
+        BigQueryJobReference, BigQueryQueryResponse, BigQueryTableCell, BigQueryTableFieldSchema,
+        BigQueryTableRow,
     };
     use super::super::models::{QueryParameter, QueryParameterType};
     use super::BigQueryDriver;
@@ -706,5 +1187,131 @@ mod tests {
             QueryParameterType::Integer,
         ))
         .is_err());
+    }
+
+    fn test_driver() -> BigQueryDriver {
+        use super::super::query_cancel::QueryCancelRegistry;
+        use std::collections::HashMap;
+        use std::sync::{Mutex, RwLock as StdRwLock};
+        use tokio::sync::RwLock;
+
+        BigQueryDriver {
+            client: reqwest::Client::new(),
+            base_url: "https://bigquery.googleapis.com/bigquery/v2".to_string(),
+            access_token: "token".to_string(),
+            project_id: "proj".to_string(),
+            location: None,
+            current_dataset: std::sync::Arc::new(RwLock::new(None)),
+            cancel_registry: StdRwLock::new(QueryCancelRegistry::new()),
+            pending_jobs: Mutex::new(HashMap::new()),
+        }
+    }
+
+    #[test]
+    fn builds_job_cancel_path() {
+        let job = BigQueryJobReference {
+            project_id: "proj".to_string(),
+            job_id: "job_123".to_string(),
+            location: Some("US".to_string()),
+        };
+        assert_eq!(
+            BigQueryDriver::job_cancel_path(&job),
+            "projects/proj/jobs/job_123/cancel"
+        );
+    }
+
+    #[test]
+    fn pending_jobs_roundtrip_per_request() {
+        let driver = test_driver();
+        let job = BigQueryJobReference {
+            project_id: "proj".to_string(),
+            job_id: "job_123".to_string(),
+            location: Some("EU".to_string()),
+        };
+        driver.store_pending_job("req-1", &job);
+
+        let taken = driver.take_pending_job("req-1").expect("job registered");
+        assert_eq!(taken.job_id, "job_123");
+        assert_eq!(taken.location.as_deref(), Some("EU"));
+        // Taking a job removes only that request's entry.
+        assert!(driver.take_pending_job("req-1").is_none());
+    }
+
+    #[test]
+    fn wraps_statements_in_one_transaction_script() {
+        let script = BigQueryDriver::transaction_script(&[
+            "UPDATE t SET a = ? WHERE id = ?".to_string(),
+            "INSERT INTO t (a) VALUES (?) ;".to_string(),
+        ]);
+        assert_eq!(
+            script,
+            "BEGIN TRANSACTION; UPDATE t SET a = ? WHERE id = ?; \
+             INSERT INTO t (a) VALUES (?); COMMIT TRANSACTION;"
+        );
+    }
+
+    #[test]
+    fn preview_script_rolls_back_and_reports_row_counts() {
+        let script = BigQueryDriver::preview_transaction_script(&[
+            "UPDATE t SET a = 1".to_string(),
+            "DELETE FROM t WHERE id = 2;".to_string(),
+        ]);
+        assert!(script.starts_with(
+            "DECLARE preview_row_counts ARRAY<INT64> DEFAULT []; BEGIN TRANSACTION; UPDATE t SET a = 1"
+        ));
+        assert!(script.contains(
+            "; SET preview_row_counts = preview_row_counts || [@@row_count]; DELETE FROM t WHERE id = 2"
+        ));
+        assert!(script.ends_with(
+            "ROLLBACK TRANSACTION; SELECT statement_index, affected_rows \
+             FROM UNNEST(preview_row_counts) AS affected_rows \
+             WITH OFFSET AS statement_index ORDER BY statement_index;"
+        ));
+        // Two statements → two @@row_count captures, and COMMIT never appears.
+        assert_eq!(script.matches("@@row_count").count(), 2);
+        assert!(!script.contains("COMMIT"));
+    }
+
+    #[test]
+    fn strips_explain_prefixes() {
+        assert_eq!(
+            BigQueryDriver::strip_explain_prefix("EXPLAIN SELECT 1"),
+            Some("SELECT 1")
+        );
+        assert_eq!(
+            BigQueryDriver::strip_explain_prefix("explain analyze select 1"),
+            Some("select 1")
+        );
+        assert_eq!(
+            BigQueryDriver::strip_explain_prefix("-- note\nEXPLAIN (ANALYZE) SELECT 1"),
+            Some("SELECT 1")
+        );
+        assert_eq!(
+            BigQueryDriver::strip_explain_prefix("/* c */ EXPLAIN UPDATE t SET a = 1"),
+            Some("UPDATE t SET a = 1")
+        );
+        assert_eq!(BigQueryDriver::strip_explain_prefix("SELECT 1"), None);
+        assert_eq!(BigQueryDriver::strip_explain_prefix("EXPLAIN"), None);
+        assert_eq!(BigQueryDriver::strip_explain_prefix("EXPLAINABLE x"), None);
+    }
+
+    #[test]
+    fn explain_result_surfaces_dry_run_estimates() {
+        let response = BigQueryQueryResponse {
+            total_bytes_processed: Some("1048576".to_string()),
+            total_slot_ms: Some("12".to_string()),
+            cache_hit: Some(false),
+            ..Default::default()
+        };
+        let result = BigQueryDriver::explain_result_from_dry_run(response, 5, "EXPLAIN SELECT 1");
+        assert_eq!(result.query, "EXPLAIN SELECT 1");
+        assert_eq!(result.columns.len(), 2);
+        assert_eq!(
+            result.rows[0],
+            vec![json!("total_bytes_processed"), json!(1048576)]
+        );
+        assert_eq!(result.rows[1], vec![json!("total_slot_ms"), json!(12)]);
+        assert_eq!(result.rows[2], vec![json!("cache_hit"), json!(false)]);
+        assert_eq!(result.rows.len(), 4); // metrics + note row
     }
 }

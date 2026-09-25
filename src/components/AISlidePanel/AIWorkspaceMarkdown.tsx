@@ -17,18 +17,84 @@ type MarkdownBlock =
   | { type: "thematic-break" };
 
 const SQL_LANGUAGE_PATTERN =
-  /^(sql|postgres(ql)?|mysql|maria(db)?|sqlite|mssql|tsql|plsql|pl\/sql|clickhouse|duckdb|snowflake|bigquery|libsql|redshift|vertica|cockroach(db)?)$/i;
+  /^(sql|postgres(ql)?|mysql|maria(db)?|sqlite|mssql|tsql|plsql|pl\/sql|clickhouse|duckdb|snowflake|bigquery|libsql|redshift|vertica|cockroach(db)?|trino|spanner|partiql)$/i;
 
 const SQL_KEYWORDS = new Set([
-  "SELECT", "FROM", "WHERE", "INSERT", "INTO", "VALUES", "UPDATE", "SET", "DELETE",
-  "CREATE", "TABLE", "ALTER", "DROP", "TRUNCATE", "RENAME", "JOIN", "INNER", "LEFT",
-  "RIGHT", "FULL", "OUTER", "CROSS", "ON", "AS", "AND", "OR", "NOT", "NULL", "IS",
-  "IN", "BETWEEN", "LIKE", "ILIKE", "EXISTS", "GROUP", "BY", "ORDER", "HAVING",
-  "LIMIT", "OFFSET", "FETCH", "UNION", "ALL", "DISTINCT", "CASE", "WHEN", "THEN",
-  "ELSE", "END", "WITH", "RECURSIVE", "RETURNING", "PRIMARY", "KEY", "FOREIGN",
-  "REFERENCES", "CONSTRAINT", "DEFAULT", "UNIQUE", "INDEX", "VIEW", "ASC", "DESC",
-  "USING", "NATURAL", "BEGIN", "COMMIT", "ROLLBACK", "TRANSACTION", "EXPLAIN",
-  "ANALYZE", "VACUUM", "GRANT", "REVOKE", "CASCADE",
+  "SELECT",
+  "FROM",
+  "WHERE",
+  "INSERT",
+  "INTO",
+  "VALUES",
+  "UPDATE",
+  "SET",
+  "DELETE",
+  "CREATE",
+  "TABLE",
+  "ALTER",
+  "DROP",
+  "TRUNCATE",
+  "RENAME",
+  "JOIN",
+  "INNER",
+  "LEFT",
+  "RIGHT",
+  "FULL",
+  "OUTER",
+  "CROSS",
+  "ON",
+  "AS",
+  "AND",
+  "OR",
+  "NOT",
+  "NULL",
+  "IS",
+  "IN",
+  "BETWEEN",
+  "LIKE",
+  "ILIKE",
+  "EXISTS",
+  "GROUP",
+  "BY",
+  "ORDER",
+  "HAVING",
+  "LIMIT",
+  "OFFSET",
+  "FETCH",
+  "UNION",
+  "ALL",
+  "DISTINCT",
+  "CASE",
+  "WHEN",
+  "THEN",
+  "ELSE",
+  "END",
+  "WITH",
+  "RECURSIVE",
+  "RETURNING",
+  "PRIMARY",
+  "KEY",
+  "FOREIGN",
+  "REFERENCES",
+  "CONSTRAINT",
+  "DEFAULT",
+  "UNIQUE",
+  "INDEX",
+  "VIEW",
+  "ASC",
+  "DESC",
+  "USING",
+  "NATURAL",
+  "BEGIN",
+  "COMMIT",
+  "ROLLBACK",
+  "TRANSACTION",
+  "EXPLAIN",
+  "ANALYZE",
+  "VACUUM",
+  "GRANT",
+  "REVOKE",
+  "CASCADE",
 ]);
 
 const SQL_TOKEN_PATTERN =
@@ -42,9 +108,7 @@ function renderSqlCode(code: string, keyPrefix: string): ReactNode[] {
 
   const flushPlain = () => {
     if (!plainBuffer) return;
-    nodes.push(
-      <Fragment key={`${keyPrefix}-plain-${tokenIndex}`}>{plainBuffer}</Fragment>,
-    );
+    nodes.push(<Fragment key={`${keyPrefix}-plain-${tokenIndex}`}>{plainBuffer}</Fragment>);
     plainBuffer = "";
     tokenIndex += 1;
   };
@@ -160,7 +224,8 @@ const SQL_BLOCK_START_PATTERN =
 const SQL_BLOCK_BODY_PATTERN = /\b(?:FROM|INTO|SET|VALUES|TABLE|JOIN)\b/i;
 
 /** Unmistakable SQL clause structure: FROM plus a second clause keyword. */
-const SQL_CLAUSE_HINT_PATTERN = /\b(?:JOIN|WHERE|GROUP\s+BY|ORDER\s+BY|HAVING|UNION|ON\s+["\w.]+\s*=)\b/i;
+const SQL_CLAUSE_HINT_PATTERN =
+  /\b(?:JOIN|WHERE|GROUP\s+BY|ORDER\s+BY|HAVING|UNION|ON\s+["\w.]+\s*=)\b/i;
 
 /**
  * Detects unfenced SQL paragraphs so they render as formatted code frames.
@@ -220,10 +285,7 @@ function renderInlineMarkdown(text: string, keyPrefix: string): ReactNode[] {
       if (closingIndex !== -1 && text.slice(cursor + 1, closingIndex).trim()) {
         flushBuffer();
         nodes.push(
-          <em
-            key={`${keyPrefix}-em-${nodes.length}`}
-            className="ai-workspace-markdown-em"
-          >
+          <em key={`${keyPrefix}-em-${nodes.length}`} className="ai-workspace-markdown-em">
             {renderInlineMarkdown(
               text.slice(cursor + 1, closingIndex),
               `${keyPrefix}-em-${nodes.length}`,
@@ -240,7 +302,10 @@ function renderInlineMarkdown(text: string, keyPrefix: string): ReactNode[] {
       if (closingIndex !== -1) {
         flushBuffer();
         nodes.push(
-          <code key={`${keyPrefix}-code-${nodes.length}`} className="ai-workspace-markdown-inline-code">
+          <code
+            key={`${keyPrefix}-code-${nodes.length}`}
+            className="ai-workspace-markdown-inline-code"
+          >
             {text.slice(cursor + 1, closingIndex)}
           </code>,
         );
@@ -391,23 +456,33 @@ function parseMarkdownBlocks(text: string): MarkdownBlock[] {
   return blocks;
 }
 
-export const AIWorkspaceMarkdown = memo(function AIWorkspaceMarkdown({ text, className, compact = false }: AIWorkspaceMarkdownProps) {
+export const AIWorkspaceMarkdown = memo(function AIWorkspaceMarkdown({
+  text,
+  className,
+  compact = false,
+}: AIWorkspaceMarkdownProps) {
   // Parsing is the expensive part of every message render; memoizing on `text`
   // keeps unchanged bubbles cheap when the conversation re-renders (agent
   // progress, streaming chunks, composer keystrokes...).
   const blocks = useMemo(() => parseMarkdownBlocks(text ?? ""), [text]);
 
-
   if (!blocks.length) return null;
 
   return (
-    <div className={["ai-workspace-markdown", compact ? "is-compact" : "", className].filter(Boolean).join(" ")}>
+    <div
+      className={["ai-workspace-markdown", compact ? "is-compact" : "", className]
+        .filter(Boolean)
+        .join(" ")}
+    >
       {blocks.map((block, index) => {
         const key = `block-${index}`;
 
         if (block.type === "heading") {
           return (
-            <div key={key} className={`ai-workspace-markdown-heading ai-workspace-markdown-heading--h${block.level}`}>
+            <div
+              key={key}
+              className={`ai-workspace-markdown-heading ai-workspace-markdown-heading--h${block.level}`}
+            >
               {renderInlineMarkdown(block.text, `${key}-heading`)}
             </div>
           );
@@ -418,7 +493,9 @@ export const AIWorkspaceMarkdown = memo(function AIWorkspaceMarkdown({ text, cla
           return (
             <ListTag key={key} className="ai-workspace-markdown-list">
               {block.items.map((item, itemIndex) => (
-                <li key={`${key}-item-${itemIndex}`}>{renderInlineMarkdown(item, `${key}-item-${itemIndex}`)}</li>
+                <li key={`${key}-item-${itemIndex}`}>
+                  {renderInlineMarkdown(item, `${key}-item-${itemIndex}`)}
+                </li>
               ))}
             </ListTag>
           );
@@ -469,4 +546,4 @@ export const AIWorkspaceMarkdown = memo(function AIWorkspaceMarkdown({ text, cla
       })}
     </div>
   );
-})
+});

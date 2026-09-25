@@ -23,3 +23,8 @@ yarn.lock
 
 # Rust is handled by rustfmt, not prettier
 *.rs
+
+# Generated capability matrix — byte-exact contract with serde_json::to_string_pretty
+# (test committed_json_matrix_matches_the_rust_catalog). Prettier collapses
+# single-element arrays to one line; serde always expands them.
+docs/generated/driver-capabilities.json

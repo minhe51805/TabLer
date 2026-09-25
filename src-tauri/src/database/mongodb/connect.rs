@@ -1,10 +1,12 @@
 use super::{strip_database_prefix, MongoDbDriver};
 use crate::database::models::*;
+use crate::database::query_cancel::QueryCancelRegistry;
 use anyhow::{anyhow, Context, Result};
 use mongodb::bson::{doc, Document};
 use mongodb::options::ClientOptions;
 use mongodb::{Client, Collection, Database};
 use std::sync::atomic::AtomicBool;
+use std::sync::RwLock as StdRwLock;
 use tokio::sync::RwLock;
 
 impl MongoDbDriver {
@@ -43,6 +45,10 @@ impl MongoDbDriver {
             client,
             current_db: RwLock::new(current_db),
             current_op_all_users: AtomicBool::new(true),
+            // Probed lazily on the first transaction attempt: sessions and
+            // transactions need a replica set or mongos, which `hello` reveals.
+            transactions_supported: StdRwLock::new(None),
+            cancel_registry: StdRwLock::new(QueryCancelRegistry::new()),
         })
     }
 

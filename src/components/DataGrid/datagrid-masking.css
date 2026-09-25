@@ -34,3 +34,59 @@
   color: var(--text-muted);
   letter-spacing: 0.1em;
 }
+
+/* Toolbar masked-columns indicator + popover. */
+.datagrid-mask-indicator {
+  color: var(--warning);
+}
+
+.datagrid-mask-menu {
+  min-width: 220px;
+}
+
+.datagrid-mask-menu-title {
+  padding: 6px 12px 4px;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.datagrid-mask-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  font-size: 12px;
+}
+
+.datagrid-mask-menu-column {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.datagrid-mask-menu-strategy {
+  color: var(--text-muted);
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.datagrid-mask-menu-unmask {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px;
+  border: none;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.datagrid-mask-menu-unmask:hover {
+  background: var(--bg-hover, rgba(128, 128, 128, 0.15));
+  color: var(--danger, #e5534b);
+}

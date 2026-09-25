@@ -7,6 +7,7 @@ use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 use serde_json::{Number as JsonNumber, Value as JsonValue};
 use std::collections::BTreeMap;
+use std::future::Future;
 use std::time::Instant;
 use tokio::time::{sleep, Duration};
 
@@ -79,10 +80,6 @@ pub(super) struct SnowflakeStatementParameters {
     pub(super) timestamp_tz_output_format: &'static str,
     pub(super) timezone: &'static str,
     pub(super) use_cached_result: bool,
-    /// Snowflake requires the statement count as a string session parameter
-    /// when a request carries more than one statement.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub(super) multi_statement_count: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Serialize)]
@@ -253,12 +250,9 @@ impl SnowflakeDriver {
         statement: &str,
         database_override: Option<&str>,
         bindings: Option<BTreeMap<String, SnowflakeStatementBinding>>,
-        multi_statement_count: Option<u64>,
     ) -> Result<SnowflakeApiResponse> {
         let mut request = self.build_statement_request(statement, database_override);
         request.bindings = bindings;
-        request.parameters.multi_statement_count =
-            multi_statement_count.map(|count| count.to_string());
         let response = self
             .apply_common_headers(self.client.post(&self.statements_url))
             .json(&request)
@@ -505,10 +499,23 @@ impl SnowflakeDriver {
         let started_at = Instant::now();
         let result_set = self
             .await_result_set(
-                self.post_statement(trimmed_sql, database_override, bindings, None)
+                self.post_statement(trimmed_sql, database_override, bindings)
                     .await?,
             )
             .await?;
+        self.result_set_to_query_result(result_set, preserve_query_text, started_at)
+            .await
+    }
+
+    /// Convert a finished result set into a `QueryResult`, fetching extra
+    /// partitions and applying the interactive row cap. Shared by the plain
+    /// and request-scoped execution paths.
+    pub(super) async fn result_set_to_query_result(
+        &self,
+        result_set: SnowflakeResultSet,
+        preserve_query_text: &str,
+        started_at: Instant,
+    ) -> Result<QueryResult> {
         let row_types = Self::row_types_from_result_set(&result_set);
         let mut raw_rows = result_set.data.clone();
         let mut truncated = Self::total_rows_hint(&result_set)
@@ -655,60 +662,151 @@ impl SnowflakeDriver {
         }
     }
 
-    /// Builds one multi-statement request (`BEGIN; INSERT…; COMMIT`) for an
-    /// atomic CSV import. When `bind` is set the values become `:N` bind
-    /// placeholders appended to `parameters`; otherwise they are escaped into
-    /// the SQL text as literals.
-    pub(super) fn build_atomic_insert_batch(
-        &self,
-        requests: &[TableRowInsertRequest],
-        bind: bool,
-        parameters: &mut Vec<QueryParameter>,
-    ) -> Result<String> {
-        let mut statement = String::from("BEGIN");
-        for request in requests {
-            if request.values.is_empty() {
-                return Err(anyhow!("Each CSV row requires at least one column value"));
+    /// Run one transaction-control statement (`BEGIN`, `COMMIT`, `ROLLBACK`)
+    /// as its own SQL API request. The session persists via the auth token,
+    /// so sequential requests share the open transaction.
+    pub(super) async fn run_transaction_control(&self, sql: &str) -> Result<()> {
+        let result_set = self
+            .await_result_set(self.post_statement(sql, None, None).await?)
+            .await?;
+        if let Some(message) = result_set.message.as_deref().map(str::trim) {
+            if !message.is_empty() {
+                log::debug!("Snowflake {sql}: {message}");
             }
-            let table_reference =
-                self.parse_table_reference(&request.table, request.database.as_deref())?;
-            let columns = request
-                .values
-                .iter()
-                .map(|(column, _)| quote_snowflake_identifier(column))
-                .collect::<Result<Vec<_>>>()?;
-
-            statement.push_str("; INSERT INTO ");
-            statement.push_str(&Self::qualify_table_name(&table_reference)?);
-            statement.push_str(" (");
-            statement.push_str(&columns.join(", "));
-            statement.push_str(") VALUES (");
-            for (index, (column, value)) in request.values.iter().enumerate() {
-                if index > 0 {
-                    statement.push_str(", ");
-                }
-                if bind {
-                    statement.push_str(&format!(":{}", parameters.len() + 1));
-                    parameters.push(QueryParameter {
-                        name: column.clone(),
-                        value: value.clone(),
-                        data_type: Self::json_value_parameter_type(value),
-                    });
-                } else {
-                    statement.push_str(&Self::quote_sql_literal(value)?);
-                }
-            }
-            statement.push(')');
         }
-        statement.push_str("; COMMIT");
-        Ok(statement)
+        Ok(())
     }
 
-    /// Snowflake does not support bind variables inside multi-statement
-    /// requests; detect that rejection so the caller can retry with literals.
-    pub(super) fn is_multi_statement_binding_error(error: &anyhow::Error) -> bool {
-        let message = error.to_string().to_ascii_lowercase();
-        message.contains("bind variable") || message.contains("binding")
+    /// Wrap `body` in BEGIN/COMMIT over sequential SQL API requests. Any
+    /// failure — including a failed COMMIT — triggers a best-effort ROLLBACK
+    /// before the error is returned. A failed BEGIN surfaces immediately so
+    /// callers never fall back to non-atomic execution.
+    pub(super) async fn run_atomic_transaction<F, Fut>(&self, body: F) -> Result<u64>
+    where
+        F: FnOnce() -> Fut,
+        Fut: Future<Output = Result<u64>>,
+    {
+        self.run_transaction_control("BEGIN").await?;
+        match body().await {
+            Ok(affected) => {
+                if let Err(commit_error) = self.run_transaction_control("COMMIT").await {
+                    if let Err(rollback_error) = self.run_transaction_control("ROLLBACK").await {
+                        log::warn!(
+                            "Snowflake rollback after failed commit also failed: {rollback_error}"
+                        );
+                    }
+                    return Err(commit_error);
+                }
+                Ok(affected)
+            }
+            Err(error) => {
+                if let Err(rollback_error) = self.run_transaction_control("ROLLBACK").await {
+                    log::warn!("Snowflake rollback failed: {rollback_error}");
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Append a bound placeholder for one JSON cell value. VARIANT values
+    /// ride through `PARSE_JSON(?)` so the TEXT binding lands as JSON, the
+    /// same shape `quote_sql_literal` produces for literals.
+    pub(super) fn push_bound_literal(
+        clause: &mut String,
+        column: &str,
+        value: &JsonValue,
+        parameters: &mut Vec<QueryParameter>,
+    ) {
+        if matches!(value, JsonValue::Array(_) | JsonValue::Object(_)) {
+            clause.push_str("PARSE_JSON(?)");
+        } else {
+            clause.push('?');
+        }
+        parameters.push(QueryParameter {
+            name: column.to_string(),
+            value: value.clone(),
+            data_type: Self::json_value_parameter_type(value),
+        });
+    }
+
+    /// Build one `INSERT INTO … VALUES (?, …)` statement whose values travel
+    /// as SQL API bindings — never interpolated into the SQL text.
+    pub(super) fn build_bound_insert(
+        &self,
+        request: &TableRowInsertRequest,
+    ) -> Result<(String, Vec<QueryParameter>)> {
+        if request.values.is_empty() {
+            return Err(anyhow!("Each CSV row requires at least one column value"));
+        }
+        let table_reference =
+            self.parse_table_reference(&request.table, request.database.as_deref())?;
+        let mut parameters = Vec::with_capacity(request.values.len());
+        let mut sql = format!(
+            "INSERT INTO {} (",
+            Self::qualify_table_name(&table_reference)?
+        );
+        for (index, (column, _)) in request.values.iter().enumerate() {
+            if index > 0 {
+                sql.push_str(", ");
+            }
+            sql.push_str(&quote_snowflake_identifier(column)?);
+        }
+        sql.push_str(") VALUES (");
+        for (index, (column, value)) in request.values.iter().enumerate() {
+            if index > 0 {
+                sql.push_str(", ");
+            }
+            Self::push_bound_literal(&mut sql, column, value, &mut parameters);
+        }
+        sql.push(')');
+        Ok((sql, parameters))
+    }
+
+    /// Build one `UPDATE … SET col = ? WHERE pk = ? AND …` statement whose
+    /// values travel as SQL API bindings. NULL primary-key values become
+    /// `IS NULL` predicates (a `= NULL` comparison can never match).
+    pub(super) fn build_bound_update(
+        &self,
+        request: &TableCellUpdateRequest,
+    ) -> Result<(String, Vec<QueryParameter>)> {
+        if request.primary_keys.is_empty() {
+            return Err(anyhow!(
+                "Inline update requires at least one primary key column"
+            ));
+        }
+        let table_reference =
+            self.parse_table_reference(&request.table, request.database.as_deref())?;
+        let mut parameters = Vec::with_capacity(request.primary_keys.len() + 1);
+        let mut sql = format!(
+            "UPDATE {} SET {} = ",
+            Self::qualify_table_name(&table_reference)?,
+            quote_snowflake_order_by(&request.target_column)?,
+        );
+        Self::push_bound_literal(
+            &mut sql,
+            &request.target_column,
+            &request.value,
+            &mut parameters,
+        );
+        sql.push_str(" WHERE ");
+        for (index, primary_key) in request.primary_keys.iter().enumerate() {
+            if index > 0 {
+                sql.push_str(" AND ");
+            }
+            sql.push_str(&quote_snowflake_order_by(&primary_key.column)?);
+            if primary_key.value.is_null() {
+                sql.push_str(" IS NULL");
+            } else {
+                sql.push_str(" = ");
+                Self::push_bound_literal(
+                    &mut sql,
+                    &primary_key.column,
+                    &primary_key.value,
+                    &mut parameters,
+                );
+            }
+        }
+        Ok((sql, parameters))
     }
 
     pub(super) fn info_schema_relation(database: &str, relation: &str) -> Result<String> {

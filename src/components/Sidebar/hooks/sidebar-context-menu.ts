@@ -5,6 +5,8 @@ import type { ExplorerContextMenuItem } from "../components/ContextMenu";
 import type { CodegenTarget } from "../../../utils/schema-codegen";
 import { getBulkActionsCopy } from "../bulk-actions-copy";
 import { getCodegenCopy } from "../codegen-copy";
+import { getExportFormatsCopy } from "../../../utils/export-formats-copy";
+import type { ExportFormatInfo, TableExportFormat } from "../../../utils/export-formats";
 import { getSeedRowsCopy } from "../../GenerateTestRows/seed-rows-copy";
 import { getQualifiedTableName, copyToClipboard } from "../SidebarUtils";
 import {
@@ -45,8 +47,10 @@ export interface TableContextMenuDeps {
   onGenerateTestRows: (table: TableInfo) => void;
   onTogglePinnedTable: (table: TableInfo) => void;
   onRunMaintenanceCommand: (command: string, tableName: string) => void;
-  onBulkExport: (format: "csv" | "jsonl") => void;
+  onBulkExport: (format: TableExportFormat) => void;
   onOpenBulkDrop: () => void;
+  /** Export formats compiled into the backend (from `get_export_formats`). */
+  exportFormats: ExportFormatInfo[];
 }
 
 /** Right-click menu for a table (or a multi-table selection): open/copy/
@@ -70,6 +74,7 @@ export function buildTableContextMenuItems(deps: TableContextMenuDeps): Explorer
     onGenerateTestRows: handleGenerateTestRows,
     onTogglePinnedTable: togglePinnedTable,
     onRunMaintenanceCommand: runMaintenanceCommand,
+    exportFormats,
     onBulkExport: handleBulkExport,
     onOpenBulkDrop: openBulkDrop,
   } = deps;
@@ -79,22 +84,16 @@ export function buildTableContextMenuItems(deps: TableContextMenuDeps): Explorer
   // Multi-selection menu: bulk actions only (export + guarded drop).
   if (tableContextMenu.tables && tableContextMenu.tables.length > 1) {
     const count = tableContextMenu.tables.length;
+    const exportCopy = getExportFormatsCopy(language);
     return [
       {
         key: "bulk-export",
         label: `${bulkCopy.exportTables} (${count})`,
-        children: [
-          {
-            key: "bulk-export-csv",
-            label: bulkCopy.exportCsv,
-            action: () => void handleBulkExport("csv"),
-          },
-          {
-            key: "bulk-export-jsonl",
-            label: bulkCopy.exportJsonl,
-            action: () => void handleBulkExport("jsonl"),
-          },
-        ],
+        children: exportFormats.map((format) => ({
+          key: `bulk-export-${format.id}`,
+          label: exportCopy.formats[format.id]?.label ?? format.label,
+          action: () => void handleBulkExport(format.id),
+        })),
       },
       { key: "bulk-divider", divider: true },
       {

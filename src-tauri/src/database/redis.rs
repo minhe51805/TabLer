@@ -1,5 +1,6 @@
 use super::driver::DatabaseDriver;
 use super::models::*;
+use super::query_cancel::{request_cancel, CancelLookup, CancelScopeGuard, QueryCancelRegistry};
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures_util::{stream, Stream, StreamExt, TryStreamExt};
@@ -10,7 +11,8 @@ use redis::{
 use serde_json::Value as JsonValue;
 use std::collections::HashSet;
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, RwLock as StdRwLock};
 use std::time::Instant;
 use tokio::task;
 
@@ -31,8 +33,15 @@ enum RedisExportState {
 }
 
 pub struct RedisDriver {
+    /// Kept so `cancel_query_request` can open a second connection and issue
+    /// `CLIENT KILL ID` against the busy one — Redis has no per-command kill.
+    client: Client,
     connection: Arc<Mutex<RedisConnection>>,
     current_db: Arc<Mutex<i64>>,
+    /// Database index the client connects to; restored on the replacement
+    /// connection after a kill so `current_db` bookkeeping stays honest.
+    default_db: i64,
+    cancel_registry: Arc<StdRwLock<QueryCancelRegistry>>,
 }
 
 impl RedisDriver {
@@ -76,10 +85,10 @@ impl RedisDriver {
             .context("Failed to prepare Redis connection info")?
             .set_redis_settings(redis_settings);
 
+        let client = Client::open(connection_info).context("Failed to initialize Redis client")?;
+        let connect_client = client.clone();
         let connection = task::spawn_blocking(move || -> Result<RedisConnection> {
-            let client =
-                Client::open(connection_info).context("Failed to initialize Redis client")?;
-            let mut connection = client
+            let mut connection = connect_client
                 .get_connection()
                 .context("Failed to open the Redis connection")?;
             let _: String = cmd("PING")
@@ -91,8 +100,11 @@ impl RedisDriver {
         .map_err(|_| anyhow!("Redis connection task failed unexpectedly"))??;
 
         Ok(Self {
+            client,
             connection: Arc::new(Mutex::new(connection)),
             current_db: Arc::new(Mutex::new(db_index)),
+            default_db: db_index,
+            cancel_registry: Arc::new(StdRwLock::new(QueryCancelRegistry::new())),
         })
     }
 
@@ -192,6 +204,62 @@ impl RedisDriver {
 
     fn database_label(db_index: i64) -> String {
         format!("db{db_index}")
+    }
+
+    /// Shared body of `execute_query`/`execute_query_for_request`: runs the
+    /// parsed command lines on the given connection, tracking SELECT so the
+    /// shared `current_db` bookkeeping stays in sync.
+    fn run_command_script(
+        connection: &mut RedisConnection,
+        current_db: &mut i64,
+        commands: Vec<Vec<String>>,
+        raw_script: &str,
+    ) -> Result<QueryResult> {
+        let start = Instant::now();
+        let mut last_result = Self::build_query_result(
+            vec![Self::column("result", "TEXT")],
+            Vec::new(),
+            0,
+            raw_script.to_string(),
+            0,
+        );
+        let mut total_affected = 0u64;
+
+        for tokens in commands {
+            let command_name = tokens
+                .first()
+                .cloned()
+                .ok_or_else(|| anyhow!("Redis command cannot be empty"))?;
+            let mut redis_command = cmd(&command_name);
+            for argument in tokens.iter().skip(1) {
+                redis_command.arg(argument);
+            }
+
+            let value = redis_command
+                .query::<RedisValue>(connection)
+                .with_context(|| format!("Redis command failed: {}", tokens.join(" ")))?;
+
+            if command_name.eq_ignore_ascii_case("SELECT") {
+                if let Some(target_db) = tokens.get(1) {
+                    *current_db = Self::parse_database_index(target_db)?;
+                }
+            }
+
+            let affected_rows = Self::affected_rows_for_command(&command_name, &value);
+            total_affected += affected_rows;
+            last_result = Self::build_command_query_result(
+                &command_name,
+                &tokens,
+                value,
+                start.elapsed().as_millis(),
+                raw_script.to_string(),
+                affected_rows,
+            );
+        }
+
+        last_result.affected_rows = total_affected;
+        last_result.execution_time_ms = start.elapsed().as_millis();
+        Ok(last_result)
     }
 }
 
@@ -550,6 +618,270 @@ impl RedisDriver {
             }
         }
     }
+
+    /// Resolves the target database and key type for a cell update, then
+    /// builds the queued commands. Reads happen before MULTI so the
+    /// transaction itself only carries writes.
+    fn build_cell_update_commands(
+        connection: &mut RedisConnection,
+        current_db: &mut i64,
+        update: &TableCellUpdateRequest,
+    ) -> Result<(i64, Vec<Vec<String>>)> {
+        let target_db = update
+            .database
+            .as_deref()
+            .map(Self::parse_database_index)
+            .transpose()?
+            .unwrap_or(*current_db);
+        Self::ensure_database_selected(connection, current_db, target_db)?;
+        let table = update.table.trim();
+        if table.is_empty() {
+            return Err(anyhow!("Redis key name cannot be empty"));
+        }
+        let key_type = Self::key_type(connection, table)?;
+        if key_type == "none" {
+            return Err(anyhow!("Redis key '{table}' was not found"));
+        }
+        let commands = Self::build_cell_update_commands_for_type(update, &key_type)?;
+        Ok((target_db, commands))
+    }
+
+    /// Resolves the target database and key type for a row insert. Missing
+    /// keys get their type inferred from the supplied column names.
+    fn build_row_insert_commands(
+        connection: &mut RedisConnection,
+        current_db: &mut i64,
+        request: &TableRowInsertRequest,
+    ) -> Result<(i64, Vec<Vec<String>>)> {
+        let target_db = request
+            .database
+            .as_deref()
+            .map(Self::parse_database_index)
+            .transpose()?
+            .unwrap_or(*current_db);
+        Self::ensure_database_selected(connection, current_db, target_db)?;
+        let table = request.table.trim();
+        if table.is_empty() {
+            return Err(anyhow!("Redis key name cannot be empty"));
+        }
+        let key_type = Self::key_type(connection, table)?;
+        let key_type = if key_type == "none" {
+            Self::infer_key_type_for_insert(request)
+                .ok_or_else(|| {
+                    anyhow!(
+                        "Cannot infer a Redis key type for new key '{table}' from columns: {}",
+                        request
+                            .values
+                            .iter()
+                            .map(|(column, _)| column.as_str())
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                })?
+                .to_string()
+        } else {
+            key_type
+        };
+        let commands = Self::build_row_insert_commands_for_type(request, &key_type)?;
+        Ok((target_db, commands))
+    }
+
+    /// Resolves the target database and key type for one row delete.
+    fn build_row_delete_commands(
+        connection: &mut RedisConnection,
+        current_db: &mut i64,
+        request: &TableRowDeleteRequest,
+        primary_keys: &[RowKeyValue],
+    ) -> Result<(i64, Vec<Vec<String>>)> {
+        let target_db = request
+            .database
+            .as_deref()
+            .map(Self::parse_database_index)
+            .transpose()?
+            .unwrap_or(*current_db);
+        Self::ensure_database_selected(connection, current_db, target_db)?;
+        let table = request.table.trim();
+        if table.is_empty() {
+            return Err(anyhow!("Redis key name cannot be empty"));
+        }
+        let key_type = Self::key_type(connection, table)?;
+        if key_type == "none" {
+            return Err(anyhow!("Redis key '{table}' was not found"));
+        }
+        let commands = Self::build_row_delete_commands_for_type(table, primary_keys, &key_type)?;
+        Ok((target_db, commands))
+    }
+
+    /// Runs one already-built write command outside a transaction (single
+    /// row ops need no MULTI wrapper).
+    fn exec_write_command(connection: &mut RedisConnection, argv: &[String]) -> Result<u64> {
+        let command_name = argv
+            .first()
+            .cloned()
+            .ok_or_else(|| anyhow!("Redis write command cannot be empty"))?;
+        let mut command = cmd(&command_name);
+        for argument in argv.iter().skip(1) {
+            command.arg(argument);
+        }
+        let value = command
+            .query::<RedisValue>(connection)
+            .with_context(|| format!("Redis command failed: {}", argv.join(" ")))?;
+        Ok(Self::affected_rows_for_command(&command_name, &value))
+    }
+
+    /// Queues every command inside MULTI on this connection and commits
+    /// with EXEC — or DISCARDs when the cancel flag is set or a command
+    /// fails to queue. SELECT commands inside the batch move the shared
+    /// `current_db` bookkeeping so post-transaction state stays honest.
+    ///
+    /// EXEC replies carry per-command errors inline (Redis never rolls a
+    /// transaction back); those are surfaced with a partial-application
+    /// note instead of being mistaken for success.
+    fn run_atomic_writes(
+        connection: &mut RedisConnection,
+        current_db: &mut i64,
+        commands: Vec<Vec<String>>,
+        cancelled: Option<&AtomicBool>,
+    ) -> Result<u64> {
+        if commands.is_empty() {
+            return Err(anyhow!("Redis atomic block requires at least one command"));
+        }
+        if commands.iter().any(|argv| argv.is_empty()) {
+            return Err(anyhow!("Redis write command cannot be empty"));
+        }
+        let is_cancelled = || cancelled.is_some_and(|flag| flag.load(Ordering::Relaxed));
+        if is_cancelled() {
+            return Err(anyhow!("Redis operation cancelled before it was queued"));
+        }
+
+        let mut queued_db = *current_db;
+        let discard = |connection: &mut RedisConnection| {
+            if let Err(error) = cmd("DISCARD").query::<RedisValue>(connection) {
+                log::warn!("Redis DISCARD after a failed MULTI block failed: {error}");
+            }
+        };
+
+        let _: RedisValue = cmd("MULTI")
+            .query(connection)
+            .context("Redis MULTI failed")?;
+        for argv in &commands {
+            let mut command = cmd(&argv[0]);
+            for argument in argv.iter().skip(1) {
+                command.arg(argument);
+            }
+            if let Err(error) = command.query::<RedisValue>(connection) {
+                discard(connection);
+                return Err(anyhow!(error))
+                    .with_context(|| format!("Redis command failed to queue: {}", argv.join(" ")));
+            }
+            if argv[0].eq_ignore_ascii_case("SELECT") {
+                if let Some(index) = argv.get(1).and_then(|raw| raw.parse::<i64>().ok()) {
+                    queued_db = index;
+                }
+            }
+        }
+
+        if is_cancelled() {
+            discard(connection);
+            return Err(anyhow!(
+                "Redis operation cancelled; the queued commands were discarded"
+            ));
+        }
+
+        let reply = match cmd("EXEC").query::<RedisValue>(connection) {
+            Ok(reply) => reply,
+            Err(error) => {
+                // EXEC itself failed; the transaction did not run but the
+                // connection is usable again.
+                return Err(anyhow!(error).context("Redis EXEC failed"));
+            }
+        };
+        *current_db = queued_db;
+
+        let RedisValue::Array(results) = reply else {
+            return Err(anyhow!(
+                "Redis EXEC returned an unexpected reply: {reply:?}"
+            ));
+        };
+        if results.len() != commands.len() {
+            return Err(anyhow!(
+                "Redis EXEC returned {} results for {} queued commands",
+                results.len(),
+                commands.len()
+            ));
+        }
+        let mut affected = 0u64;
+        for (argv, value) in commands.iter().zip(results.iter()) {
+            if let RedisValue::ServerError(error) = value {
+                return Err(anyhow!(
+                    "Redis command '{}' failed inside EXEC ({error}); earlier commands in the transaction were already applied",
+                    argv.join(" ")
+                ));
+            }
+            affected += Self::affected_rows_for_command(&argv[0], value);
+        }
+        Ok(affected)
+    }
+
+    /// Classifies a restore payload: a TableR JSON snapshot is replayed as
+    /// key rebuilds (SELECT + DEL + type-specific writes per table entry);
+    /// anything else is treated as a Redis command script. Returns None for
+    /// the script case.
+    fn snapshot_restore_commands(statements: &[String]) -> Result<Option<Vec<Vec<String>>>> {
+        let joined = statements.join(";\n");
+        let trimmed = joined.trim();
+        if !trimmed.starts_with('{') {
+            return Ok(None);
+        }
+        let snapshot: JsonValue = serde_json::from_str(trimmed).with_context(|| {
+            "The restore payload looks like a JSON snapshot but could not be parsed"
+        })?;
+        let format = snapshot
+            .get("meta")
+            .and_then(|meta| meta.get("format"))
+            .and_then(JsonValue::as_str);
+        if format != Some("json-snapshot") {
+            return Err(anyhow!(
+                "The restore payload is JSON but not a TableR json-snapshot export"
+            ));
+        }
+        let tables = snapshot
+            .get("tables")
+            .and_then(JsonValue::as_array)
+            .ok_or_else(|| anyhow!("The JSON snapshot does not contain a 'tables' array"))?;
+
+        let mut commands = Vec::new();
+        for table in tables {
+            let name = table
+                .get("name")
+                .and_then(JsonValue::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| anyhow!("A snapshot table entry is missing its key name"))?;
+            if let Some(schema) = table.get("schema").and_then(JsonValue::as_str) {
+                let db_index = Self::parse_database_index(schema)?;
+                commands.push(vec!["SELECT".to_string(), db_index.to_string()]);
+            }
+            let object_type = table
+                .get("structure")
+                .and_then(|structure| structure.get("objectType"))
+                .and_then(JsonValue::as_str);
+            let rows = table
+                .get("rows")
+                .and_then(JsonValue::as_array)
+                .cloned()
+                .unwrap_or_default();
+            commands.extend(Self::build_snapshot_table_commands(
+                name,
+                object_type,
+                &rows,
+            )?);
+        }
+        if commands.is_empty() {
+            return Err(anyhow!("The JSON snapshot does not contain any keys"));
+        }
+        Ok(Some(commands))
+    }
 }
 
 #[async_trait]
@@ -652,57 +984,103 @@ impl DatabaseDriver for RedisDriver {
     }
 
     async fn execute_query(&self, sql: &str) -> Result<QueryResult> {
-        let raw_script = sql.to_string();
         let commands = Self::parse_command_lines(sql)?;
-
+        let raw_script = sql.to_string();
         self.with_connection(move |connection, current_db| {
-            let start = Instant::now();
-            let mut last_result = Self::build_query_result(
-                vec![Self::column("result", "TEXT")],
-                Vec::new(),
-                0,
-                raw_script.clone(),
-                0,
-            );
-            let mut total_affected = 0u64;
-
-            for tokens in commands {
-                let command_name = tokens
-                    .first()
-                    .cloned()
-                    .ok_or_else(|| anyhow!("Redis command cannot be empty"))?;
-                let mut redis_command = cmd(&command_name);
-                for argument in tokens.iter().skip(1) {
-                    redis_command.arg(argument);
-                }
-
-                let value = redis_command
-                    .query::<RedisValue>(connection)
-                    .with_context(|| format!("Redis command failed: {}", tokens.join(" ")))?;
-
-                if command_name.eq_ignore_ascii_case("SELECT") {
-                    if let Some(target_db) = tokens.get(1) {
-                        *current_db = Self::parse_database_index(target_db)?;
-                    }
-                }
-
-                let affected_rows = Self::affected_rows_for_command(&command_name, &value);
-                total_affected += affected_rows;
-                last_result = Self::build_command_query_result(
-                    &command_name,
-                    &tokens,
-                    value,
-                    start.elapsed().as_millis(),
-                    raw_script.clone(),
-                    affected_rows,
-                );
-            }
-
-            last_result.affected_rows = total_affected;
-            last_result.execution_time_ms = start.elapsed().as_millis();
-            Ok(last_result)
+            Self::run_command_script(connection, current_db, commands, &raw_script)
         })
         .await
+    }
+
+    /// Request-scoped execution: registers the request, then resolves this
+    /// connection's `CLIENT ID` inside the worker so `cancel_query_request`
+    /// can `CLIENT KILL ID` it from a second connection.
+    async fn execute_query_for_request(&self, request_id: &str, sql: &str) -> Result<QueryResult> {
+        if request_id.trim().is_empty() {
+            return self.execute_query(sql).await;
+        }
+        let commands = Self::parse_command_lines(sql)?;
+        let raw_script = sql.to_string();
+        let request_id = request_id.to_string();
+        let registry = self.cancel_registry.clone();
+        let connection = self.connection.clone();
+        let current_db = self.current_db.clone();
+        // The guard lives in the async caller so the slot stays open for the
+        // whole spawn_blocking lifetime; the worker only registers its id.
+        let guard = CancelScopeGuard::begin(&self.cancel_registry, &request_id);
+        let result = task::spawn_blocking(move || {
+            let mut connection_guard = connection
+                .lock()
+                .map_err(|_| anyhow!("Redis connection lock was poisoned"))?;
+            let mut db_guard = current_db
+                .lock()
+                .map_err(|_| anyhow!("Redis database state lock was poisoned"))?;
+            // CLIENT ID (Redis 5+) names this connection for CLIENT KILL. On
+            // older servers the lookup fails: run anyway — cancel then only
+            // releases the UI without a server-side kill.
+            match cmd("CLIENT").arg("ID").query::<i64>(&mut connection_guard) {
+                Ok(client_id) => {
+                    let cancelled = registry
+                        .write()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .register_backend(&request_id, client_id);
+                    if cancelled {
+                        return Err(anyhow!("Query cancelled."));
+                    }
+                }
+                Err(error) => {
+                    log::warn!("Redis CLIENT ID unavailable; cancel will be UI-only: {error}");
+                }
+            }
+            Self::run_command_script(&mut connection_guard, &mut db_guard, commands, &raw_script)
+        })
+        .await
+        .map_err(|_| anyhow!("Redis background task failed unexpectedly"))?;
+        drop(guard);
+        result
+    }
+
+    /// Cancels by issuing `CLIENT KILL ID <id>` on a second connection —
+    /// Redis has no per-command kill, so the whole session is dropped and the
+    /// shared connection is swapped for the fresh killer connection.
+    async fn cancel_query_request(&self, request_id: &str) -> Result<bool> {
+        match request_cancel(&self.cancel_registry, request_id) {
+            CancelLookup::NotRunning => Ok(false),
+            CancelLookup::Pending => Ok(true),
+            CancelLookup::Backend(client_id) => {
+                let client = self.client.clone();
+                let connection = self.connection.clone();
+                let current_db = self.current_db.clone();
+                let default_db = self.default_db;
+                task::spawn_blocking(move || -> Result<()> {
+                    let mut killer = client
+                        .get_connection()
+                        .context("Redis cancel: could not open a second connection")?;
+                    let killed: i64 = cmd("CLIENT")
+                        .arg("KILL")
+                        .arg("ID")
+                        .arg(client_id)
+                        .query(&mut killer)
+                        .context("Redis CLIENT KILL failed")?;
+                    if killed > 0 {
+                        // The killed connection is dead; adopt the killer so
+                        // the next command does not reuse a closed socket.
+                        let mut connection_guard = connection
+                            .lock()
+                            .map_err(|_| anyhow!("Redis connection lock was poisoned"))?;
+                        *connection_guard = killer;
+                        let mut db_guard = current_db
+                            .lock()
+                            .map_err(|_| anyhow!("Redis database state lock was poisoned"))?;
+                        *db_guard = default_db;
+                    }
+                    Ok(())
+                })
+                .await
+                .map_err(|_| anyhow!("Redis cancel task failed unexpectedly"))??;
+                Ok(true)
+            }
+        }
     }
 
     async fn get_table_data(
@@ -839,14 +1217,16 @@ impl DatabaseDriver for RedisDriver {
         if order_by.is_some() {
             log::warn!("Redis export of '{table_name}' ignores ORDER BY (no server-side ordering)");
         }
+        let setup_table_name = table_name.clone();
         let setup = async move {
             let (key_type, columns) = self
                 .with_selected_database(database, move |connection, _| {
-                    let key_type = Self::key_type(connection, &table_name)?;
+                    let key_type = Self::key_type(connection, &setup_table_name)?;
                     if key_type == "none" {
-                        return Err(anyhow!("Redis key '{}' was not found", table_name));
+                        return Err(anyhow!("Redis key '{}' was not found", setup_table_name));
                     }
-                    Ok((key_type, Self::export_columns(&key_type, &table_name)))
+                    let columns = Self::export_columns(&key_type, &setup_table_name);
+                    Ok((key_type, columns))
                 })
                 .await?;
             let state = match key_type.as_str() {
@@ -868,6 +1248,8 @@ impl DatabaseDriver for RedisDriver {
 
         stream::once(setup)
             .map_ok(move |(key_type, columns, state)| {
+                let table_name = table_name.clone();
+                let filter = filter.clone();
                 stream::try_unfold(
                     (key_type, columns, state),
                     move |(key_type, columns, state)| {
@@ -981,22 +1363,178 @@ impl DatabaseDriver for RedisDriver {
         Ok(0)
     }
 
-    async fn update_table_cell(&self, _request: &TableCellUpdateRequest) -> Result<u64> {
-        Err(anyhow!(
-            "Redis key projections are read-only in this build. Use the Redis CLI tab to mutate values."
-        ))
+    /// Single-cell update: SET/HSET/LSET/ZADD per the key type. Stream
+    /// entries and identity columns are rejected by the command builder —
+    /// they cannot be mutated in place.
+    async fn update_table_cell(&self, request: &TableCellUpdateRequest) -> Result<u64> {
+        let request = request.clone();
+        self.with_connection(move |connection, current_db| {
+            let (_, commands) = Self::build_cell_update_commands(connection, current_db, &request)?;
+            let mut affected = 0u64;
+            for argv in &commands {
+                affected += Self::exec_write_command(connection, argv)?;
+            }
+            Ok(affected)
+        })
+        .await
     }
 
-    async fn delete_table_rows(&self, _request: &TableRowDeleteRequest) -> Result<u64> {
-        Err(anyhow!(
-            "Redis key projections are read-only in this build. Use the Redis CLI tab to mutate values."
-        ))
+    /// Edit queue: every update's commands queue inside one MULTI/EXEC on
+    /// the shared connection, so the batch either applies completely or is
+    /// discarded. SELECT is queued between db groups so a queue spanning
+    /// logical databases stays atomic.
+    async fn apply_table_updates_atomically(
+        &self,
+        updates: &[TableCellUpdateRequest],
+    ) -> Result<u64> {
+        if updates.is_empty() {
+            return Err(anyhow!("Atomic edit queue requires at least one update"));
+        }
+        let updates = updates.to_vec();
+        self.with_connection(move |connection, current_db| {
+            let mut commands = Vec::new();
+            let mut write_db: Option<i64> = None;
+            for update in &updates {
+                let (target_db, mut built) =
+                    Self::build_cell_update_commands(connection, current_db, update)?;
+                if write_db != Some(target_db) {
+                    commands.push(vec!["SELECT".to_string(), target_db.to_string()]);
+                    write_db = Some(target_db);
+                }
+                commands.append(&mut built);
+            }
+            Self::run_atomic_writes(connection, current_db, commands, None)
+        })
+        .await
     }
 
-    async fn insert_table_row(&self, _request: &TableRowInsertRequest) -> Result<u64> {
-        Err(anyhow!(
-            "Redis key projections are read-only in this build. Use the Redis CLI tab to create values."
-        ))
+    /// Row deletes run inside one MULTI/EXEC: HDEL/SREM/ZREM/XDEL/DEL per
+    /// key type, and LSET+LREM with a unique sentinel for list indexes.
+    async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64> {
+        if request.rows.is_empty() {
+            return Err(anyhow!(
+                "Redis row delete requires at least one row selector"
+            ));
+        }
+        let request = request.clone();
+        self.with_connection(move |connection, current_db| {
+            let mut commands = Vec::new();
+            let mut write_db: Option<i64> = None;
+            for primary_keys in &request.rows {
+                let (target_db, mut built) = Self::build_row_delete_commands(
+                    connection,
+                    current_db,
+                    &request,
+                    primary_keys,
+                )?;
+                if write_db != Some(target_db) {
+                    commands.push(vec!["SELECT".to_string(), target_db.to_string()]);
+                    write_db = Some(target_db);
+                }
+                commands.append(&mut built);
+            }
+            Self::run_atomic_writes(connection, current_db, commands, None)
+        })
+        .await
+    }
+
+    /// Single-row insert: SET/HSET/RPUSH/SADD/ZADD/XADD per the key type.
+    /// New keys get their type inferred from the supplied column names.
+    async fn insert_table_row(&self, request: &TableRowInsertRequest) -> Result<u64> {
+        let request = request.clone();
+        self.with_connection(move |connection, current_db| {
+            let (_, commands) = Self::build_row_insert_commands(connection, current_db, &request)?;
+            let mut affected = 0u64;
+            for argv in &commands {
+                affected += Self::exec_write_command(connection, argv)?;
+            }
+            Ok(affected)
+        })
+        .await
+    }
+
+    /// CSV import: every row's commands queue inside one MULTI/EXEC. A set
+    /// cancel flag DISCARDs the queued commands so no partial import lands.
+    async fn insert_table_rows_atomically(
+        &self,
+        requests: &[TableRowInsertRequest],
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        if requests.is_empty() {
+            return Err(anyhow!("CSV import requires at least one row"));
+        }
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+        }
+        let requests = requests.to_vec();
+        self.with_connection(move |connection, current_db| {
+            let mut commands = Vec::new();
+            let mut write_db: Option<i64> = None;
+            for request in &requests {
+                let (target_db, mut built) =
+                    Self::build_row_insert_commands(connection, current_db, request)?;
+                if write_db != Some(target_db) {
+                    commands.push(vec!["SELECT".to_string(), target_db.to_string()]);
+                    write_db = Some(target_db);
+                }
+                commands.append(&mut built);
+            }
+            Self::run_atomic_writes(connection, current_db, commands, Some(&cancelled))
+        })
+        .await
+    }
+
+    /// Streams CSV rows, then commits them as one MULTI/EXEC — nothing is
+    /// queued until every row parses, so a parse failure, cancellation, or
+    /// early channel close leaves the keyspace untouched.
+    async fn insert_table_row_stream_atomically(
+        &self,
+        mut rows: tokio::sync::mpsc::Receiver<crate::database::models::CsvImportRow>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        let mut requests = Vec::new();
+        while let Some(row) = rows.recv().await {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+            }
+            requests.push(row.map_err(anyhow::Error::msg)?);
+        }
+        if requests.is_empty() {
+            return Err(anyhow!("CSV import did not contain any data rows"));
+        }
+        self.insert_table_rows_atomically(&requests, cancelled)
+            .await
+    }
+
+    /// Restore replays a TableR JSON snapshot (the format Redis exports
+    /// produce) or a Redis command script — both inside one MULTI/EXEC on
+    /// the shared connection. Snapshot tables restore as DEL + type-specific
+    /// rebuild commands with SELECT per exported db.
+    async fn execute_restore_statements(&self, statements: &[String]) -> Result<u64> {
+        let commands = match Self::snapshot_restore_commands(statements)? {
+            Some(commands) => commands,
+            None => {
+                let mut commands = Vec::new();
+                for statement in statements {
+                    // Skip blank/comment-only statements — the command
+                    // parser rejects scripts with no runnable lines.
+                    let has_command_line = statement.lines().any(|line| {
+                        let trimmed = line.trim();
+                        !trimmed.is_empty()
+                            && !trimmed.starts_with('#')
+                            && !trimmed.starts_with("--")
+                    });
+                    if has_command_line {
+                        commands.extend(Self::parse_command_lines(statement)?);
+                    }
+                }
+                commands
+            }
+        };
+        self.with_connection(move |connection, current_db| {
+            Self::run_atomic_writes(connection, current_db, commands, None)
+        })
+        .await
     }
 
     async fn use_database(&self, database: &str) -> Result<()> {
@@ -1079,5 +1617,201 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0][0], serde_json::Value::String("field_a".to_string()));
         assert_eq!(rows[0][1], serde_json::Value::String("value_a".to_string()));
+    }
+
+    use crate::database::models::{RowKeyValue, TableCellUpdateRequest, TableRowInsertRequest};
+    use serde_json::json;
+
+    fn cell_update(
+        table: &str,
+        target: &str,
+        pk_column: &str,
+        pk_value: serde_json::Value,
+    ) -> TableCellUpdateRequest {
+        TableCellUpdateRequest {
+            table: table.to_string(),
+            database: None,
+            target_column: target.to_string(),
+            value: json!("new"),
+            primary_keys: vec![RowKeyValue {
+                column: pk_column.to_string(),
+                value: pk_value,
+            }],
+        }
+    }
+
+    #[test]
+    fn builds_multi_payload_for_hash_cell_update() {
+        let update = cell_update("users:1", "value", "field", json!("name"));
+        let commands = RedisDriver::build_cell_update_commands_for_type(&update, "hash").unwrap();
+        assert_eq!(
+            commands,
+            vec![vec![
+                "HSET".to_string(),
+                "users:1".to_string(),
+                "name".to_string(),
+                "new".to_string()
+            ]]
+        );
+    }
+
+    #[test]
+    fn builds_multi_payload_for_zset_score_update() {
+        let update = TableCellUpdateRequest {
+            value: json!(9.5),
+            ..cell_update("board", "score", "member", json!("alice"))
+        };
+        let commands = RedisDriver::build_cell_update_commands_for_type(&update, "zset").unwrap();
+        assert_eq!(
+            commands,
+            vec![vec![
+                "ZADD".to_string(),
+                "board".to_string(),
+                "9.5".to_string(),
+                "alice".to_string()
+            ]]
+        );
+    }
+
+    #[test]
+    fn builds_multi_payload_for_list_cell_update() {
+        let update = cell_update("queue", "value", "index", json!(2));
+        let commands = RedisDriver::build_cell_update_commands_for_type(&update, "list").unwrap();
+        assert_eq!(
+            commands,
+            vec![vec![
+                "LSET".to_string(),
+                "queue".to_string(),
+                "2".to_string(),
+                "new".to_string()
+            ]]
+        );
+    }
+
+    #[test]
+    fn rejects_identity_column_and_stream_updates() {
+        let identity_edit = cell_update("tags", "member", "member", json!("a"));
+        assert!(RedisDriver::build_cell_update_commands_for_type(&identity_edit, "set").is_err());
+        let stream_edit = cell_update("events", "payload", "id", json!("1-0"));
+        assert!(RedisDriver::build_cell_update_commands_for_type(&stream_edit, "stream").is_err());
+    }
+
+    #[test]
+    fn builds_multi_payload_for_list_delete_with_sentinel() {
+        let commands = RedisDriver::build_row_delete_commands_for_type(
+            "queue",
+            &[RowKeyValue {
+                column: "index".to_string(),
+                value: json!(1),
+            }],
+            "list",
+        )
+        .unwrap();
+        assert_eq!(commands.len(), 2);
+        assert_eq!(commands[0][0], "LSET");
+        assert_eq!(commands[0][1], "queue");
+        assert_eq!(commands[0][2], "1");
+        assert_eq!(commands[1][0], "LREM");
+        assert_eq!(commands[1][3], commands[0][3]);
+        assert!(commands[0][3].starts_with("__tabler_delete_"));
+    }
+
+    #[test]
+    fn builds_multi_payload_for_stream_insert() {
+        let request = TableRowInsertRequest {
+            table: "events".to_string(),
+            database: None,
+            values: vec![
+                ("id".to_string(), json!("1-0")),
+                ("payload".to_string(), json!({"kind": "click", "count": 3})),
+            ],
+        };
+        let commands = RedisDriver::build_row_insert_commands_for_type(&request, "stream").unwrap();
+        assert_eq!(
+            commands,
+            vec![vec![
+                "XADD".to_string(),
+                "events".to_string(),
+                "1-0".to_string(),
+                "kind".to_string(),
+                "click".to_string(),
+                "count".to_string(),
+                "3".to_string()
+            ]]
+        );
+    }
+
+    #[test]
+    fn infers_key_type_for_new_key_inserts() {
+        let hash_insert = TableRowInsertRequest {
+            table: "users:2".to_string(),
+            database: None,
+            values: vec![
+                ("field".to_string(), json!("name")),
+                ("value".to_string(), json!("ada")),
+            ],
+        };
+        assert_eq!(
+            RedisDriver::infer_key_type_for_insert(&hash_insert),
+            Some("hash")
+        );
+        let member_insert = TableRowInsertRequest {
+            values: vec![("member".to_string(), json!("a"))],
+            ..hash_insert.clone()
+        };
+        assert_eq!(
+            RedisDriver::infer_key_type_for_insert(&member_insert),
+            Some("set")
+        );
+    }
+
+    #[test]
+    fn builds_snapshot_restore_commands_with_select_and_rebuild() {
+        let snapshot = json!({
+            "meta": {"format": "json-snapshot", "engine": "redis"},
+            "tables": [
+                {
+                    "name": "users:1",
+                    "schema": "db2",
+                    "structure": {"objectType": "REDIS HASH"},
+                    "rows": [{"field": "name", "value": "ada"}]
+                },
+                {
+                    "name": "greeting",
+                    "schema": null,
+                    "structure": {"objectType": "REDIS STRING"},
+                    "rows": [{"key": "greeting", "value": "hi"}]
+                }
+            ]
+        });
+        let commands = RedisDriver::snapshot_restore_commands(&[snapshot.to_string()])
+            .unwrap()
+            .expect("snapshot payload");
+        assert_eq!(
+            commands,
+            vec![
+                vec!["SELECT".to_string(), "2".to_string()],
+                vec!["DEL".to_string(), "users:1".to_string()],
+                vec![
+                    "HSET".to_string(),
+                    "users:1".to_string(),
+                    "name".to_string(),
+                    "ada".to_string()
+                ],
+                vec!["DEL".to_string(), "greeting".to_string()],
+                vec!["SET".to_string(), "greeting".to_string(), "hi".to_string()],
+            ]
+        );
+    }
+
+    #[test]
+    fn non_snapshot_restore_payload_returns_none() {
+        assert!(
+            RedisDriver::snapshot_restore_commands(&["SET a b".to_string()])
+                .unwrap()
+                .is_none()
+        );
+        // JSON that is not a TableR snapshot is a hard error, not a script.
+        assert!(RedisDriver::snapshot_restore_commands(&["{\"a\": 1}".to_string()]).is_err());
     }
 }

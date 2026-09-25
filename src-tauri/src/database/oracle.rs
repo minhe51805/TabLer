@@ -13,8 +13,16 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map as JsonMap, Value as JsonValue};
-use std::sync::{Arc, RwLock};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, RwLock,
+};
 use std::time::Instant;
+
+/// Marker the write-preview PL/SQL block embeds in its ORA-20999 message to
+/// carry per-statement `SQL%ROWCOUNT` values back to the driver — ORDS does
+/// not return rowcounts for a block, so the error text is the only channel.
+const PREVIEW_ROWCOUNT_MARKER: &str = "TABLER_PREVIEW_ROWS:";
 
 /// Page size requested from the ORDS `/_/sql` endpoint. ORDS may clamp this to
 /// the pool's configured maximum; `hasMore` drives the loop, not the limit.
@@ -41,15 +49,67 @@ struct OrdsSqlBind {
     value: JsonValue,
 }
 
-/// Success envelope: `{"items": [row objects], "hasMore": bool, ...}`.
-/// Row objects arrive as JSON objects keyed by column name; serde_json's
-/// `preserve_order` feature keeps the emitted column order.
+/// Success envelope: `{"items": [statement results], "env": {...}}`. ORDS
+/// runs the payload as a script and returns one item per statement; query
+/// rows live nested under `resultSet`, and statement failures surface as
+/// per-item `errorCode`/`errorDetails` fields even when the HTTP status is
+/// 200, so every item must be checked.
 #[derive(Debug, Default, Deserialize)]
 struct OrdsSqlResponse {
+    #[serde(default)]
+    items: Vec<OrdsStatementResult>,
+}
+
+/// One statement's outcome inside the response `items` array. `result` is
+/// the affected-row count for DML (a single number, or one number per
+/// element for batch statements); `resultSet` is present only for queries.
+#[derive(Debug, Default, Deserialize)]
+struct OrdsStatementResult {
+    #[serde(default)]
+    result: Option<JsonValue>,
+    #[serde(default, rename = "resultSet")]
+    result_set: Option<OrdsResultSet>,
+    #[serde(default, rename = "errorCode")]
+    error_code: Option<JsonValue>,
+    #[serde(default, rename = "errorDetails")]
+    error_details: Option<String>,
+    #[serde(default)]
+    response: Option<Vec<String>>,
+}
+
+/// The `resultSet` block of a query statement: column metadata plus one
+/// JSON object per row keyed by `jsonColumnName` (serde_json's
+/// `preserve_order` feature keeps the emitted column order).
+#[derive(Debug, Default, Deserialize)]
+struct OrdsResultSet {
+    #[serde(default)]
+    metadata: Vec<OrdsColumnMeta>,
     #[serde(default)]
     items: Vec<JsonMap<String, JsonValue>>,
     #[serde(default, rename = "hasMore")]
     has_more: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct OrdsColumnMeta {
+    #[serde(default, rename = "jsonColumnName")]
+    json_column_name: Option<String>,
+    #[serde(default, rename = "columnName")]
+    column_name: Option<String>,
+    #[serde(default, rename = "columnTypeName")]
+    column_type_name: Option<String>,
+    #[serde(default, rename = "isNullable")]
+    is_nullable: Option<i64>,
+}
+
+/// Accumulated outcome of running one statement, possibly across several
+/// paginated requests.
+#[derive(Debug, Default)]
+struct OrdsExecution {
+    rows: Vec<JsonMap<String, JsonValue>>,
+    columns: Vec<ColumnInfo>,
+    affected_rows: u64,
+    truncated: bool,
 }
 
 /// Error envelope. ORDS emits Problem-JSON-ish shapes (`title`, `o:errorCode`,
@@ -75,7 +135,7 @@ struct OrdsErrorDetail {
     message: Option<String>,
 }
 
-/// Read-only Oracle driver backed by Oracle REST Data Services (ORDS).
+/// Read/write Oracle driver backed by Oracle REST Data Services (ORDS).
 /// Every statement goes through `POST {base}/ords/{schema}/_/sql` with HTTP
 /// Basic auth; the schema path segment selects the ORDS-enabled schema.
 pub struct OracleDriver {
@@ -235,51 +295,66 @@ impl OracleDriver {
         }
     }
 
-    /// POST one statement and accumulate every page until `hasMore` is false
-    /// or `max_rows` is reached. Returns the row objects plus a flag telling
-    /// whether more rows remained on the server.
-    async fn execute_statement(
+    /// POST one statement and accumulate every result-set page until
+    /// `hasMore` is false or `max_rows` is reached.
+    async fn execute_statement(&self, sql: &str, max_rows: usize) -> Result<OrdsExecution> {
+        self.execute_statement_binds(sql, &[], max_rows).await
+    }
+
+    /// Raw `POST {base}/ords/{schema}/_/sql` for one `statementText`, returning
+    /// the HTTP status and unparsed body. Callers that must inspect per-item
+    /// errors before deciding success (the write preview's rowcount channel is
+    /// an expected per-item error) use this directly; everyone else goes
+    /// through `execute_statement_binds`.
+    async fn post_statement(
         &self,
         sql: &str,
-        max_rows: usize,
-    ) -> Result<(Vec<JsonMap<String, JsonValue>>, bool)> {
-        self.execute_statement_binds(sql, &[], max_rows).await
+        binds: &[OrdsSqlBind],
+        offset: u64,
+    ) -> Result<(reqwest::StatusCode, String)> {
+        let response = self
+            .client
+            .post(self.sql_endpoint())
+            .basic_auth(&self.username, Some(&self.password))
+            .json(&OrdsSqlPayload {
+                statement_text: sql,
+                offset,
+                limit: ORDS_PAGE_LIMIT,
+                binds: (!binds.is_empty()).then_some(binds),
+            })
+            .send()
+            .await
+            .with_context(|| format!("Failed to reach Oracle ORDS for query: {sql}"))?;
+
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .context("Failed to read Oracle ORDS response body")?;
+        Ok((status, body))
     }
 
     /// `execute_statement` with positional binds. `binds[i]` supplies the
     /// (i+1)-th `?` marker in `sql`; values travel in the request body, never
     /// in the statement text.
+    ///
+    /// ORDS answers with one `items` entry per statement in the payload.
+    /// Statement failures arrive as per-item `errorCode`/`errorDetails`
+    /// fields even on HTTP 200, so every item is checked before results are
+    /// collected — an error is never swallowed. For queries, `resultSet`
+    /// rows are accumulated across `offset`/`limit` pages; for DML/DDL the
+    /// per-item `result` counts are summed into `affected_rows`.
     async fn execute_statement_binds(
         &self,
         sql: &str,
         binds: &[OrdsSqlBind],
         max_rows: usize,
-    ) -> Result<(Vec<JsonMap<String, JsonValue>>, bool)> {
-        let endpoint = self.sql_endpoint();
-        let mut rows: Vec<JsonMap<String, JsonValue>> = Vec::new();
+    ) -> Result<OrdsExecution> {
+        let mut execution = OrdsExecution::default();
         let mut offset = 0u64;
-        let mut truncated = false;
 
         loop {
-            let response = self
-                .client
-                .post(&endpoint)
-                .basic_auth(&self.username, Some(&self.password))
-                .json(&OrdsSqlPayload {
-                    statement_text: sql,
-                    offset,
-                    limit: ORDS_PAGE_LIMIT,
-                    binds: (!binds.is_empty()).then_some(binds),
-                })
-                .send()
-                .await
-                .with_context(|| format!("Failed to reach Oracle ORDS for query: {sql}"))?;
-
-            let status = response.status();
-            let body = response
-                .text()
-                .await
-                .context("Failed to read Oracle ORDS response body")?;
+            let (status, body) = self.post_statement(sql, binds, offset).await?;
 
             if !status.is_success() {
                 return Err(anyhow!(Self::error_message(status, &body)));
@@ -288,20 +363,97 @@ impl OracleDriver {
             let page = serde_json::from_str::<OrdsSqlResponse>(&body)
                 .context("Failed to parse Oracle ORDS response")?;
 
-            let fetched = page.items.len() as u64;
-            rows.extend(page.items);
-            offset += fetched;
+            let mut page_has_more = false;
+            let mut fetched = 0u64;
+            for item in &page.items {
+                if let Some(message) = Self::statement_error(item) {
+                    return Err(anyhow!(message));
+                }
+                execution.affected_rows += Self::affected_rows(item);
+                if let Some(result_set) = &item.result_set {
+                    if execution.columns.is_empty() {
+                        execution.columns = Self::result_set_columns(result_set);
+                    }
+                    fetched += result_set.items.len() as u64;
+                    execution.rows.extend(result_set.items.iter().cloned());
+                    page_has_more = result_set.has_more;
+                }
+            }
 
-            if !page.has_more || fetched == 0 {
+            offset += fetched;
+            if !page_has_more || fetched == 0 {
                 break;
             }
-            if rows.len() >= max_rows {
-                truncated = true;
+            if execution.rows.len() >= max_rows {
+                execution.truncated = true;
                 break;
             }
         }
 
-        Ok((rows, truncated))
+        Ok(execution)
+    }
+
+    /// Extract a statement-level failure from one response item. ORDS
+    /// reports script errors inside the item (`errorCode`, `errorDetails`,
+    /// plus the SQLcl-style `response` lines) while still returning HTTP 200.
+    fn statement_error(item: &OrdsStatementResult) -> Option<String> {
+        let code = item.error_code.as_ref()?;
+        let code = match code {
+            JsonValue::String(text) => text.clone(),
+            other => other.to_string(),
+        };
+        let detail = item
+            .error_details
+            .as_deref()
+            .map(str::trim)
+            .filter(|detail| !detail.is_empty())
+            .map(str::to_string)
+            .or_else(|| {
+                item.response.as_ref().and_then(|lines| {
+                    let text = lines.join("").trim().to_string();
+                    (!text.is_empty()).then_some(text)
+                })
+            })
+            .unwrap_or_else(|| "statement failed".to_string());
+        Some(format!("Oracle ORDS statement failed ({code}): {detail}"))
+    }
+
+    /// `result` is the affected-row count for DML/DDL items: a single number,
+    /// or an array of numbers for batch `statementText` payloads.
+    fn affected_rows(item: &OrdsStatementResult) -> u64 {
+        match item.result.as_ref() {
+            Some(JsonValue::Number(number)) => number.as_u64().unwrap_or(0),
+            Some(JsonValue::Array(counts)) => {
+                counts.iter().filter_map(JsonValue::as_u64).sum::<u64>()
+            }
+            _ => 0,
+        }
+    }
+
+    /// Build `ColumnInfo`s from `resultSet.metadata`, preferring
+    /// `jsonColumnName` because that is the key ORDS uses in row objects.
+    fn result_set_columns(result_set: &OrdsResultSet) -> Vec<ColumnInfo> {
+        result_set
+            .metadata
+            .iter()
+            .filter_map(|meta| {
+                let name = meta
+                    .json_column_name
+                    .clone()
+                    .or_else(|| meta.column_name.clone())?;
+                Some(ColumnInfo {
+                    name,
+                    data_type: meta
+                        .column_type_name
+                        .clone()
+                        .unwrap_or_else(|| "unknown".to_string()),
+                    is_nullable: meta.is_nullable.map(|flag| flag == 1).unwrap_or(true),
+                    is_primary_key: false,
+                    max_length: None,
+                    default_value: None,
+                })
+            })
+            .collect()
     }
 
     /// Map ordered `QueryParameter`s to ORDS positional binds. `index` is
@@ -348,37 +500,32 @@ impl OracleDriver {
             .collect()
     }
 
-    /// Map ORDS row objects to a `QueryResult`. Column order comes from the
-    /// JSON key order of the first row that carries each key (serde_json's
-    /// `preserve_order` keeps ORDS's emitted order); later rows may add keys
-    /// the first row lacked, so the union is taken in first-seen order.
-    fn rows_to_query_result(
-        rows: Vec<JsonMap<String, JsonValue>>,
+    /// Map an accumulated `OrdsExecution` to a `QueryResult`. Column order
+    /// comes from `resultSet.metadata`; when metadata is absent the union of
+    /// row keys is taken in first-seen order (serde_json's `preserve_order`
+    /// keeps ORDS's emitted order).
+    fn execution_to_query_result(
+        execution: OrdsExecution,
         query: String,
         elapsed: u128,
-        truncated: bool,
     ) -> QueryResult {
-        let mut column_names: Vec<String> = Vec::new();
-        for row in &rows {
-            for key in row.keys() {
-                if !column_names.iter().any(|name| name == key) {
-                    column_names.push(key.clone());
+        let OrdsExecution {
+            rows,
+            mut columns,
+            affected_rows,
+            truncated,
+        } = execution;
+
+        if columns.is_empty() {
+            let mut column_names: Vec<String> = Vec::new();
+            for row in &rows {
+                for key in row.keys() {
+                    if !column_names.iter().any(|name| name == key) {
+                        column_names.push(key.clone());
+                    }
                 }
             }
-        }
-
-        let values = rows
-            .into_iter()
-            .map(|row| {
-                column_names
-                    .iter()
-                    .map(|name| row.get(name).cloned().unwrap_or(JsonValue::Null))
-                    .collect::<Vec<_>>()
-            })
-            .collect::<Vec<_>>();
-
-        QueryResult {
-            columns: column_names
+            columns = column_names
                 .into_iter()
                 .map(|name| ColumnInfo {
                     name,
@@ -388,9 +535,23 @@ impl OracleDriver {
                     max_length: None,
                     default_value: None,
                 })
-                .collect(),
+                .collect();
+        }
+
+        let values = rows
+            .into_iter()
+            .map(|row| {
+                columns
+                    .iter()
+                    .map(|column| row.get(&column.name).cloned().unwrap_or(JsonValue::Null))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<Vec<_>>();
+
+        QueryResult {
+            columns,
             rows: values,
-            affected_rows: 0,
+            affected_rows,
             execution_time_ms: elapsed,
             query,
             sandboxed: false,
@@ -402,10 +563,10 @@ impl OracleDriver {
     /// use the catalog row limit (all_objects/all_tab_columns can be large),
     /// not the interactive query cap.
     async fn query_objects(&self, sql: &str) -> Result<Vec<JsonMap<String, JsonValue>>> {
-        let (rows, _) = self
+        let execution = self
             .execute_statement(sql, METADATA_QUERY_ROW_LIMIT)
             .await?;
-        Ok(rows)
+        Ok(execution.rows)
     }
 
     fn string_field(row: &JsonMap<String, JsonValue>, key: &str) -> Option<String> {
@@ -438,8 +599,397 @@ impl OracleDriver {
         Self::sql_literal(&value.trim().to_uppercase())
     }
 
-    fn read_only_write_error() -> anyhow::Error {
-        anyhow!("Write operations are not supported by the Oracle ORDS driver")
+    /// Append one statement to a PL/SQL block body, normalizing away any
+    /// trailing semicolons so the block always carries exactly one
+    /// terminator per statement. Empty statements are skipped.
+    fn push_plsql_statement(block: &mut String, statement: &str) {
+        let trimmed = statement.trim().trim_end_matches(';').trim_end();
+        if trimmed.is_empty() {
+            return;
+        }
+        block.push_str(trimmed);
+        block.push_str(";\n");
+    }
+
+    /// Whether a statement can appear verbatim inside a PL/SQL block: DML,
+    /// transaction-control statements, and nested anonymous blocks are all
+    /// legal PL/SQL. Everything else (DDL, SELECT, client commands) must go
+    /// through `EXECUTE IMMEDIATE` — see `build_restore_block`.
+    fn plsql_embeddable(statement: &str) -> bool {
+        statement_returns_rows(
+            statement,
+            &[
+                "INSERT",
+                "UPDATE",
+                "DELETE",
+                "MERGE",
+                "COMMIT",
+                "ROLLBACK",
+                "SAVEPOINT",
+                "BEGIN",
+                "DECLARE",
+                "NULL",
+            ],
+        )
+    }
+
+    /// Oracle q-quoted string literal for embedding a SQL statement inside a
+    /// PL/SQL `EXECUTE IMMEDIATE`. A delimiter pair is chosen whose closing
+    /// character never appears in the text; PL/SQL string literals are
+    /// limited to 32767 bytes, so longer statements are rejected rather than
+    /// silently truncated.
+    fn plsql_quoted_literal(text: &str) -> Result<String> {
+        const MAX_PLSQL_LITERAL_BYTES: usize = 32_767;
+        if text.len() > MAX_PLSQL_LITERAL_BYTES {
+            return Err(anyhow!(
+                "Statement is {} bytes, over the 32767-byte PL/SQL string literal limit; \
+                 it cannot be embedded in an atomic restore block",
+                text.len()
+            ));
+        }
+        for (open, close) in [
+            ('[', ']'),
+            ('{', '}'),
+            ('(', ')'),
+            ('<', '>'),
+            ('!', '!'),
+            ('#', '#'),
+            ('~', '~'),
+            ('^', '^'),
+            ('@', '@'),
+            ('%', '%'),
+            ('*', '*'),
+            ('+', '+'),
+            ('=', '='),
+            ('|', '|'),
+            ('?', '?'),
+        ] {
+            if !text.contains(close) {
+                return Ok(format!("q'{open}{text}{close}'"));
+            }
+        }
+        Err(anyhow!(
+            "Statement cannot be embedded in a PL/SQL block: it contains every \
+             candidate q-quote closing delimiter"
+        ))
+    }
+
+    /// Wrap the edit queue's UPDATE statements in one anonymous PL/SQL block
+    /// (`BEGIN s1; s2; … END;`). ORDS executes the whole `statementText` in a
+    /// single transaction context, so the queue commits all-or-nothing — the
+    /// only transaction primitive ORDS offers, since every HTTP request
+    /// auto-commits independently.
+    ///
+    /// Values still travel as `?` positional binds: ORDS bind indexes are
+    /// numbered across the entire `statementText`, and binds inside a PL/SQL
+    /// block resolve through the same JDBC prepared-statement path as plain
+    /// DML. After each UPDATE a `SQL%ROWCOUNT` guard raises ORA-20998 when the
+    /// primary-key selector matched nothing — the same zero-match contract the
+    /// PostgreSQL driver enforces — which also makes `updates.len()` an honest
+    /// affected-row count, since ORDS does not return per-statement rowcounts
+    /// for a block.
+    fn build_atomic_update_block(
+        updates: &[TableCellUpdateRequest],
+    ) -> Result<(String, Vec<JsonValue>)> {
+        if updates.is_empty() {
+            return Err(anyhow!("Atomic edit queue requires at least one update"));
+        }
+
+        let mut block = String::from("BEGIN\n");
+        let mut values = Vec::new();
+        for update in updates {
+            let (sql, mut statement_values) = Self::build_cell_update_statement(update)?;
+            Self::push_plsql_statement(&mut block, &sql);
+            block.push_str(
+                "IF SQL%ROWCOUNT = 0 THEN \
+                 RAISE_APPLICATION_ERROR(-20998, \
+                 'An edit queue row no longer matches its primary-key selector'); \
+                 END IF;\n",
+            );
+            values.append(&mut statement_values);
+        }
+        block.push_str("END;");
+        Ok((block, values))
+    }
+
+    /// Wrap the import's INSERT statements in one anonymous PL/SQL block so
+    /// the file lands all-or-nothing inside a single ORDS transaction
+    /// context. Values stay `?` binds (see `build_atomic_update_block`).
+    /// Each INSERT adds exactly one row, so `requests.len()` is the affected
+    /// count — ORDS does not return per-statement rowcounts for a block.
+    fn build_atomic_insert_block(
+        requests: &[TableRowInsertRequest],
+    ) -> Result<(String, Vec<JsonValue>)> {
+        if requests.is_empty() {
+            return Err(anyhow!("CSV import requires at least one row"));
+        }
+
+        let mut block = String::from("BEGIN\n");
+        let mut values = Vec::new();
+        for request in requests {
+            let (sql, mut statement_values) = Self::build_row_insert_statement(request)?;
+            Self::push_plsql_statement(&mut block, &sql);
+            values.append(&mut statement_values);
+        }
+        block.push_str("END;");
+        Ok((block, values))
+    }
+
+    /// Wrap restore statements in one anonymous PL/SQL block so the replay is
+    /// atomic: any failure raises out of the block and rolls back every DML
+    /// statement it ran. Statements that are legal PL/SQL (DML, transaction
+    /// control, nested blocks — see `plsql_embeddable`) are embedded verbatim;
+    /// everything else (DDL, SELECT, client commands) runs through
+    /// `EXECUTE IMMEDIATE` with a q-quoted literal.
+    ///
+    /// Caveat: Oracle DDL issues an implicit commit, so a dump containing DDL
+    /// cannot be rolled back past the last DDL statement — the block still
+    /// aborts on the first failure instead of replaying the rest, and all
+    /// DML since the previous DDL is atomic. Restore statements arrive as raw
+    /// SQL text (no binds), so nothing is interpolated by this driver.
+    fn build_restore_block(statements: &[String]) -> Result<(String, usize)> {
+        let mut block = String::from("BEGIN\n");
+        let mut applied = 0usize;
+        for statement in statements {
+            let trimmed = statement.trim().trim_end_matches(';').trim_end();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if Self::plsql_embeddable(trimmed) {
+                Self::push_plsql_statement(&mut block, trimmed);
+            } else {
+                let literal = Self::plsql_quoted_literal(trimmed)?;
+                block.push_str(&format!("EXECUTE IMMEDIATE {literal};\n"));
+            }
+            applied += 1;
+        }
+        if applied == 0 {
+            return Err(anyhow!("Restore requires at least one statement"));
+        }
+        block.push_str("END;");
+        Ok((block, applied))
+    }
+
+    /// Wrap preview statements in `BEGIN … ROLLBACK; END;` — ROLLBACK is a
+    /// legal PL/SQL statement, so the block executes every write and then
+    /// discards it inside the same ORDS transaction context.
+    ///
+    /// ORDS does not return per-statement rowcounts for a PL/SQL block, so
+    /// the block smuggles them out through the only channel that survives:
+    /// after ROLLBACK it raises ORA-20999 carrying `SQL%ROWCOUNT` for each
+    /// statement as a comma-separated list, which `preview_write_transaction`
+    /// parses back out of the error detail. The raise also guarantees the
+    /// block never commits even if the ROLLBACK were skipped.
+    ///
+    /// Only INSERT/UPDATE/DELETE/MERGE are accepted: row-returning statements
+    /// cannot appear inside PL/SQL, and DDL would implicitly commit before
+    /// the ROLLBACK, persisting a "previewed" change.
+    fn build_preview_block(statements: &[String]) -> Result<(String, Vec<String>)> {
+        let mut block = String::from("DECLARE\n  l_counts VARCHAR2(4000) := '';\nBEGIN\n");
+        let mut accepted = Vec::new();
+        for statement in statements {
+            let trimmed = statement.trim().trim_end_matches(';').trim_end();
+            if trimmed.is_empty() {
+                continue;
+            }
+            if Self::query_returns_rows(trimmed) {
+                return Err(anyhow!(
+                    "Write preview cannot run row-returning statements inside the \
+                     Oracle rollback block: {trimmed}"
+                ));
+            }
+            if !statement_returns_rows(trimmed, &["INSERT", "UPDATE", "DELETE", "MERGE"]) {
+                return Err(anyhow!(
+                    "Write preview only supports INSERT/UPDATE/DELETE/MERGE on Oracle; \
+                     other statements cannot run inside a PL/SQL rollback block: {trimmed}"
+                ));
+            }
+            Self::push_plsql_statement(&mut block, trimmed);
+            block.push_str("l_counts := l_counts || SQL%ROWCOUNT || ',';\n");
+            accepted.push(trimmed.to_string());
+        }
+        if accepted.is_empty() {
+            return Err(anyhow!("Write preview requires at least one statement"));
+        }
+        block.push_str("ROLLBACK;\n");
+        block.push_str(&format!(
+            "RAISE_APPLICATION_ERROR(-20999, '{PREVIEW_ROWCOUNT_MARKER}' || l_counts);\nEND;"
+        ));
+        Ok((block, accepted))
+    }
+
+    /// Extract the preview rowcounts the block smuggled out via ORA-20999:
+    /// ORDS reports the raise as `ORA-20999: TABLER_PREVIEW_ROWS:1,2,` inside
+    /// the item's `errorDetails`/`response` fields. Returns `None` when the
+    /// marker is absent (a real failure) or the count list does not match the
+    /// statement count (a malformed channel).
+    fn parse_preview_counts(item: &OrdsStatementResult, expected: usize) -> Option<Vec<u64>> {
+        let haystacks = item
+            .error_details
+            .iter()
+            .map(String::as_str)
+            .chain(
+                item.response
+                    .iter()
+                    .flat_map(|lines| lines.iter().map(String::as_str)),
+            )
+            .collect::<Vec<_>>();
+        for text in haystacks {
+            let Some(start) = text.find(PREVIEW_ROWCOUNT_MARKER) else {
+                continue;
+            };
+            let digits: String = text[start + PREVIEW_ROWCOUNT_MARKER.len()..]
+                .chars()
+                .take_while(|ch| ch.is_ascii_digit() || *ch == ',')
+                .collect();
+            let counts: Vec<u64> = digits
+                .split(',')
+                .filter(|part| !part.is_empty())
+                .filter_map(|part| part.parse::<u64>().ok())
+                .collect();
+            if counts.len() == expected {
+                return Some(counts);
+            }
+        }
+        None
+    }
+
+    /// `request.table` may already carry a schema prefix; `database`
+    /// overrides it. Every segment is validated and double-quoted.
+    fn qualified_table_name(table: &str, database: Option<&str>) -> Result<String> {
+        let qualified = match database.map(str::trim).filter(|db| !db.is_empty()) {
+            Some(db) => format!("{db}.{table}"),
+            None => table.to_string(),
+        };
+        quote_oracle_order_by(&qualified)
+    }
+
+    /// Map raw JSON values to ORDS positional binds, inferring the Oracle
+    /// type from the value: numbers bind as NUMBER, booleans as NUMBER 1/0
+    /// (Oracle has no portable BOOLEAN bind type pre-23c), strings and
+    /// serialized arrays/objects as VARCHAR2, and null as a VARCHAR2 NULL.
+    fn values_to_binds(values: &[JsonValue]) -> Vec<OrdsSqlBind> {
+        values
+            .iter()
+            .enumerate()
+            .map(|(position, value)| {
+                let (data_type, value) = match value {
+                    JsonValue::Null => ("VARCHAR2", JsonValue::Null),
+                    JsonValue::Bool(flag) => ("NUMBER", JsonValue::from(*flag as u8)),
+                    JsonValue::Number(_) => ("NUMBER", value.clone()),
+                    JsonValue::String(_) => ("VARCHAR2", value.clone()),
+                    other => ("VARCHAR2", JsonValue::String(other.to_string())),
+                };
+                OrdsSqlBind {
+                    index: position as u64 + 1,
+                    data_type,
+                    value,
+                }
+            })
+            .collect()
+    }
+
+    /// Builds the `UPDATE … SET col = ? WHERE pk = ?` statement for one cell
+    /// edit. Values are returned separately so they travel as ORDS binds,
+    /// never interpolated into the statement text.
+    fn build_cell_update_statement(
+        request: &TableCellUpdateRequest,
+    ) -> Result<(String, Vec<JsonValue>)> {
+        if request.primary_keys.is_empty() {
+            return Err(anyhow!(
+                "Inline update requires at least one primary key column"
+            ));
+        }
+
+        let mut values = vec![request.value.clone()];
+        let mut where_clause = String::new();
+        for (index, primary_key) in request.primary_keys.iter().enumerate() {
+            if index > 0 {
+                where_clause.push_str(" AND ");
+            }
+            where_clause.push_str(&quote_oracle_order_by(&primary_key.column)?);
+            if primary_key.value.is_null() {
+                where_clause.push_str(" IS NULL");
+            } else {
+                values.push(primary_key.value.clone());
+                where_clause.push_str(" = ?");
+            }
+        }
+
+        let sql = format!(
+            "UPDATE {} SET {} = ? WHERE {}",
+            Self::qualified_table_name(&request.table, request.database.as_deref())?,
+            quote_oracle_order_by(&request.target_column)?,
+            where_clause
+        );
+        Ok((sql, values))
+    }
+
+    /// Builds the `DELETE FROM … WHERE (pk = ? …) OR (…)` statement for the
+    /// selected rows. NULL key values become `IS NULL` predicates and carry
+    /// no bind.
+    fn build_row_delete_statement(
+        request: &TableRowDeleteRequest,
+    ) -> Result<(String, Vec<JsonValue>)> {
+        if request.rows.is_empty() {
+            return Err(anyhow!("Deleting rows requires at least one selected row"));
+        }
+
+        let mut values = Vec::new();
+        let mut predicates = Vec::new();
+        for row_keys in &request.rows {
+            let mut parts = Vec::new();
+            for key in row_keys {
+                if key.value.is_null() {
+                    parts.push(format!("{} IS NULL", quote_oracle_order_by(&key.column)?));
+                } else {
+                    values.push(key.value.clone());
+                    parts.push(format!("{} = ?", quote_oracle_order_by(&key.column)?));
+                }
+            }
+            if !parts.is_empty() {
+                predicates.push(format!("({})", parts.join(" AND ")));
+            }
+        }
+
+        if predicates.is_empty() {
+            return Err(anyhow!(
+                "Deleting rows requires at least one valid row predicate"
+            ));
+        }
+
+        let sql = format!(
+            "DELETE FROM {} WHERE {}",
+            Self::qualified_table_name(&request.table, request.database.as_deref())?,
+            predicates.join(" OR ")
+        );
+        Ok((sql, values))
+    }
+
+    /// Builds the `INSERT INTO … (cols) VALUES (?, …)` statement for one row.
+    fn build_row_insert_statement(
+        request: &TableRowInsertRequest,
+    ) -> Result<(String, Vec<JsonValue>)> {
+        if request.values.is_empty() {
+            return Err(anyhow!("Insert requires at least one column value"));
+        }
+
+        let mut columns = Vec::new();
+        let mut placeholders = Vec::new();
+        let mut values = Vec::new();
+        for (column, value) in &request.values {
+            columns.push(quote_oracle_identifier(column)?);
+            values.push(value.clone());
+            placeholders.push("?");
+        }
+
+        let sql = format!(
+            "INSERT INTO {} ({}) VALUES ({})",
+            Self::qualified_table_name(&request.table, request.database.as_deref())?,
+            columns.join(", "),
+            placeholders.join(", ")
+        );
+        Ok((sql, values))
     }
 }
 
@@ -714,35 +1264,36 @@ impl DatabaseDriver for OracleDriver {
         let statements = split_sql_statements(sql);
 
         if statements.len() <= 1 && Self::query_returns_rows(sql) {
-            let (rows, truncated) = self.execute_statement(sql, MAX_QUERY_RESULT_ROWS).await?;
-            return Ok(Self::rows_to_query_result(
-                rows,
+            let execution = self.execute_statement(sql, MAX_QUERY_RESULT_ROWS).await?;
+            return Ok(Self::execution_to_query_result(
+                execution,
                 sql.to_string(),
                 started_at.elapsed().as_millis(),
-                truncated,
             ));
         }
 
         let mut last_result = None;
+        let mut affected_rows = 0u64;
         for statement in statements
             .iter()
             .filter(|statement| !statement.trim().is_empty())
         {
-            let (rows, truncated) = self
+            let execution = self
                 .execute_statement(statement, MAX_QUERY_RESULT_ROWS)
                 .await?;
+            affected_rows += execution.affected_rows;
             if Self::query_returns_rows(statement) {
-                last_result = Some(Self::rows_to_query_result(
-                    rows,
-                    sql.to_string(),
+                last_result = Some(Self::execution_to_query_result(
+                    execution,
+                    statement.clone(),
                     0,
-                    truncated,
                 ));
             }
         }
 
         let elapsed = started_at.elapsed().as_millis();
         if let Some(mut result) = last_result {
+            result.affected_rows = affected_rows;
             result.execution_time_ms = elapsed;
             return Ok(result);
         }
@@ -750,7 +1301,7 @@ impl DatabaseDriver for OracleDriver {
         Ok(QueryResult {
             columns: Vec::new(),
             rows: Vec::new(),
-            affected_rows: 0,
+            affected_rows,
             execution_time_ms: elapsed,
             query: sql.to_string(),
             sandboxed: false,
@@ -765,14 +1316,13 @@ impl DatabaseDriver for OracleDriver {
     ) -> Result<QueryResult> {
         let started_at = Instant::now();
         let binds = Self::parameters_to_binds(parameters);
-        let (rows, truncated) = self
+        let execution = self
             .execute_statement_binds(sql, &binds, MAX_QUERY_RESULT_ROWS)
             .await?;
-        Ok(Self::rows_to_query_result(
-            rows,
+        Ok(Self::execution_to_query_result(
+            execution,
             sql.to_string(),
             started_at.elapsed().as_millis(),
-            truncated,
         ))
     }
 
@@ -826,16 +1376,182 @@ impl DatabaseDriver for OracleDriver {
         Self::scalar_i64(&result)
     }
 
-    async fn update_table_cell(&self, _request: &TableCellUpdateRequest) -> Result<u64> {
-        Err(Self::read_only_write_error())
+    async fn update_table_cell(&self, request: &TableCellUpdateRequest) -> Result<u64> {
+        let (sql, values) = Self::build_cell_update_statement(request)?;
+        let binds = Self::values_to_binds(&values);
+        let execution = self
+            .execute_statement_binds(&sql, &binds, MAX_QUERY_RESULT_ROWS)
+            .await?;
+        Ok(execution.affected_rows)
     }
 
-    async fn delete_table_rows(&self, _request: &TableRowDeleteRequest) -> Result<u64> {
-        Err(Self::read_only_write_error())
+    /// Apply the edit queue as one anonymous PL/SQL block — the only
+    /// transaction primitive ORDS offers, since every `/_/sql` request
+    /// auto-commits independently. The whole block runs in a single
+    /// transaction context, so the queue commits all-or-nothing; a
+    /// `SQL%ROWCOUNT` guard after each UPDATE aborts (and rolls back) the
+    /// block when a primary-key selector no longer matches. Values travel as
+    /// `?` positional binds inside the block, never interpolated.
+    ///
+    /// Caveat: ORDS does not return per-statement rowcounts for a block, so
+    /// the returned count is the number of applied updates — exact because
+    /// the guard guarantees every update matched at least one row.
+    async fn apply_table_updates_atomically(
+        &self,
+        updates: &[TableCellUpdateRequest],
+    ) -> Result<u64> {
+        let (block, values) = Self::build_atomic_update_block(updates)?;
+        let binds = Self::values_to_binds(&values);
+        self.execute_statement_binds(&block, &binds, MAX_QUERY_RESULT_ROWS)
+            .await?;
+        Ok(updates.len() as u64)
     }
 
-    async fn insert_table_row(&self, _request: &TableRowInsertRequest) -> Result<u64> {
-        Err(Self::read_only_write_error())
+    async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64> {
+        let (sql, values) = Self::build_row_delete_statement(request)?;
+        let binds = Self::values_to_binds(&values);
+        let execution = self
+            .execute_statement_binds(&sql, &binds, MAX_QUERY_RESULT_ROWS)
+            .await?;
+        Ok(execution.affected_rows)
+    }
+
+    async fn insert_table_row(&self, request: &TableRowInsertRequest) -> Result<u64> {
+        let (sql, values) = Self::build_row_insert_statement(request)?;
+        let binds = Self::values_to_binds(&values);
+        let execution = self
+            .execute_statement_binds(&sql, &binds, MAX_QUERY_RESULT_ROWS)
+            .await?;
+        Ok(execution.affected_rows)
+    }
+
+    /// Import CSV rows as one anonymous PL/SQL block so the file lands
+    /// all-or-nothing inside a single ORDS transaction context (see
+    /// `apply_table_updates_atomically`). The cancel flag is honoured before
+    /// the block is sent; once sent, ORDS either commits every row or rolls
+    /// the block back. Each INSERT adds exactly one row, so the request count
+    /// is the affected count — ORDS does not return per-statement rowcounts
+    /// for a block.
+    async fn insert_table_rows_atomically(
+        &self,
+        requests: &[TableRowInsertRequest],
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+        }
+        let (block, values) = Self::build_atomic_insert_block(requests)?;
+        let binds = Self::values_to_binds(&values);
+        self.execute_statement_binds(&block, &binds, MAX_QUERY_RESULT_ROWS)
+            .await?;
+        Ok(requests.len() as u64)
+    }
+
+    /// Consume the row stream, then commit it as one atomic PL/SQL block.
+    /// Nothing is written until every row parses, so a parse failure,
+    /// cancellation, or early channel close leaves the table untouched.
+    async fn insert_table_row_stream_atomically(
+        &self,
+        mut rows: tokio::sync::mpsc::Receiver<crate::database::models::CsvImportRow>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        let mut requests = Vec::new();
+        while let Some(row) = rows.recv().await {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+            }
+            requests.push(row.map_err(anyhow::Error::msg)?);
+        }
+        self.insert_table_rows_atomically(&requests, cancelled)
+            .await
+    }
+
+    /// Preview writes inside `BEGIN … ROLLBACK; END;`: ROLLBACK is a legal
+    /// PL/SQL statement, so the block executes every statement and discards
+    /// the work inside one ORDS transaction context. ORDS does not return
+    /// per-statement rowcounts for a block, so the block raises ORA-20999
+    /// after the ROLLBACK carrying each `SQL%ROWCOUNT` in its message (see
+    /// `build_preview_block`); that expected error is parsed back into
+    /// per-statement `affected_rows`. Only INSERT/UPDATE/DELETE/MERGE are
+    /// accepted — row-returning statements cannot appear inside PL/SQL, and
+    /// DDL would implicitly commit before the ROLLBACK.
+    async fn preview_write_transaction(&self, statements: &[String]) -> Result<Vec<QueryResult>> {
+        let started_at = Instant::now();
+        let (block, accepted) = Self::build_preview_block(statements)?;
+        let (status, body) = self.post_statement(&block, &[], 0).await?;
+
+        if !status.is_success() {
+            return Err(anyhow!(Self::error_message(status, &body)));
+        }
+        let page = serde_json::from_str::<OrdsSqlResponse>(&body)
+            .context("Failed to parse Oracle ORDS response")?;
+
+        let elapsed = started_at.elapsed().as_millis();
+        let mut first_error: Option<String> = None;
+        for item in &page.items {
+            if let Some(counts) = Self::parse_preview_counts(item, accepted.len()) {
+                return Ok(accepted
+                    .iter()
+                    .zip(counts)
+                    .map(|(statement, affected_rows)| QueryResult {
+                        columns: Vec::new(),
+                        rows: Vec::new(),
+                        affected_rows,
+                        execution_time_ms: elapsed,
+                        query: statement.clone(),
+                        sandboxed: true,
+                        truncated: false,
+                    })
+                    .collect());
+            }
+            if first_error.is_none() {
+                first_error = Self::statement_error(item);
+            }
+        }
+
+        // The marker was absent: either a previewed statement genuinely
+        // failed (its ORA error is the item's error) or ORDS mangled the
+        // rowcount channel — both surface as errors, never as silent success.
+        Err(anyhow!(first_error.unwrap_or_else(|| {
+            "Oracle ORDS did not return the write-preview rowcount channel".to_string()
+        })))
+    }
+
+    /// Schema changes run one statement per request through the same ORDS
+    /// endpoint. Statements are NOT routed through `execute_query` because
+    /// its client-side splitter breaks PL/SQL bodies (`CREATE OR REPLACE`,
+    /// triggers) on inner semicolons — ORDS itself parses each payload, so a
+    /// single statement (or a caller-supplied script) is sent verbatim.
+    async fn execute_structure_statements(&self, statements: &[String]) -> Result<u64> {
+        let mut total_affected = 0u64;
+        for statement in statements {
+            if statement.trim().is_empty() {
+                continue;
+            }
+            total_affected += self
+                .execute_statement(statement, MAX_QUERY_RESULT_ROWS)
+                .await?
+                .affected_rows;
+        }
+        Ok(total_affected)
+    }
+
+    /// Replay a restore dump as one anonymous PL/SQL block so the replay is
+    /// atomic: any failure raises out of the block and rolls back every DML
+    /// statement it ran. DML and transaction-control statements embed
+    /// verbatim; DDL and other non-PL/SQL statements run through
+    /// `EXECUTE IMMEDIATE` (see `build_restore_block`).
+    ///
+    /// Caveats: Oracle DDL implicitly commits, so a dump containing DDL can
+    /// only roll back to the last DDL boundary — the block still aborts on
+    /// the first failure instead of replaying the rest. ORDS does not return
+    /// per-statement rowcounts for a block, so the returned count is the
+    /// number of applied statements.
+    async fn execute_restore_statements(&self, statements: &[String]) -> Result<u64> {
+        let (block, applied) = Self::build_restore_block(statements)?;
+        self.execute_statement(&block, MAX_QUERY_RESULT_ROWS)
+            .await?;
+        Ok(applied as u64)
     }
 
     async fn use_database(&self, database: &str) -> Result<()> {
@@ -921,7 +1637,7 @@ impl DatabaseDriver for OracleDriver {
 
 #[cfg(test)]
 mod tests {
-    use super::{OracleDriver, OrdsErrorBody, OrdsSqlResponse};
+    use super::{OracleDriver, OrdsErrorBody, OrdsExecution, OrdsSqlResponse, OrdsStatementResult};
     use crate::database::models::ConnectionConfig;
     use serde_json::json;
     use std::collections::HashMap;
@@ -1014,34 +1730,80 @@ mod tests {
 
     #[test]
     fn parses_ords_response_envelope() {
+        // Real ORDS shape: one item per statement; query rows nest under
+        // `resultSet` and DML counts arrive in `result`.
         let body = r#"{
-            "items": [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}],
-            "hasMore": true,
-            "count": 2,
-            "limit": 500,
-            "offset": 0
+            "env": {"defaultTimeZone": "Europe/London"},
+            "items": [{
+                "statementId": 1,
+                "statementType": "query",
+                "result": 0,
+                "resultSet": {
+                    "metadata": [
+                        {"columnName": "ID", "jsonColumnName": "id",
+                         "columnTypeName": "NUMBER", "isNullable": 0},
+                        {"columnName": "NAME", "jsonColumnName": "name",
+                         "columnTypeName": "VARCHAR2", "isNullable": 1}
+                    ],
+                    "items": [{"id": 1, "name": "a"}, {"id": 2, "name": "b"}],
+                    "hasMore": true,
+                    "count": 2,
+                    "limit": 500,
+                    "offset": 0
+                }
+            }]
         }"#;
         let page: OrdsSqlResponse = serde_json::from_str(body).unwrap();
-        assert_eq!(page.items.len(), 2);
-        assert!(page.has_more);
+        assert_eq!(page.items.len(), 1);
+        let result_set = page.items[0].result_set.as_ref().unwrap();
+        assert_eq!(result_set.items.len(), 2);
+        assert!(result_set.has_more);
+        assert_eq!(result_set.metadata.len(), 2);
+    }
+
+    #[test]
+    fn statement_item_reports_dml_result_and_errors() {
+        let dml: OrdsStatementResult = serde_json::from_str(
+            r#"{"statementType": "dml", "result": 14, "response": ["\n14 rows updated.\n\n"]}"#,
+        )
+        .unwrap();
+        assert_eq!(OracleDriver::affected_rows(&dml), 14);
+        assert!(OracleDriver::statement_error(&dml).is_none());
+
+        let batch: OrdsStatementResult =
+            serde_json::from_str(r#"{"statementType": "dml", "result": [1, 1, 2]}"#).unwrap();
+        assert_eq!(OracleDriver::affected_rows(&batch), 4);
+
+        // Statement failures arrive inside the item even on HTTP 200.
+        let failed: OrdsStatementResult = serde_json::from_str(
+            r#"{"errorCode": 942, "errorDetails": "ORA-00942: table or view does not exist",
+                "result": 0}"#,
+        )
+        .unwrap();
+        let message = OracleDriver::statement_error(&failed).unwrap();
+        assert!(message.contains("942"));
+        assert!(message.contains("ORA-00942"));
     }
 
     #[test]
     fn row_objects_map_to_query_result_preserving_column_order() {
         // serde_json's preserve_order feature keeps the emitted key order;
         // without it Map is a BTreeMap and "z_col" would sort before "a_col"
-        // alphabetically — this test pins the ORDS column contract.
+        // alphabetically — this test pins the ORDS column contract for the
+        // metadata-less fallback path.
         let first: serde_json::Map<String, serde_json::Value> =
             serde_json::from_str(r#"{"z_col": 1, "a_col": "x", "m_col": null}"#).unwrap();
         let second: serde_json::Map<String, serde_json::Value> =
             serde_json::from_str(r#"{"z_col": 2, "a_col": "y", "m_col": 5, "extra": true}"#)
                 .unwrap();
 
-        let result = OracleDriver::rows_to_query_result(
-            vec![first, second],
+        let result = OracleDriver::execution_to_query_result(
+            OrdsExecution {
+                rows: vec![first, second],
+                ..OrdsExecution::default()
+            },
             "SELECT * FROM t".to_string(),
             7,
-            false,
         );
 
         let names: Vec<&str> = result.columns.iter().map(|c| c.name.as_str()).collect();
@@ -1055,6 +1817,31 @@ mod tests {
             vec![json!(2), json!("y"), json!(5), json!(true)]
         );
         assert!(!result.truncated);
+    }
+
+    #[test]
+    fn result_set_metadata_drives_column_info() {
+        let result_set: super::OrdsResultSet = serde_json::from_str(
+            r#"{
+                "metadata": [
+                    {"columnName": "ID", "jsonColumnName": "id",
+                     "columnTypeName": "NUMBER", "isNullable": 0},
+                    {"columnName": "NAME", "columnTypeName": "VARCHAR2", "isNullable": 1}
+                ],
+                "items": [],
+                "hasMore": false
+            }"#,
+        )
+        .unwrap();
+
+        let columns = OracleDriver::result_set_columns(&result_set);
+        assert_eq!(columns.len(), 2);
+        assert_eq!(columns[0].name, "id");
+        assert_eq!(columns[0].data_type, "NUMBER");
+        assert!(!columns[0].is_nullable);
+        // No jsonColumnName: falls back to columnName.
+        assert_eq!(columns[1].name, "NAME");
+        assert!(columns[1].is_nullable);
     }
 
     #[test]
@@ -1135,5 +1922,301 @@ mod tests {
                 {"index": 5, "data_type": "VARCHAR2", "value": null},
             ])
         );
+    }
+    #[test]
+    fn cell_update_builds_bound_statement() {
+        use crate::database::models::{RowKeyValue, TableCellUpdateRequest};
+
+        let request = TableCellUpdateRequest {
+            table: "employees".to_string(),
+            database: Some("hr".to_string()),
+            target_column: "salary".to_string(),
+            value: json!(9500),
+            primary_keys: vec![
+                RowKeyValue {
+                    column: "employee_id".to_string(),
+                    value: json!(42),
+                },
+                RowKeyValue {
+                    column: "archived_at".to_string(),
+                    value: json!(null),
+                },
+            ],
+        };
+
+        let (sql, values) = OracleDriver::build_cell_update_statement(&request).unwrap();
+        assert_eq!(
+            sql,
+            "UPDATE \"HR\".\"EMPLOYEES\" SET \"SALARY\" = ? \
+             WHERE \"EMPLOYEE_ID\" = ? AND \"ARCHIVED_AT\" IS NULL"
+        );
+        // NULL keys become IS NULL predicates and carry no bind value.
+        assert_eq!(values, vec![json!(9500), json!(42)]);
+
+        let binds = serde_json::to_value(OracleDriver::values_to_binds(&values)).unwrap();
+        assert_eq!(
+            binds,
+            json!([
+                {"index": 1, "data_type": "NUMBER", "value": 9500},
+                {"index": 2, "data_type": "NUMBER", "value": 42},
+            ])
+        );
+    }
+
+    #[test]
+    fn cell_update_requires_primary_keys() {
+        use crate::database::models::TableCellUpdateRequest;
+
+        let request = TableCellUpdateRequest {
+            table: "t".to_string(),
+            database: None,
+            target_column: "c".to_string(),
+            value: json!(1),
+            primary_keys: vec![],
+        };
+        assert!(OracleDriver::build_cell_update_statement(&request).is_err());
+    }
+
+    #[test]
+    fn row_delete_builds_or_predicates_with_binds() {
+        use crate::database::models::{RowKeyValue, TableRowDeleteRequest};
+
+        let request = TableRowDeleteRequest {
+            table: "orders".to_string(),
+            database: None,
+            rows: vec![
+                vec![RowKeyValue {
+                    column: "id".to_string(),
+                    value: json!(7),
+                }],
+                vec![
+                    RowKeyValue {
+                        column: "id".to_string(),
+                        value: json!(9),
+                    },
+                    RowKeyValue {
+                        column: "note".to_string(),
+                        value: json!(null),
+                    },
+                ],
+            ],
+        };
+
+        let (sql, values) = OracleDriver::build_row_delete_statement(&request).unwrap();
+        assert_eq!(
+            sql,
+            "DELETE FROM \"ORDERS\" WHERE (\"ID\" = ?) OR (\"ID\" = ? AND \"NOTE\" IS NULL)"
+        );
+        assert_eq!(values, vec![json!(7), json!(9)]);
+    }
+
+    #[test]
+    fn row_insert_builds_bound_statement() {
+        use crate::database::models::TableRowInsertRequest;
+
+        let request = TableRowInsertRequest {
+            table: "employees".to_string(),
+            database: None,
+            values: vec![
+                ("name".to_string(), json!("O'Reilly")),
+                ("active".to_string(), json!(true)),
+                ("meta".to_string(), json!({"a": 1})),
+                ("deleted_at".to_string(), json!(null)),
+            ],
+        };
+
+        let (sql, values) = OracleDriver::build_row_insert_statement(&request).unwrap();
+        assert_eq!(
+            sql,
+            "INSERT INTO \"EMPLOYEES\" (\"NAME\", \"ACTIVE\", \"META\", \"DELETED_AT\") \
+             VALUES (?, ?, ?, ?)"
+        );
+        assert_eq!(values.len(), 4);
+
+        // Booleans bind as NUMBER 1/0; objects serialize to VARCHAR2 text;
+        // null binds as a VARCHAR2 NULL.
+        let binds = serde_json::to_value(OracleDriver::values_to_binds(&values)).unwrap();
+        assert_eq!(
+            binds,
+            json!([
+                {"index": 1, "data_type": "VARCHAR2", "value": "O'Reilly"},
+                {"index": 2, "data_type": "NUMBER", "value": 1},
+                {"index": 3, "data_type": "VARCHAR2", "value": "{\"a\":1}"},
+                {"index": 4, "data_type": "VARCHAR2", "value": null},
+            ])
+        );
+    }
+
+    #[test]
+    fn qualified_table_name_quotes_schema_and_table() {
+        assert_eq!(
+            OracleDriver::qualified_table_name("employees", Some("hr")).unwrap(),
+            "\"HR\".\"EMPLOYEES\""
+        );
+        assert_eq!(
+            OracleDriver::qualified_table_name("hr.employees", None).unwrap(),
+            "\"HR\".\"EMPLOYEES\""
+        );
+        assert!(OracleDriver::qualified_table_name("a.b.c", None).is_err());
+    }
+
+    #[test]
+    fn atomic_update_block_wraps_updates_and_guards_zero_matches() {
+        use crate::database::models::{RowKeyValue, TableCellUpdateRequest};
+
+        let updates = vec![
+            TableCellUpdateRequest {
+                table: "employees".to_string(),
+                database: None,
+                target_column: "salary".to_string(),
+                value: json!(9500),
+                primary_keys: vec![RowKeyValue {
+                    column: "employee_id".to_string(),
+                    value: json!(42),
+                }],
+            },
+            TableCellUpdateRequest {
+                table: "employees".to_string(),
+                database: None,
+                target_column: "name".to_string(),
+                value: json!("Ada"),
+                primary_keys: vec![RowKeyValue {
+                    column: "employee_id".to_string(),
+                    value: json!(7),
+                }],
+            },
+        ];
+
+        let (block, values) = OracleDriver::build_atomic_update_block(&updates).unwrap();
+        // One block, one statement per update, one zero-match guard each.
+        assert!(block.starts_with("BEGIN\n"));
+        assert!(block.ends_with("END;"));
+        assert_eq!(block.matches("UPDATE \"EMPLOYEES\" SET").count(), 2);
+        assert_eq!(block.matches("IF SQL%ROWCOUNT = 0 THEN").count(), 2);
+        assert!(block.contains("primary-key selector"));
+        // Values stay positional binds across the whole block, in order.
+        assert_eq!(values, vec![json!(9500), json!(42), json!("Ada"), json!(7)]);
+
+        assert!(OracleDriver::build_atomic_update_block(&[]).is_err());
+    }
+
+    #[test]
+    fn atomic_insert_block_wraps_rows_with_binds() {
+        use crate::database::models::TableRowInsertRequest;
+
+        let requests = vec![
+            TableRowInsertRequest {
+                table: "employees".to_string(),
+                database: None,
+                values: vec![("name".to_string(), json!("O'Reilly"))],
+            },
+            TableRowInsertRequest {
+                table: "employees".to_string(),
+                database: None,
+                values: vec![("name".to_string(), json!("Ada"))],
+            },
+        ];
+
+        let (block, values) = OracleDriver::build_atomic_insert_block(&requests).unwrap();
+        assert!(block.starts_with("BEGIN\n"));
+        assert!(block.ends_with("END;"));
+        assert_eq!(block.matches("INSERT INTO \"EMPLOYEES\"").count(), 2);
+        // The apostrophe stays inside a bind value, never in the block text.
+        assert!(!block.contains("O'Reilly"));
+        assert_eq!(values, vec![json!("O'Reilly"), json!("Ada")]);
+
+        assert!(OracleDriver::build_atomic_insert_block(&[]).is_err());
+    }
+
+    #[test]
+    fn restore_block_embeds_dml_and_dynamic_sql_for_ddl() {
+        let statements = vec![
+            "INSERT INTO t (id) VALUES (1)".to_string(),
+            "CREATE TABLE t2 (id NUMBER)".to_string(),
+            "  ".to_string(),
+            "DELETE FROM t WHERE id = 1;".to_string(),
+        ];
+
+        let (block, applied) = OracleDriver::build_restore_block(&statements).unwrap();
+        assert_eq!(applied, 3);
+        assert!(block.starts_with("BEGIN\n"));
+        assert!(block.ends_with("END;"));
+        // DML embeds verbatim (trailing semicolon normalized to exactly one).
+        assert!(block.contains("INSERT INTO t (id) VALUES (1);\n"));
+        assert!(block.contains("DELETE FROM t WHERE id = 1;\n"));
+        assert!(!block.contains(";;"));
+        // DDL cannot appear in PL/SQL: it goes through EXECUTE IMMEDIATE
+        // with a q-quoted literal.
+        assert!(block.contains("EXECUTE IMMEDIATE q'[CREATE TABLE t2 (id NUMBER)]';"));
+
+        assert!(OracleDriver::build_restore_block(&[]).is_err());
+        assert!(OracleDriver::build_restore_block(&["  ".to_string()]).is_err());
+    }
+
+    #[test]
+    fn plsql_literal_picks_safe_q_quote_delimiter() {
+        assert_eq!(
+            OracleDriver::plsql_quoted_literal("SELECT 1 FROM dual").unwrap(),
+            "q'[SELECT 1 FROM dual]'"
+        );
+        // A text containing ']' falls through to the next free delimiter.
+        assert_eq!(
+            OracleDriver::plsql_quoted_literal("a]b").unwrap(),
+            "q'{a]b}'"
+        );
+        // Every candidate closing delimiter present -> rejected, never
+        // silently misquoted.
+        assert!(OracleDriver::plsql_quoted_literal("] } ) > ! # ~ ^ @ % * + = | ?").is_err());
+        // PL/SQL string literals cap at 32767 bytes.
+        assert!(OracleDriver::plsql_quoted_literal(&"x".repeat(40_000)).is_err());
+    }
+
+    #[test]
+    fn preview_block_rolls_back_and_smuggles_rowcounts() {
+        let statements = vec![
+            "UPDATE items SET name = 'x' WHERE id = 1".to_string(),
+            "DELETE FROM items WHERE id = 2;".to_string(),
+        ];
+
+        let (block, accepted) = OracleDriver::build_preview_block(&statements).unwrap();
+        assert_eq!(accepted.len(), 2);
+        assert!(block.starts_with("DECLARE\n  l_counts VARCHAR2(4000) := '';\nBEGIN\n"));
+        assert!(block.contains("ROLLBACK;\n"));
+        assert!(block.contains("RAISE_APPLICATION_ERROR(-20999, 'TABLER_PREVIEW_ROWS:'"));
+        assert_eq!(block.matches("l_counts || SQL%ROWCOUNT").count(), 2);
+        assert!(block.ends_with("END;"));
+
+        // Row-returning and non-DML statements are rejected before any write.
+        assert!(OracleDriver::build_preview_block(&["SELECT * FROM items".to_string()]).is_err());
+        assert!(
+            OracleDriver::build_preview_block(&["CREATE TABLE t (id NUMBER)".to_string()]).is_err()
+        );
+        assert!(OracleDriver::build_preview_block(&[]).is_err());
+    }
+
+    #[test]
+    fn preview_counts_parse_from_ords_error_item() {
+        // The block's ORA-20999 surfaces inside the item's errorDetails.
+        let item: OrdsStatementResult = serde_json::from_str(
+            r#"{"errorCode": 20999,
+                "errorDetails": "ORA-20999: TABLER_PREVIEW_ROWS:1,3,\nORA-06512: at line 9",
+                "result": 0}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            OracleDriver::parse_preview_counts(&item, 2),
+            Some(vec![1, 3])
+        );
+
+        // A count list that does not match the statement count is not a
+        // valid channel — treated as a real failure.
+        assert_eq!(OracleDriver::parse_preview_counts(&item, 3), None);
+
+        // A genuine statement failure carries no marker.
+        let failed: OrdsStatementResult = serde_json::from_str(
+            r#"{"errorCode": 942, "errorDetails": "ORA-00942: table or view does not exist"}"#,
+        )
+        .unwrap();
+        assert_eq!(OracleDriver::parse_preview_counts(&failed, 1), None);
     }
 }

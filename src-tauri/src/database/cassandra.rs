@@ -13,13 +13,24 @@ use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::metadata::{ColumnKind, Table};
 use scylla::response::query_result::QueryResult as ScyllaQueryResult;
+use scylla::statement::batch::{Batch, BatchType};
 use scylla::statement::Statement;
 use scylla::value::{CqlValue, Row as ScyllaRow};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use std::collections::BTreeSet;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock as StdRwLock};
 use std::time::Instant;
+
+/// Cap on statements inside one CQL BATCH. Cassandra rejects oversized
+/// batches (`batch_size_fail_threshold_in_kb`, 50 KB by default) and logged
+/// batches spanning many partitions are expensive, so the driver refuses
+/// work that cannot plausibly fit instead of partially applying it.
+const CASSANDRA_BATCH_MAX_STATEMENTS: usize = 100;
+/// Conservative byte cap on the combined CQL text of one batch, kept well
+/// under Cassandra's default 50 KB `batch_size_fail_threshold_in_kb`.
+const CASSANDRA_BATCH_MAX_BYTES: usize = 32 * 1024;
 
 pub struct CassandraDriver {
     session: Session,
@@ -497,6 +508,330 @@ impl CassandraDriver {
             .or_else(|| value.as_str().and_then(|raw| raw.parse::<i64>().ok()))
             .ok_or_else(|| anyhow!("Expected a numeric scalar value"))
     }
+
+    /// Build one `UPDATE … SET col = term WHERE pk = term …` CQL statement
+    /// for a primary-key based cell edit. Values use `fromJson` terms, the
+    /// same coercion mechanism as `update_table_cell`.
+    fn build_cell_update_statement(&self, request: &TableCellUpdateRequest) -> Result<String> {
+        if request.primary_keys.is_empty() {
+            return Err(anyhow!(
+                "Inline update requires at least one primary key column"
+            ));
+        }
+        let (_, _, qualified_table) =
+            self.resolve_table_target(&request.table, request.database.as_deref())?;
+        Ok(format!(
+            "UPDATE {qualified_table} SET {} = {} WHERE {}",
+            quote_cassandra_identifier(&request.target_column)?,
+            Self::json_to_cql_term(&request.value, true)?,
+            Self::build_where_clause(&request.primary_keys)?,
+        ))
+    }
+
+    /// Build one `INSERT INTO … VALUES (…)` CQL statement for a CSV import
+    /// row, using `fromJson` terms like `insert_table_row`.
+    fn build_row_insert_statement(&self, request: &TableRowInsertRequest) -> Result<String> {
+        if request.values.is_empty() {
+            return Err(anyhow!("Each CSV row requires at least one column value"));
+        }
+        let (_, _, qualified_table) =
+            self.resolve_table_target(&request.table, request.database.as_deref())?;
+        let columns = request
+            .values
+            .iter()
+            .map(|(name, _)| quote_cassandra_identifier(name))
+            .collect::<Result<Vec<_>>>()?;
+        let values = request
+            .values
+            .iter()
+            .map(|(_, value)| Self::json_to_cql_term(value, true))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(format!(
+            "INSERT INTO {qualified_table} ({}) VALUES ({})",
+            columns.join(", "),
+            values.join(", "),
+        ))
+    }
+
+    /// Reject work that cannot plausibly fit inside one CQL BATCH. Cassandra
+    /// fails batches over `batch_size_fail_threshold_in_kb` (50 KB default)
+    /// and warns past 5 KB; the caps here stay under both so a batch never
+    /// half-applies because it was too large to send.
+    fn ensure_batch_fits(statements: &[String]) -> Result<()> {
+        if statements.len() > CASSANDRA_BATCH_MAX_STATEMENTS {
+            return Err(anyhow!(
+                "Cassandra batches are limited to {CASSANDRA_BATCH_MAX_STATEMENTS} statements; \
+                 {} were requested. Split the operation into smaller groups.",
+                statements.len()
+            ));
+        }
+        let total_bytes: usize = statements.iter().map(|statement| statement.len()).sum();
+        if total_bytes > CASSANDRA_BATCH_MAX_BYTES {
+            return Err(anyhow!(
+                "Cassandra batch of {} statements is {total_bytes} bytes, over the \
+                 {CASSANDRA_BATCH_MAX_BYTES}-byte driver cap. Split the operation into \
+                 smaller groups.",
+                statements.len()
+            ));
+        }
+        Ok(())
+    }
+
+    /// Execute statements inside one logged CQL BATCH.
+    ///
+    /// Semantics caveat: a LOGGED batch is atomic — either all mutations are
+    /// applied or none are — but it is *not* isolated; concurrent readers can
+    /// observe a partially applied batch. Batches spanning multiple
+    /// partitions also pay a batchlog round-trip, which is why the statement
+    /// and byte caps above keep batches small.
+    async fn execute_logged_batch(&self, statements: &[String]) -> Result<()> {
+        Self::ensure_batch_fits(statements)?;
+
+        let mut batch = Batch::new(BatchType::Logged);
+        for statement in statements {
+            batch.append_statement(statement.as_str());
+        }
+
+        // One empty value row per statement — the CQL text carries `fromJson`
+        // terms, so there are no `?` markers to bind.
+        let values = vec![(); statements.len()];
+        self.session
+            .batch(&batch, values)
+            .await
+            .context("Cassandra logged batch failed")?;
+        Ok(())
+    }
+
+    /// Resolve a snapshot table entry to a concrete `(keyspace, table)` pair.
+    /// A `keyspace.table` name wins; otherwise the entry's `schema` (the
+    /// exporting keyspace) is used, then the connection's current keyspace.
+    /// Both pieces are validated as identifier parts — never interpolated
+    /// raw into CQL text.
+    fn snapshot_table_target(
+        name: &str,
+        schema: Option<&str>,
+        default_keyspace: Option<&str>,
+    ) -> Result<(String, String)> {
+        let parts = name
+            .split('.')
+            .map(str::trim)
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>();
+        let (explicit_keyspace, table_name) = match parts.as_slice() {
+            [table_name] => (None, *table_name),
+            [keyspace, table_name] => (Some(*keyspace), *table_name),
+            _ => {
+                return Err(anyhow!(
+                    "Snapshot table name '{name}' is not a keyspace.table reference"
+                ))
+            }
+        };
+        let keyspace = explicit_keyspace
+            .or(schema)
+            .or(default_keyspace)
+            .ok_or_else(|| {
+                anyhow!(
+                    "Snapshot table '{name}' has no keyspace and no Cassandra keyspace is selected"
+                )
+            })?;
+        // Validate both parts now; the qualified name quotes them.
+        quote_cassandra_identifier(keyspace)?;
+        quote_cassandra_identifier(table_name)?;
+        Ok((keyspace.to_string(), table_name.to_string()))
+    }
+
+    /// Column names for array-shaped snapshot rows: the exported
+    /// `structure.columns` first (ColumnDetail serializes `name`), then a
+    /// flat `columns` string array for snapshots written by other
+    /// producers.
+    fn snapshot_column_names(table: &JsonValue) -> Vec<String> {
+        let from_structure = table
+            .get("structure")
+            .and_then(|structure| structure.get("columns"))
+            .and_then(JsonValue::as_array)
+            .map(|columns| {
+                columns
+                    .iter()
+                    .filter_map(|column| {
+                        column
+                            .get("name")
+                            .and_then(JsonValue::as_str)
+                            .map(str::to_string)
+                    })
+                    .collect::<Vec<_>>()
+            });
+        if let Some(names) = from_structure.filter(|names| !names.is_empty()) {
+            return names;
+        }
+        table
+            .get("columns")
+            .and_then(JsonValue::as_array)
+            .map(|columns| {
+                columns
+                    .iter()
+                    .filter_map(JsonValue::as_str)
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Turn one snapshot row into `(column, value)` entries. Object rows
+    /// (the shape `row_to_object` writes) map keys verbatim; array rows zip
+    /// cells with the exported column list. Values become
+    /// `Option<CqlValue>` binds: `None` for JSON null, otherwise the
+    /// serialized JSON text that `fromJson(?)` coerces server-side — so
+    /// strings, numbers, booleans, collections, UDTs, and timestamp/uuid
+    /// textual forms all round-trip through the binary protocol, never
+    /// through CQL text.
+    fn snapshot_row_to_entries(
+        name: &str,
+        row: &JsonValue,
+        column_names: &[String],
+    ) -> Result<Vec<(String, Option<CqlValue>)>> {
+        let pairs: Vec<(&str, &JsonValue)> = match row {
+            JsonValue::Object(map) => map
+                .iter()
+                .map(|(key, value)| (key.as_str(), value))
+                .collect(),
+            JsonValue::Array(cells) => {
+                if column_names.is_empty() {
+                    return Err(anyhow!(
+                        "Snapshot table '{name}' has array-shaped rows but no column list"
+                    ));
+                }
+                let mut pairs = Vec::with_capacity(cells.len());
+                for (index, cell) in cells.iter().enumerate() {
+                    let column = column_names.get(index).ok_or_else(|| {
+                        anyhow!(
+                            "Snapshot row for '{name}' has more cells than the exported column list"
+                        )
+                    })?;
+                    pairs.push((column.as_str(), cell));
+                }
+                pairs
+            }
+            _ => {
+                return Err(anyhow!(
+                    "Snapshot row for '{name}' is not a JSON object or array"
+                ))
+            }
+        };
+        if pairs.is_empty() {
+            return Err(anyhow!("Snapshot row for '{name}' has no values"));
+        }
+        pairs
+            .into_iter()
+            .map(|(column, value)| {
+                let bound = if value.is_null() {
+                    None
+                } else {
+                    Some(CqlValue::Text(
+                        serde_json::to_string(value)
+                            .context("Failed to serialize a snapshot value")?,
+                    ))
+                };
+                Ok((column.to_string(), bound))
+            })
+            .collect()
+    }
+
+    /// Classify a restore payload the way the Redis/MongoDB drivers do: a
+    /// TableR JSON snapshot (`meta.format == "json-snapshot"`) becomes a
+    /// replay plan of per-table CQL INSERTs with bound values (`Some`);
+    /// anything not starting with `{` returns `None` so the caller keeps
+    /// the sequential CQL statement path. Payloads that look like a
+    /// snapshot but are not (`meta.format` mismatch, missing `tables`,
+    /// malformed rows) are hard errors — guessing CQL around a half-valid
+    /// snapshot would corrupt data.
+    ///
+    /// Each plan row is one `INSERT INTO "ks"."table" ("cols"…) VALUES
+    /// (fromJson(?), …)` statement plus the bound `Option<CqlValue>` row:
+    /// `None` for NULL, otherwise the JSON text `fromJson` parses into the
+    /// target column type. Identifiers are quoted; values are only ever
+    /// bind markers, so no snapshot value reaches the wire as CQL text.
+    fn snapshot_restore_inserts(
+        statements: &[String],
+        default_keyspace: Option<&str>,
+    ) -> Result<Option<Vec<(String, Vec<Vec<Option<CqlValue>>>)>>> {
+        // `split_sql_statements` keeps a JSON document inside one
+        // statement, but join for robustness — hand-edited payloads may not
+        // survive splitting intact.
+        let joined = statements.join(";\n");
+        let trimmed = joined.trim();
+        if !trimmed.starts_with('{') {
+            return Ok(None);
+        }
+        let snapshot: JsonValue = serde_json::from_str(trimmed).with_context(|| {
+            "The restore payload looks like a JSON snapshot but could not be parsed"
+        })?;
+        let format = snapshot
+            .get("meta")
+            .and_then(|meta| meta.get("format"))
+            .and_then(JsonValue::as_str);
+        if format != Some("json-snapshot") {
+            return Err(anyhow!(
+                "The restore payload is JSON but not a TableR json-snapshot export"
+            ));
+        }
+        let tables = snapshot
+            .get("tables")
+            .and_then(JsonValue::as_array)
+            .ok_or_else(|| anyhow!("The JSON snapshot does not contain a 'tables' array"))?;
+
+        // Plan shape: one entry per `INSERT` text, holding every bind row
+        // that shares it. Rows with different column sets produce
+        // different statements and land as separate entries; the executor
+        // prepares each distinct statement once.
+        let mut plans: Vec<(String, Vec<Vec<Option<CqlValue>>>)> = Vec::new();
+        for table in tables {
+            let name = table
+                .get("name")
+                .and_then(JsonValue::as_str)
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| anyhow!("A snapshot table entry is missing its table name"))?;
+            let schema = table
+                .get("schema")
+                .and_then(JsonValue::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty());
+            let (keyspace, table_name) =
+                Self::snapshot_table_target(name, schema, default_keyspace)?;
+            let qualified = qualify_cassandra_table_name(&table_name, &keyspace)?;
+
+            let column_names = Self::snapshot_column_names(table);
+            let rows = table
+                .get("rows")
+                .and_then(JsonValue::as_array)
+                .ok_or_else(|| anyhow!("Snapshot table '{name}' is missing its 'rows' array"))?;
+
+            for row in rows {
+                let entries = Self::snapshot_row_to_entries(name, row, &column_names)
+                    .with_context(|| format!("Cannot replay a snapshot row for '{name}'"))?;
+                let mut columns_sql = String::new();
+                let mut values_sql = String::new();
+                for (index, (column, _)) in entries.iter().enumerate() {
+                    if index > 0 {
+                        columns_sql.push_str(", ");
+                        values_sql.push_str(", ");
+                    }
+                    columns_sql.push_str(&quote_cassandra_identifier(column)?);
+                    values_sql.push_str("fromJson(?)");
+                }
+                let cql = format!("INSERT INTO {qualified} ({columns_sql}) VALUES ({values_sql})");
+                let binds = entries
+                    .into_iter()
+                    .map(|(_, value)| value)
+                    .collect::<Vec<_>>();
+                match plans.iter_mut().find(|(existing, _)| existing == &cql) {
+                    Some((_, grouped)) => grouped.push(binds),
+                    None => plans.push((cql, vec![binds])),
+                }
+            }
+        }
+        Ok(Some(plans))
+    }
 }
 
 #[async_trait]
@@ -691,6 +1026,47 @@ impl DatabaseDriver for CassandraDriver {
             .with_context(|| format!("Cassandra query failed: {sql}"))?;
 
         Self::query_response_to_result(response, sql, started_at)
+    }
+
+    /// Restore a reviewed payload. A TableR JSON snapshot replays as
+    /// prepared `INSERT` statements with every value bound as a
+    /// `fromJson(?)` marker — no snapshot value is ever interpolated into
+    /// CQL text. Each distinct insert statement is prepared once and
+    /// executed sequentially per row.
+    ///
+    /// Atomicity caveat: CQL has no multi-table transaction and BATCH is
+    /// only used for the bounded edit/import paths (`ensure_batch_fits`
+    /// caps), not here — a checkpoint can legitimately exceed any batch
+    /// cap. A failed replay therefore leaves earlier rows applied, which
+    /// is honest: INSERT in Cassandra is an upsert keyed by primary key,
+    /// so a snapshot overlays data rather than rebuilding it. Anything
+    /// that is not a JSON snapshot keeps the default sequential statement
+    /// path.
+    async fn execute_restore_statements(&self, statements: &[String]) -> Result<u64> {
+        let Some(plans) =
+            Self::snapshot_restore_inserts(statements, self.current_keyspace_name().as_deref())?
+        else {
+            return self.execute_structure_statements(statements).await;
+        };
+
+        let mut total_affected = 0_u64;
+        for (cql, bind_rows) in plans {
+            if bind_rows.is_empty() {
+                continue;
+            }
+            let prepared =
+                self.session.prepare(cql.as_str()).await.with_context(|| {
+                    format!("Failed to prepare Cassandra restore insert: {cql}")
+                })?;
+            for binds in bind_rows {
+                self.session
+                    .execute_unpaged(&prepared, binds)
+                    .await
+                    .with_context(|| format!("Cassandra restore insert failed: {cql}"))?;
+                total_affected += 1;
+            }
+        }
+        Ok(total_affected)
     }
 
     async fn get_table_data(
@@ -976,6 +1352,69 @@ impl DatabaseDriver for CassandraDriver {
         Ok(1)
     }
 
+    /// Apply the edit queue inside one logged CQL BATCH — atomic (all
+    /// mutations apply or none do) though not isolated, and capped by
+    /// `ensure_batch_fits` so oversized queues are rejected rather than
+    /// partially applied.
+    async fn apply_table_updates_atomically(
+        &self,
+        updates: &[TableCellUpdateRequest],
+    ) -> Result<u64> {
+        if updates.is_empty() {
+            return Err(anyhow!("Atomic edit queue requires at least one update"));
+        }
+
+        let statements = updates
+            .iter()
+            .map(|update| self.build_cell_update_statement(update))
+            .collect::<Result<Vec<_>>>()?;
+        self.execute_logged_batch(&statements).await?;
+        Ok(updates.len() as u64)
+    }
+
+    /// Import CSV rows inside one logged CQL BATCH. Imports larger than the
+    /// documented batch caps are rejected up front — Cassandra has no
+    /// transaction spanning multiple batches, so chunking would break the
+    /// all-or-nothing contract.
+    async fn insert_table_rows_atomically(
+        &self,
+        requests: &[TableRowInsertRequest],
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        if requests.is_empty() {
+            return Err(anyhow!("CSV import requires at least one row"));
+        }
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+        }
+
+        let statements = requests
+            .iter()
+            .map(|request| self.build_row_insert_statement(request))
+            .collect::<Result<Vec<_>>>()?;
+        self.execute_logged_batch(&statements).await?;
+        Ok(requests.len() as u64)
+    }
+
+    /// Consume the row stream, then commit it as one logged batch. Nothing is
+    /// written until every row parses, so a parse failure, cancellation, or
+    /// early channel close leaves the table untouched.
+    async fn insert_table_row_stream_atomically(
+        &self,
+        mut rows: tokio::sync::mpsc::Receiver<crate::database::models::CsvImportRow>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        let mut requests = Vec::new();
+        while let Some(row) = rows.recv().await {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+            }
+            requests.push(row.map_err(anyhow::Error::msg)?);
+        }
+        self.insert_table_rows_atomically(&requests, cancelled)
+            .await
+    }
+
     async fn use_database(&self, database: &str) -> Result<()> {
         let trimmed = database.trim();
         if trimmed.is_empty() {
@@ -1043,5 +1482,141 @@ mod tests {
             CassandraDriver::json_to_cql_term(&json!(null), true).unwrap(),
             "null"
         );
+    }
+
+    #[test]
+    fn batch_caps_reject_oversized_work() {
+        // Statement-count cap: one over the limit is rejected.
+        let too_many = vec!["UPDATE t SET c = 1 WHERE k = 1".to_string(); 101];
+        assert!(CassandraDriver::ensure_batch_fits(&too_many).is_err());
+        let at_cap = vec!["UPDATE t SET c = 1 WHERE k = 1".to_string(); 100];
+        assert!(CassandraDriver::ensure_batch_fits(&at_cap).is_ok());
+
+        // Byte cap: few statements can still exceed the batch byte budget.
+        let oversized = vec!["x".repeat(40 * 1024)];
+        assert!(CassandraDriver::ensure_batch_fits(&oversized).is_err());
+    }
+
+    #[test]
+    fn snapshot_payload_maps_to_bound_inserts() {
+        let snapshot = json!({
+            "meta": {"format": "json-snapshot", "engine": "cassandra"},
+            "tables": [
+                {
+                    "name": "users",
+                    "schema": "analytics",
+                    "rows": [
+                        {"id": 1, "name": "amy"},
+                        {"id": 2, "name": "bob", "deleted": null}
+                    ]
+                },
+                {
+                    "name": "orders",
+                    "schema": "analytics",
+                    "rows": [{"id": 9, "total": 12.5}]
+                }
+            ]
+        })
+        .to_string();
+
+        let plans = CassandraDriver::snapshot_restore_inserts(&[snapshot], None)
+            .unwrap()
+            .expect("a json-snapshot payload produces a replay plan");
+        // Three distinct key sets → three prepared statements.
+        assert_eq!(plans.len(), 3);
+        let (first_cql, first_binds) = &plans[0];
+        assert_eq!(
+            first_cql,
+            r#"INSERT INTO "analytics"."users" ("id", "name") VALUES (fromJson(?), fromJson(?))"#
+        );
+        assert_eq!(
+            first_binds,
+            &vec![vec![
+                Some(scylla::value::CqlValue::Text("1".to_string())),
+                Some(scylla::value::CqlValue::Text("\"amy\"".to_string())),
+            ]]
+        );
+        // Null binds as a real CQL NULL (`None`), not the string "null".
+        let (nullable_cql, nullable_binds) = &plans[1];
+        assert!(nullable_cql.contains("\"deleted\""));
+        assert_eq!(nullable_binds[0][2], None);
+        // `schema` supplies the keyspace when the name is bare.
+        assert!(plans[2]
+            .0
+            .starts_with(r#"INSERT INTO "analytics"."orders""#));
+    }
+
+    #[test]
+    fn snapshot_array_rows_zip_the_column_list() {
+        let snapshot = json!({
+            "meta": {"format": "json-snapshot"},
+            "tables": [{
+                "name": "metrics",
+                "columns": ["pk", "value"],
+                "rows": [["m1", 7]]
+            }]
+        })
+        .to_string();
+
+        let plans = CassandraDriver::snapshot_restore_inserts(&[snapshot], Some("default_ks"))
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            plans[0].0,
+            r#"INSERT INTO "default_ks"."metrics" ("pk", "value") VALUES (fromJson(?), fromJson(?))"#
+        );
+        assert_eq!(plans[0].1[0].len(), 2);
+
+        // More cells than the exported column list is corrupt input.
+        let bad = json!({
+            "meta": {"format": "json-snapshot"},
+            "tables": [{
+                "name": "metrics",
+                "columns": ["pk"],
+                "rows": [["m1", "extra"]]
+            }]
+        })
+        .to_string();
+        assert!(CassandraDriver::snapshot_restore_inserts(&[bad], Some("default_ks")).is_err());
+
+        // Array rows with no column list at all cannot be replayed.
+        let no_columns = json!({
+            "meta": {"format": "json-snapshot"},
+            "tables": [{"name": "metrics", "rows": [["m1", 7]]}]
+        })
+        .to_string();
+        assert!(
+            CassandraDriver::snapshot_restore_inserts(&[no_columns], Some("default_ks")).is_err()
+        );
+    }
+
+    #[test]
+    fn non_snapshot_payloads_stay_on_the_cql_path_or_fail() {
+        // Plain CQL is not a snapshot → None keeps the sequential path.
+        let cql = vec!["INSERT INTO ks.t (id) VALUES (1)".to_string()];
+        assert!(CassandraDriver::snapshot_restore_inserts(&cql, None)
+            .unwrap()
+            .is_none());
+
+        // `{`-led JSON that is not a json-snapshot is a hard error.
+        let wrong_format = json!({"meta": {"format": "csv-dump"}, "tables": []}).to_string();
+        assert!(CassandraDriver::snapshot_restore_inserts(&[wrong_format], None).is_err());
+
+        // Missing `tables` array.
+        let no_tables = json!({"meta": {"format": "json-snapshot"}}).to_string();
+        assert!(CassandraDriver::snapshot_restore_inserts(&[no_tables], None).is_err());
+
+        // Unparseable JSON.
+        assert!(
+            CassandraDriver::snapshot_restore_inserts(&["{not json".to_string()], None).is_err()
+        );
+
+        // No keyspace anywhere → the snapshot cannot resolve a target.
+        let no_keyspace = json!({
+            "meta": {"format": "json-snapshot"},
+            "tables": [{"name": "t", "rows": [{"id": 1}]}]
+        })
+        .to_string();
+        assert!(CassandraDriver::snapshot_restore_inserts(&[no_keyspace], None).is_err());
     }
 }

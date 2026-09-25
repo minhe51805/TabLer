@@ -33,7 +33,7 @@ export const tools: AgentToolModule[] = [
     handler: async (ctx, args) => {
       // In-handler availability re-check: the catalog gate hides the tool, but a
       // hallucinated call must still fail closed on engines whose checkpoints
-      // are SQL dumps they cannot replay (mongodb/redis/opensearch).
+      // are SQL dumps they cannot replay (mongodb/redis/opensearch/elasticsearch).
       if (ctx.toolAvailability && !ctx.toolAvailability.checkpointRestore) {
         return agentSqlToolBlockedMessage("restore_checkpoint", ctx.toolAvailability);
       }

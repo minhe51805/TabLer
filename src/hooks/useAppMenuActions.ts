@@ -87,13 +87,17 @@ export function useAppMenuActions(handlers: AppMenuActionHandlers) {
       onToggleTerminalPanel: handleToggleTerminalPanel,
       onToggleQueryResultsPane: () => {
         if (activeTab?.type === "query") {
-          window.dispatchEvent(new CustomEvent("toggle-query-results-pane", { detail: { tabId: activeTab.id } }));
+          window.dispatchEvent(
+            new CustomEvent("toggle-query-results-pane", { detail: { tabId: activeTab.id } }),
+          );
         }
       },
       onToggleRightSidebar: () => handlers.setShowAISlidePanel((v: boolean) => !v),
       onToggleBottomSidebar: () => {
         if (activeTab?.type === "query") {
-          window.dispatchEvent(new CustomEvent("toggle-query-results-pane", { detail: { tabId: activeTab.id } }));
+          window.dispatchEvent(
+            new CustomEvent("toggle-query-results-pane", { detail: { tabId: activeTab.id } }),
+          );
         } else {
           setShowTerminalPanel((v) => !v);
         }
@@ -108,6 +112,7 @@ export function useAppMenuActions(handlers: AppMenuActionHandlers) {
       onActivateTheme: handleActivateThemeFromMenu,
       onOpenUserManagement: () => setShowUserRoleManagement(true),
       onOpenProcessList: () => handleOpenAdminQuery("process-list"),
+      onOpenKillSession: () => handleOpenAdminQuery("kill-session"),
       onOpenAISettings: () => setShowAISettings(true),
       onOpenAISlidePanel: () => handleOpenAISlidePanel(),
       onOpenPluginManager: () => setShowPluginManager(true),
@@ -121,6 +126,41 @@ export function useAppMenuActions(handlers: AppMenuActionHandlers) {
       onWindowMenuClose: handleWindowMenuClose,
     }),
     // Handler identity list mirrors the original useMemo dependencies.
-    [handleOpenDatabaseFile, handleImportSqlFile, handleImportSqlIntoCurrentDatabase, handleExportDatabase, handleOpenMetricsBoard, handleCloseWindow, handleNewQuery, handleToggleSidebar, handleToggleTerminalPanel, handleFocusExplorerSearch, handleShowDatabaseWorkspace, handleRefreshWorkspace, handleSearchInDatabaseFromMenu, handleSetFontSizeFromMenu, handleIncreaseFontSizeInline, handleDecreaseFontSizeInline, handleActivateThemeFromMenu, handleChangeLanguage, handleWindowMenuClose, activeTab?.type, activeTab?.id, handlers, setShowTerminalPanel, setShowUserRoleManagement, handleOpenAdminQuery, setShowAISettings, handleOpenAISlidePanel, setShowPluginManager, setShowMcpIntegrations, setShowAboutModal, setShowKeyboardShortcutsModal, setShowQueryHistory, setShowConnectionExporter, setShowConnectionImporter],
+    [
+      handleOpenDatabaseFile,
+      handleImportSqlFile,
+      handleImportSqlIntoCurrentDatabase,
+      handleExportDatabase,
+      handleOpenMetricsBoard,
+      handleCloseWindow,
+      handleNewQuery,
+      handleToggleSidebar,
+      handleToggleTerminalPanel,
+      handleFocusExplorerSearch,
+      handleShowDatabaseWorkspace,
+      handleRefreshWorkspace,
+      handleSearchInDatabaseFromMenu,
+      handleSetFontSizeFromMenu,
+      handleIncreaseFontSizeInline,
+      handleDecreaseFontSizeInline,
+      handleActivateThemeFromMenu,
+      handleChangeLanguage,
+      handleWindowMenuClose,
+      activeTab?.type,
+      activeTab?.id,
+      handlers,
+      setShowTerminalPanel,
+      setShowUserRoleManagement,
+      handleOpenAdminQuery,
+      setShowAISettings,
+      handleOpenAISlidePanel,
+      setShowPluginManager,
+      setShowMcpIntegrations,
+      setShowAboutModal,
+      setShowKeyboardShortcutsModal,
+      setShowQueryHistory,
+      setShowConnectionExporter,
+      setShowConnectionImporter,
+    ],
   );
 }

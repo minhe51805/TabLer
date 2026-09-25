@@ -18,8 +18,18 @@ import {
   setCachedQueryResult,
 } from "../utils/query-result-cache";
 import { getOrLoadTableColumns, getOrLoadTableStructure } from "../utils/schema-cache";
+import type { TableExportFormat } from "../utils/export-formats";
 import { useConnectionStore } from "./connectionStore";
 import { invokeAIWorkspaceToolWithTimeout } from "../utils/ai-tool-command-client";
+
+/** Result of an atomic CSV file import (import_csv_file_atomically). */
+export interface AtomicCsvImportSummary {
+  insertedRows: number;
+  /** Row-count delta measured around the transaction; null when unverified. */
+  verifiedRows: number | null;
+  totalRowsAfter: number | null;
+  warnings: string[];
+}
 
 export interface QueryState {
   isExecutingQuery: boolean;
@@ -117,14 +127,14 @@ export interface QueryState {
       mappings: Array<{ sourceIndex: number; targetColumn: string }>;
     },
     operationId: string,
-  ) => Promise<number>;
+  ) => Promise<AtomicCsvImportSummary>;
   cancelCsvImport: (operationId: string) => Promise<boolean>;
   exportTableData: (
     connectionId: string,
     request: {
       table: string;
       database?: string;
-      format: "csv" | "jsonl";
+      format: TableExportFormat;
       orderBy?: string;
       orderDir?: "ASC" | "DESC";
       filter?: string;
@@ -608,7 +618,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
   },
 
   importCsvFileAtomically: async (connectionId, request, operationId) => {
-    const affected = await invokeMutation<number>("import_csv_file_atomically", {
+    const affected = await invokeMutation<AtomicCsvImportSummary>("import_csv_file_atomically", {
       connectionId,
       operationId,
       request: {

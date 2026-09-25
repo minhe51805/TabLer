@@ -318,8 +318,27 @@ pub async fn get_user_role_snapshot(
                 privileges_unavailable: role_mappings.is_none(),
             })
         }
+        "oracle" => {
+            let principals = driver
+                .execute_query(ORACLE_PRINCIPALS_SQL)
+                .await
+                .map_err(|error| error.to_string())?;
+            let privileges = driver
+                .execute_query(ORACLE_PRIVILEGES_SQL)
+                .await
+                .map_err(|error| {
+                    log::warn!("oracle privilege query failed: {error}");
+                    error.to_string()
+                })
+                .ok();
+            Ok(UserRoleSnapshot {
+                engine,
+                principals: postgres_principals(principals, privileges.clone()),
+                privileges_unavailable: privileges.is_none(),
+            })
+        }
         _ => Err(
-            "Users & Roles is currently available for PostgreSQL, CockroachDB, Redshift, Vertica, MySQL, MariaDB, SQL Server, Snowflake, ClickHouse, Cassandra, MongoDB, Redis, and OpenSearch."
+            "Users & Roles is currently available for PostgreSQL, CockroachDB, Redshift, Vertica, MySQL, MariaDB, SQL Server, Oracle, Snowflake, ClickHouse, Cassandra, MongoDB, Redis, and OpenSearch."
                 .to_string(),
         ),
     }
@@ -430,6 +449,7 @@ fn build_executable_statements(
         "mongodb" => return mongodb_statements(request, user_name, role_name),
         "redis" => return redis_statements(request, user_name),
         "opensearch" => return opensearch_statements(request, user_name, role_name),
+        "oracle" => return oracle_statements(request, user_name, role_name),
         _ => {}
     }
     let privilege = request
@@ -445,7 +465,7 @@ fn build_executable_statements(
     let is_mssql = engine == "mssql";
     if !is_postgres && !is_mysql && !is_mssql {
         return Err(
-            "Users & Roles is currently available for PostgreSQL, CockroachDB, Redshift, Vertica, MySQL, MariaDB, SQL Server, Snowflake, ClickHouse, Cassandra, MongoDB, Redis, and OpenSearch."
+            "Users & Roles is currently available for PostgreSQL, CockroachDB, Redshift, Vertica, MySQL, MariaDB, SQL Server, Oracle, Snowflake, ClickHouse, Cassandra, MongoDB, Redis, and OpenSearch."
                 .to_string(),
         );
     }
@@ -556,6 +576,74 @@ fn build_executable_statements(
             } else {
                 format!("{verb} {privilege} ON {object} {direction} {user};")
             }
+        }
+    };
+    Ok(vec![statement])
+}
+
+// Oracle principals live in dba_users / dba_role_privs; direct grants span
+// dba_sys_privs (system privileges, prefixed `SYS:`) and dba_tab_privs
+// (object privileges, `owner.table:PRIV`). dba_* views need
+// DBA/SELECT_CATALOG_ROLE — a plain user sees an error, which surfaces
+// honestly rather than rendering an empty list. `can_login`/`is_superuser`
+// are emitted as TRUE/FALSE strings so row_bool reads them (pre-23c has no
+// SQL BOOLEAN). Neither privilege query filters on dba_users: grants to
+// ROLES must be in the map so collect_effective_privileges can propagate
+// role privileges to their members, matching the pg arm's shape.
+const ORACLE_PRINCIPALS_SQL: &str = "SELECT u.username AS user_name, CASE WHEN u.account_status = 'OPEN' THEN 'TRUE' ELSE 'FALSE' END AS can_login, CASE WHEN EXISTS (SELECT 1 FROM dba_role_privs d WHERE d.grantee = u.username AND d.granted_role = 'DBA') THEN 'TRUE' ELSE 'FALSE' END AS is_superuser, COALESCE((SELECT LISTAGG(r.granted_role, ',') WITHIN GROUP (ORDER BY r.granted_role) FROM dba_role_privs r WHERE r.grantee = u.username), '') AS roles FROM dba_users u ORDER BY u.username";
+const ORACLE_PRIVILEGES_SQL: &str = "SELECT grantee, 'SYS:' || privilege AS privilege FROM dba_sys_privs UNION ALL SELECT grantee, owner || '.' || table_name || ':' || privilege AS privilege FROM dba_tab_privs ORDER BY 1, 2";
+
+/// Oracle statement builder: double-quoted identifiers like Postgres, but
+/// `IDENTIFIED BY` for passwords and `GRANT ... ON <object>` without the
+/// Postgres `TABLE` keyword. A passwordless create maps to Oracle's
+/// `IDENTIFIED EXTERNALLY` (OS-authenticated account) rather than failing —
+/// Oracle has no no-login role/user split like Postgres.
+fn oracle_statements(
+    request: &UserRoleChangeRequest,
+    user_name: &str,
+    role_name: Option<&str>,
+) -> Result<Vec<String>, String> {
+    let user = quote_postgres_identifier(user_name);
+    let statement = match request.action {
+        UserRoleChangeAction::CreateUser => {
+            let clause = request
+                .password
+                .as_deref()
+                .filter(|value| !value.is_empty())
+                .map(quote_postgres_literal)
+                .map(|password| format!(" IDENTIFIED BY {password}"))
+                .unwrap_or_else(|| " IDENTIFIED EXTERNALLY".to_string());
+            format!("CREATE USER {user}{clause};")
+        }
+        UserRoleChangeAction::GrantRole => {
+            let role = role_name.ok_or_else(|| "Role name is required.".to_string())?;
+            format!("GRANT {} TO {user};", quote_postgres_identifier(role))
+        }
+        UserRoleChangeAction::RevokeRole => {
+            let role = role_name.ok_or_else(|| "Role name is required.".to_string())?;
+            format!("REVOKE {} FROM {user};", quote_postgres_identifier(role))
+        }
+        UserRoleChangeAction::GrantPrivilege | UserRoleChangeAction::RevokePrivilege => {
+            let privilege = request
+                .privilege
+                .as_deref()
+                .map(require_privilege)
+                .transpose()?
+                .ok_or_else(|| "Privilege is required.".to_string())?;
+            let object_name = request
+                .object_name
+                .as_deref()
+                .ok_or_else(|| "Object name is required.".to_string())?;
+            // Oracle object grants take an unqualified-or-schema-qualified
+            // target with no TABLE keyword; quoting matches Postgres style.
+            let object = quote_qualified_object(object_name, "postgres")?;
+            let verb = if matches!(request.action, UserRoleChangeAction::GrantPrivilege) {
+                "GRANT"
+            } else {
+                "REVOKE"
+            };
+            let direction = if verb == "GRANT" { "TO" } else { "FROM" };
+            format!("{verb} {privilege} ON {object} {direction} {user};")
         }
     };
     Ok(vec![statement])
@@ -2011,6 +2099,38 @@ mod tests {
         assert_eq!(
             statements,
             vec!["ALTER ROLE [read_only] DROP MEMBER [analyst\"team];"]
+        );
+    }
+
+    #[test]
+    fn oracle_uses_identified_by_and_plain_object_grants() {
+        let statements =
+            build_executable_statements("oracle", &request(UserRoleChangeAction::CreateUser))
+                .unwrap();
+        assert_eq!(
+            statements,
+            vec!["CREATE USER \"analyst\"\"team\" IDENTIFIED BY 'not-for-logs';"]
+        );
+        // A passwordless create becomes an externally-authenticated account.
+        let mut external = request(UserRoleChangeAction::CreateUser);
+        external.password = None;
+        assert_eq!(
+            build_executable_statements("oracle", &external).unwrap(),
+            vec!["CREATE USER \"analyst\"\"team\" IDENTIFIED EXTERNALLY;"]
+        );
+        let statements =
+            build_executable_statements("oracle", &request(UserRoleChangeAction::GrantRole))
+                .unwrap();
+        assert_eq!(
+            statements,
+            vec!["GRANT \"read_only\" TO \"analyst\"\"team\";"]
+        );
+        let mut request = request(UserRoleChangeAction::GrantPrivilege);
+        request.privilege = Some("select".to_string());
+        request.object_name = Some("hr.order items".to_string());
+        assert_eq!(
+            build_executable_statements("oracle", &request).unwrap(),
+            vec!["GRANT SELECT ON \"hr\".\"order items\" TO \"analyst\"\"team\";"]
         );
     }
 

@@ -59,6 +59,8 @@ export function resolveSqlDialect(dbType: DatabaseType): SqlDialectFamily {
     case "clickhouse":
       return "clickhouse";
     case "oracle":
+    case "trino":
+    case "spanner":
       // ANSI double-quoted identifiers, same as the postgresql family.
       return "postgresql";
     default:

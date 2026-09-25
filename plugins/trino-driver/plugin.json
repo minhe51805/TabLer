@@ -1,0 +1,36 @@
+{
+  "apiVersion": 1,
+  "version": "1.0.0",
+  "publishedAt": "2026-09-25T00:00:00.000Z",
+  "kind": "adapter",
+  "author": "TableR Team",
+  "entry": null,
+  "capabilities": ["database"],
+  "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+  "compatibility": {
+    "minAppVersion": "0.1.4",
+    "maxAppVersion": null,
+    "platforms": [],
+    "architectures": []
+  },
+  "updateUrl": null,
+  "id": "trino-driver",
+  "name": "Trino driver",
+  "description": "Adds Trino connectivity over the declarative HTTP driver host.",
+  "integrity": {
+    "algorithm": "sha256",
+    "digest": "b35f1ab0f7ec7a9d390c1235b0e5f3f45e9a7cf504733820fc80bb15040a3aff"
+  },
+  "contributes": {
+    "formats": [],
+    "drivers": [
+      {
+        "id": "trino",
+        "label": "Trino",
+        "protocol": "trino",
+        "runtime": "declarative-http-v1",
+        "status": "stable"
+      }
+    ]
+  }
+}

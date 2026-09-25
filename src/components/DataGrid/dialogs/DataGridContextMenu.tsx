@@ -23,7 +23,7 @@ import type { ResolvedColumn } from "../hooks/useDataGrid";
 import type { DatabaseType } from "../../../types/database";
 import { getDataGridMaskingCopy } from "../datagrid-masking-copy";
 import { useColumnMaskStore } from "../../../stores/columnMaskStore";
-import type { DataGridColumnMasks } from "../hooks/useDataGridColumnMasks";
+import { defaultMaskStrategy, type DataGridColumnMasks } from "../hooks/useDataGridColumnMasks";
 import type { AnonymizerStrategy } from "../../../utils/anonymizer";
 
 /** Normalizes a raw cell value for text formats: objects become JSON text so
@@ -151,8 +151,8 @@ export function DataGridContextMenu({
   const clearColumnMask = useColumnMaskStore((state) => state.clearColumnMask);
   const setMaskRevealed = useColumnMaskStore((state) => state.setRevealed);
   const maskScopeKey = columnMasks?.scopeKey ?? "";
-  const contextColumnIsPk =
-    resolvedColumns.find((column) => column.name === contextMenu.colName)?.is_primary_key === true;
+  const contextColumn = resolvedColumns.find((column) => column.name === contextMenu.colName);
+  const contextColumnIsPk = contextColumn?.is_primary_key === true;
 
   /** Copies the right-clicked row — or the whole row selection when the
    *  clicked row is part of it — in the chosen text format. Values come from
@@ -580,7 +580,7 @@ export function DataGridContextMenu({
               )}
             </button>
           ))}
-          {maskScopeKey && contextMenu.colName !== "_row_num" && columnMasks && (
+          {maskScopeKey && contextMenu.colName !== "_row_num" && columnMasks && contextColumn && (
             <>
               <div className="datagrid-context-menu-separator" />
               {contextColumnIsPk ? (
@@ -593,74 +593,98 @@ export function DataGridContextMenu({
                   {maskingCopy.maskColumn}
                 </button>
               ) : (
-                <div className="datagrid-context-menu-item has-submenu" tabIndex={0}>
-                  <span>{maskingCopy.maskColumn}</span>
-                  <ChevronRight className="w-3 h-3 submenu-chevron" />
-                  <div className="datagrid-context-menu datagrid-context-submenu">
-                    {(
-                      [
-                        "hash",
-                        "redact",
-                        "null",
-                        "fake-email",
-                        "fake-name",
-                        "fake-phone",
-                        "noise",
-                      ] as AnonymizerStrategy[]
-                    ).map((strategy) => (
+                <>
+                  {columnMasks.maskedColumnNames.has(contextMenu.colName!) ? (
+                    <>
                       <button
-                        key={strategy}
                         type="button"
                         className="datagrid-context-menu-item"
-                        style={{
-                          display: "flex",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                        }}
                         onClick={() => {
-                          setColumnMask(maskScopeKey, contextMenu.colName!, strategy);
+                          clearColumnMask(maskScopeKey, contextMenu.colName!);
                           onClose();
                         }}
                       >
-                        <span>{maskingCopy.strategies[strategy]}</span>
-                        {columnMasks.maskStrategies[contextMenu.colName!] === strategy && (
-                          <span style={{ color: "var(--accent)" }}>✓</span>
-                        )}
+                        {maskingCopy.unmask}
                       </button>
-                    ))}
-                    {columnMasks.maskedColumnNames.has(contextMenu.colName!) && (
-                      <>
-                        <div className="datagrid-context-menu-separator" />
+                      <button
+                        type="button"
+                        className="datagrid-context-menu-item"
+                        onClick={() => {
+                          setMaskRevealed(
+                            maskScopeKey,
+                            contextMenu.colName!,
+                            !columnMasks.activeMaskedNames.has(contextMenu.colName!),
+                          );
+                          onClose();
+                        }}
+                      >
+                        {columnMasks.activeMaskedNames.has(contextMenu.colName!)
+                          ? maskingCopy.reveal
+                          : maskingCopy.hide}
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      type="button"
+                      className="datagrid-context-menu-item"
+                      onClick={() => {
+                        setColumnMask(
+                          maskScopeKey,
+                          contextMenu.colName!,
+                          defaultMaskStrategy(contextColumn),
+                        );
+                        onClose();
+                      }}
+                    >
+                      {maskingCopy.maskColumn}
+                    </button>
+                  )}
+                  <div className="datagrid-context-menu-item has-submenu" tabIndex={0}>
+                    <span>{maskingCopy.maskWith}</span>
+                    <ChevronRight className="w-3 h-3 submenu-chevron" />
+                    <div className="datagrid-context-menu datagrid-context-submenu">
+                      {(
+                        [
+                          "hash",
+                          "redact",
+                          "null",
+                          "fake-email",
+                          "fake-name",
+                          "fake-phone",
+                          "noise",
+                        ] as AnonymizerStrategy[]
+                      ).map((strategy) => (
                         <button
+                          key={strategy}
                           type="button"
                           className="datagrid-context-menu-item"
+                          style={{
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            gap: "8px",
+                          }}
                           onClick={() => {
-                            setMaskRevealed(
-                              maskScopeKey,
-                              contextMenu.colName!,
-                              !columnMasks.activeMaskedNames.has(contextMenu.colName!),
-                            );
+                            setColumnMask(maskScopeKey, contextMenu.colName!, strategy);
                             onClose();
                           }}
                         >
-                          {columnMasks.activeMaskedNames.has(contextMenu.colName!)
-                            ? maskingCopy.reveal
-                            : maskingCopy.hide}
+                          <span>
+                            {maskingCopy.strategies[strategy]}
+                            {strategy === defaultMaskStrategy(contextColumn) && (
+                              <span style={{ color: "var(--text-muted)" }}>
+                                {` (${maskingCopy.defaultTag})`}
+                              </span>
+                            )}
+                          </span>
+                          {columnMasks.maskStrategies[contextMenu.colName!] === strategy && (
+                            <span style={{ color: "var(--accent)" }}>✓</span>
+                          )}
                         </button>
-                        <button
-                          type="button"
-                          className="datagrid-context-menu-item"
-                          onClick={() => {
-                            clearColumnMask(maskScopeKey, contextMenu.colName!);
-                            onClose();
-                          }}
-                        >
-                          {maskingCopy.unmask}
-                        </button>
-                      </>
-                    )}
+                      ))}
+                    </div>
                   </div>
-                </div>
+                </>
               )}
             </>
           )}

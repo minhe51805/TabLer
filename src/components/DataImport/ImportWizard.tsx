@@ -31,6 +31,10 @@ interface ImportSummary {
   error?: string | null;
   rejectionReport?: string | null;
   warnings?: string[];
+  /** Row-count delta measured around the import; null when unverified. */
+  verifiedRows?: number | null;
+  /** Total rows in the target table after the import; null when unverified. */
+  totalRowsAfter?: number | null;
 }
 
 interface CsvImportProgress {
@@ -38,6 +42,8 @@ interface CsvImportProgress {
   processedRows: number;
   processedBytes: number;
   totalBytes: number;
+  /** "verifying" while the post-import row-count check runs. */
+  phase?: string;
 }
 
 // Matches the backend CSV_FILE_IMPORT_TIMEOUT (30 minutes) so the client
@@ -399,6 +405,7 @@ export function ImportWizard() {
                   {(summary.rejectedRows ?? 0) > 0 ? ` · ${summary.rejectedRows} rejected` : ""}
                   {(summary.failedRows ?? 0) > 0 ? ` · ${summary.failedRows} not inserted` : ""}
                   {summary.tableCreated ? " · table created" : ""}
+                  {summary.verifiedRows != null ? ` · verified ${summary.verifiedRows} rows` : ""}
                   {summary.rejectionReport ? ` · report: ${summary.rejectionReport}` : ""}
                 </span>
                 {(summary.warnings ?? []).map((warning, index) => (
@@ -408,33 +415,42 @@ export function ImportWizard() {
                 ))}
               </div>
             )}
-            {isBusy && progress && progress.totalBytes > 0 && (
+            {isBusy && progress && (progress.phase === "verifying" || progress.totalBytes > 0) && (
               <div className="schema-diff-summary">
-                <span>
-                  {progress.processedRows} rows ·{" "}
-                  {Math.min(100, Math.round((progress.processedBytes / progress.totalBytes) * 100))}
-                  %
-                </span>
-                <span
-                  style={{
-                    flex: 1,
-                    height: 6,
-                    borderRadius: 3,
-                    background: "var(--border-subtle, #333)",
-                    overflow: "hidden",
-                  }}
-                  role="progressbar"
-                  aria-label="CSV import progress"
-                >
+                {progress.phase === "verifying" ? (
+                  <span>Verifying row count…</span>
+                ) : (
+                  <span>
+                    {progress.processedRows} rows ·{" "}
+                    {Math.min(
+                      100,
+                      Math.round((progress.processedBytes / progress.totalBytes) * 100),
+                    )}
+                    %
+                  </span>
+                )}
+                {progress.phase !== "verifying" && (
                   <span
                     style={{
-                      display: "block",
-                      height: "100%",
-                      width: `${Math.min(100, Math.round((progress.processedBytes / progress.totalBytes) * 100))}%`,
-                      background: "var(--fintech-blue, #3b82f6)",
+                      flex: 1,
+                      height: 6,
+                      borderRadius: 3,
+                      background: "var(--border-subtle, #333)",
+                      overflow: "hidden",
                     }}
-                  />
-                </span>
+                    role="progressbar"
+                    aria-label="CSV import progress"
+                  >
+                    <span
+                      style={{
+                        display: "block",
+                        height: "100%",
+                        width: `${Math.min(100, Math.round((progress.processedBytes / progress.totalBytes) * 100))}%`,
+                        background: "var(--fintech-blue, #3b82f6)",
+                      }}
+                    />
+                  </span>
+                )}
               </div>
             )}
 

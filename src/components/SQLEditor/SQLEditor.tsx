@@ -263,6 +263,10 @@ export function SQLEditor({
               autoClosingBrackets: "always",
               automaticLayout: true,
               inlineSuggest: { enabled: true },
+              // Alt+Click adds a cursor; Ctrl+D / Ctrl+Shift+L / Ctrl+Alt+↑↓
+              // come from Monaco's multicursor contrib — the global
+              // AppKeyboardHandler yields to these while the editor is focused.
+              multiCursorModifier: "alt",
               maxTokenizationLineLength: 10000,
               scrollbar: { verticalScrollbarSize: 7, horizontalScrollbarSize: 7 },
             }}

@@ -1,7 +1,7 @@
 use super::csv::{
     decode_csv_cell, detect_delimiter, looks_like_header, sample_and_count, strip_text_bom,
 };
-use super::insert::{build_insert_batch, ImportColumnMapping};
+use super::insert::{build_insert_batch, failed_row_count, ImportColumnMapping};
 use super::json::{
     align_object, collect_keys, json_shape_from_prefix, json_value_to_cell, parse_json_object_line,
     JsonShape,
@@ -121,6 +121,21 @@ fn mappings_pick_cells_by_source_index() {
     assert!(sql.contains("(\"name\", \"age\")"));
     assert_eq!(parameters[0].value, serde_json::json!("alice"));
     assert_eq!(parameters[1].value, serde_json::json!("42"));
+}
+#[test]
+fn failed_rows_count_consumed_rows_once() {
+    // A file with 200 parsed rows where 50 were rejected upstream of the
+    // consume counter and 150 inserted must report 0 missing rows... and a
+    // run aborted after 150 of 200 consumed rows inserted reports exactly 50.
+    // Rejected rows are skipped before `consumed` increments, so subtracting
+    // them again (the old arithmetic) under-reports failed rows.
+    assert_eq!(failed_row_count(200, 150), 50);
+    // Clean finish: everything consumed was inserted.
+    assert_eq!(failed_row_count(1_000, 1_000), 0);
+    // Cancel before any flush: every consumed row failed to land.
+    assert_eq!(failed_row_count(37, 0), 37);
+    // Driver over-report can never drive the count negative.
+    assert_eq!(failed_row_count(10, 12), 0);
 }
 
 fn reader_from(text: &str) -> csv::Reader<Cursor<&str>> {

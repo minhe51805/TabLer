@@ -23,6 +23,9 @@ mod schema;
 // Re-exported so `export` (glob import) reaches the DDL/DML entry points it
 // builds SQL dumps from; both are `pub(crate)` in their submodules for this.
 pub(super) use rows::build_insert_statement_batch;
+// `qualify_name` is also re-exported for `data_export`'s SQL INSERT format,
+// which needs the same dialect-aware table reference as SQL dumps.
+pub(super) use rows::qualify_name;
 pub(super) use schema::build_create_table_statement;
 // `ensure_trailing_semicolon` is exercised only by `export`'s unit tests, so
 // gate its re-export to keep normal builds free of an unused re-export.
@@ -30,15 +33,15 @@ pub(super) use schema::build_create_table_statement;
 pub(super) use schema::ensure_trailing_semicolon;
 
 // Helpers used only inside this module; kept private to `export_support`.
-use rows::{database_export_postamble, database_export_preamble, qualify_name, row_to_object};
+use rows::{database_export_postamble, database_export_preamble, row_to_object};
 use schema::{build_foreign_key_statements, build_index_statements, normalize_schema_object_sql};
 
 pub(super) fn preferred_export_format(db_type: DatabaseType) -> DatabaseExportFormat {
     match db_type {
         DatabaseType::Redis
         | DatabaseType::MongoDB
-        | DatabaseType::Cassandra
-        | DatabaseType::OpenSearch => DatabaseExportFormat::JsonSnapshot,
+        | DatabaseType::OpenSearch
+        | DatabaseType::Elasticsearch => DatabaseExportFormat::JsonSnapshot,
         _ => DatabaseExportFormat::Sql,
     }
 }

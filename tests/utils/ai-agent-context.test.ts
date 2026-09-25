@@ -198,9 +198,9 @@ describe("AI agent context builder", () => {
       toolAvailability: agentToolAvailability("mongodb"),
     });
 
-    // MongoDB speaks a translated SELECT subset, so the read tool stays — but
-    // write preview, parameterized reads, schema objects and checkpoints are
-    // gated off by the capability matrix.
+    // MongoDB speaks a translated SELECT subset, so the read tool stays.
+    // Write preview and checkpoint restore are enabled (JSON-snapshot replay);
+    // parameterized reads and schema objects stay gated by the capability matrix.
     const mongoPayload = JSON.stringify(
       nativeToolPayloadForProvider("openai", {
         workspaceToolsEnabled: true,
@@ -208,9 +208,9 @@ describe("AI agent context builder", () => {
       }),
     );
     expect(mongoPayload).toContain('"run_readonly_sql"');
-    expect(mongoPayload).not.toContain('"preview_write"');
+    expect(mongoPayload).toContain('"preview_write"');
     expect(mongoPayload).not.toContain('"run_parameterized_sql"');
-    expect(mongoPayload).not.toContain('"restore_checkpoint"');
+    expect(mongoPayload).toContain('"restore_checkpoint"');
     expect(prompt).toContain("run_readonly_sql");
   });
 

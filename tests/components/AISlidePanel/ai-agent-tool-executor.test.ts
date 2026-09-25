@@ -417,15 +417,16 @@ describe("run_readonly_sql", () => {
 });
 
 describe("preview_write", () => {
-  it("rejects write previews on non-SQL engines even if the backend mock would allow them", async () => {
+  it("rejects write previews on engines without a preview impl", async () => {
     const deps = mkDeps();
-    deps.toolAvailability = agentToolAvailability("mongodb");
+    // DynamoDB has no rollback primitive — preview_write stays gated.
+    deps.toolAvailability = agentToolAvailability("dynamodb");
     const obs = await run(deps, {
       action: "preview_write",
       args: { statements: ["DELETE FROM users WHERE id = 1"] },
     } as AIAgentToolAction);
     expect(obs).toContain("Tool blocked:");
-    expect(obs).toContain("MongoDB");
+    expect(obs).toContain("DynamoDB");
     expect(deps.previewWriteTransaction).not.toHaveBeenCalled();
   });
 

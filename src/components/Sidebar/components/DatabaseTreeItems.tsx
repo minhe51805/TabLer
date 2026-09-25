@@ -282,26 +282,38 @@ export const StaticObjectRow = memo(function StaticObjectRow({
   metaText,
   icon,
   onObjectSqlClick,
+  onOpen,
   t,
 }: {
   object: SchemaObjectInfo;
   metaText: string;
   icon: "GitBranch" | "FileCode";
   onObjectSqlClick: (e: React.MouseEvent, object: SchemaObjectInfo) => void;
+  /** When set (routines), the object name opens the dedicated editor. */
+  onOpen?: (object: SchemaObjectInfo) => void;
   t: TranslateFn;
 }) {
   const IconGlyph = icon === "GitBranch" ? GitBranch : FileCode;
+  const nameContent = (
+    <>
+      <div className="explorer-table-icon">
+        <IconGlyph className="w-3.5 h-3.5 shrink-0" />
+      </div>
+      <div className="explorer-table-copy">
+        <span className="explorer-table-name">{object.name}</span>
+        <span className="explorer-table-meta">{metaText}</span>
+      </div>
+    </>
+  );
   return (
     <div className="explorer-table-row explorer-object-row">
-      <div className="explorer-table-main static">
-        <div className="explorer-table-icon">
-          <IconGlyph className="w-3.5 h-3.5 shrink-0" />
-        </div>
-        <div className="explorer-table-copy">
-          <span className="explorer-table-name">{object.name}</span>
-          <span className="explorer-table-meta">{metaText}</span>
-        </div>
-      </div>
+      {onOpen ? (
+        <button type="button" className="explorer-table-main" onClick={() => onOpen(object)}>
+          {nameContent}
+        </button>
+      ) : (
+        <div className="explorer-table-main static">{nameContent}</div>
+      )}
       <button
         onClick={(e) => onObjectSqlClick(e, object)}
         className="explorer-structure-btn"

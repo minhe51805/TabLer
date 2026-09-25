@@ -14,6 +14,8 @@ import {
   X,
 } from "lucide-react";
 import type { useI18n } from "../../i18n";
+import type { ExportFormatInfo, TableExportFormat } from "../../utils/export-formats";
+import type { ExportFormatsCopy } from "../../utils/export-formats-copy";
 import type { RuntimePluginFormat } from "../../utils/plugin-format-runtime";
 import type { getDataGridChartCopy } from "./datagrid-chart-copy";
 import type { getDataGridPowerCopy } from "./datagrid-power-copy";
@@ -31,6 +33,8 @@ interface MenuOption {
   hint: string;
   icon: typeof FileSpreadsheet;
   run: () => void;
+  /** Render a divider line above this option. */
+  separator?: boolean;
 }
 
 /** Fixed-position dropdown anchored under a toolbar button, portaled to
@@ -62,20 +66,28 @@ function ToolbarMenu({
 function MenuOptionButton({ opt, onDone }: { opt: MenuOption; onDone: () => void }) {
   const OptIcon = opt.icon;
   return (
-    <button
-      type="button"
-      className="datagrid-export-menu-item"
-      onClick={() => {
-        opt.run();
-        onDone();
-      }}
-    >
-      <OptIcon className="!w-4 !h-4" />
-      <span className="datagrid-export-menu-copy">
-        <strong>{opt.label}</strong>
-        <span>{opt.hint}</span>
-      </span>
-    </button>
+    <>
+      {opt.separator && (
+        <div
+          role="separator"
+          style={{ borderTop: "1px solid var(--border-color, #444)", margin: "4px 0" }}
+        />
+      )}
+      <button
+        type="button"
+        className="datagrid-export-menu-item"
+        onClick={() => {
+          opt.run();
+          onDone();
+        }}
+      >
+        <OptIcon className="!w-4 !h-4" />
+        <span className="datagrid-export-menu-copy">
+          <strong>{opt.label}</strong>
+          <span>{opt.hint}</span>
+        </span>
+      </button>
+    </>
   );
 }
 
@@ -189,21 +201,28 @@ export function DataGridRefreshMenu({
   );
 }
 
-/** Export dropdown: CSV/JSON/XLSX/Markdown/XML/NDJSON/MQL plus plugin-registered formats. */
+/** Export dropdown: every compiled backend format streams the full table when
+ *  a table is open; loaded-rows exports stay available underneath (they are
+ *  the masked-value export path). Plugin-registered formats come last. */
 export function DataGridExportMenu({
   open,
   anchorRef,
   tableName,
   onExportFull,
+  fullFormats,
+  exportCopy,
   pluginFormats,
   powerCopy,
   t,
   onExportCSV,
+  onExportTSV,
   onExportJSON,
   onExportXLSX,
   onExportMarkdown,
   onExportXML,
+  onExportHtml,
   onExportNDJSON,
+  onExportSQL,
   onExportMQL,
   onPluginExport,
   onClose,
@@ -211,71 +230,131 @@ export function DataGridExportMenu({
   open: boolean;
   anchorRef: RefObject<HTMLElement | null>;
   tableName?: string;
-  onExportFull?: (format: "csv" | "jsonl") => void;
+  onExportFull?: (format: TableExportFormat) => void;
+  /** Compiled-in backend formats from `get_export_formats`. */
+  fullFormats: ExportFormatInfo[];
+  exportCopy: ExportFormatsCopy;
   pluginFormats: RuntimePluginFormat[];
   powerCopy: PowerCopy;
   t: TFunction;
   onExportCSV: () => void;
+  onExportTSV: () => void;
   onExportJSON: () => void;
   onExportXLSX: () => void;
   onExportMarkdown: () => void;
   onExportXML: () => void;
+  onExportHtml: () => void;
   onExportNDJSON: () => void;
+  onExportSQL: () => void;
   onExportMQL: () => void;
   onPluginExport: (format: RuntimePluginFormat) => void;
   onClose: () => void;
 }) {
   if (!open) return null;
-  const exportOptions: MenuOption[] = [
+  const fullMode = Boolean(tableName && onExportFull);
+  const formatIcons: Partial<Record<TableExportFormat, typeof FileSpreadsheet>> = {
+    csv: FileSpreadsheet,
+    tsv: FileSpreadsheet,
+    json: FileJson,
+    jsonl: Braces,
+    sql: FilePen,
+    xlsx: FileSpreadsheet,
+    xml: FileCode,
+    html: FileCode,
+    markdown: Table2,
+    parquet: FileSpreadsheet,
+  };
+  const exportOptions: MenuOption[] = [];
+  if (fullMode) {
+    for (const format of fullFormats) {
+      const copy = exportCopy.formats[format.id];
+      exportOptions.push({
+        label: copy?.label ?? format.label,
+        hint: `${copy?.hint ?? format.label} · ${exportCopy.fullTableTag}`,
+        icon: formatIcons[format.id] ?? FileCode,
+        run: () => onExportFull?.(format.id),
+      });
+    }
+  }
+  const loadedOptions: MenuOption[] = [
     {
-      label: tableName && onExportFull ? t("datagrid.exportFullCsv") : "CSV",
-      hint: t("datagrid.exportHintCsv"),
+      label: exportCopy.formats.csv.label,
+      hint: `${exportCopy.formats.csv.hint} · ${exportCopy.loadedRowsHint}`,
       icon: FileSpreadsheet,
       run: onExportCSV,
     },
     {
-      label: tableName && onExportFull ? t("datagrid.exportFullJsonl") : "JSON",
-      hint: t("datagrid.exportHintJson"),
+      label: exportCopy.formats.tsv.label,
+      hint: `${exportCopy.formats.tsv.hint} · ${exportCopy.loadedRowsHint}`,
+      icon: FileSpreadsheet,
+      run: onExportTSV,
+    },
+    {
+      label: exportCopy.formats.json.label,
+      hint: `${exportCopy.formats.json.hint} · ${exportCopy.loadedRowsHint}`,
       icon: FileJson,
       run: onExportJSON,
     },
     {
-      label: "XLSX",
-      hint: t("datagrid.exportHintXlsx"),
+      label: exportCopy.formats.xlsx.label,
+      hint: `${exportCopy.formats.xlsx.hint} · ${exportCopy.loadedRowsHint}`,
       icon: FileSpreadsheet,
       run: onExportXLSX,
     },
     {
       label: powerCopy.copyAs.markdown,
-      hint: powerCopy.copyAs.markdownHint,
+      hint: `${powerCopy.copyAs.markdownHint} · ${exportCopy.loadedRowsHint}`,
       icon: Table2,
       run: onExportMarkdown,
     },
     {
       label: powerCopy.copyAs.xml,
-      hint: powerCopy.copyAs.xmlHint,
+      hint: `${powerCopy.copyAs.xmlHint} · ${exportCopy.loadedRowsHint}`,
       icon: FileCode,
       run: onExportXML,
     },
     {
+      label: exportCopy.formats.html.label,
+      hint: `${exportCopy.formats.html.hint} · ${exportCopy.loadedRowsHint}`,
+      icon: FileCode,
+      run: onExportHtml,
+    },
+    {
       label: powerCopy.copyAs.ndjson,
-      hint: powerCopy.copyAs.ndjsonHint,
+      hint: `${powerCopy.copyAs.ndjsonHint} · ${exportCopy.loadedRowsHint}`,
       icon: Braces,
       run: onExportNDJSON,
     },
+    ...(tableName
+      ? [
+          {
+            label: exportCopy.formats.sql.label,
+            hint: `${exportCopy.formats.sql.hint} · ${exportCopy.loadedRowsHint}`,
+            icon: FilePen,
+            run: onExportSQL,
+          },
+        ]
+      : []),
     {
       label: "MQL",
-      hint: t("datagrid.exportHintMql"),
+      hint: `${t("datagrid.exportHintMql")} · ${exportCopy.loadedRowsHint}`,
       icon: FileCode,
       run: () => void onExportMQL(),
     },
+  ];
+  exportOptions.push(
+    ...loadedOptions.map((opt, index) => ({
+      ...opt,
+      separator: fullMode && index === 0,
+    })),
     ...pluginFormats.map((format) => ({
       label: format.label,
       hint: format.description || t("datagrid.exportHintPlugin", { plugin: format.pluginName }),
       icon: FileCode,
       run: () => onPluginExport(format),
+      separator: !fullMode && format === pluginFormats[0],
     })),
-  ];
+  );
   return (
     <ToolbarMenu anchorRef={anchorRef}>
       {exportOptions.map((opt) => (

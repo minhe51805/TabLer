@@ -30,6 +30,16 @@ export interface SQLAnalysisContext {
   isJoinContext: boolean;
   isOnContext: boolean;
   isAliasDefinition: boolean;
+  /** Identifier typed before a `.` immediately left of the cursor
+   *  (`alias.col` → "alias"); null when the word is unqualified. */
+  qualifier: string | null;
+  /** Table named by the nearest preceding INSERT INTO / UPDATE / DELETE FROM
+   *  clause — more precise than `table` when several statements share the
+   *  editor or the cursor sits before the FROM clause. */
+  targetTable: string | null;
+  /** Column names already typed inside `INSERT INTO t (…)` when the cursor is
+   *  inside that parenthesized list; null when not in a column list. */
+  insertColumnList: string[] | null;
 }
 
 const CLAUSE_PATTERNS: Array<[SQLAnalysisContext["context"], RegExp]> = [
@@ -49,8 +59,23 @@ const CLAUSE_PATTERNS: Array<[SQLAnalysisContext["context"], RegExp]> = [
 ];
 
 const NON_ALIAS_WORDS = new Set([
-  "WHERE", "ON", "JOIN", "LEFT", "RIGHT", "INNER", "OUTER", "CROSS", "FULL",
-  "ORDER", "GROUP", "HAVING", "LIMIT", "OFFSET", "UNION", "SET", "VALUES",
+  "WHERE",
+  "ON",
+  "JOIN",
+  "LEFT",
+  "RIGHT",
+  "INNER",
+  "OUTER",
+  "CROSS",
+  "FULL",
+  "ORDER",
+  "GROUP",
+  "HAVING",
+  "LIMIT",
+  "OFFSET",
+  "UNION",
+  "SET",
+  "VALUES",
 ]);
 
 function lastMatchIndex(text: string, pattern: RegExp) {
@@ -164,7 +189,10 @@ function extractCtes(text: string) {
     const openIndex = cursor + asMatch[0].lastIndexOf("(");
     const body = readBalanced(text, openIndex);
     if (!body) break;
-    ctes.set(name.toLowerCase(), explicitColumns.length > 0 ? explicitColumns : deriveSelectColumns(body.body));
+    ctes.set(
+      name.toLowerCase(),
+      explicitColumns.length > 0 ? explicitColumns : deriveSelectColumns(body.body),
+    );
     cursor = body.end;
     while (/\s/.test(text[cursor] || "")) cursor += 1;
     if (text[cursor] !== ",") break;
@@ -188,14 +216,16 @@ export function extractTableAliases(model: Monaco.editor.ITextModel): Map<string
   const text = model.getValue();
   const ctes = extractCtes(text);
   const scopes = new Map<string, SQLTableScope>();
-  const tablePattern = /\b(?:FROM|JOIN|UPDATE|INTO)\s+((?:[`"\x5B]?[\w$]+[`"\x5D]?)(?:\s*\.\s*(?:[`"\x5B]?[\w$]+[`"\x5D]?))?)(?:\s+(?:AS\s+)?([`"\x5B]?[\w$]+[`"\x5D]?))?/gi;
+  const tablePattern =
+    /\b(?:FROM|JOIN|UPDATE|INTO)\s+((?:[`"\x5B]?[\w$]+[`"\x5D]?)(?:\s*\.\s*(?:[`"\x5B]?[\w$]+[`"\x5D]?))?)(?:\s+(?:AS\s+)?([`"\x5B]?[\w$]+[`"\x5D]?))?/gi;
 
   for (const match of text.matchAll(tablePattern)) {
     const table = normalizeIdentifier(match[1]);
     const candidateAlias = match[2] ? normalizeIdentifier(match[2]) : "";
-    const alias = candidateAlias && !NON_ALIAS_WORDS.has(candidateAlias.toUpperCase())
-      ? candidateAlias
-      : table.split(".").slice(-1)[0] || table;
+    const alias =
+      candidateAlias && !NON_ALIAS_WORDS.has(candidateAlias.toUpperCase())
+        ? candidateAlias
+        : table.split(".").slice(-1)[0] || table;
     const cteColumns = ctes.get(table.toLowerCase());
     scopes.set(alias.toLowerCase(), {
       table,
@@ -215,6 +245,41 @@ export function getTablesInScope(
   return [...extractTableAliases(model).values()];
 }
 
+/** Identifier pattern shared by the qualifier/target-table scanners —
+ *  accepts bare, `backtick`/"double"/[bracket] quoted and schema-qualified
+ *  names. */
+const IDENTIFIER = '[`"\\x5B]?[\\w$]+[`"\\x5D]?';
+const QUALIFIED_IDENTIFIER = `${IDENTIFIER}(?:\\s*\\.\\s*${IDENTIFIER})?`;
+
+/** Finds the table named by the nearest preceding DML clause. */
+function findTargetTable(textBefore: string): string | null {
+  const pattern = new RegExp(
+    `\\b(?:INSERT\\s+INTO|UPDATE|DELETE\\s+FROM)\\s+(${QUALIFIED_IDENTIFIER})`,
+    "gi",
+  );
+  let table: string | null = null;
+  for (const match of textBefore.matchAll(pattern)) {
+    table = normalizeIdentifier(match[1]);
+  }
+  return table;
+}
+
+/** When the cursor sits inside `INSERT INTO t (col, …)`, returns the column
+ *  names already present in that list; otherwise null. */
+function findInsertColumnList(textBefore: string): string[] | null {
+  const insertPattern = new RegExp(`\\bINSERT\\s+INTO\\s+${QUALIFIED_IDENTIFIER}\\s*\\(`, "gi");
+  let openIndex = -1;
+  for (const match of textBefore.matchAll(insertPattern)) {
+    openIndex = match.index + match[0].length - 1;
+  }
+  if (openIndex < 0) return null;
+  // If the list closed before the cursor we are past it (VALUES, SELECT, …).
+  if (readBalanced(textBefore, openIndex)) return null;
+  return splitTopLevel(textBefore.slice(openIndex + 1))
+    .map(normalizeIdentifier)
+    .filter(Boolean);
+}
+
 export function analyzeSqlContext(
   model: Monaco.editor.ITextModel,
   position: Monaco.Position,
@@ -228,19 +293,38 @@ export function analyzeSqlContext(
   };
   const textBefore = model.getValue().slice(0, model.getOffsetAt(position));
 
+  // Resolve by match END, not start: "DELETE FROM" and "FROM" end at the same
+  // offset, and the longer match must win or DELETE FROM degrades to FROM.
   let context: SQLAnalysisContext["context"] = "UNKNOWN";
-  let latestIndex = -1;
+  let latestEnd = -1;
+  let latestLen = -1;
   for (const [candidate, pattern] of CLAUSE_PATTERNS) {
-    const index = lastMatchIndex(textBefore, pattern);
-    if (index > latestIndex) {
-      latestIndex = index;
+    let end = -1;
+    let len = -1;
+    for (const match of textBefore.matchAll(pattern)) {
+      end = match.index + match[0].length;
+      len = match[0].length;
+    }
+    if (end > latestEnd || (end === latestEnd && len > latestLen)) {
+      latestEnd = end;
+      latestLen = len;
       context = candidate;
     }
   }
-
   const scopes = getTablesInScope(model, position);
   const activeScope = scopes.length > 0 ? scopes[scopes.length - 1] : null;
-  const isAliasDefinition = /\b(?:FROM|JOIN|UPDATE|INTO)\s+[^\s,()]+\s+(?:AS\s+)?[\w$]*$/i.test(textBefore);
+  const isAliasDefinition = /\b(?:FROM|JOIN|UPDATE|INTO)\s+[^\s,()]+\s+(?:AS\s+)?[\w$]*$/i.test(
+    textBefore,
+  );
+
+  // `alias.` / `table.` qualifier immediately left of the cursor — the word
+  // under the cursor is the column fragment, the identifier before the dot is
+  // the qualifier. A leading digit means a numeric literal (`1.5`), not a
+  // qualifier.
+  const qualifierMatch = new RegExp(`(${IDENTIFIER})\\s*\\.\\s*[\\w$]*$`).exec(textBefore);
+  const qualifierCandidate = qualifierMatch ? normalizeIdentifier(qualifierMatch[1]) : null;
+  const qualifier =
+    qualifierCandidate && !/^\d/.test(qualifierCandidate) ? qualifierCandidate : null;
 
   return {
     context,
@@ -251,5 +335,8 @@ export function analyzeSqlContext(
     isJoinContext: context === "JOIN",
     isOnContext: context === "ON",
     isAliasDefinition,
+    qualifier,
+    targetTable: findTargetTable(textBefore),
+    insertColumnList: findInsertColumnList(textBefore),
   };
 }

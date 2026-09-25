@@ -12,7 +12,12 @@ use sqlx::{Column, Executor, MySql, QueryBuilder, Row, TypeInfo};
 /// MySQL driver, split into a second inherent impl block.
 impl MySqlDriver {
     pub(super) fn query_returns_rows(sql: &str) -> bool {
-        statement_returns_rows(sql, &["SELECT", "SHOW", "DESCRIBE", "EXPLAIN", "WITH"])
+        // CALL: procedures can return result sets; sqlx drains any remaining
+        // sets after the first, so the fetch path is safe for both shapes.
+        statement_returns_rows(
+            sql,
+            &["SELECT", "SHOW", "DESCRIBE", "EXPLAIN", "WITH", "CALL"],
+        )
     }
 
     pub(super) fn build_result_from_rows(

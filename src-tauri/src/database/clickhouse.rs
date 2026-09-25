@@ -1,5 +1,6 @@
 use super::driver::DatabaseDriver;
 use super::models::*;
+use super::query_cancel::{request_cancel, CancelLookup, CancelScopeGuard, QueryCancelRegistry};
 use super::query_common::{statement_returns_rows, MAX_QUERY_RESULT_ROWS};
 use super::safety::{
     normalize_order_dir, quote_clickhouse_identifier, quote_clickhouse_order_by,
@@ -40,6 +41,9 @@ pub struct ClickHouseDriver {
     username: String,
     password: String,
     current_db: Arc<RwLock<Option<String>>>,
+    /// request_id → running-query scope so `cancel_query_request` can KILL
+    /// the tagged server-side query over a second HTTP request.
+    cancel_registry: RwLock<QueryCancelRegistry>,
 }
 
 impl ClickHouseDriver {
@@ -71,6 +75,7 @@ impl ClickHouseDriver {
             username,
             password,
             current_db,
+            cancel_registry: RwLock::new(QueryCancelRegistry::new()),
         };
 
         driver.ping().await?;
@@ -175,17 +180,19 @@ impl ClickHouseDriver {
     }
 
     async fn post_query(&self, sql: &str, database: Option<&str>) -> Result<String> {
-        self.post_query_with_params(sql, database, &[]).await
+        self.post_query_with_params(sql, database, &[], None).await
     }
 
     /// POST `sql` with ClickHouse `param_<name>` URL arguments carrying bound
     /// values for `{name:Type}` placeholders — the HTTP interface has no
-    /// positional `?` binds, so values never enter the query text.
+    /// positional `?` binds, so values never enter the query text. `query_id`
+    /// tags the server-side process so `cancel_query_request` can KILL it.
     async fn post_query_with_params(
         &self,
         sql: &str,
         database: Option<&str>,
         params: &[(String, String)],
+        query_id: Option<&str>,
     ) -> Result<String> {
         // Server-side execution cap: the outer tokio timeout aborts the HTTP
         // wait, but ClickHouse would keep running the query without this.
@@ -199,6 +206,9 @@ impl ClickHouseDriver {
 
         if let Some(database_name) = database.map(str::trim).filter(|value| !value.is_empty()) {
             request = request.query(&[("database", database_name)]);
+        }
+        if let Some(query_id) = query_id.map(str::trim).filter(|value| !value.is_empty()) {
+            request = request.query(&[("query_id", query_id)]);
         }
 
         let response = request
@@ -222,8 +232,21 @@ impl ClickHouseDriver {
         Ok(body)
     }
 
+    /// ClickHouse `query_id` for one statement of a cancellable request. The
+    /// `tabler-<request_id>-<n>` prefix lets `KILL QUERY` match every statement
+    /// of the batch with `startsWith`; request ids are UUIDs, so the trailing
+    /// `-` keeps prefixes of different requests disjoint.
+    fn request_query_id(request_id: &str, statement_index: usize) -> String {
+        format!("tabler-{request_id}-{statement_index}")
+    }
+
+    /// Escape a value for a single-quoted ClickHouse string literal.
+    fn escape_string_literal(value: &str) -> String {
+        value.replace('\\', "\\\\").replace('\'', "\\'")
+    }
+
     async fn query_json(&self, sql: &str, database: Option<&str>) -> Result<ClickHouseJsonResult> {
-        self.query_json_with_params(sql, database, &[]).await
+        self.query_json_with_params(sql, database, &[], None).await
     }
 
     async fn query_json_with_params(
@@ -231,9 +254,10 @@ impl ClickHouseDriver {
         sql: &str,
         database: Option<&str>,
         params: &[(String, String)],
+        query_id: Option<&str>,
     ) -> Result<ClickHouseJsonResult> {
         let body = self
-            .post_query_with_params(&Self::append_json_format(sql)?, database, params)
+            .post_query_with_params(&Self::append_json_format(sql)?, database, params, query_id)
             .await?;
 
         serde_json::from_str(&body).context("Failed to parse ClickHouse JSON response")
@@ -290,6 +314,128 @@ impl ClickHouseDriver {
             sandboxed,
             truncated,
         }
+    }
+
+    /// Shared body of `execute_query`/`execute_query_for_request`. When
+    /// `request_id` is set, each statement is posted with a derived
+    /// `query_id` so a cancel can find and kill it server-side.
+    async fn execute_query_inner(
+        &self,
+        sql: &str,
+        request_id: Option<&str>,
+    ) -> Result<QueryResult> {
+        let start = Instant::now();
+        let statements = split_sql_statements(sql);
+        let database = self.current_database_name(None);
+        let query_id_at = |index: usize| request_id.map(|id| Self::request_query_id(id, index));
+
+        if statements.len() <= 1 && Self::query_returns_rows(sql) {
+            let result = self
+                .query_json_with_params(sql, Some(&database), &[], query_id_at(0).as_deref())
+                .await?;
+            return Ok(Self::build_result_from_json(
+                result,
+                start.elapsed().as_millis(),
+                sql.to_string(),
+                0,
+                false,
+                MAX_QUERY_RESULT_ROWS,
+            ));
+        }
+
+        let total_affected = 0u64;
+        let mut last_result = None;
+
+        for (index, statement) in statements
+            .iter()
+            .filter(|statement| !statement.trim().is_empty())
+            .enumerate()
+        {
+            let query_id = query_id_at(index);
+            if Self::query_returns_rows(statement) {
+                let result = self
+                    .query_json_with_params(statement, Some(&database), &[], query_id.as_deref())
+                    .await?;
+                last_result = Some(Self::build_result_from_json(
+                    result,
+                    0,
+                    sql.to_string(),
+                    total_affected,
+                    false,
+                    MAX_QUERY_RESULT_ROWS,
+                ));
+            } else {
+                self.post_query_with_params(statement, Some(&database), &[], query_id.as_deref())
+                    .await?;
+            }
+        }
+
+        let elapsed = start.elapsed().as_millis();
+        if let Some(mut result) = last_result {
+            result.execution_time_ms = elapsed;
+            result.affected_rows = total_affected;
+            return Ok(result);
+        }
+
+        Ok(QueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            affected_rows: total_affected,
+            execution_time_ms: elapsed,
+            query: sql.to_string(),
+            sandboxed: false,
+            truncated: false,
+        })
+    }
+
+    /// Shared body of `execute_parameterized_query` and its request-scoped
+    /// variant; `request_id` tags the statement's `query_id` for KILL QUERY.
+    async fn execute_parameterized_query_inner(
+        &self,
+        sql: &str,
+        parameters: &[QueryParameter],
+        request_id: Option<&str>,
+    ) -> Result<QueryResult> {
+        let start = Instant::now();
+        let database = self.current_database_name(None);
+        let (rewritten_sql, params) = rewrite_clickhouse_placeholders(sql, parameters)?;
+        let query_id = request_id.map(|id| Self::request_query_id(id, 0));
+
+        if Self::query_returns_rows(&rewritten_sql) {
+            let result = self
+                .query_json_with_params(
+                    &rewritten_sql,
+                    Some(&database),
+                    &params,
+                    query_id.as_deref(),
+                )
+                .await?;
+            return Ok(Self::build_result_from_json(
+                result,
+                start.elapsed().as_millis(),
+                sql.to_string(),
+                0,
+                false,
+                MAX_QUERY_RESULT_ROWS,
+            ));
+        }
+
+        self.post_query_with_params(
+            &rewritten_sql,
+            Some(&database),
+            &params,
+            query_id.as_deref(),
+        )
+        .await?;
+        Ok(QueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            affected_rows: 0,
+            execution_time_ms: start.elapsed().as_millis(),
+            query: sql.to_string(),
+            sandboxed: false,
+            truncated: false,
+        })
     }
 }
 
@@ -498,60 +644,43 @@ impl DatabaseDriver for ClickHouseDriver {
     }
 
     async fn execute_query(&self, sql: &str) -> Result<QueryResult> {
-        let start = Instant::now();
-        let statements = split_sql_statements(sql);
-        let database = self.current_database_name(None);
+        self.execute_query_inner(sql, None).await
+    }
 
-        if statements.len() <= 1 && Self::query_returns_rows(sql) {
-            let result = self.query_json(sql, Some(&database)).await?;
-            return Ok(Self::build_result_from_json(
-                result,
-                start.elapsed().as_millis(),
-                sql.to_string(),
-                0,
-                false,
-                MAX_QUERY_RESULT_ROWS,
-            ));
+    /// Request-scoped execution: every statement is tagged with a
+    /// `tabler-<request_id>-<n>` `query_id` so `cancel_query_request` can KILL
+    /// the in-flight statement over a second HTTP request.
+    async fn execute_query_for_request(&self, request_id: &str, sql: &str) -> Result<QueryResult> {
+        if request_id.trim().is_empty() {
+            return self.execute_query(sql).await;
         }
+        let guard = CancelScopeGuard::begin(&self.cancel_registry, request_id);
+        // The query_id is derived from the request id, so there is no backend
+        // id to look up — registering a marker only resolves the pending race.
+        if guard.register_backend(0) {
+            return Err(anyhow!("Query cancelled."));
+        }
+        let result = self.execute_query_inner(sql, Some(request_id)).await;
+        drop(guard);
+        result
+    }
 
-        let total_affected = 0u64;
-        let mut last_result = None;
-
-        for statement in statements
-            .iter()
-            .filter(|statement| !statement.trim().is_empty())
-        {
-            if Self::query_returns_rows(statement) {
-                let result = self.query_json(statement, Some(&database)).await?;
-                last_result = Some(Self::build_result_from_json(
-                    result,
-                    0,
-                    sql.to_string(),
-                    total_affected,
-                    false,
-                    MAX_QUERY_RESULT_ROWS,
-                ));
-            } else {
-                self.post_query(statement, Some(&database)).await?;
+    /// Cancels by issuing `KILL QUERY WHERE startsWith(query_id, ...)` over a
+    /// fresh HTTP request — the in-flight request is blocked waiting on its
+    /// own response, so the kill rides a second connection.
+    async fn cancel_query_request(&self, request_id: &str) -> Result<bool> {
+        match request_cancel(&self.cancel_registry, request_id) {
+            CancelLookup::NotRunning => Ok(false),
+            CancelLookup::Pending => Ok(true),
+            CancelLookup::Backend(_) => {
+                let prefix = Self::escape_string_literal(&format!("tabler-{request_id}-"));
+                let kill_sql = format!("KILL QUERY WHERE startsWith(query_id, '{prefix}') ASYNC");
+                self.post_query(&kill_sql, None)
+                    .await
+                    .context("ClickHouse KILL QUERY failed")?;
+                Ok(true)
             }
         }
-
-        let elapsed = start.elapsed().as_millis();
-        if let Some(mut result) = last_result {
-            result.execution_time_ms = elapsed;
-            result.affected_rows = total_affected;
-            return Ok(result);
-        }
-
-        Ok(QueryResult {
-            columns: Vec::new(),
-            rows: Vec::new(),
-            affected_rows: total_affected,
-            execution_time_ms: elapsed,
-            query: sql.to_string(),
-            sandboxed: false,
-            truncated: false,
-        })
     }
 
     async fn execute_parameterized_query(
@@ -559,35 +688,28 @@ impl DatabaseDriver for ClickHouseDriver {
         sql: &str,
         parameters: &[QueryParameter],
     ) -> Result<QueryResult> {
-        let start = Instant::now();
-        let database = self.current_database_name(None);
-        let (rewritten_sql, params) = rewrite_clickhouse_placeholders(sql, parameters)?;
+        self.execute_parameterized_query_inner(sql, parameters, None)
+            .await
+    }
 
-        if Self::query_returns_rows(&rewritten_sql) {
-            let result = self
-                .query_json_with_params(&rewritten_sql, Some(&database), &params)
-                .await?;
-            return Ok(Self::build_result_from_json(
-                result,
-                start.elapsed().as_millis(),
-                sql.to_string(),
-                0,
-                false,
-                MAX_QUERY_RESULT_ROWS,
-            ));
+    async fn execute_parameterized_query_for_request(
+        &self,
+        request_id: &str,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        if request_id.trim().is_empty() {
+            return self.execute_parameterized_query(sql, parameters).await;
         }
-
-        self.post_query_with_params(&rewritten_sql, Some(&database), &params)
-            .await?;
-        Ok(QueryResult {
-            columns: Vec::new(),
-            rows: Vec::new(),
-            affected_rows: 0,
-            execution_time_ms: start.elapsed().as_millis(),
-            query: sql.to_string(),
-            sandboxed: false,
-            truncated: false,
-        })
+        let guard = CancelScopeGuard::begin(&self.cancel_registry, request_id);
+        if guard.register_backend(0) {
+            return Err(anyhow!("Query cancelled."));
+        }
+        let result = self
+            .execute_parameterized_query_inner(sql, parameters, Some(request_id))
+            .await;
+        drop(guard);
+        result
     }
 
     async fn get_table_data(

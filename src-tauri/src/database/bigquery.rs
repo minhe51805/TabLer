@@ -1,6 +1,9 @@
-use super::bigquery_support::BigQueryDatasetListResponse;
+use super::bigquery_support::{BigQueryDatasetListResponse, BigQueryJobReference};
 use super::driver::DatabaseDriver;
 use super::models::*;
+use super::query_cancel::{
+    cancel_flag, request_cancel, CancelLookup, CancelScopeGuard, QueryCancelRegistry,
+};
 use super::query_common::statement_returns_rows;
 use super::safety::{
     normalize_order_dir, quote_bigquery_identifier, quote_bigquery_order_by,
@@ -11,8 +14,9 @@ use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::Value as JsonValue;
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, RwLock as StdRwLock};
 use std::time::Instant;
 use tokio::sync::RwLock;
 
@@ -27,6 +31,12 @@ pub struct BigQueryDriver {
     pub(super) project_id: String,
     pub(super) location: Option<String>,
     pub(super) current_dataset: Arc<RwLock<Option<String>>>,
+    /// request_id → running-query scope so `cancel_query_request` can abort
+    /// the in-flight job over a second HTTP request.
+    cancel_registry: StdRwLock<QueryCancelRegistry>,
+    /// request_id → job reference of the BigQuery job currently in flight
+    /// for that request.
+    pending_jobs: Mutex<HashMap<String, BigQueryJobReference>>,
 }
 
 impl BigQueryDriver {
@@ -79,6 +89,8 @@ impl BigQueryDriver {
             project_id,
             location,
             current_dataset: Arc::new(RwLock::new(initial_dataset)),
+            cancel_registry: StdRwLock::new(QueryCancelRegistry::new()),
+            pending_jobs: Mutex::new(HashMap::new()),
         };
 
         driver.ping().await?;
@@ -91,6 +103,172 @@ impl BigQueryDriver {
             .try_read()
             .ok()
             .and_then(|guard| guard.clone())
+    }
+
+    /// Whether a cancel was already requested for this request scope.
+    fn cancel_requested(&self, request_id: &str) -> bool {
+        cancel_flag(&self.cancel_registry, request_id)
+            .map(|flag| flag.load(Ordering::SeqCst))
+            .unwrap_or(false)
+    }
+
+    fn store_pending_job(&self, request_id: &str, job: &BigQueryJobReference) {
+        let mut jobs = self
+            .pending_jobs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        jobs.insert(request_id.to_string(), job.clone());
+    }
+
+    fn take_pending_job(&self, request_id: &str) -> Option<BigQueryJobReference> {
+        let mut jobs = self
+            .pending_jobs
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        jobs.remove(request_id)
+    }
+
+    /// API path of the job cancel endpoint (`POST
+    /// projects/{project}/jobs/{jobId}/cancel`). The job reference returned
+    /// by `jobs.query` carries the owning project and location, so the cancel
+    /// targets the same job the query is polling.
+    fn job_cancel_path(job: &BigQueryJobReference) -> String {
+        format!("projects/{}/jobs/{}/cancel", job.project_id, job.job_id)
+    }
+
+    /// Abort a running job through `POST
+    /// /bigquery/v2/projects/{project}/jobs/{jobId}/cancel`.
+    async fn cancel_job(&self, job: &BigQueryJobReference) -> Result<()> {
+        let mut request = self
+            .client
+            .post(self.api_url(&Self::job_cancel_path(job)))
+            .bearer_auth(&self.access_token)
+            .header("x-goog-user-project", &self.project_id);
+        if let Some(location) = job
+            .location
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+        {
+            request = request.query(&[("location", location)]);
+        }
+
+        let response = request
+            .send()
+            .await
+            .context("Failed to reach BigQuery job cancel endpoint")?;
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .context("Failed to read BigQuery cancel response")?;
+
+        if status.is_success() {
+            return Ok(());
+        }
+
+        // A job that already finished cannot be cancelled, but the caller's
+        // goal — nothing left running — is still met.
+        let lowered = body.to_ascii_lowercase();
+        if lowered.contains("not found")
+            || lowered.contains("already")
+            || lowered.contains("completed")
+        {
+            return Ok(());
+        }
+
+        Err(anyhow!(
+            "{}",
+            Self::format_api_error(status.as_u16(), &body)
+        ))
+    }
+
+    /// `execute_parameterized_single_query` scoped to a request: the job
+    /// reference is registered as soon as `jobs.query` returns it (before
+    /// polling) so `cancel_query_request` can abort the in-flight job.
+    async fn execute_parameterized_single_query_scoped(
+        &self,
+        request_id: &str,
+        sql: &str,
+        dataset_override: Option<&str>,
+        preserve_query_text: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        if self.cancel_requested(request_id) {
+            return Err(anyhow!("Query cancelled."));
+        }
+
+        let started_at = Instant::now();
+        let (response, job_reference) = self
+            .submit_query_job(sql, dataset_override, parameters)
+            .await?;
+        self.store_pending_job(request_id, &job_reference);
+
+        // A cancel that raced ahead of the job registration still reaches the
+        // job: abort it now instead of polling to completion.
+        if self.cancel_requested(request_id) {
+            if let Err(error) = self.cancel_job(&job_reference).await {
+                log::warn!(
+                    "BigQuery cancel for job {} failed: {error}",
+                    job_reference.job_id
+                );
+            }
+            self.take_pending_job(request_id);
+            return Err(anyhow!("Query cancelled."));
+        }
+
+        let result = self
+            .collect_query_result(response, job_reference, preserve_query_text, started_at)
+            .await;
+        self.take_pending_job(request_id);
+        result
+    }
+
+    /// `execute_query` scoped to a request: every statement of a
+    /// multi-statement script registers its own job so a cancel aborts
+    /// whichever job is currently running.
+    async fn execute_query_scoped(&self, request_id: &str, sql: &str) -> Result<QueryResult> {
+        let started_at = Instant::now();
+        let statements = split_sql_statements(sql);
+
+        if statements.len() <= 1 {
+            return self
+                .execute_parameterized_single_query_scoped(request_id, sql, None, sql, &[])
+                .await;
+        }
+
+        let mut total_affected = 0u64;
+        let mut last_result = None;
+
+        for statement in statements
+            .iter()
+            .filter(|statement| !statement.trim().is_empty())
+        {
+            let result = self
+                .execute_parameterized_single_query_scoped(request_id, statement, None, sql, &[])
+                .await?;
+            total_affected += result.affected_rows;
+
+            if Self::query_returns_rows(statement) || !result.rows.is_empty() {
+                last_result = Some(result);
+            }
+        }
+
+        if let Some(mut result) = last_result {
+            result.execution_time_ms = started_at.elapsed().as_millis();
+            result.affected_rows = total_affected;
+            return Ok(result);
+        }
+
+        Ok(QueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            affected_rows: total_affected,
+            execution_time_ms: started_at.elapsed().as_millis(),
+            query: sql.to_string(),
+            sandboxed: false,
+            truncated: false,
+        })
     }
 }
 
@@ -265,6 +443,71 @@ impl DatabaseDriver for BigQueryDriver {
     ) -> Result<QueryResult> {
         self.execute_parameterized_single_query(sql, None, sql, parameters)
             .await
+    }
+
+    /// Request-scoped execution: the job reference returned by `jobs.query`
+    /// is registered before polling so `cancel_query_request` can abort the
+    /// in-flight job over a second HTTP request.
+    async fn execute_query_for_request(&self, request_id: &str, sql: &str) -> Result<QueryResult> {
+        if request_id.trim().is_empty() {
+            return self.execute_query(sql).await;
+        }
+        let guard = CancelScopeGuard::begin(&self.cancel_registry, request_id);
+        // The backend id is a job reference tracked in `pending_jobs`, so
+        // registering a marker only resolves the pending race.
+        if guard.register_backend(0) {
+            return Err(anyhow!("Query cancelled."));
+        }
+        let result = self.execute_query_scoped(request_id, sql).await;
+        drop(guard);
+        result
+    }
+
+    /// Cancels by POSTing to `projects/{p}/jobs/{jobId}/cancel` — the job
+    /// reference stored by `execute_query_for_request` carries the owning
+    /// project and location. The in-flight request is blocked polling, so the
+    /// cancel rides a second HTTP request.
+    async fn cancel_query_request(&self, request_id: &str) -> Result<bool> {
+        match request_cancel(&self.cancel_registry, request_id) {
+            CancelLookup::NotRunning => Ok(false),
+            // Cancel was recorded before the job reference landed; the scoped
+            // execute path aborts as soon as it arrives.
+            CancelLookup::Pending => Ok(true),
+            CancelLookup::Backend(_) => {
+                match self.take_pending_job(request_id) {
+                    Some(job) => {
+                        self.cancel_job(&job).await?;
+                        Ok(true)
+                    }
+                    // The job finished between submission and the cancel;
+                    // nothing is left running.
+                    None => Ok(true),
+                }
+            }
+        }
+    }
+
+    /// Request-scoped parameterized execution: same job registration as
+    /// `execute_query_for_request`, with values travelling through
+    /// `queryParameters` binds.
+    async fn execute_parameterized_query_for_request(
+        &self,
+        request_id: &str,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        if request_id.trim().is_empty() {
+            return self.execute_parameterized_query(sql, parameters).await;
+        }
+        let guard = CancelScopeGuard::begin(&self.cancel_registry, request_id);
+        if guard.register_backend(0) {
+            return Err(anyhow!("Query cancelled."));
+        }
+        let result = self
+            .execute_parameterized_single_query_scoped(request_id, sql, None, sql, parameters)
+            .await;
+        drop(guard);
+        result
     }
 
     async fn get_table_data(
@@ -560,7 +803,7 @@ impl DatabaseDriver for BigQueryDriver {
 #[cfg(test)]
 mod tests {
     use super::super::bigquery_support::{
-        BigQueryTableCell, BigQueryTableFieldSchema, BigQueryTableRow,
+        BigQueryJobReference, BigQueryTableCell, BigQueryTableFieldSchema, BigQueryTableRow,
     };
     use super::super::models::{QueryParameter, QueryParameterType};
     use super::BigQueryDriver;
@@ -706,5 +949,53 @@ mod tests {
             QueryParameterType::Integer,
         ))
         .is_err());
+    }
+
+    fn test_driver() -> BigQueryDriver {
+        use super::super::query_cancel::QueryCancelRegistry;
+        use std::collections::HashMap;
+        use std::sync::{Mutex, RwLock as StdRwLock};
+        use tokio::sync::RwLock;
+
+        BigQueryDriver {
+            client: reqwest::Client::new(),
+            base_url: "https://bigquery.googleapis.com/bigquery/v2".to_string(),
+            access_token: "token".to_string(),
+            project_id: "proj".to_string(),
+            location: None,
+            current_dataset: std::sync::Arc::new(RwLock::new(None)),
+            cancel_registry: StdRwLock::new(QueryCancelRegistry::new()),
+            pending_jobs: Mutex::new(HashMap::new()),
+        }
+    }
+
+    #[test]
+    fn builds_job_cancel_path() {
+        let job = BigQueryJobReference {
+            project_id: "proj".to_string(),
+            job_id: "job_123".to_string(),
+            location: Some("US".to_string()),
+        };
+        assert_eq!(
+            BigQueryDriver::job_cancel_path(&job),
+            "projects/proj/jobs/job_123/cancel"
+        );
+    }
+
+    #[test]
+    fn pending_jobs_roundtrip_per_request() {
+        let driver = test_driver();
+        let job = BigQueryJobReference {
+            project_id: "proj".to_string(),
+            job_id: "job_123".to_string(),
+            location: Some("EU".to_string()),
+        };
+        driver.store_pending_job("req-1", &job);
+
+        let taken = driver.take_pending_job("req-1").expect("job registered");
+        assert_eq!(taken.job_id, "job_123");
+        assert_eq!(taken.location.as_deref(), Some("EU"));
+        // Taking a job removes only that request's entry.
+        assert!(driver.take_pending_job("req-1").is_none());
     }
 }

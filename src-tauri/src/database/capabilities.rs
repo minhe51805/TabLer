@@ -390,8 +390,8 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "redshift",
             "Amazon Redshift",
             DriverTier::Specialized,
-            S, S, S, L, S, S, S, S, S, S, S, S, S,
-            &["Redshift shares the PostgreSQL wire driver; DDL, restore, and administration semantics require dedicated coverage.", "Cancel attempts pg_cancel_backend from a second connection, but Redshift may not honor the PostgreSQL cancel function; the statement may keep running.", "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied.", "Explain returns a text plan; the JSON plan format is not supported."]),
+            S, S, S, S, S, S, S, S, S, S, S, S, S,
+            &["Redshift shares the PostgreSQL wire driver; DDL, restore, and administration semantics require dedicated coverage.", "Cancel issues pg_cancel_backend from a second pooled connection to abort the running statement.", "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied.", "Explain returns a text plan; the JSON plan format is not supported."]),
         DatabaseType::SQLite => profile(
             database_type,
             "sqlite",
@@ -412,16 +412,16 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "cassandra",
             "Apache Cassandra",
             DriverTier::Specialized,
-            S, S, S, L, S, S, U, U, S, U, U, S, S,
-            &["CQL prepared parameters, tracing plans, atomic imports, and schema actions are not integrated.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."],
+            S, S, S, L, S, S, S, L, S, U, U, S, S,
+            &["CQL prepared parameters, tracing plans, and schema actions are not integrated.", "Atomic edits/imports run inside a logged BATCH capped at 100 statements / 32KB — larger queues are rejected rather than chunked.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."],
         ),
         DatabaseType::Snowflake => profile(
             database_type,
             "snowflake",
             "Snowflake",
             DriverTier::Specialized,
-            S, S, S, L, S, S, U, S, S, S, S, S, S,
-            &["Prepared parameters, atomic edits/imports, and reviewed schema actions are not implemented.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."],
+            S, S, S, S, S, S, U, S, S, S, S, S, S,
+            &["Prepared parameters, atomic edits, and reviewed schema actions are not implemented.", "Cancel issues POST /api/v2/statements/{handle}/cancel against the statement handle captured at submission."],
         ),
         DatabaseType::MSSQL => profile(
             database_type,
@@ -444,8 +444,8 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "mongodb",
             "MongoDB",
             DriverTier::Extended,
-            S, S, N, S, S, S, U, U, S, U, N, S, S,
-            &["Atomic edit/import queues and explain integration are not implemented.", "Backup/export uses a TableR JSON snapshot.", "Cancel tags each command with a comment and kills the matching op via killOp; deployments without killOp privilege (e.g. shared Atlas tiers) get UI-only cancel."],
+            S, S, N, S, S, S, S, S, S, U, N, S, S,
+            &["Atomic edit/import queues and write previews run inside multi-document transactions — they require a replica set or mongos; standalone mongod gets a clear rejection.", "Explain integration is not implemented.", "Backup/export uses a TableR JSON snapshot.", "Cancel tags each command with a comment and kills the matching op via killOp; deployments without killOp privilege (e.g. shared Atlas tiers) get UI-only cancel."],
         ),
         DatabaseType::Vertica => profile(
             database_type,
@@ -467,8 +467,8 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "bigquery",
             "Google BigQuery",
             DriverTier::Specialized,
-            S, S, S, L, S, S, U, S, S, U, S, S, U,
-            &["Prepared parameters, atomic mutations/imports, explain plans, and administration are not integrated.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."],
+            S, S, S, S, S, S, U, S, S, U, S, S, U,
+            &["Prepared parameters, atomic mutations/imports, explain plans, and administration are not integrated.", "Cancel issues jobs.cancel against the jobReference captured at submission."],
         ),
         DatabaseType::LibSQL => profile(
             database_type,
@@ -482,8 +482,8 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "cloudflare_d1",
             "Cloudflare D1",
             DriverTier::Specialized,
-            S, S, S, L, S, S, U, U, S, S, S, S, N,
-            &["Prepared parameters, atomic mutations/imports, and direct schema actions are not implemented.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.", "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied."],
+            S, S, S, L, S, S, S, S, S, S, S, S, N,
+            &["Prepared parameters and direct schema actions are not implemented.", "Atomic edits/imports run as one D1 batch request (implicit transaction, all-or-nothing).", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."],
         ),
         DatabaseType::OpenSearch => profile(
             database_type,
@@ -498,31 +498,31 @@ pub const fn driver_capabilities(database_type: DatabaseType) -> DriverCapabilit
             "oracle",
             "Oracle (ORDS)",
             DriverTier::Extended,
-            S, S, S, L, S, U, U, U, S, S, U, U, U,
-            &["Requires ORDS (Oracle REST Data Services) enabled on the database; write operations are not supported over the REST endpoint.", "Prepared parameters, inline edits, atomic imports, schema actions, and backup/restore are not available through the ORDS SQL endpoint.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.", "Explain writes PLAN_TABLE via EXPLAIN PLAN and reads it back through DBMS_XPLAN; requires PLAN_TABLE to exist."]),
+            S, S, S, L, S, S, U, U, S, S, S, L, U,
+            &["Requires ORDS (Oracle REST Data Services) enabled on the database.", "Inline edits use ORDS ? positional binds; atomic queues and write previews are impossible because ORDS auto-commits every request.", "Restore replays INSERT statements sequentially — not atomic across statements.", "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.", "Explain writes PLAN_TABLE via EXPLAIN PLAN and reads it back through DBMS_XPLAN; requires PLAN_TABLE to exist."]),
         DatabaseType::Spanner => profile(
             database_type,
             "spanner",
             "Google Spanner",
             DriverTier::Specialized,
-            S, S, S, S, S, S, N, U, S, S, U, N, U,
-            &["Runs over the Cloud Spanner REST API (executeSql); authentication is a Google OAuth2 access token stored in the password field.", "Atomic imports, schema actions, backup/restore, and administration are not available through the REST endpoint; cell edits run one DML statement per row.", "Cancel deletes the session, which aborts its in-flight REST calls; the next query lazily recreates it."],
+            S, S, S, S, S, S, S, S, S, S, S, L, U,
+            &["Runs over the Cloud Spanner REST API (executeSql); authentication is a Google OAuth2 access token stored in the password field.", "Atomic edits/imports and write previews run inside a read-write transaction; DDL batches through updateDatabaseDdl.", "Restore replays statements sequentially — Spanner cannot mix DDL and DML in one transaction.", "Explain runs executeSql with queryMode=PLAN and returns the plan JSON.", "Cancel deletes the session, which aborts its in-flight REST calls; the next query lazily recreates it."],
         ),
         DatabaseType::DynamoDB => profile(
             database_type,
             "dynamodb",
             "Amazon DynamoDB",
             DriverTier::Specialized,
-            S, S, S, L, S, S, N, U, S, U, N, U, U,
-            &["PartiQL statements only; the driver signs requests with AWS Signature V4 using the access key in username and secret key in password.", "Inline edits run one PartiQL statement per row — no multi-row atomicity; atomic imports, explain, schema actions, backup/restore, and administration are not implemented.", "Cancel aborts NextToken paging client-side; DynamoDB cannot kill a running statement server-side."],
+            S, S, S, L, S, S, S, L, S, U, N, L, U,
+            &["PartiQL statements only; the driver signs requests with AWS Signature V4 using the access key in username and secret key in password.", "Atomic edits/imports run inside ExecuteTransaction capped at 100 actions — larger queues are rejected rather than chunked.", "Explain, schema actions, and administration are not implemented; restore replays PartiQL INSERTs sequentially.", "Cancel aborts NextToken paging client-side; DynamoDB cannot kill a running statement server-side."],
         ),
         DatabaseType::Trino => profile(
             database_type,
             "trino",
             "Trino",
             DriverTier::Extended,
-            S, S, U, S, S, S, N, U, S, S, U, N, U,
-            &["Runs over the Trino HTTP protocol (/v1/statement); the driver follows nextUri pages until the coordinator reports no more data.", "Prepared parameters, atomic imports, schema actions, backup/restore, and administration are not implemented; cell edits use escaped literals.", "Cancel issues HTTP DELETE on the running query URI."],
+            S, S, S, S, S, S, S, S, S, S, S, S, U,
+            &["Runs over the Trino HTTP protocol (/v1/statement); the driver follows nextUri pages until the coordinator reports no more data.", "Atomic edits/imports and write previews pin statements to a coordinator transaction (X-Trino-Transaction-Id); connectors without transaction support reject START TRANSACTION honestly.", "Prepared parameters run through PREPARE/EXECUTE with escaped literals — Trino has no wire-level binds.", "Cancel issues HTTP DELETE on the running query URI."],
         ),
     }
 }
@@ -667,11 +667,7 @@ mod tests {
 
     #[test]
     fn read_only_projection_drivers_do_not_advertise_edits() {
-        for database_type in [
-            DatabaseType::Redis,
-            DatabaseType::OpenSearch,
-            DatabaseType::Oracle,
-        ] {
+        for database_type in [DatabaseType::Redis, DatabaseType::OpenSearch] {
             let profile = driver_capabilities(database_type);
             assert_ne!(profile.capabilities.inline_edit, S);
             assert_ne!(profile.capabilities.atomic_edit_queue, S);

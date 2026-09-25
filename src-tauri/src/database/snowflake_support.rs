@@ -509,6 +509,19 @@ impl SnowflakeDriver {
                     .await?,
             )
             .await?;
+        self.result_set_to_query_result(result_set, preserve_query_text, started_at)
+            .await
+    }
+
+    /// Convert a finished result set into a `QueryResult`, fetching extra
+    /// partitions and applying the interactive row cap. Shared by the plain
+    /// and request-scoped execution paths.
+    pub(super) async fn result_set_to_query_result(
+        &self,
+        result_set: SnowflakeResultSet,
+        preserve_query_text: &str,
+        started_at: Instant,
+    ) -> Result<QueryResult> {
         let row_types = Self::row_types_from_result_set(&result_set);
         let mut raw_rows = result_set.data.clone();
         let mut truncated = Self::total_rows_hint(&result_set)

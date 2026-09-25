@@ -11,6 +11,10 @@
 //! - `ExecuteStatement` runs ONE PartiQL statement per request and has no
 //!   server-side cancel — request-scoped cancellation only aborts paging
 //!   between HTTP calls.
+//! - `ExecuteTransaction` is the only atomic write primitive and caps at
+//!   100 actions; larger edit queues/imports are rejected rather than
+//!   chunked. DynamoDB has no rollback-only transaction, so
+//!   `preview_write_transaction` stays unsupported.
 //! - `DescribeTable.ItemCount` is approximate (refreshed roughly every 6h).
 //! - DynamoDB is schemaless: only key attributes appear in
 //!   `AttributeDefinitions`, so `get_table_structure` cannot list
@@ -43,6 +47,10 @@ const DYNAMODB_SERVICE: &str = "dynamodb";
 /// Upper bound for `ExecuteStatement`'s `Limit` parameter. Larger pages are
 /// pointless — DynamoDB already caps a page at 1 MB of evaluated items.
 const DYNAMODB_PAGE_LIMIT: u64 = 1_000;
+/// Maximum actions in one `ExecuteTransaction` call. AWS rejects larger
+/// batches, and splitting them client-side would break atomicity, so
+/// oversized edit queues and CSV imports are refused up front.
+const DYNAMODB_TRANSACTION_ACTION_LIMIT: usize = 100;
 /// Maximum accepted browse-filter length, matching `safety.rs`.
 const MAX_FILTER_LEN: usize = 1_000;
 
@@ -510,6 +518,110 @@ impl DynamoDbDriver {
             anyhow!("DynamoDB DescribeTable returned no Table payload for '{table}'")
         })
     }
+
+    /// PartiQL `UPDATE` for one primary-key cell edit plus its bound
+    /// `AttributeValue` parameters. DynamoDB has no NULL assignment —
+    /// clearing a cell removes the attribute entirely.
+    fn build_update_statement(
+        request: &TableCellUpdateRequest,
+    ) -> Result<(String, Vec<JsonValue>)> {
+        if request.primary_keys.is_empty() {
+            return Err(anyhow!(
+                "Inline update requires at least one primary key column"
+            ));
+        }
+
+        let mut parameters = Vec::new();
+        let update_clause = if request.value.is_null() {
+            format!("REMOVE {}", quote_partiql_path(&request.target_column)?)
+        } else {
+            parameters.push(json_to_attribute_value(&request.value));
+            format!("SET {} = ?", quote_partiql_path(&request.target_column)?)
+        };
+
+        let mut where_clause = String::new();
+        for (index, primary_key) in request.primary_keys.iter().enumerate() {
+            if index > 0 {
+                where_clause.push_str(" AND ");
+            }
+            where_clause.push_str(&quote_partiql_path(&primary_key.column)?);
+            where_clause.push_str(" = ?");
+            parameters.push(json_to_attribute_value(&primary_key.value));
+        }
+
+        Ok((
+            format!(
+                "UPDATE {} {} WHERE {}",
+                quote_partiql_identifier(&request.table)?,
+                update_clause,
+                where_clause
+            ),
+            parameters,
+        ))
+    }
+
+    /// PartiQL `INSERT` for one row plus its bound `AttributeValue`
+    /// parameters. Inside a VALUE struct, attribute names are single-quoted
+    /// string literals, not identifiers.
+    fn build_insert_statement(request: &TableRowInsertRequest) -> Result<(String, Vec<JsonValue>)> {
+        if request.values.is_empty() {
+            return Err(anyhow!("Insert requires at least one column value"));
+        }
+
+        let mut attributes = Vec::with_capacity(request.values.len());
+        let mut parameters = Vec::with_capacity(request.values.len());
+        for (column, value) in &request.values {
+            attributes.push(format!("{}: ?", partiql_string_literal(column)?));
+            parameters.push(json_to_attribute_value(value));
+        }
+
+        Ok((
+            format!(
+                "INSERT INTO {} VALUE {{{}}}",
+                quote_partiql_identifier(&request.table)?,
+                attributes.join(", ")
+            ),
+            parameters,
+        ))
+    }
+
+    /// Reject batches DynamoDB cannot commit in one `ExecuteTransaction`.
+    /// Chunking is never an option — it would silently break atomicity.
+    fn enforce_transaction_action_limit(count: usize, unit: &str) -> Result<()> {
+        if count > DYNAMODB_TRANSACTION_ACTION_LIMIT {
+            return Err(anyhow!(
+                "DynamoDB transactions are limited to {DYNAMODB_TRANSACTION_ACTION_LIMIT} \
+                 actions; {count} {unit} cannot be applied atomically"
+            ));
+        }
+        Ok(())
+    }
+
+    /// Assemble the `ExecuteTransaction` request body from already-built
+    /// `(Statement, Parameters)` pairs. `Parameters` is omitted when empty —
+    /// the API treats an empty list as invalid.
+    fn build_execute_transaction_payload(statements: Vec<(String, Vec<JsonValue>)>) -> JsonValue {
+        let transact_statements = statements
+            .into_iter()
+            .map(|(statement, parameters)| {
+                let mut entry = json!({ "Statement": statement });
+                if !parameters.is_empty() {
+                    entry["Parameters"] = JsonValue::Array(parameters);
+                }
+                entry
+            })
+            .collect::<Vec<_>>();
+        json!({ "TransactStatements": transact_statements })
+    }
+
+    /// Commit one `ExecuteTransaction` batch. DynamoDB applies every action
+    /// or none; a `TransactionCanceledException` aborts the whole batch and
+    /// its per-item `CancellationReasons` are surfaced in the error.
+    async fn execute_transaction(&self, statements: Vec<(String, Vec<JsonValue>)>) -> Result<()> {
+        let payload = Self::build_execute_transaction_payload(statements);
+        self.invoke("ExecuteTransaction", payload).await?;
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -855,41 +967,30 @@ impl DatabaseDriver for DynamoDbDriver {
     }
 
     async fn update_table_cell(&self, request: &TableCellUpdateRequest) -> Result<u64> {
-        if request.primary_keys.is_empty() {
-            return Err(anyhow!(
-                "Inline update requires at least one primary key column"
-            ));
-        }
-
-        let mut parameters = Vec::new();
-        // DynamoDB has no NULL assignment — clearing a cell removes the
-        // attribute entirely.
-        let update_clause = if request.value.is_null() {
-            format!("REMOVE {}", quote_partiql_path(&request.target_column)?)
-        } else {
-            parameters.push(json_to_attribute_value(&request.value));
-            format!("SET {} = ?", quote_partiql_path(&request.target_column)?)
-        };
-
-        let mut where_clause = String::new();
-        for (index, primary_key) in request.primary_keys.iter().enumerate() {
-            if index > 0 {
-                where_clause.push_str(" AND ");
-            }
-            where_clause.push_str(&quote_partiql_path(&primary_key.column)?);
-            where_clause.push_str(" = ?");
-            parameters.push(json_to_attribute_value(&primary_key.value));
-        }
-
-        let statement = format!(
-            "UPDATE {} {} WHERE {}",
-            quote_partiql_identifier(&request.table)?,
-            update_clause,
-            where_clause
-        );
+        let (statement, parameters) = Self::build_update_statement(request)?;
         self.execute_statement_page(&statement, Some(&parameters), None, None)
             .await?;
         Ok(1)
+    }
+
+    /// Atomic edit queue via `ExecuteTransaction`: every staged UPDATE lands
+    /// in one `TransactStatements` batch, so DynamoDB commits all of them or
+    /// none. The 100-action cap is enforced up front — chunking would break
+    /// the all-or-nothing contract.
+    async fn apply_table_updates_atomically(
+        &self,
+        updates: &[TableCellUpdateRequest],
+    ) -> Result<u64> {
+        Self::enforce_transaction_action_limit(updates.len(), "cell updates")?;
+        let statements = updates
+            .iter()
+            .map(Self::build_update_statement)
+            .collect::<Result<Vec<_>>>()?;
+        if statements.is_empty() {
+            return Ok(0);
+        }
+        self.execute_transaction(statements).await?;
+        Ok(updates.len() as u64)
     }
 
     async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64> {
@@ -926,27 +1027,82 @@ impl DatabaseDriver for DynamoDbDriver {
     }
 
     async fn insert_table_row(&self, request: &TableRowInsertRequest) -> Result<u64> {
-        if request.values.is_empty() {
-            return Err(anyhow!("Insert requires at least one column value"));
-        }
-
-        let mut attributes = Vec::with_capacity(request.values.len());
-        let mut parameters = Vec::with_capacity(request.values.len());
-        for (column, value) in &request.values {
-            // Inside a PartiQL VALUE struct, attribute names are single-quoted
-            // string literals, not identifiers.
-            attributes.push(format!("{}: ?", partiql_string_literal(column)?));
-            parameters.push(json_to_attribute_value(value));
-        }
-
-        let statement = format!(
-            "INSERT INTO {} VALUE {{{}}}",
-            quote_partiql_identifier(&request.table)?,
-            attributes.join(", ")
-        );
+        let (statement, parameters) = Self::build_insert_statement(request)?;
         self.execute_statement_page(&statement, Some(&parameters), None, None)
             .await?;
         Ok(1)
+    }
+
+    /// Atomic CSV import via `ExecuteTransaction`. The cancel flag is
+    /// honoured while statements are built and once more before commit —
+    /// DynamoDB cannot abort an in-flight transaction, but the single
+    /// request either commits every row or none.
+    async fn insert_table_rows_atomically(
+        &self,
+        requests: &[TableRowInsertRequest],
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        if requests.is_empty() {
+            return Err(anyhow!("CSV import requires at least one row"));
+        }
+        Self::enforce_transaction_action_limit(requests.len(), "CSV rows")?;
+
+        let mut statements = Vec::with_capacity(requests.len());
+        for request in requests {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+            }
+            statements.push(Self::build_insert_statement(request)?);
+        }
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+        }
+
+        self.execute_transaction(statements).await?;
+        Ok(requests.len() as u64)
+    }
+
+    /// Streaming import buffers every row, then commits one
+    /// `ExecuteTransaction`. DynamoDB has no incremental transaction to
+    /// flush mid-stream, so files beyond the 100-action cap cannot be
+    /// imported atomically and are rejected before anything is written.
+    async fn insert_table_row_stream_atomically(
+        &self,
+        mut rows: tokio::sync::mpsc::Receiver<crate::database::models::CsvImportRow>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        let mut requests = Vec::new();
+        while let Some(row) = rows.recv().await {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+            }
+            requests.push(row.map_err(anyhow::Error::msg)?);
+            if requests.len() > DYNAMODB_TRANSACTION_ACTION_LIMIT {
+                return Err(anyhow!(
+                    "CSV import exceeds DynamoDB's {DYNAMODB_TRANSACTION_ACTION_LIMIT}-action \
+                     transaction limit; streaming writes cannot be made atomic beyond it"
+                ));
+            }
+        }
+        self.insert_table_rows_atomically(&requests, cancelled)
+            .await
+    }
+
+    /// Restore replays dump statements through `ExecuteStatement`, one
+    /// request each. DynamoDB has no transaction spanning separate calls,
+    /// so this is NOT atomic — a mid-restore failure leaves earlier
+    /// statements applied and surfaces the error.
+    async fn execute_restore_statements(&self, statements: &[String]) -> Result<u64> {
+        let mut total_affected = 0_u64;
+        for statement in statements {
+            if statement.trim().is_empty() {
+                continue;
+            }
+            self.execute_statement_page(statement, None, None, None)
+                .await?;
+            total_affected += 1;
+        }
+        Ok(total_affected)
     }
 
     async fn use_database(&self, _database: &str) -> Result<()> {
@@ -1120,7 +1276,9 @@ fn aws_region_from_hostname(host: &str) -> Option<String> {
     None
 }
 
-/// Extract `__type`/`message` from a DynamoDB error envelope.
+/// Extract `__type`/`message` from a DynamoDB error envelope. A
+/// `TransactionCanceledException` additionally carries per-item
+/// `CancellationReasons` — appended so callers learn WHICH action failed.
 fn dynamodb_error_message(operation: &str, status: u16, body: &str) -> String {
     let parsed = serde_json::from_str::<JsonValue>(body).ok();
     let kind = parsed
@@ -1133,16 +1291,45 @@ fn dynamodb_error_message(operation: &str, status: u16, body: &str) -> String {
         .and_then(|value| value.get("message").or_else(|| value.get("Message")))
         .and_then(|value| value.as_str());
 
-    match (kind, message) {
+    let mut rendered = match (kind, message) {
         (Some(kind), Some(message)) => {
             format!("DynamoDB {operation} failed ({status} {kind}): {message}")
         }
         (Some(kind), None) => format!("DynamoDB {operation} failed ({status} {kind})"),
-        _ => format!(
-            "DynamoDB {operation} failed with status {status}: {}",
-            body.trim()
-        ),
+        _ => {
+            return format!(
+                "DynamoDB {operation} failed with status {status}: {}",
+                body.trim()
+            )
+        }
+    };
+
+    if let Some(reasons) = parsed
+        .as_ref()
+        .and_then(|value| value.get("CancellationReasons"))
+        .and_then(|value| value.as_array())
+    {
+        let details = reasons
+            .iter()
+            .enumerate()
+            .filter_map(|(index, reason)| {
+                let code = reason.get("Code").and_then(|value| value.as_str())?;
+                if code == "None" {
+                    return None;
+                }
+                let detail = reason
+                    .get("Message")
+                    .and_then(|value| value.as_str())
+                    .map(|text| format!(": {text}"))
+                    .unwrap_or_default();
+                Some(format!("action {index}: {code}{detail}"))
+            })
+            .collect::<Vec<_>>();
+        if !details.is_empty() {
+            rendered.push_str(&format!(" [{}]", details.join("; ")));
+        }
     }
+    rendered
 }
 
 // ---------------------------------------------------------------------------
@@ -1882,6 +2069,131 @@ mod tests {
         assert_eq!(
             dynamodb_error_message("ListTables", 500, "not json"),
             "DynamoDB ListTables failed with status 500: not json"
+        );
+    }
+
+    fn cell_update(value: JsonValue) -> TableCellUpdateRequest {
+        TableCellUpdateRequest {
+            table: "users".to_string(),
+            database: None,
+            target_column: "name".to_string(),
+            value,
+            primary_keys: vec![
+                RowKeyValue {
+                    column: "pk".to_string(),
+                    value: json!("u1"),
+                },
+                RowKeyValue {
+                    column: "sk".to_string(),
+                    value: json!(7),
+                },
+            ],
+        }
+    }
+
+    fn row_insert() -> TableRowInsertRequest {
+        TableRowInsertRequest {
+            table: "users".to_string(),
+            database: None,
+            values: vec![
+                ("pk".to_string(), json!("u1")),
+                ("age".to_string(), json!(30)),
+            ],
+        }
+    }
+
+    #[test]
+    fn update_statement_binds_values_without_interpolation() {
+        let (statement, parameters) =
+            DynamoDbDriver::build_update_statement(&cell_update(json!("O'Brien"))).unwrap();
+        assert_eq!(
+            statement,
+            "UPDATE \"users\" SET \"name\" = ? WHERE \"pk\" = ? AND \"sk\" = ?"
+        );
+        assert_eq!(
+            parameters,
+            vec![
+                json!({"S": "O'Brien"}),
+                json!({"S": "u1"}),
+                json!({"N": "7"})
+            ]
+        );
+    }
+
+    #[test]
+    fn update_statement_null_value_removes_attribute() {
+        let (statement, parameters) =
+            DynamoDbDriver::build_update_statement(&cell_update(JsonValue::Null)).unwrap();
+        assert_eq!(
+            statement,
+            "UPDATE \"users\" REMOVE \"name\" WHERE \"pk\" = ? AND \"sk\" = ?"
+        );
+        // Only the key parameters are bound — REMOVE takes no value.
+        assert_eq!(parameters, vec![json!({"S": "u1"}), json!({"N": "7"})]);
+    }
+
+    #[test]
+    fn update_statement_requires_primary_key() {
+        let mut request = cell_update(json!("x"));
+        request.primary_keys.clear();
+        assert!(DynamoDbDriver::build_update_statement(&request).is_err());
+    }
+
+    #[test]
+    fn insert_statement_quotes_attribute_names_as_literals() {
+        let (statement, parameters) =
+            DynamoDbDriver::build_insert_statement(&row_insert()).unwrap();
+        assert_eq!(statement, "INSERT INTO \"users\" VALUE {'pk': ?, 'age': ?}");
+        assert_eq!(parameters, vec![json!({"S": "u1"}), json!({"N": "30"})]);
+
+        let mut empty = row_insert();
+        empty.values.clear();
+        assert!(DynamoDbDriver::build_insert_statement(&empty).is_err());
+    }
+
+    #[test]
+    fn transaction_payload_wraps_statements_with_parameters() {
+        let payload = DynamoDbDriver::build_execute_transaction_payload(vec![
+            DynamoDbDriver::build_insert_statement(&row_insert()).unwrap(),
+            DynamoDbDriver::build_update_statement(&cell_update(JsonValue::Null)).unwrap(),
+        ]);
+        let actions = payload["TransactStatements"].as_array().unwrap();
+        assert_eq!(actions.len(), 2);
+        assert_eq!(
+            actions[0]["Statement"],
+            json!("INSERT INTO \"users\" VALUE {'pk': ?, 'age': ?}")
+        );
+        assert_eq!(actions[0]["Parameters"], json!([{"S": "u1"}, {"N": "30"}]));
+        assert_eq!(
+            actions[1]["Statement"],
+            json!("UPDATE \"users\" REMOVE \"name\" WHERE \"pk\" = ? AND \"sk\" = ?")
+        );
+        assert_eq!(actions[1]["Parameters"], json!([{"S": "u1"}, {"N": "7"}]));
+    }
+
+    #[test]
+    fn transaction_limit_rejects_over_100_actions() {
+        assert!(DynamoDbDriver::enforce_transaction_action_limit(100, "cell updates").is_ok());
+        let error =
+            DynamoDbDriver::enforce_transaction_action_limit(101, "cell updates").unwrap_err();
+        assert!(error.to_string().contains("100"));
+        assert!(error.to_string().contains("101"));
+    }
+
+    #[test]
+    fn error_message_surfaces_transaction_cancellation_reasons() {
+        let body = r#"{
+            "__type": "com.amazonaws.dynamodb.v20120810#TransactionCanceledException",
+            "message": "Transaction cancelled",
+            "CancellationReasons": [
+                {"Code": "None"},
+                {"Code": "ConditionalCheckFailed", "Message": "The conditional request failed"}
+            ]
+        }"#;
+        assert_eq!(
+            dynamodb_error_message("ExecuteTransaction", 400, body),
+            "DynamoDB ExecuteTransaction failed (400 TransactionCanceledException): \
+             Transaction cancelled [action 1: ConditionalCheckFailed: The conditional request failed]"
         );
     }
 }

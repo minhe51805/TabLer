@@ -45,6 +45,9 @@ impl MongoDbDriver {
             client,
             current_db: RwLock::new(current_db),
             current_op_all_users: AtomicBool::new(true),
+            // Probed lazily on the first transaction attempt: sessions and
+            // transactions need a replica set or mongos, which `hello` reveals.
+            transactions_supported: StdRwLock::new(None),
             cancel_registry: StdRwLock::new(QueryCancelRegistry::new()),
         })
     }

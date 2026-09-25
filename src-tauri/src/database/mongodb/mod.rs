@@ -14,6 +14,11 @@ pub struct MongoDbDriver {
     /// rejection we cache it and sample only the current user's operations
     /// instead of issuing a doomed cluster-wide request on every poll.
     current_op_all_users: AtomicBool,
+    /// Lazily-detected multi-document transaction support, resolved on the
+    /// first transaction attempt via the `hello` response: replica set members
+    /// report `setName` and mongos routers report `msg: "isdbgrid"`, while a
+    /// standalone mongod reports neither. `None` means "not probed yet".
+    transactions_supported: StdRwLock<Option<bool>>,
     /// request_id → running-operation scope so `cancel_query_request` can
     /// find the tagged op via `$currentOp` and kill it with `killOp`.
     cancel_registry: StdRwLock<QueryCancelRegistry>,
@@ -833,5 +838,30 @@ mod tests {
             strip_database_prefix("avtech_operations", "avtech_operations"),
             "avtech_operations"
         );
+    }
+
+    #[test]
+    fn hello_probe_detects_transaction_capable_topologies() {
+        use mongodb::bson::doc;
+
+        // Replica set member: `setName` is present.
+        assert!(MongoDbDriver::hello_supports_transactions(&doc! {
+            "setName": "rs0",
+            "isWritablePrimary": true,
+        }));
+        // mongos router: no setName, but `msg: "isdbgrid"`.
+        assert!(MongoDbDriver::hello_supports_transactions(&doc! {
+            "msg": "isdbgrid",
+            "isWritablePrimary": true,
+        }));
+        // Standalone mongod: neither marker → transactions unavailable.
+        assert!(!MongoDbDriver::hello_supports_transactions(&doc! {
+            "isWritablePrimary": true,
+            "maxWireVersion": 17,
+        }));
+        // A stray `msg` value must not be mistaken for a router.
+        assert!(!MongoDbDriver::hello_supports_transactions(&doc! {
+            "msg": "something else",
+        }));
     }
 }

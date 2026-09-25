@@ -226,7 +226,7 @@ const AGENT_ENGINE_TOOL_FLAGS: Record<
   },
   mongodb: {
     parameterizedRead: false,
-    previewWrite: false,
+    previewWrite: true,
     schemaObjects: false,
     presets: false,
     checkpointRestore: false,
@@ -243,17 +243,17 @@ const AGENT_ENGINE_TOOL_FLAGS: Record<
     previewWrite: false,
     schemaObjects: true,
     presets: false,
-    checkpointRestore: false,
+    checkpointRestore: true,
   },
   spanner: {
     parameterizedRead: true,
-    previewWrite: false,
+    previewWrite: true,
     schemaObjects: true,
     presets: false,
-    checkpointRestore: false,
+    checkpointRestore: true,
   },
   dynamodb: {
-    parameterizedRead: false,
+    parameterizedRead: true,
     previewWrite: false,
     schemaObjects: false,
     presets: false,
@@ -261,10 +261,10 @@ const AGENT_ENGINE_TOOL_FLAGS: Record<
   },
   trino: {
     parameterizedRead: true,
-    previewWrite: false,
+    previewWrite: true,
     schemaObjects: true,
     presets: false,
-    checkpointRestore: false,
+    checkpointRestore: true,
   },
 };
 

@@ -13,13 +13,24 @@ use scylla::client::session::Session;
 use scylla::client::session_builder::SessionBuilder;
 use scylla::cluster::metadata::{ColumnKind, Table};
 use scylla::response::query_result::QueryResult as ScyllaQueryResult;
+use scylla::statement::batch::{Batch, BatchType};
 use scylla::statement::Statement;
 use scylla::value::{CqlValue, Row as ScyllaRow};
 use serde_json::{Map as JsonMap, Value as JsonValue};
 use std::collections::BTreeSet;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock as StdRwLock};
 use std::time::Instant;
+
+/// Cap on statements inside one CQL BATCH. Cassandra rejects oversized
+/// batches (`batch_size_fail_threshold_in_kb`, 50 KB by default) and logged
+/// batches spanning many partitions are expensive, so the driver refuses
+/// work that cannot plausibly fit instead of partially applying it.
+const CASSANDRA_BATCH_MAX_STATEMENTS: usize = 100;
+/// Conservative byte cap on the combined CQL text of one batch, kept well
+/// under Cassandra's default 50 KB `batch_size_fail_threshold_in_kb`.
+const CASSANDRA_BATCH_MAX_BYTES: usize = 32 * 1024;
 
 pub struct CassandraDriver {
     session: Session,
@@ -496,6 +507,99 @@ impl CassandraDriver {
             .or_else(|| value.as_u64().and_then(|raw| i64::try_from(raw).ok()))
             .or_else(|| value.as_str().and_then(|raw| raw.parse::<i64>().ok()))
             .ok_or_else(|| anyhow!("Expected a numeric scalar value"))
+    }
+
+    /// Build one `UPDATE … SET col = term WHERE pk = term …` CQL statement
+    /// for a primary-key based cell edit. Values use `fromJson` terms, the
+    /// same coercion mechanism as `update_table_cell`.
+    fn build_cell_update_statement(&self, request: &TableCellUpdateRequest) -> Result<String> {
+        if request.primary_keys.is_empty() {
+            return Err(anyhow!(
+                "Inline update requires at least one primary key column"
+            ));
+        }
+        let (_, _, qualified_table) =
+            self.resolve_table_target(&request.table, request.database.as_deref())?;
+        Ok(format!(
+            "UPDATE {qualified_table} SET {} = {} WHERE {}",
+            quote_cassandra_identifier(&request.target_column)?,
+            Self::json_to_cql_term(&request.value, true)?,
+            Self::build_where_clause(&request.primary_keys)?,
+        ))
+    }
+
+    /// Build one `INSERT INTO … VALUES (…)` CQL statement for a CSV import
+    /// row, using `fromJson` terms like `insert_table_row`.
+    fn build_row_insert_statement(&self, request: &TableRowInsertRequest) -> Result<String> {
+        if request.values.is_empty() {
+            return Err(anyhow!("Each CSV row requires at least one column value"));
+        }
+        let (_, _, qualified_table) =
+            self.resolve_table_target(&request.table, request.database.as_deref())?;
+        let columns = request
+            .values
+            .iter()
+            .map(|(name, _)| quote_cassandra_identifier(name))
+            .collect::<Result<Vec<_>>>()?;
+        let values = request
+            .values
+            .iter()
+            .map(|(_, value)| Self::json_to_cql_term(value, true))
+            .collect::<Result<Vec<_>>>()?;
+        Ok(format!(
+            "INSERT INTO {qualified_table} ({}) VALUES ({})",
+            columns.join(", "),
+            values.join(", "),
+        ))
+    }
+
+    /// Reject work that cannot plausibly fit inside one CQL BATCH. Cassandra
+    /// fails batches over `batch_size_fail_threshold_in_kb` (50 KB default)
+    /// and warns past 5 KB; the caps here stay under both so a batch never
+    /// half-applies because it was too large to send.
+    fn ensure_batch_fits(statements: &[String]) -> Result<()> {
+        if statements.len() > CASSANDRA_BATCH_MAX_STATEMENTS {
+            return Err(anyhow!(
+                "Cassandra batches are limited to {CASSANDRA_BATCH_MAX_STATEMENTS} statements; \
+                 {} were requested. Split the operation into smaller groups.",
+                statements.len()
+            ));
+        }
+        let total_bytes: usize = statements.iter().map(|statement| statement.len()).sum();
+        if total_bytes > CASSANDRA_BATCH_MAX_BYTES {
+            return Err(anyhow!(
+                "Cassandra batch of {} statements is {total_bytes} bytes, over the \
+                 {CASSANDRA_BATCH_MAX_BYTES}-byte driver cap. Split the operation into \
+                 smaller groups.",
+                statements.len()
+            ));
+        }
+        Ok(())
+    }
+
+    /// Execute statements inside one logged CQL BATCH.
+    ///
+    /// Semantics caveat: a LOGGED batch is atomic — either all mutations are
+    /// applied or none are — but it is *not* isolated; concurrent readers can
+    /// observe a partially applied batch. Batches spanning multiple
+    /// partitions also pay a batchlog round-trip, which is why the statement
+    /// and byte caps above keep batches small.
+    async fn execute_logged_batch(&self, statements: &[String]) -> Result<()> {
+        Self::ensure_batch_fits(statements)?;
+
+        let mut batch = Batch::new(BatchType::Logged);
+        for statement in statements {
+            batch.append_statement(statement.as_str());
+        }
+
+        // One empty value row per statement — the CQL text carries `fromJson`
+        // terms, so there are no `?` markers to bind.
+        let values = vec![(); statements.len()];
+        self.session
+            .batch(&batch, values)
+            .await
+            .context("Cassandra logged batch failed")?;
+        Ok(())
     }
 }
 
@@ -976,6 +1080,69 @@ impl DatabaseDriver for CassandraDriver {
         Ok(1)
     }
 
+    /// Apply the edit queue inside one logged CQL BATCH — atomic (all
+    /// mutations apply or none do) though not isolated, and capped by
+    /// `ensure_batch_fits` so oversized queues are rejected rather than
+    /// partially applied.
+    async fn apply_table_updates_atomically(
+        &self,
+        updates: &[TableCellUpdateRequest],
+    ) -> Result<u64> {
+        if updates.is_empty() {
+            return Err(anyhow!("Atomic edit queue requires at least one update"));
+        }
+
+        let statements = updates
+            .iter()
+            .map(|update| self.build_cell_update_statement(update))
+            .collect::<Result<Vec<_>>>()?;
+        self.execute_logged_batch(&statements).await?;
+        Ok(updates.len() as u64)
+    }
+
+    /// Import CSV rows inside one logged CQL BATCH. Imports larger than the
+    /// documented batch caps are rejected up front — Cassandra has no
+    /// transaction spanning multiple batches, so chunking would break the
+    /// all-or-nothing contract.
+    async fn insert_table_rows_atomically(
+        &self,
+        requests: &[TableRowInsertRequest],
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        if requests.is_empty() {
+            return Err(anyhow!("CSV import requires at least one row"));
+        }
+        if cancelled.load(Ordering::Relaxed) {
+            return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+        }
+
+        let statements = requests
+            .iter()
+            .map(|request| self.build_row_insert_statement(request))
+            .collect::<Result<Vec<_>>>()?;
+        self.execute_logged_batch(&statements).await?;
+        Ok(requests.len() as u64)
+    }
+
+    /// Consume the row stream, then commit it as one logged batch. Nothing is
+    /// written until every row parses, so a parse failure, cancellation, or
+    /// early channel close leaves the table untouched.
+    async fn insert_table_row_stream_atomically(
+        &self,
+        mut rows: tokio::sync::mpsc::Receiver<crate::database::models::CsvImportRow>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        let mut requests = Vec::new();
+        while let Some(row) = rows.recv().await {
+            if cancelled.load(Ordering::Relaxed) {
+                return Err(anyhow!("CSV import cancelled; all rows were rolled back"));
+            }
+            requests.push(row.map_err(anyhow::Error::msg)?);
+        }
+        self.insert_table_rows_atomically(&requests, cancelled)
+            .await
+    }
+
     async fn use_database(&self, database: &str) -> Result<()> {
         let trimmed = database.trim();
         if trimmed.is_empty() {
@@ -1043,5 +1210,18 @@ mod tests {
             CassandraDriver::json_to_cql_term(&json!(null), true).unwrap(),
             "null"
         );
+    }
+
+    #[test]
+    fn batch_caps_reject_oversized_work() {
+        // Statement-count cap: one over the limit is rejected.
+        let too_many = vec!["UPDATE t SET c = 1 WHERE k = 1".to_string(); 101];
+        assert!(CassandraDriver::ensure_batch_fits(&too_many).is_err());
+        let at_cap = vec!["UPDATE t SET c = 1 WHERE k = 1".to_string(); 100];
+        assert!(CassandraDriver::ensure_batch_fits(&at_cap).is_ok());
+
+        // Byte cap: few statements can still exceed the batch byte budget.
+        let oversized = vec!["x".repeat(40 * 1024)];
+        assert!(CassandraDriver::ensure_batch_fits(&oversized).is_err());
     }
 }

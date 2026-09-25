@@ -136,7 +136,7 @@
       "connect": "supported",
       "query": "supported",
       "preparedParameters": "supported",
-      "queryCancellation": "limited",
+      "queryCancellation": "supported",
       "pagination": "supported",
       "inlineEdit": "supported",
       "atomicEditQueue": "supported",
@@ -149,7 +149,7 @@
     },
     "limitations": [
       "Redshift shares the PostgreSQL wire driver; DDL, restore, and administration semantics require dedicated coverage.",
-      "Cancel attempts pg_cancel_backend from a second connection, but Redshift may not honor the PostgreSQL cancel function; the statement may keep running.",
+      "Cancel issues pg_cancel_backend from a second pooled connection to abort the running statement.",
       "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied.",
       "Explain returns a text plan; the JSON plan format is not supported."
     ]
@@ -221,8 +221,8 @@
       "queryCancellation": "limited",
       "pagination": "supported",
       "inlineEdit": "supported",
-      "atomicEditQueue": "unsupported",
-      "atomicCsvImport": "unsupported",
+      "atomicEditQueue": "supported",
+      "atomicCsvImport": "limited",
       "dataExport": "supported",
       "explain": "unsupported",
       "schemaEdit": "unsupported",
@@ -230,7 +230,8 @@
       "administration": "supported"
     },
     "limitations": [
-      "CQL prepared parameters, tracing plans, atomic imports, and schema actions are not integrated.",
+      "CQL prepared parameters, tracing plans, and schema actions are not integrated.",
+      "Atomic edits/imports run inside a logged BATCH capped at 100 statements / 32KB — larger queues are rejected rather than chunked.",
       "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
     ]
   },
@@ -244,7 +245,7 @@
       "connect": "supported",
       "query": "supported",
       "preparedParameters": "supported",
-      "queryCancellation": "limited",
+      "queryCancellation": "supported",
       "pagination": "supported",
       "inlineEdit": "supported",
       "atomicEditQueue": "unsupported",
@@ -256,8 +257,8 @@
       "administration": "supported"
     },
     "limitations": [
-      "Prepared parameters, atomic edits/imports, and reviewed schema actions are not implemented.",
-      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
+      "Prepared parameters, atomic edits, and reviewed schema actions are not implemented.",
+      "Cancel issues POST /api/v2/statements/{handle}/cancel against the statement handle captured at submission."
     ]
   },
   {
@@ -328,8 +329,8 @@
       "queryCancellation": "supported",
       "pagination": "supported",
       "inlineEdit": "supported",
-      "atomicEditQueue": "unsupported",
-      "atomicCsvImport": "unsupported",
+      "atomicEditQueue": "supported",
+      "atomicCsvImport": "supported",
       "dataExport": "supported",
       "explain": "unsupported",
       "schemaEdit": "not_applicable",
@@ -337,7 +338,8 @@
       "administration": "supported"
     },
     "limitations": [
-      "Atomic edit/import queues and explain integration are not implemented.",
+      "Atomic edit/import queues and write previews run inside multi-document transactions — they require a replica set or mongos; standalone mongod gets a clear rejection.",
+      "Explain integration is not implemented.",
       "Backup/export uses a TableR JSON snapshot.",
       "Cancel tags each command with a comment and kills the matching op via killOp; deployments without killOp privilege (e.g. shared Atlas tiers) get UI-only cancel."
     ]
@@ -406,7 +408,7 @@
       "connect": "supported",
       "query": "supported",
       "preparedParameters": "supported",
-      "queryCancellation": "limited",
+      "queryCancellation": "supported",
       "pagination": "supported",
       "inlineEdit": "supported",
       "atomicEditQueue": "unsupported",
@@ -419,7 +421,7 @@
     },
     "limitations": [
       "Prepared parameters, atomic mutations/imports, explain plans, and administration are not integrated.",
-      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
+      "Cancel issues jobs.cancel against the jobReference captured at submission."
     ]
   },
   {
@@ -462,8 +464,8 @@
       "queryCancellation": "limited",
       "pagination": "supported",
       "inlineEdit": "supported",
-      "atomicEditQueue": "unsupported",
-      "atomicCsvImport": "unsupported",
+      "atomicEditQueue": "supported",
+      "atomicCsvImport": "supported",
       "dataExport": "supported",
       "explain": "supported",
       "schemaEdit": "supported",
@@ -471,9 +473,9 @@
       "administration": "not_applicable"
     },
     "limitations": [
-      "Prepared parameters, atomic mutations/imports, and direct schema actions are not implemented.",
-      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.",
-      "Reviewed schema changes run statement-by-statement; a mid-batch failure leaves earlier statements applied."
+      "Prepared parameters and direct schema actions are not implemented.",
+      "Atomic edits/imports run as one D1 batch request (implicit transaction, all-or-nothing).",
+      "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it."
     ]
   },
   {
@@ -515,18 +517,19 @@
       "preparedParameters": "supported",
       "queryCancellation": "limited",
       "pagination": "supported",
-      "inlineEdit": "unsupported",
+      "inlineEdit": "supported",
       "atomicEditQueue": "unsupported",
       "atomicCsvImport": "unsupported",
       "dataExport": "supported",
       "explain": "supported",
-      "schemaEdit": "unsupported",
-      "backupRestore": "unsupported",
+      "schemaEdit": "supported",
+      "backupRestore": "limited",
       "administration": "unsupported"
     },
     "limitations": [
-      "Requires ORDS (Oracle REST Data Services) enabled on the database; write operations are not supported over the REST endpoint.",
-      "Prepared parameters, inline edits, atomic imports, schema actions, and backup/restore are not available through the ORDS SQL endpoint.",
+      "Requires ORDS (Oracle REST Data Services) enabled on the database.",
+      "Inline edits use ORDS ? positional binds; atomic queues and write previews are impossible because ORDS auto-commits every request.",
+      "Restore replays INSERT statements sequentially — not atomic across statements.",
       "Cancel releases the UI but cannot abort the statement server-side; the engine may keep running it.",
       "Explain writes PLAN_TABLE via EXPLAIN PLAN and reads it back through DBMS_XPLAN; requires PLAN_TABLE to exist."
     ]
@@ -544,17 +547,19 @@
       "queryCancellation": "supported",
       "pagination": "supported",
       "inlineEdit": "supported",
-      "atomicEditQueue": "not_applicable",
-      "atomicCsvImport": "unsupported",
+      "atomicEditQueue": "supported",
+      "atomicCsvImport": "supported",
       "dataExport": "supported",
       "explain": "supported",
-      "schemaEdit": "unsupported",
-      "backupRestore": "not_applicable",
+      "schemaEdit": "supported",
+      "backupRestore": "limited",
       "administration": "unsupported"
     },
     "limitations": [
       "Runs over the Cloud Spanner REST API (executeSql); authentication is a Google OAuth2 access token stored in the password field.",
-      "Atomic imports, schema actions, backup/restore, and administration are not available through the REST endpoint; cell edits run one DML statement per row.",
+      "Atomic edits/imports and write previews run inside a read-write transaction; DDL batches through updateDatabaseDdl.",
+      "Restore replays statements sequentially — Spanner cannot mix DDL and DML in one transaction.",
+      "Explain runs executeSql with queryMode=PLAN and returns the plan JSON.",
       "Cancel deletes the session, which aborts its in-flight REST calls; the next query lazily recreates it."
     ]
   },
@@ -571,17 +576,18 @@
       "queryCancellation": "limited",
       "pagination": "supported",
       "inlineEdit": "supported",
-      "atomicEditQueue": "not_applicable",
-      "atomicCsvImport": "unsupported",
+      "atomicEditQueue": "supported",
+      "atomicCsvImport": "limited",
       "dataExport": "supported",
       "explain": "unsupported",
       "schemaEdit": "not_applicable",
-      "backupRestore": "unsupported",
+      "backupRestore": "limited",
       "administration": "unsupported"
     },
     "limitations": [
       "PartiQL statements only; the driver signs requests with AWS Signature V4 using the access key in username and secret key in password.",
-      "Inline edits run one PartiQL statement per row — no multi-row atomicity; atomic imports, explain, schema actions, backup/restore, and administration are not implemented.",
+      "Atomic edits/imports run inside ExecuteTransaction capped at 100 actions — larger queues are rejected rather than chunked.",
+      "Explain, schema actions, and administration are not implemented; restore replays PartiQL INSERTs sequentially.",
       "Cancel aborts NextToken paging client-side; DynamoDB cannot kill a running statement server-side."
     ]
   },
@@ -594,21 +600,22 @@
     "capabilities": {
       "connect": "supported",
       "query": "supported",
-      "preparedParameters": "unsupported",
+      "preparedParameters": "supported",
       "queryCancellation": "supported",
       "pagination": "supported",
       "inlineEdit": "supported",
-      "atomicEditQueue": "not_applicable",
-      "atomicCsvImport": "unsupported",
+      "atomicEditQueue": "supported",
+      "atomicCsvImport": "supported",
       "dataExport": "supported",
       "explain": "supported",
-      "schemaEdit": "unsupported",
-      "backupRestore": "not_applicable",
+      "schemaEdit": "supported",
+      "backupRestore": "supported",
       "administration": "unsupported"
     },
     "limitations": [
       "Runs over the Trino HTTP protocol (/v1/statement); the driver follows nextUri pages until the coordinator reports no more data.",
-      "Prepared parameters, atomic imports, schema actions, backup/restore, and administration are not implemented; cell edits use escaped literals.",
+      "Atomic edits/imports and write previews pin statements to a coordinator transaction (X-Trino-Transaction-Id); connectors without transaction support reject START TRANSACTION honestly.",
+      "Prepared parameters run through PREPARE/EXECUTE with escaped literals — Trino has no wire-level binds.",
       "Cancel issues HTTP DELETE on the running query URI."
     ]
   }

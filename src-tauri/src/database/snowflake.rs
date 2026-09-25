@@ -1,21 +1,25 @@
 use super::driver::DatabaseDriver;
 use super::models::*;
+use super::query_cancel::{
+    cancel_flag, request_cancel, CancelLookup, CancelScopeGuard, QueryCancelRegistry,
+};
 use super::query_common::{statement_returns_rows, MAX_QUERY_RESULT_ROWS};
 use super::safety::{
     normalize_order_dir, quote_snowflake_identifier, quote_snowflake_order_by,
     sanitize_snowflake_filter_clause,
 };
 use super::snowflake_support::{
-    SnowflakeStatementContext, SnowflakeStatementParameters, SnowflakeStatementRequest,
+    SnowflakeApiResponse, SnowflakeStatementBinding, SnowflakeStatementContext,
+    SnowflakeStatementParameters, SnowflakeStatementRequest,
 };
 use crate::utils::sql::split_sql_statements;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::Value as JsonValue;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, RwLock as StdRwLock};
 use std::time::Instant;
 use tokio::sync::RwLock;
 
@@ -37,6 +41,12 @@ pub struct SnowflakeDriver {
     pub(super) current_schema: Arc<RwLock<Option<String>>>,
     pub(super) warehouse: Option<String>,
     pub(super) role: Option<String>,
+    /// request_id → running-query scope so `cancel_query_request` can abort
+    /// the in-flight statement over a second HTTP request.
+    cancel_registry: StdRwLock<QueryCancelRegistry>,
+    /// request_id → Snowflake statement handle (the query id) of the
+    /// statement currently in flight for that request.
+    pending_handles: Mutex<HashMap<String, String>>,
 }
 
 impl SnowflakeDriver {
@@ -88,6 +98,8 @@ impl SnowflakeDriver {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
                 .map(str::to_string),
+            cancel_registry: StdRwLock::new(QueryCancelRegistry::new()),
+            pending_handles: Mutex::new(HashMap::new()),
         };
 
         driver.ping().await?;
@@ -180,6 +192,179 @@ impl SnowflakeDriver {
         } else {
             format!("{}/{}", self.root_url.trim_end_matches('/'), trimmed)
         }
+    }
+
+    /// Whether a cancel was already requested for this request scope.
+    fn cancel_requested(&self, request_id: &str) -> bool {
+        cancel_flag(&self.cancel_registry, request_id)
+            .map(|flag| flag.load(Ordering::SeqCst))
+            .unwrap_or(false)
+    }
+
+    fn store_pending_handle(&self, request_id: &str, handle: &str) {
+        let mut handles = self
+            .pending_handles
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        handles.insert(request_id.to_string(), handle.to_string());
+    }
+
+    fn take_pending_handle(&self, request_id: &str) -> Option<String> {
+        let mut handles = self
+            .pending_handles
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        handles.remove(request_id)
+    }
+
+    /// URL of the SQL API's dedicated cancel endpoint for one statement
+    /// handle (`POST /api/v2/statements/{handle}/cancel`).
+    fn statement_cancel_url(&self, handle: &str) -> String {
+        format!("{}/{}/cancel", self.statements_url, handle)
+    }
+
+    /// Abort a running statement through the SQL API's dedicated cancel
+    /// endpoint (`POST /api/v2/statements/{handle}/cancel`). The statement
+    /// handle returned by the statements API is the server-side query id, so
+    /// this is equivalent to `SYSTEM$CANCEL_QUERY` without needing a second
+    /// statement execution (and a session/warehouse) to run it.
+    ///
+    /// A session `QUERY_TAG` + `QUERY_HISTORY_BY_SESSION` lookup was
+    /// considered and rejected: the SQL API is stateless, so `ALTER SESSION`
+    /// would not reliably land on the same session as the query being
+    /// cancelled.
+    async fn cancel_statement_handle(&self, handle: &str) -> Result<()> {
+        let url = self.statement_cancel_url(handle);
+        let response = self
+            .apply_common_headers(self.client.post(&url))
+            .send()
+            .await
+            .with_context(|| format!("Failed to reach Snowflake cancel endpoint {url}"))?;
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .context("Failed to read Snowflake cancel response")?;
+
+        if status.is_success() {
+            return Ok(());
+        }
+
+        // A statement that already finished cannot be cancelled, but the
+        // caller's goal — nothing left running — is still met.
+        let lowered = body.to_ascii_lowercase();
+        if lowered.contains("not found")
+            || lowered.contains("already")
+            || lowered.contains("completed")
+            || lowered.contains("no longer running")
+        {
+            return Ok(());
+        }
+
+        Err(anyhow!(
+            "{}",
+            Self::format_api_error(status.as_u16(), &body)
+        ))
+    }
+
+    /// `execute_bound_query` scoped to a request: the statement handle is
+    /// registered as soon as the statements API returns it (before polling)
+    /// so `cancel_query_request` can abort the in-flight statement.
+    async fn execute_bound_query_scoped(
+        &self,
+        request_id: &str,
+        sql: &str,
+        database_override: Option<&str>,
+        preserve_query_text: &str,
+        bindings: Option<std::collections::BTreeMap<String, SnowflakeStatementBinding>>,
+    ) -> Result<QueryResult> {
+        let trimmed_sql = sql.trim();
+        if trimmed_sql.is_empty() {
+            return Err(anyhow!("Snowflake query cannot be empty"));
+        }
+        if self.cancel_requested(request_id) {
+            return Err(anyhow!("Query cancelled."));
+        }
+
+        let started_at = Instant::now();
+        let initial = self
+            .post_statement(trimmed_sql, database_override, bindings, None)
+            .await?;
+
+        // The POST response carries the statement handle immediately, even
+        // while the statement is still running — register it before polling.
+        let handle = match &initial {
+            SnowflakeApiResponse::Pending(status) => status.statement_handle.clone(),
+            SnowflakeApiResponse::Ready(result_set) => result_set.statement_handle.clone(),
+        };
+        if let Some(handle) = handle.as_deref() {
+            self.store_pending_handle(request_id, handle);
+        }
+
+        // A cancel that raced ahead of the handle registration still reaches
+        // the statement: abort it now instead of polling to completion.
+        if self.cancel_requested(request_id) {
+            if let Some(handle) = handle.as_deref() {
+                if let Err(error) = self.cancel_statement_handle(handle).await {
+                    log::warn!("Snowflake cancel for {handle} failed: {error}");
+                }
+            }
+            self.take_pending_handle(request_id);
+            return Err(anyhow!("Query cancelled."));
+        }
+
+        let result = self.await_result_set(initial).await;
+        self.take_pending_handle(request_id);
+        let result_set = result?;
+        self.result_set_to_query_result(result_set, preserve_query_text, started_at)
+            .await
+    }
+
+    /// `execute_query` scoped to a request: every statement of a
+    /// multi-statement script registers its own handle so a cancel aborts
+    /// whichever statement is currently running.
+    async fn execute_query_scoped(&self, request_id: &str, sql: &str) -> Result<QueryResult> {
+        let started_at = Instant::now();
+        let statements = split_sql_statements(sql);
+
+        if statements.len() <= 1 {
+            return self
+                .execute_bound_query_scoped(request_id, sql, None, sql, None)
+                .await;
+        }
+
+        let mut total_affected = 0u64;
+        let mut last_result = None;
+
+        for statement in statements
+            .iter()
+            .filter(|statement| !statement.trim().is_empty())
+        {
+            let result = self
+                .execute_bound_query_scoped(request_id, statement, None, sql, None)
+                .await?;
+            total_affected += result.affected_rows;
+
+            if Self::query_returns_rows(statement) || !result.rows.is_empty() {
+                last_result = Some(result);
+            }
+        }
+
+        if let Some(mut result) = last_result {
+            result.execution_time_ms = started_at.elapsed().as_millis();
+            result.affected_rows = total_affected;
+            return Ok(result);
+        }
+
+        Ok(QueryResult {
+            columns: Vec::new(),
+            rows: Vec::new(),
+            affected_rows: total_affected,
+            execution_time_ms: started_at.elapsed().as_millis(),
+            query: sql.to_string(),
+            sandboxed: false,
+            truncated: false,
+        })
     }
 }
 
@@ -591,6 +776,75 @@ impl DatabaseDriver for SnowflakeDriver {
             .await
     }
 
+    /// Request-scoped execution: the statement handle (Snowflake's query id)
+    /// is captured from the POST response before polling so
+    /// `cancel_query_request` can abort the in-flight statement over a second
+    /// HTTP request.
+    async fn execute_query_for_request(&self, request_id: &str, sql: &str) -> Result<QueryResult> {
+        if request_id.trim().is_empty() {
+            return self.execute_query(sql).await;
+        }
+        let guard = CancelScopeGuard::begin(&self.cancel_registry, request_id);
+        // The backend id is a string handle tracked in `pending_handles`, so
+        // registering a marker only resolves the pending race.
+        if guard.register_backend(0) {
+            return Err(anyhow!("Query cancelled."));
+        }
+        let result = self.execute_query_scoped(request_id, sql).await;
+        drop(guard);
+        result
+    }
+
+    /// Cancels by POSTing to `/api/v2/statements/{handle}/cancel` — the
+    /// statement handle stored by `execute_query_for_request` is the
+    /// server-side query id. The in-flight request is blocked polling, so the
+    /// cancel rides a second HTTP request.
+    async fn cancel_query_request(&self, request_id: &str) -> Result<bool> {
+        match request_cancel(&self.cancel_registry, request_id) {
+            CancelLookup::NotRunning => Ok(false),
+            // Cancel was recorded before the statement handle landed; the
+            // scoped execute path aborts as soon as the handle arrives.
+            CancelLookup::Pending => Ok(true),
+            CancelLookup::Backend(_) => {
+                match self.take_pending_handle(request_id) {
+                    Some(handle) => {
+                        self.cancel_statement_handle(&handle).await?;
+                        Ok(true)
+                    }
+                    // The statement finished between the POST and the cancel;
+                    // nothing is left running.
+                    None => Ok(true),
+                }
+            }
+        }
+    }
+
+    /// Request-scoped parameterized execution: same handle registration as
+    /// `execute_query_for_request`, with bind values travelling through the
+    /// statements API `bindings` object.
+    async fn execute_parameterized_query_for_request(
+        &self,
+        request_id: &str,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        if request_id.trim().is_empty() {
+            return self.execute_parameterized_query(sql, parameters).await;
+        }
+        let guard = CancelScopeGuard::begin(&self.cancel_registry, request_id);
+        if guard.register_backend(0) {
+            return Err(anyhow!("Query cancelled."));
+        }
+        let result = async {
+            let bindings = Self::statement_bindings(parameters)?;
+            self.execute_bound_query_scoped(request_id, sql, None, sql, Some(bindings))
+                .await
+        }
+        .await;
+        drop(guard);
+        result
+    }
+
     async fn get_table_data(
         &self,
         table: &str,
@@ -886,6 +1140,53 @@ mod tests {
     use super::super::models::{QueryParameter, QueryParameterType};
     use super::SnowflakeDriver;
     use serde_json::json;
+
+    fn test_driver() -> SnowflakeDriver {
+        use super::super::query_cancel::QueryCancelRegistry;
+        use std::collections::HashMap;
+        use std::sync::{Mutex, RwLock as StdRwLock};
+        use tokio::sync::RwLock;
+
+        SnowflakeDriver {
+            client: reqwest::Client::new(),
+            root_url: "https://acct.snowflakecomputing.com".to_string(),
+            statements_url: "https://acct.snowflakecomputing.com/api/v2/statements".to_string(),
+            access_token: "token".to_string(),
+            current_db: std::sync::Arc::new(RwLock::new(None)),
+            current_schema: std::sync::Arc::new(RwLock::new(None)),
+            warehouse: None,
+            role: None,
+            cancel_registry: StdRwLock::new(QueryCancelRegistry::new()),
+            pending_handles: Mutex::new(HashMap::new()),
+        }
+    }
+
+    #[test]
+    fn builds_statement_cancel_url() {
+        let driver = test_driver();
+        assert_eq!(
+            driver.statement_cancel_url("01ab-cdef"),
+            "https://acct.snowflakecomputing.com/api/v2/statements/01ab-cdef/cancel"
+        );
+    }
+
+    #[test]
+    fn pending_handles_roundtrip_per_request() {
+        let driver = test_driver();
+        driver.store_pending_handle("req-1", "handle-1");
+        driver.store_pending_handle("req-2", "handle-2");
+
+        assert_eq!(
+            driver.take_pending_handle("req-1").as_deref(),
+            Some("handle-1")
+        );
+        // Taking a handle removes only that request's entry.
+        assert_eq!(driver.take_pending_handle("req-1"), None);
+        assert_eq!(
+            driver.take_pending_handle("req-2").as_deref(),
+            Some("handle-2")
+        );
+    }
 
     #[test]
     fn serializes_variant_values_for_sql_literals() {

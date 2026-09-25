@@ -212,10 +212,10 @@ describe("AI agent tool schema", () => {
     const names = (payload.tools as Array<{ function: { name: string } }>).map(
       (tool) => tool.function.name,
     );
-    // MongoDB keeps the translated-SELECT read tool; write/schema/checkpoint
-    // tools are gated by the capability matrix.
+    // MongoDB keeps the translated-SELECT read tool and the txn-backed write
+    // preview; schema/checkpoint tools stay gated by the capability matrix.
     expect(names).toContain("run_readonly_sql");
-    expect(names).not.toContain("preview_write");
+    expect(names).toContain("preview_write");
     expect(names).not.toContain("restore_checkpoint");
     expect(names).toContain("sample_table_data");
   });

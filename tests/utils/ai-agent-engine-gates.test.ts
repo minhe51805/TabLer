@@ -25,6 +25,8 @@ const SQL_ENGINES_WITH_PREVIEW: DatabaseType[] = [
   "redshift",
   "mssql",
   "vertica",
+  "spanner",
+  "trino",
 ];
 
 // SQL dialects without a rollback-preview driver impl — preview_write is gated.
@@ -36,9 +38,7 @@ const SQL_ENGINES_WITHOUT_PREVIEW: DatabaseType[] = [
   "libsql",
   "cloudflare_d1",
   "oracle",
-  "spanner",
   "dynamodb",
-  "trino",
 ];
 
 const SQL_ENGINES: DatabaseType[] = [...SQL_ENGINES_WITH_PREVIEW, ...SQL_ENGINES_WITHOUT_PREVIEW];
@@ -107,20 +107,23 @@ describe("agent engine tool gates", () => {
     expect(actions).toContain("list_tables");
   });
 
-  it("keeps translated SELECT reads on mongodb but gates write/schema tools", () => {
+  it("keeps translated SELECT reads on mongodb with txn-backed write preview", () => {
     const availability = agentToolAvailability("mongodb");
     // The driver translates a SELECT subset into find() pipelines — reads stay.
     expect(availability.sqlRead).toBe(true);
+    // sqlWritePreview tracks the SQL query model — document engines stay
+    // false; the preview_write tool itself is gated by previewWrite.
     expect(availability.sqlWritePreview).toBe(false);
+    expect(availability.previewWrite).toBe(true);
     expect(isAgentToolEnabled("run_readonly_sql", availability)).toBe(true);
-    expect(isAgentToolEnabled("preview_write", availability)).toBe(false);
+    expect(isAgentToolEnabled("preview_write", availability)).toBe(true);
     expect(isAgentToolEnabled("restore_checkpoint", availability)).toBe(false);
     expect(isAgentToolEnabled("list_schema_objects", availability)).toBe(false);
     expect(isAgentToolEnabled("sample_table_data", availability)).toBe(true);
     const catalog = formatAgentToolCatalog({ workspaceToolsEnabled: true, availability });
     const actions = catalog.map((line) => line.match(/"action":"([^"]+)"/)?.[1]);
     expect(actions).toContain("run_readonly_sql");
-    expect(actions).not.toContain("preview_write");
+    expect(actions).toContain("preview_write");
     expect(actions).toContain("sample_table_data");
   });
 

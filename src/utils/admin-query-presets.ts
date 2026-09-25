@@ -61,6 +61,31 @@ const PROCESS_LIST_PRESETS: Partial<Record<DatabaseType, AdminQueryPreset>> = {
     content:
       "SELECT query_id, user_name, execution_status, start_time, query_text\nFROM TABLE(INFORMATION_SCHEMA.QUERY_HISTORY(RESULT_LIMIT => 50))\nORDER BY start_time DESC;",
   },
+  trino: {
+    supported: true,
+    content:
+      "SELECT query_id, user, state, source, started, query\nFROM system.runtime.queries\nORDER BY started DESC;",
+  },
+  spanner: {
+    supported: true,
+    content:
+      "SELECT * FROM SPANNER_SYS.QUERY_STATS_TOP_MINUTE\nORDER BY EXECUTION_COUNT DESC\nLIMIT 50;",
+  },
+  bigquery: {
+    supported: true,
+    content:
+      "SELECT job_id, user_email, state, query, start_time\nFROM `region-us`.INFORMATION_SCHEMA.JOBS_BY_PROJECT\nWHERE creation_time > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 1 HOUR)\nORDER BY start_time DESC\nLIMIT 50;",
+  },
+  oracle: {
+    supported: true,
+    content:
+      "SELECT sid, serial#, username, status, sql_id, event, seconds_in_wait\nFROM v$session\nWHERE type = 'USER'\nORDER BY logon_time DESC;",
+  },
+  dynamodb: {
+    supported: false,
+    content: "",
+    reason: "DynamoDB exposes no process list; use CloudWatch Contributor Insights externally.",
+  },
 };
 
 const USER_MANAGEMENT_PRESETS: Partial<Record<DatabaseType, AdminQueryPreset>> = {
@@ -117,6 +142,32 @@ const USER_MANAGEMENT_PRESETS: Partial<Record<DatabaseType, AdminQueryPreset>> =
     content:
       "SELECT name, login_name, display_name, type, disabled, has_password, has_mfa\nFROM SNOWFLAKE.ACCOUNT_USAGE.USERS\nWHERE deleted_on IS NULL\nORDER BY name;",
   },
+  trino: {
+    supported: false,
+    content: "",
+    reason:
+      "Trino delegates authentication to the configured authenticator (LDAP/OAuth2/password file); there is no user catalog to query.",
+  },
+  spanner: {
+    supported: false,
+    content: "",
+    reason: "Spanner access is managed by Cloud IAM, not in-database users.",
+  },
+  bigquery: {
+    supported: false,
+    content: "",
+    reason: "BigQuery access is managed by Cloud IAM, not in-database users.",
+  },
+  oracle: {
+    supported: true,
+    content:
+      "SELECT username, account_status, default_tablespace, created\nFROM dba_users\nORDER BY username;",
+  },
+  dynamodb: {
+    supported: false,
+    content: "",
+    reason: "DynamoDB access is managed by AWS IAM, not in-database users.",
+  },
 };
 
 export function getAdminQueryPreset(
@@ -137,12 +188,6 @@ export function getAdminQueryPreset(
       return unsupported("This engine does not expose a live server process list.");
     }
 
-    if (dbType === "bigquery") {
-      return unsupported(
-        "BigQuery process inspection depends on region-scoped INFORMATION_SCHEMA views.",
-      );
-    }
-
     return (
       PROCESS_LIST_PRESETS[dbType] ??
       unsupported("No process list preset is available for this engine yet.")
@@ -158,10 +203,6 @@ export function getAdminQueryPreset(
     return unsupported(
       "This engine does not have server-managed users in the current workspace model.",
     );
-  }
-
-  if (dbType === "bigquery") {
-    return unsupported("BigQuery access is governed by IAM rather than an in-database user list.");
   }
 
   return (

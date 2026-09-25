@@ -60,6 +60,14 @@ struct SpannerSession {
     name: String,
 }
 
+/// An open read-write transaction: the session it was begun on, the
+/// transaction id, and the database path it is bound to.
+struct SpannerTxn {
+    session_name: String,
+    transaction_id: String,
+    database_path: String,
+}
+
 /// Positional `@pN` binds accumulated while building one statement.
 #[derive(Default)]
 struct SpannerBinds {
@@ -193,6 +201,18 @@ impl SpannerDriver {
 
     fn database_url(base_url: &str, database_path: &str) -> String {
         format!("{base_url}/v1/{database_path}")
+    }
+
+    fn begin_transaction_url(base_url: &str, session_name: &str) -> String {
+        format!("{base_url}/v1/{session_name}:beginTransaction")
+    }
+
+    fn commit_url(base_url: &str, session_name: &str) -> String {
+        format!("{base_url}/v1/{session_name}:commit")
+    }
+
+    fn rollback_url(base_url: &str, session_name: &str) -> String {
+        format!("{base_url}/v1/{session_name}:rollback")
     }
 
     fn current_database_path(&self) -> Result<String> {
@@ -342,16 +362,19 @@ impl SpannerDriver {
         }
     }
 
-    /// One `executeSql` call against an already-resolved session.
-    async fn execute_sql_on(
-        &self,
-        session_name: &str,
+    /// Build the `executeSql` request body. `transaction` overrides the
+    /// default single-use read-write selector DML statements get; `query_mode`
+    /// maps to the REST `queryMode` field (`PLAN`/`PROFILE` for EXPLAIN).
+    fn execute_sql_body(
         sql: &str,
         binds: Option<&SpannerBinds>,
-        row_cap: usize,
-    ) -> Result<QueryResult> {
+        transaction: Option<JsonValue>,
+        query_mode: Option<&str>,
+    ) -> JsonValue {
         let mut body = json!({ "sql": sql });
-        if Self::statement_kind(sql) == StatementKind::Dml {
+        if let Some(transaction) = transaction {
+            body["transaction"] = transaction;
+        } else if Self::statement_kind(sql) == StatementKind::Dml {
             // DML must run inside a read-write transaction; singleUse commits
             // the statement on success.
             body["transaction"] = json!({ "singleUse": { "readWrite": {} } });
@@ -360,14 +383,42 @@ impl SpannerDriver {
             body["params"] = JsonValue::Object(binds.params.clone());
             body["paramTypes"] = JsonValue::Object(binds.param_types.clone());
         }
+        if let Some(query_mode) = query_mode {
+            body["queryMode"] = json!(query_mode);
+        }
+        body
+    }
 
+    /// One `executeSql` call against an already-resolved session, returning
+    /// the raw `ResultSet` JSON.
+    async fn execute_sql_request(
+        &self,
+        session_name: &str,
+        sql: &str,
+        binds: Option<&SpannerBinds>,
+        transaction: Option<JsonValue>,
+        query_mode: Option<&str>,
+    ) -> Result<JsonValue> {
+        let body = Self::execute_sql_body(sql, binds, transaction, query_mode);
+        self.send_checked(
+            self.client
+                .post(Self::execute_sql_url(&self.base_url, session_name))
+                .json(&body),
+        )
+        .await
+    }
+
+    /// One `executeSql` call against an already-resolved session.
+    async fn execute_sql_on(
+        &self,
+        session_name: &str,
+        sql: &str,
+        binds: Option<&SpannerBinds>,
+        row_cap: usize,
+    ) -> Result<QueryResult> {
         let started = Instant::now();
         let response = self
-            .send_checked(
-                self.client
-                    .post(Self::execute_sql_url(&self.base_url, session_name))
-                    .json(&body),
-            )
+            .execute_sql_request(session_name, sql, binds, None, None)
             .await?;
         Ok(Self::result_from_execute_sql(
             response,
@@ -472,6 +523,298 @@ impl SpannerDriver {
             }
         }
         bail!("Spanner DDL operation did not finish within the polling window")
+    }
+
+    /// `POST {session}:beginTransaction` with `readWrite` options; returns the
+    /// transaction id.
+    async fn begin_txn_on(&self, session_name: &str) -> Result<String> {
+        let response = self
+            .send_checked(
+                self.client
+                    .post(Self::begin_transaction_url(&self.base_url, session_name))
+                    .json(&json!({ "options": { "readWrite": {} } })),
+            )
+            .await
+            .context("Failed to begin Spanner transaction")?;
+        response
+            .get("id")
+            .and_then(|value| value.as_str())
+            .map(str::to_string)
+            .context("Spanner beginTransaction response did not include a transaction id")
+    }
+
+    /// Begin a read-write transaction on the current (or overridden)
+    /// database, recreating the session once when the stored one is stale —
+    /// same retry contract as the execute path.
+    async fn begin_read_write_txn(&self, database: Option<&str>) -> Result<SpannerTxn> {
+        let database_path = self.database_path_for(database)?;
+        let session_name = self.ensure_session(&database_path).await?;
+        let transaction_id = match self.begin_txn_on(&session_name).await {
+            Ok(id) => id,
+            Err(error) if is_session_not_found(&error) => {
+                self.drop_session_if(&session_name).await;
+                let session_name = self.ensure_session(&database_path).await?;
+                return Ok(SpannerTxn {
+                    transaction_id: self.begin_txn_on(&session_name).await?,
+                    session_name,
+                    database_path,
+                });
+            }
+            Err(error) => return Err(error),
+        };
+        Ok(SpannerTxn {
+            transaction_id,
+            session_name,
+            database_path,
+        })
+    }
+
+    /// One `executeSql` call pinned to an open transaction.
+    async fn execute_sql_in_txn(
+        &self,
+        txn: &SpannerTxn,
+        sql: &str,
+        binds: Option<&SpannerBinds>,
+    ) -> Result<QueryResult> {
+        let started = Instant::now();
+        let response = self
+            .execute_sql_request(
+                &txn.session_name,
+                sql,
+                binds,
+                Some(json!({ "id": txn.transaction_id })),
+                None,
+            )
+            .await?;
+        Ok(Self::result_from_execute_sql(
+            response,
+            started.elapsed().as_millis(),
+            sql.to_string(),
+            MAX_QUERY_RESULT_ROWS,
+        ))
+    }
+
+    /// `POST {session}:commit` for the transaction. The response's
+    /// `commitTimestamp` is not needed by callers.
+    async fn commit_txn(&self, txn: &SpannerTxn) -> Result<()> {
+        self.send_checked(
+            self.client
+                .post(Self::commit_url(&self.base_url, &txn.session_name))
+                .json(&json!({ "transactionId": txn.transaction_id })),
+        )
+        .await
+        .context("Failed to commit Spanner transaction")?;
+        Ok(())
+    }
+
+    /// `POST {session}:rollback`; rollback failures are logged, never raised,
+    /// so the original error stays the one the caller sees.
+    async fn rollback_txn(&self, txn: &SpannerTxn) {
+        if let Err(error) = self
+            .send_checked(
+                self.client
+                    .post(Self::rollback_url(&self.base_url, &txn.session_name))
+                    .json(&json!({ "transactionId": txn.transaction_id })),
+            )
+            .await
+        {
+            log::warn!("Spanner transaction rollback failed: {error:#}");
+        }
+    }
+
+    /// Strip a leading `EXPLAIN`/`EXPLAIN ANALYZE` prefix (comments and
+    /// whitespace tolerated) so the inner statement can run with
+    /// `queryMode=PLAN`/`PROFILE`. Returns `(inner_sql, analyze)` or `None`
+    /// when the statement is not an EXPLAIN.
+    fn strip_explain_prefix(sql: &str) -> Option<(&str, bool)> {
+        let mut rest = sql.trim_start();
+        loop {
+            if let Some(after) = rest.strip_prefix("--") {
+                rest = after.split_once('\n').map(|(_, tail)| tail).unwrap_or("");
+                rest = rest.trim_start();
+                continue;
+            }
+            if let Some(after) = rest.strip_prefix('#') {
+                rest = after.split_once('\n').map(|(_, tail)| tail).unwrap_or("");
+                rest = rest.trim_start();
+                continue;
+            }
+            if let Some(after) = rest.strip_prefix("/*") {
+                rest = match after.find("*/") {
+                    Some(end) => &after[end + 2..],
+                    None => "",
+                };
+                rest = rest.trim_start();
+                continue;
+            }
+            break;
+        }
+        let head = rest.get(..7)?;
+        if !head.eq_ignore_ascii_case("EXPLAIN") {
+            return None;
+        }
+        let after = &rest[7..];
+        if !after.starts_with(|ch: char| ch.is_whitespace() || ch == '(') {
+            return None;
+        }
+        let mut inner = after.trim_start();
+        let mut analyze = false;
+        // Tolerate a Postgres-style option list: EXPLAIN (ANALYZE, COSTS) …
+        if let Some(options) = inner.strip_prefix('(') {
+            if let Some(close) = options.find(')') {
+                if options[..close]
+                    .split(|ch: char| !(ch.is_alphanumeric() || ch == '_'))
+                    .any(|word| word.eq_ignore_ascii_case("ANALYZE"))
+                {
+                    analyze = true;
+                }
+                inner = options[close + 1..].trim_start();
+            }
+        }
+        if let Some(head) = inner.get(..7) {
+            if head.eq_ignore_ascii_case("ANALYZE") {
+                let tail = &inner[7..];
+                if tail.starts_with(|ch: char| ch.is_whitespace()) {
+                    analyze = true;
+                    inner = tail.trim_start();
+                }
+            }
+        }
+        if inner.is_empty() {
+            return None;
+        }
+        Some((inner, analyze))
+    }
+
+    /// Run an `EXPLAIN` statement: Spanner has no EXPLAIN keyword — the plan
+    /// comes from `executeSql` with `queryMode=PLAN` (or `PROFILE` for
+    /// `EXPLAIN ANALYZE`, which also executes). The plan lands in
+    /// `stats.queryPlan` and is returned as a single-row JSON result.
+    async fn execute_explain(
+        &self,
+        inner_sql: &str,
+        analyze: bool,
+        cancel_flag: Option<&AtomicBool>,
+    ) -> Result<QueryResult> {
+        let database_path = self.current_database_path()?;
+        let session_name = self.ensure_session(&database_path).await?;
+        let query_mode = if analyze { "PROFILE" } else { "PLAN" };
+        let started = Instant::now();
+        let response = match self
+            .execute_sql_request(&session_name, inner_sql, None, None, Some(query_mode))
+            .await
+        {
+            Ok(response) => response,
+            Err(error) if is_session_not_found(&error) => {
+                if cancel_flag.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
+                    return Err(anyhow!("Query cancelled."));
+                }
+                self.drop_session_if(&session_name).await;
+                let session_name = self.ensure_session(&database_path).await?;
+                if cancel_flag.is_some_and(|flag| flag.load(Ordering::SeqCst)) {
+                    return Err(anyhow!("Query cancelled."));
+                }
+                self.execute_sql_request(&session_name, inner_sql, None, None, Some(query_mode))
+                    .await?
+            }
+            Err(error) => return Err(error),
+        };
+        Ok(Self::explain_result_from_execute_sql(
+            response,
+            started.elapsed().as_millis(),
+            inner_sql,
+        ))
+    }
+
+    /// Shape a `PLAN`/`PROFILE` `executeSql` response into a single-row
+    /// `QueryResult`: the `stats` object carries `queryPlan` (and
+    /// `queryStats` under PROFILE) and is serialized as the plan cell.
+    fn explain_result_from_execute_sql(
+        response: JsonValue,
+        elapsed_ms: u128,
+        query: &str,
+    ) -> QueryResult {
+        let stats = response.get("stats").cloned().unwrap_or_else(|| json!({}));
+        let plan_text = serde_json::to_string_pretty(&stats).unwrap_or_else(|_| stats.to_string());
+        QueryResult {
+            columns: vec![ColumnInfo {
+                name: "query_plan".to_string(),
+                data_type: "JSON".to_string(),
+                is_nullable: true,
+                is_primary_key: false,
+                max_length: None,
+                default_value: None,
+            }],
+            rows: vec![vec![JsonValue::String(plan_text)]],
+            affected_rows: 0,
+            execution_time_ms: elapsed_ms,
+            query: query.to_string(),
+            sandboxed: false,
+            truncated: false,
+        }
+    }
+
+    /// Build the UPDATE DML for one cell edit; shared by `update_table_cell`
+    /// and the atomic edit queue.
+    fn build_cell_update(request: &TableCellUpdateRequest) -> Result<(String, SpannerBinds)> {
+        if request.primary_keys.is_empty() {
+            return Err(anyhow!(
+                "Inline update requires at least one primary key column"
+            ));
+        }
+
+        let mut binds = SpannerBinds::default();
+        let target = quote_bigquery_order_by(&request.target_column)?;
+        let set_value = if request.value.is_null() {
+            "NULL".to_string()
+        } else {
+            binds.push(&request.value)?
+        };
+
+        let mut conditions = Vec::new();
+        for primary_key in &request.primary_keys {
+            let column = quote_bigquery_order_by(&primary_key.column)?;
+            if primary_key.value.is_null() {
+                conditions.push(format!("{column} IS NULL"));
+            } else {
+                conditions.push(format!("{column} = {}", binds.push(&primary_key.value)?));
+            }
+        }
+
+        let sql = format!(
+            "UPDATE {} SET {target} = {set_value} WHERE {}",
+            Self::qualify_table_name(&request.table)?,
+            conditions.join(" AND ")
+        );
+        Ok((sql, binds))
+    }
+
+    /// Build the INSERT DML for one row; shared by `insert_table_row` and the
+    /// atomic CSV import paths.
+    fn build_row_insert(request: &TableRowInsertRequest) -> Result<(String, SpannerBinds)> {
+        if request.values.is_empty() {
+            return Err(anyhow!("Insert requires at least one column value"));
+        }
+
+        let mut binds = SpannerBinds::default();
+        let mut columns = Vec::new();
+        let mut values = Vec::new();
+        for (column, value) in &request.values {
+            columns.push(quote_bigquery_identifier(column)?);
+            if value.is_null() {
+                values.push("NULL".to_string());
+            } else {
+                values.push(binds.push(value)?);
+            }
+        }
+
+        let sql = format!(
+            "INSERT INTO {} ({}) VALUES ({})",
+            Self::qualify_table_name(&request.table)?,
+            columns.join(", "),
+            values.join(", ")
+        );
+        Ok((sql, binds))
     }
 
     fn statement_kind(sql: &str) -> StatementKind {
@@ -1010,6 +1353,13 @@ impl SpannerDriver {
 
         if statements.len() <= 1 {
             let statement = statements.first().map(String::as_str).unwrap_or(sql);
+            // Spanner has no EXPLAIN keyword: route `EXPLAIN <sql>` through
+            // executeSql with queryMode=PLAN (PROFILE for EXPLAIN ANALYZE).
+            if let Some((inner, analyze)) = Self::strip_explain_prefix(statement) {
+                return self
+                    .execute_explain(inner, analyze, cancel_flag.as_deref())
+                    .await;
+            }
             if Self::statement_kind(statement) == StatementKind::Ddl {
                 self.execute_ddl(&[statement.to_string()]).await?;
                 return Ok(QueryResult {
@@ -1041,6 +1391,17 @@ impl SpannerDriver {
             match Self::statement_kind(statement) {
                 StatementKind::Ddl => ddl_batch.push(statement.clone()),
                 kind => {
+                    if let Some((inner, analyze)) = Self::strip_explain_prefix(statement) {
+                        if !ddl_batch.is_empty() {
+                            self.execute_ddl(&ddl_batch).await?;
+                            ddl_batch.clear();
+                        }
+                        last_result = Some(
+                            self.execute_explain(inner, analyze, cancel_flag.as_deref())
+                                .await?,
+                        );
+                        continue;
+                    }
                     if !ddl_batch.is_empty() {
                         self.execute_ddl(&ddl_batch).await?;
                         ddl_batch.clear();
@@ -1565,39 +1926,52 @@ impl DatabaseDriver for SpannerDriver {
     }
 
     async fn update_table_cell(&self, request: &TableCellUpdateRequest) -> Result<u64> {
-        if request.primary_keys.is_empty() {
-            return Err(anyhow!(
-                "Inline update requires at least one primary key column"
-            ));
-        }
-
-        let mut binds = SpannerBinds::default();
-        let target = quote_bigquery_order_by(&request.target_column)?;
-        let set_value = if request.value.is_null() {
-            "NULL".to_string()
-        } else {
-            binds.push(&request.value)?
-        };
-
-        let mut conditions = Vec::new();
-        for primary_key in &request.primary_keys {
-            let column = quote_bigquery_order_by(&primary_key.column)?;
-            if primary_key.value.is_null() {
-                conditions.push(format!("{column} IS NULL"));
-            } else {
-                conditions.push(format!("{column} = {}", binds.push(&primary_key.value)?));
-            }
-        }
-
-        let sql = format!(
-            "UPDATE {} SET {target} = {set_value} WHERE {}",
-            Self::qualify_table_name(&request.table)?,
-            conditions.join(" AND ")
-        );
+        let (sql, binds) = Self::build_cell_update(request)?;
         let result = self
             .execute_sql(&sql, Some(&binds), request.database.as_deref())
             .await?;
         Ok(result.affected_rows)
+    }
+
+    /// Apply the queued cell edits inside one read-write transaction: every
+    /// UPDATE is pinned to the same transaction id and the batch commits only
+    /// when all statements succeed — any failure rolls the whole queue back.
+    async fn apply_table_updates_atomically(
+        &self,
+        updates: &[TableCellUpdateRequest],
+    ) -> Result<u64> {
+        if updates.is_empty() {
+            return Ok(0);
+        }
+        let txn = self
+            .begin_read_write_txn(updates[0].database.as_deref())
+            .await?;
+        let work = async {
+            let mut affected_rows = 0u64;
+            for request in updates {
+                if self.database_path_for(request.database.as_deref())? != txn.database_path {
+                    bail!("Spanner transactions cannot span databases");
+                }
+                let (sql, binds) = Self::build_cell_update(request)?;
+                let result = self.execute_sql_in_txn(&txn, &sql, Some(&binds)).await?;
+                if result.affected_rows == 0 {
+                    bail!("An edit queue row no longer matches its primary-key selector");
+                }
+                affected_rows += result.affected_rows;
+            }
+            Ok::<u64, anyhow::Error>(affected_rows)
+        }
+        .await;
+        match work {
+            Ok(affected_rows) => {
+                self.commit_txn(&txn).await?;
+                Ok(affected_rows)
+            }
+            Err(error) => {
+                self.rollback_txn(&txn).await;
+                Err(error)
+            }
+        }
     }
 
     async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64> {
@@ -1637,32 +2011,145 @@ impl DatabaseDriver for SpannerDriver {
     }
 
     async fn insert_table_row(&self, request: &TableRowInsertRequest) -> Result<u64> {
-        if request.values.is_empty() {
-            return Err(anyhow!("Insert requires at least one column value"));
-        }
-
-        let mut binds = SpannerBinds::default();
-        let mut columns = Vec::new();
-        let mut values = Vec::new();
-        for (column, value) in &request.values {
-            columns.push(quote_bigquery_identifier(column)?);
-            if value.is_null() {
-                values.push("NULL".to_string());
-            } else {
-                values.push(binds.push(value)?);
-            }
-        }
-
-        let sql = format!(
-            "INSERT INTO {} ({}) VALUES ({})",
-            Self::qualify_table_name(&request.table)?,
-            columns.join(", "),
-            values.join(", ")
-        );
+        let (sql, binds) = Self::build_row_insert(request)?;
         let result = self
             .execute_sql(&sql, Some(&binds), request.database.as_deref())
             .await?;
         Ok(result.affected_rows.max(1))
+    }
+
+    /// Insert a buffered CSV batch inside one read-write transaction. The
+    /// cancel flag is honoured between statements; a set flag or any failed
+    /// insert rolls every row back.
+    async fn insert_table_rows_atomically(
+        &self,
+        requests: &[TableRowInsertRequest],
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        if requests.is_empty() {
+            return Err(anyhow!("CSV import requires at least one row"));
+        }
+        let txn = self
+            .begin_read_write_txn(requests[0].database.as_deref())
+            .await?;
+        let work = async {
+            let mut affected_rows = 0u64;
+            for request in requests {
+                if cancelled.load(Ordering::Relaxed) {
+                    bail!("CSV import cancelled; all rows were rolled back");
+                }
+                if self.database_path_for(request.database.as_deref())? != txn.database_path {
+                    bail!("Spanner transactions cannot span databases");
+                }
+                let (sql, binds) = Self::build_row_insert(request)?;
+                let result = self.execute_sql_in_txn(&txn, &sql, Some(&binds)).await?;
+                affected_rows += result.affected_rows.max(1);
+            }
+            Ok::<u64, anyhow::Error>(affected_rows)
+        }
+        .await;
+        match work {
+            Ok(affected_rows) => {
+                self.commit_txn(&txn).await?;
+                Ok(affected_rows)
+            }
+            Err(error) => {
+                self.rollback_txn(&txn).await;
+                Err(error)
+            }
+        }
+    }
+
+    /// Consume the CSV row channel inside one read-write transaction. A parse
+    /// error, a set cancel flag, or an empty stream rolls every inserted row
+    /// back; the transaction commits only after the channel closes cleanly.
+    async fn insert_table_row_stream_atomically(
+        &self,
+        mut rows: tokio::sync::mpsc::Receiver<crate::database::models::CsvImportRow>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        let txn = self.begin_read_write_txn(None).await?;
+        let work = async {
+            let mut affected_rows = 0u64;
+            while let Some(request) = rows.recv().await {
+                if cancelled.load(Ordering::Relaxed) {
+                    bail!("CSV import cancelled; all rows were rolled back");
+                }
+                let request = request.map_err(anyhow::Error::msg)?;
+                if self.database_path_for(request.database.as_deref())? != txn.database_path {
+                    bail!("Spanner transactions cannot span databases");
+                }
+                let (sql, binds) = Self::build_row_insert(&request)?;
+                let result = self.execute_sql_in_txn(&txn, &sql, Some(&binds)).await?;
+                affected_rows += result.affected_rows.max(1);
+            }
+            if affected_rows == 0 {
+                bail!("CSV import did not contain any data rows");
+            }
+            Ok::<u64, anyhow::Error>(affected_rows)
+        }
+        .await;
+        match work {
+            Ok(affected_rows) => {
+                self.commit_txn(&txn).await?;
+                Ok(affected_rows)
+            }
+            Err(error) => {
+                self.rollback_txn(&txn).await;
+                Err(error)
+            }
+        }
+    }
+
+    /// Run reviewed statements inside one read-write transaction and ALWAYS
+    /// roll back, returning each statement's result as the preview. DDL is
+    /// rejected up front: Spanner schema changes go through
+    /// `updateDatabaseDdl`, which a transaction cannot undo.
+    async fn preview_write_transaction(&self, statements: &[String]) -> Result<Vec<QueryResult>> {
+        if statements
+            .iter()
+            .any(|statement| Self::statement_kind(statement) == StatementKind::Ddl)
+        {
+            return Err(anyhow!(
+                "Spanner write preview cannot include DDL: schema changes cannot be rolled back"
+            ));
+        }
+        let txn = self.begin_read_write_txn(None).await?;
+        let work = async {
+            let mut results = Vec::with_capacity(statements.len());
+            for statement in statements {
+                let mut result = self.execute_sql_in_txn(&txn, statement, None).await?;
+                result.sandboxed = true;
+                results.push(result);
+            }
+            Ok::<Vec<QueryResult>, anyhow::Error>(results)
+        }
+        .await;
+        self.rollback_txn(&txn).await;
+        work
+    }
+
+    /// Reviewed schema edits go straight to `updateDatabaseDdl` in one batch
+    /// (the API accepts a statement list); non-DDL statements fall back to
+    /// the regular execute path.
+    async fn execute_structure_statements(&self, statements: &[String]) -> Result<u64> {
+        let mut total_affected = 0u64;
+        let mut ddl_batch: Vec<String> = Vec::new();
+        for statement in statements {
+            if Self::statement_kind(statement) == StatementKind::Ddl {
+                ddl_batch.push(statement.clone());
+                continue;
+            }
+            if !ddl_batch.is_empty() {
+                self.execute_ddl(&ddl_batch).await?;
+                ddl_batch.clear();
+            }
+            total_affected += self.execute_query(statement).await?.affected_rows;
+        }
+        if !ddl_batch.is_empty() {
+            self.execute_ddl(&ddl_batch).await?;
+        }
+        Ok(total_affected)
     }
 
     async fn use_database(&self, database: &str) -> Result<()> {
@@ -2127,5 +2614,493 @@ mod tests {
         assert!(SpannerDriver::validate_database_name("").is_err());
         assert!(SpannerDriver::validate_database_name("a/b").is_err());
         assert!(SpannerDriver::validate_database_name("a b").is_err());
+    }
+
+    #[test]
+    fn builds_transaction_urls() {
+        let base = "https://spanner.googleapis.com";
+        let session = "projects/p/instances/i/databases/d/sessions/sess-1";
+        assert_eq!(
+            SpannerDriver::begin_transaction_url(base, session),
+            "https://spanner.googleapis.com/v1/projects/p/instances/i/databases/d/sessions/sess-1:beginTransaction"
+        );
+        assert_eq!(
+            SpannerDriver::commit_url(base, session),
+            "https://spanner.googleapis.com/v1/projects/p/instances/i/databases/d/sessions/sess-1:commit"
+        );
+        assert_eq!(
+            SpannerDriver::rollback_url(base, session),
+            "https://spanner.googleapis.com/v1/projects/p/instances/i/databases/d/sessions/sess-1:rollback"
+        );
+    }
+
+    #[test]
+    fn builds_execute_sql_body_with_transaction_and_query_mode() {
+        // DML without an explicit transaction gets the single-use selector.
+        let body = SpannerDriver::execute_sql_body("UPDATE t SET a = @p1", None, None, None);
+        assert_eq!(
+            body["transaction"],
+            json!({ "singleUse": { "readWrite": {} } })
+        );
+        assert!(body.get("queryMode").is_none());
+
+        // An open transaction id overrides the single-use selector.
+        let body = SpannerDriver::execute_sql_body(
+            "UPDATE t SET a = @p1",
+            None,
+            Some(json!({ "id": "txn-9" })),
+            None,
+        );
+        assert_eq!(body["transaction"], json!({ "id": "txn-9" }));
+
+        // EXPLAIN maps to queryMode=PLAN; binds ride along as params.
+        let mut binds = SpannerBinds::default();
+        binds.push(&json!("x")).expect("bind");
+        let body = SpannerDriver::execute_sql_body(
+            "SELECT * FROM t WHERE a = @p1",
+            Some(&binds),
+            None,
+            Some("PLAN"),
+        );
+        assert_eq!(body["queryMode"], json!("PLAN"));
+        assert_eq!(body["params"], json!({ "p1": "x" }));
+        assert_eq!(body["paramTypes"], json!({ "p1": { "code": "STRING" } }));
+        assert!(body.get("transaction").is_none());
+    }
+
+    #[test]
+    fn strips_explain_prefixes() {
+        assert_eq!(
+            SpannerDriver::strip_explain_prefix("EXPLAIN SELECT 1"),
+            Some(("SELECT 1", false))
+        );
+        assert_eq!(
+            SpannerDriver::strip_explain_prefix("explain analyze select 1"),
+            Some(("select 1", true))
+        );
+        assert_eq!(
+            SpannerDriver::strip_explain_prefix("EXPLAIN (ANALYZE, COSTS) SELECT 1"),
+            Some(("SELECT 1", true))
+        );
+        assert_eq!(
+            SpannerDriver::strip_explain_prefix("-- note\nEXPLAIN SELECT 1"),
+            Some(("SELECT 1", false))
+        );
+        assert_eq!(
+            SpannerDriver::strip_explain_prefix("/* c */ EXPLAIN SELECT 1"),
+            Some(("SELECT 1", false))
+        );
+        // Not an EXPLAIN: plain statements and look-alike identifiers pass through.
+        assert_eq!(SpannerDriver::strip_explain_prefix("SELECT 1"), None);
+        assert_eq!(
+            SpannerDriver::strip_explain_prefix("EXPLAINS SELECT 1"),
+            None
+        );
+        assert_eq!(SpannerDriver::strip_explain_prefix("EXPLAIN"), None);
+    }
+
+    #[test]
+    fn maps_plan_response_to_single_row_result() {
+        let response = json!({
+            "stats": {
+                "queryPlan": {
+                    "planNodes": [
+                        { "index": 0, "kind": "RELATIONAL", "displayName": "Table Scan" }
+                    ]
+                }
+            }
+        });
+        let result = SpannerDriver::explain_result_from_execute_sql(response, 5, "SELECT * FROM t");
+        assert_eq!(result.columns.len(), 1);
+        assert_eq!(result.columns[0].name, "query_plan");
+        assert_eq!(result.rows.len(), 1);
+        let plan_text = result.rows[0][0].as_str().expect("plan text");
+        let plan: JsonValue = serde_json::from_str(plan_text).expect("plan parses as JSON");
+        assert_eq!(
+            plan["queryPlan"]["planNodes"][0]["displayName"],
+            json!("Table Scan")
+        );
+        assert_eq!(result.execution_time_ms, 5);
+    }
+
+    #[test]
+    fn builds_cell_update_and_row_insert_dml() {
+        let update = TableCellUpdateRequest {
+            table: "Singers".to_string(),
+            database: None,
+            target_column: "Name".to_string(),
+            value: json!("Ada"),
+            primary_keys: vec![
+                RowKeyValue {
+                    column: "Id".to_string(),
+                    value: json!(7),
+                },
+                RowKeyValue {
+                    column: "Suffix".to_string(),
+                    value: JsonValue::Null,
+                },
+            ],
+        };
+        let (sql, binds) = SpannerDriver::build_cell_update(&update).expect("update dml");
+        assert_eq!(
+            sql,
+            "UPDATE `Singers` SET `Name` = @p1 WHERE `Id` = @p2 AND `Suffix` IS NULL"
+        );
+        assert_eq!(binds.params.get("p1"), Some(&json!("Ada")));
+        assert_eq!(binds.params.get("p2"), Some(&json!("7")));
+
+        let insert = TableRowInsertRequest {
+            table: "Singers".to_string(),
+            database: None,
+            values: vec![
+                ("Id".to_string(), json!(7)),
+                ("Name".to_string(), JsonValue::Null),
+            ],
+        };
+        let (sql, binds) = SpannerDriver::build_row_insert(&insert).expect("insert dml");
+        assert_eq!(
+            sql,
+            "INSERT INTO `Singers` (`Id`, `Name`) VALUES (@p1, NULL)"
+        );
+        assert_eq!(binds.params.len(), 1);
+
+        // Missing primary keys / values are rejected before any network call.
+        let mut bad_update = update.clone();
+        bad_update.primary_keys.clear();
+        assert!(SpannerDriver::build_cell_update(&bad_update).is_err());
+        let bad_insert = TableRowInsertRequest {
+            table: "Singers".to_string(),
+            database: None,
+            values: Vec::new(),
+        };
+        assert!(SpannerDriver::build_row_insert(&bad_insert).is_err());
+    }
+
+    // -- Transaction lifecycle tests against a canned REST server ------------
+
+    /// Minimal HTTP/1.1 server: serves `responses` in order, one per
+    /// connection, and records every request line + body for assertions.
+    fn serve_canned(responses: Vec<(u16, String)>) -> (String, Arc<std::sync::Mutex<Vec<String>>>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let port = listener.local_addr().expect("addr").port();
+        let requests = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let sink = Arc::clone(&requests);
+        std::thread::spawn(move || {
+            use std::io::{Read, Write};
+            for (status, payload) in responses {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    return;
+                };
+                let mut buffer = Vec::new();
+                let mut chunk = [0u8; 8192];
+                let header_end = loop {
+                    let Ok(read) = stream.read(&mut chunk) else {
+                        return;
+                    };
+                    if read == 0 {
+                        return;
+                    }
+                    buffer.extend_from_slice(&chunk[..read]);
+                    if let Some(position) =
+                        buffer.windows(4).position(|window| window == b"\r\n\r\n")
+                    {
+                        break position + 4;
+                    }
+                    if buffer.len() > 1 << 20 {
+                        return;
+                    }
+                };
+                let header_text = String::from_utf8_lossy(&buffer[..header_end]).to_string();
+                let content_length = header_text
+                    .lines()
+                    .find_map(|line| {
+                        let (name, value) = line.split_once(':')?;
+                        if name.trim().eq_ignore_ascii_case("content-length") {
+                            value.trim().parse::<usize>().ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(0);
+                while buffer.len() < header_end + content_length {
+                    let Ok(read) = stream.read(&mut chunk) else {
+                        return;
+                    };
+                    if read == 0 {
+                        break;
+                    }
+                    buffer.extend_from_slice(&chunk[..read]);
+                }
+                let request_line = header_text.lines().next().unwrap_or("").to_string();
+                let body = String::from_utf8_lossy(&buffer[header_end..]).to_string();
+                sink.lock()
+                    .expect("requests lock")
+                    .push(format!("{request_line}\n{body}"));
+                let reason = if status == 200 { "OK" } else { "ERROR" };
+                let response = format!(
+                    "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{payload}",
+                    payload.len()
+                );
+                if stream.write_all(response.as_bytes()).is_err() {
+                    return;
+                }
+            }
+        });
+        (format!("http://127.0.0.1:{port}"), requests)
+    }
+
+    fn canned_driver(base_url: String) -> SpannerDriver {
+        SpannerDriver {
+            client: Client::new(),
+            base_url,
+            access_token: "test-token".to_string(),
+            instance_path: "projects/p/instances/i".to_string(),
+            database_path: RwLock::new("projects/p/instances/i/databases/d".to_string()),
+            current_db: Arc::new(RwLock::new(Some("d".to_string()))),
+            session: AsyncRwLock::new(None),
+            cancel_registry: RwLock::new(QueryCancelRegistry::new()),
+        }
+    }
+
+    fn session_ok() -> (u16, String) {
+        (
+            200,
+            r#"{"name":"projects/p/instances/i/databases/d/sessions/s1"}"#.to_string(),
+        )
+    }
+
+    fn begin_ok() -> (u16, String) {
+        (200, r#"{"id":"txn-1"}"#.to_string())
+    }
+
+    fn empty_ok() -> (u16, String) {
+        (200, "{}".to_string())
+    }
+
+    fn dml_ok(count: u64) -> (u16, String) {
+        (200, format!(r#"{{"stats":{{"rowCountExact":"{count}"}}}}"#))
+    }
+
+    fn request_lines(requests: &Arc<std::sync::Mutex<Vec<String>>>) -> Vec<String> {
+        requests
+            .lock()
+            .expect("requests lock")
+            .iter()
+            .map(|entry| entry.lines().next().unwrap_or("").to_string())
+            .collect()
+    }
+
+    fn request_bodies(requests: &Arc<std::sync::Mutex<Vec<String>>>) -> Vec<String> {
+        requests
+            .lock()
+            .expect("requests lock")
+            .iter()
+            .map(|entry| {
+                entry
+                    .split_once('\n')
+                    .map(|(_, body)| body)
+                    .unwrap_or("")
+                    .to_string()
+            })
+            .collect()
+    }
+
+    fn cell_update(id: i64, name: &str) -> TableCellUpdateRequest {
+        TableCellUpdateRequest {
+            table: "Singers".to_string(),
+            database: None,
+            target_column: "Name".to_string(),
+            value: json!(name),
+            primary_keys: vec![RowKeyValue {
+                column: "Id".to_string(),
+                value: json!(id),
+            }],
+        }
+    }
+
+    fn row_insert(id: i64) -> TableRowInsertRequest {
+        TableRowInsertRequest {
+            table: "Singers".to_string(),
+            database: None,
+            values: vec![("Id".to_string(), json!(id))],
+        }
+    }
+
+    #[tokio::test]
+    async fn atomic_updates_commit_in_one_transaction() {
+        let (base_url, requests) = serve_canned(vec![
+            session_ok(),
+            begin_ok(),
+            dml_ok(1),
+            dml_ok(1),
+            empty_ok(),
+        ]);
+        let driver = canned_driver(base_url);
+        let affected = driver
+            .apply_table_updates_atomically(&[cell_update(1, "a"), cell_update(2, "b")])
+            .await
+            .expect("atomic updates");
+        assert_eq!(affected, 2);
+
+        let lines = request_lines(&requests);
+        assert_eq!(lines.len(), 5);
+        assert!(lines[1].contains(":beginTransaction"));
+        assert!(lines[2].contains(":executeSql"));
+        assert!(lines[3].contains(":executeSql"));
+        assert!(lines[4].contains(":commit"));
+
+        let bodies = request_bodies(&requests);
+        // Both UPDATEs are pinned to the begun transaction, not singleUse.
+        assert!(bodies[2].contains(r#""id":"txn-1""#));
+        assert!(bodies[3].contains(r#""id":"txn-1""#));
+        assert!(bodies[4].contains(r#""transactionId":"txn-1""#));
+    }
+
+    #[tokio::test]
+    async fn atomic_updates_roll_back_on_zero_match() {
+        let (base_url, requests) =
+            serve_canned(vec![session_ok(), begin_ok(), dml_ok(0), empty_ok()]);
+        let driver = canned_driver(base_url);
+        let error = driver
+            .apply_table_updates_atomically(&[cell_update(1, "a")])
+            .await
+            .expect_err("zero-row match must fail");
+        assert!(error.to_string().contains("primary-key selector"));
+
+        let lines = request_lines(&requests);
+        assert_eq!(lines.len(), 4);
+        assert!(lines[3].contains(":rollback"));
+    }
+
+    #[tokio::test]
+    async fn atomic_updates_roll_back_on_statement_error() {
+        let (base_url, requests) = serve_canned(vec![
+            session_ok(),
+            begin_ok(),
+            (400, r#"{"error":{"message":"bad dml"}}"#.to_string()),
+            empty_ok(),
+        ]);
+        let driver = canned_driver(base_url);
+        let error = driver
+            .apply_table_updates_atomically(&[cell_update(1, "a")])
+            .await
+            .expect_err("statement failure must fail the batch");
+        assert!(error.to_string().contains("bad dml"));
+
+        let lines = request_lines(&requests);
+        assert_eq!(lines.len(), 4);
+        assert!(lines[3].contains(":rollback"));
+    }
+
+    #[tokio::test]
+    async fn atomic_inserts_roll_back_when_cancelled() {
+        let (base_url, requests) = serve_canned(vec![session_ok(), begin_ok(), empty_ok()]);
+        let driver = canned_driver(base_url);
+        // Flag already set: the check between statements aborts before the
+        // first INSERT executes and the transaction rolls back.
+        let cancelled = Arc::new(AtomicBool::new(true));
+        let error = driver
+            .insert_table_rows_atomically(&[row_insert(1), row_insert(2)], cancelled)
+            .await
+            .expect_err("cancelled import must fail");
+        assert!(error.to_string().contains("cancelled"));
+
+        let lines = request_lines(&requests);
+        assert_eq!(lines.len(), 3);
+        assert!(lines[2].contains(":rollback"));
+    }
+
+    #[tokio::test]
+    async fn streamed_import_rolls_back_on_parse_error() {
+        let (base_url, requests) =
+            serve_canned(vec![session_ok(), begin_ok(), dml_ok(1), empty_ok()]);
+        let driver = canned_driver(base_url);
+        let (sender, receiver) = tokio::sync::mpsc::channel(4);
+        sender.send(Ok(row_insert(1))).await.expect("send row");
+        sender
+            .send(Err("bad csv row".to_string()))
+            .await
+            .expect("send error");
+        drop(sender);
+
+        let error = driver
+            .insert_table_row_stream_atomically(receiver, Arc::new(AtomicBool::new(false)))
+            .await
+            .expect_err("parse error must fail the import");
+        assert!(error.to_string().contains("bad csv row"));
+
+        let lines = request_lines(&requests);
+        assert_eq!(lines.len(), 4);
+        assert!(lines[3].contains(":rollback"));
+    }
+
+    #[tokio::test]
+    async fn streamed_import_rolls_back_on_empty_stream() {
+        let (base_url, requests) = serve_canned(vec![session_ok(), begin_ok(), empty_ok()]);
+        let driver = canned_driver(base_url);
+        let (sender, receiver) = tokio::sync::mpsc::channel(4);
+        drop(sender);
+        let error = driver
+            .insert_table_row_stream_atomically(receiver, Arc::new(AtomicBool::new(false)))
+            .await
+            .expect_err("empty stream must fail");
+        assert!(error.to_string().contains("did not contain any data rows"));
+
+        let lines = request_lines(&requests);
+        assert_eq!(lines.len(), 3);
+        assert!(lines[2].contains(":rollback"));
+    }
+
+    #[tokio::test]
+    async fn preview_write_always_rolls_back() {
+        let (base_url, requests) =
+            serve_canned(vec![session_ok(), begin_ok(), dml_ok(2), empty_ok()]);
+        let driver = canned_driver(base_url);
+        let results = driver
+            .preview_write_transaction(&["UPDATE Singers SET Name = 'x' WHERE Id = 1".to_string()])
+            .await
+            .expect("preview");
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].affected_rows, 2);
+
+        let lines = request_lines(&requests);
+        assert_eq!(lines.len(), 4);
+        assert!(lines[3].contains(":rollback"));
+        assert!(lines.iter().all(|line| !line.contains(":commit")));
+    }
+
+    #[tokio::test]
+    async fn preview_write_rejects_ddl() {
+        let driver = canned_driver("http://127.0.0.1:1".to_string());
+        let error = driver
+            .preview_write_transaction(&["CREATE TABLE t (id INT64) PRIMARY KEY(id)".to_string()])
+            .await
+            .expect_err("DDL preview must be rejected");
+        assert!(error.to_string().contains("cannot be rolled back"));
+    }
+
+    #[tokio::test]
+    async fn explain_uses_plan_query_mode() {
+        let (base_url, requests) = serve_canned(vec![
+            session_ok(),
+            (
+                200,
+                r#"{"stats":{"queryPlan":{"planNodes":[{"index":0,"displayName":"Table Scan"}]}}}"#
+                    .to_string(),
+            ),
+        ]);
+        let driver = canned_driver(base_url);
+        let result = driver
+            .execute_query("EXPLAIN SELECT * FROM Singers")
+            .await
+            .expect("explain");
+        assert_eq!(result.columns[0].name, "query_plan");
+        let plan_text = result.rows[0][0].as_str().expect("plan text");
+        assert!(plan_text.contains("Table Scan"));
+
+        let bodies = request_bodies(&requests);
+        assert!(bodies[1].contains(r#""queryMode":"PLAN""#));
+        // The EXPLAIN keyword is stripped — Spanner never sees it.
+        assert!(bodies[1].contains(r#""sql":"SELECT * FROM Singers""#));
     }
 }

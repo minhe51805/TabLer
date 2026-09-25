@@ -11,9 +11,10 @@ use super::safety::{normalize_order_dir, sanitize_snowflake_filter_clause};
 use crate::utils::sql::split_sql_statements;
 use anyhow::{anyhow, bail, Context, Result};
 use async_trait::async_trait;
-use reqwest::{Client, RequestBuilder};
+use reqwest::{header::HeaderMap, Client, RequestBuilder};
 use serde::Deserialize;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::Instant;
 
@@ -77,6 +78,10 @@ pub struct TrinoDriver {
     /// request_id → URI to DELETE for a server-side abort. Holds the statement
     /// URL until the first page hands back a `nextUri`.
     in_flight: Mutex<HashMap<String, String>>,
+    /// Active transaction id from `X-Trino-Started-Transaction-Id`; every
+    /// statement request re-sends it as `X-Trino-Transaction-Id` until COMMIT
+    /// or ROLLBACK clears the slot.
+    active_txn: Mutex<Option<String>>,
 }
 
 impl TrinoDriver {
@@ -105,6 +110,7 @@ impl TrinoDriver {
             password: config.password.clone(),
             current_db: Arc::new(RwLock::new(config.database.clone())),
             in_flight: Mutex::new(HashMap::new()),
+            active_txn: Mutex::new(None),
         })
     }
 
@@ -240,12 +246,16 @@ impl TrinoDriver {
         }
     }
 
-    async fn send_page(request: RequestBuilder) -> Result<TrinoPage> {
+    /// Send one protocol request and return the parsed page together with the
+    /// response headers — transaction control travels entirely in headers
+    /// (`X-Trino-Started-Transaction-Id`, `X-Trino-Clear-Transaction-Id`).
+    async fn send_page(request: RequestBuilder) -> Result<(TrinoPage, HeaderMap)> {
         let response = request
             .send()
             .await
             .context("Failed to reach the Trino coordinator")?;
         let status = response.status();
+        let headers = response.headers().clone();
         let body = response
             .text()
             .await
@@ -257,16 +267,19 @@ impl TrinoDriver {
                 body.trim()
             );
         }
-        serde_json::from_str(&body).context("Failed to parse the Trino response")
+        let page = serde_json::from_str(&body).context("Failed to parse the Trino response")?;
+        Ok((page, headers))
     }
 
-    async fn post_statement(
+    /// POST body for `/v1/statement`: auth, catalog/schema session headers,
+    /// and the active transaction id when one is pinned.
+    fn statement_request(
         &self,
         sql: &str,
         location: Option<&(String, Option<String>)>,
-    ) -> Result<TrinoPage> {
+    ) -> RequestBuilder {
         let mut request = self
-            .apply_auth(self.client.post(self.statement_url()))
+            .apply_txn(self.apply_auth(self.client.post(self.statement_url())))
             .body(sql.to_string());
         if let Some((catalog, schema)) = location {
             request = request.header("X-Trino-Catalog", catalog.as_str());
@@ -274,11 +287,296 @@ impl TrinoDriver {
                 request = request.header("X-Trino-Schema", schema.as_str());
             }
         }
-        Self::send_page(request).await
+        request
     }
 
-    async fn fetch_page(&self, uri: &str) -> Result<TrinoPage> {
-        Self::send_page(self.apply_auth(self.client.get(uri))).await
+    /// GET on a `nextUri` page; the transaction id rides along the same way
+    /// the official client sends it on every request inside a transaction.
+    fn page_request(&self, uri: &str) -> RequestBuilder {
+        self.apply_txn(self.apply_auth(self.client.get(uri)))
+    }
+
+    /// Lock the transaction slot, recovering from poisoning the same way
+    /// `lock_in_flight` does — a poisoned slot must not break query execution.
+    fn lock_active_txn(&self) -> std::sync::MutexGuard<'_, Option<String>> {
+        self.active_txn.lock().unwrap_or_else(|p| p.into_inner())
+    }
+
+    /// Attach `X-Trino-Transaction-Id` when a transaction is pinned. Trino
+    /// requires the header on every request belonging to the transaction.
+    fn apply_txn(&self, request: RequestBuilder) -> RequestBuilder {
+        match self.lock_active_txn().clone() {
+            Some(txn_id) => request.header("X-Trino-Transaction-Id", txn_id),
+            None => request,
+        }
+    }
+
+    /// Fold the transaction bookkeeping headers of one response into the
+    /// slot: a clear marker (or a `NONE` transaction id) means the server
+    /// ended the transaction, so the slot must not keep a stale id.
+    fn observe_txn_headers(&self, headers: &HeaderMap) {
+        if trino_txn_cleared(headers) {
+            *self.lock_active_txn() = None;
+        }
+    }
+
+    /// Send one already-built request and follow `nextUri` pages until the
+    /// coordinator stops producing them or the row cap cuts the result short.
+    /// Returns the first page's response headers for transaction control.
+    async fn run_request(
+        &self,
+        request: RequestBuilder,
+        request_id: Option<&str>,
+        row_cap: usize,
+    ) -> Result<(TrinoAccumulated, HeaderMap)> {
+        let (mut page, first_headers) = Self::send_page(request).await?;
+        self.observe_txn_headers(&first_headers);
+        let mut acc = TrinoAccumulated::default();
+        loop {
+            let next_uri = Self::merge_page(&mut acc, page, row_cap)?;
+            self.track_next_uri(request_id, next_uri.as_deref());
+            if acc.rows.len() >= row_cap && next_uri.is_some() {
+                acc.truncated = true;
+            }
+            if acc.truncated {
+                if let Some(uri) = next_uri {
+                    self.abort_uri(&uri).await;
+                }
+                break;
+            }
+            match next_uri {
+                Some(uri) => {
+                    let (next_page, headers) = Self::send_page(self.page_request(&uri)).await?;
+                    self.observe_txn_headers(&headers);
+                    page = next_page;
+                }
+                None => break,
+            }
+        }
+        Ok((acc, first_headers))
+    }
+
+    /// POST one statement and follow `nextUri` pages until the coordinator
+    /// stops producing them or the row cap cuts the result short. Also
+    /// returns the first page's response headers for transaction control.
+    async fn run_statement_with_headers(
+        &self,
+        sql: &str,
+        location: Option<&(String, Option<String>)>,
+        request_id: Option<&str>,
+        row_cap: usize,
+    ) -> Result<(TrinoAccumulated, HeaderMap)> {
+        self.run_request(self.statement_request(sql, location), request_id, row_cap)
+            .await
+    }
+
+    /// POST one statement and follow `nextUri` pages until the coordinator
+    /// stops producing them or the row cap cuts the result short.
+    async fn run_statement(
+        &self,
+        sql: &str,
+        location: Option<&(String, Option<String>)>,
+        request_id: Option<&str>,
+        row_cap: usize,
+    ) -> Result<TrinoAccumulated> {
+        Ok(self
+            .run_statement_with_headers(sql, location, request_id, row_cap)
+            .await?
+            .0)
+    }
+
+    /// START TRANSACTION and pin the returned transaction id. Nested
+    /// transactions are rejected: Trino has no savepoints, so a second
+    /// `begin` could never be committed independently.
+    async fn begin_transaction(&self) -> Result<()> {
+        if self.lock_active_txn().is_some() {
+            bail!("Trino driver already has an active transaction");
+        }
+        let location = self.session_location();
+        let (_, headers) = self
+            .run_statement_with_headers("START TRANSACTION", location.as_ref(), None, usize::MAX)
+            .await
+            .context("Failed to start a Trino transaction")?;
+        let Some(txn_id) = trino_txn_started_id(&headers) else {
+            bail!("Trino coordinator did not return a transaction id");
+        };
+        if self.lock_active_txn().is_some() {
+            // A concurrent begin won the slot; roll this orphan back instead
+            // of leaking a coordinator-side transaction.
+            if let Err(error) = self.end_transaction_with("ROLLBACK", &txn_id).await {
+                log::warn!("Failed to roll back orphaned Trino transaction {txn_id}: {error}");
+            }
+            bail!("Trino driver already has an active transaction");
+        }
+        *self.lock_active_txn() = Some(txn_id);
+        Ok(())
+    }
+
+    /// COMMIT or ROLLBACK the pinned transaction. The slot is cleared
+    /// unconditionally: once the coordinator has been told to end the
+    /// transaction, a stale id must never ride on later requests.
+    async fn end_transaction(&self, verb: &str) -> Result<()> {
+        let txn_id = self.lock_active_txn().take();
+        let Some(txn_id) = txn_id else {
+            bail!("Trino driver has no active transaction to {verb}");
+        };
+        self.end_transaction_with(verb, &txn_id).await
+    }
+
+    /// Send COMMIT/ROLLBACK pinned to an explicit transaction id — used both
+    /// for the active transaction and for orphaned ids that lost the slot.
+    async fn end_transaction_with(&self, verb: &str, txn_id: &str) -> Result<()> {
+        let request = self
+            .apply_auth(self.client.post(self.statement_url()))
+            .header("X-Trino-Transaction-Id", txn_id)
+            .body(verb.to_string());
+        let (mut page, _) = Self::send_page(request).await?;
+        let mut acc = TrinoAccumulated::default();
+        loop {
+            let next_uri = Self::merge_page(&mut acc, page, usize::MAX)?;
+            match next_uri {
+                Some(uri) => {
+                    let request = self
+                        .apply_auth(self.client.get(&uri))
+                        .header("X-Trino-Transaction-Id", txn_id);
+                    let (next_page, _) = Self::send_page(request).await?;
+                    page = next_page;
+                }
+                None => break,
+            }
+        }
+        Ok(())
+    }
+
+    /// Commit the pinned transaction when `outcome` succeeded, roll it back
+    /// otherwise. The original error wins when rollback also fails.
+    async fn finish_transaction<T>(&self, outcome: Result<T>) -> Result<T> {
+        match outcome {
+            Ok(value) => {
+                self.end_transaction("COMMIT").await?;
+                Ok(value)
+            }
+            Err(error) => {
+                if let Err(rollback_error) = self.end_transaction("ROLLBACK").await {
+                    log::warn!("Trino transaction rollback failed: {rollback_error}");
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Build the UPDATE for one cell-edit request together with the
+    /// catalog/schema location the statement must run under.
+    fn update_statement(
+        &self,
+        request: &TableCellUpdateRequest,
+    ) -> Result<(String, (String, Option<String>))> {
+        if request.primary_keys.is_empty() {
+            return Err(anyhow!(
+                "Inline update requires at least one primary key column"
+            ));
+        }
+        let location = self.resolve_location(request.database.as_deref())?;
+        let sql = format!(
+            "UPDATE {} SET {} = {} WHERE {}",
+            Self::qualify_table_name(&request.table, Some(&location))?,
+            quote_trino_identifier(&request.target_column)?,
+            trino_literal(&request.value)?,
+            trino_pk_condition(&request.primary_keys)?,
+        );
+        Ok((sql, location))
+    }
+
+    /// Build the INSERT for one row request together with the catalog/schema
+    /// location the statement must run under.
+    fn insert_statement(
+        &self,
+        request: &TableRowInsertRequest,
+    ) -> Result<(String, (String, Option<String>))> {
+        if request.values.is_empty() {
+            return Err(anyhow!("Insert requires at least one column value"));
+        }
+        let location = self.resolve_location(request.database.as_deref())?;
+        let mut columns = Vec::with_capacity(request.values.len());
+        let mut values = Vec::with_capacity(request.values.len());
+        for (column, value) in &request.values {
+            columns.push(quote_trino_identifier(column)?);
+            values.push(trino_literal(value)?);
+        }
+        let sql = format!(
+            "INSERT INTO {} ({}) VALUES ({})",
+            Self::qualify_table_name(&request.table, Some(&location))?,
+            columns.join(", "),
+            values.join(", "),
+        );
+        Ok((sql, location))
+    }
+
+    /// Shared body of `execute_parameterized_query` and its request-scoped
+    /// variant. Trino's HTTP protocol has no wire-level bind parameters, so
+    /// the statement runs through PREPARE/EXECUTE: the SQL text (with `?`
+    /// markers) is prepared once, then executed with the values serialized
+    /// as escaped literals in the USING clause. A `request_id` registers the
+    /// EXECUTE for server-side cancel; PREPARE/DEALLOCATE are too fast to
+    /// need it.
+    async fn execute_parameterized_query_inner(
+        &self,
+        sql: &str,
+        parameters: &[QueryParameter],
+        request_id: Option<&str>,
+    ) -> Result<QueryResult> {
+        let start = Instant::now();
+        let statements = split_sql_statements(sql);
+        let [statement] = statements.as_slice() else {
+            bail!("Trino parameterized queries support exactly one statement");
+        };
+        let location = self.session_location();
+        let name = trino_prepare_name();
+        self.run_statement(
+            &trino_prepare_statement(&name, statement),
+            location.as_ref(),
+            None,
+            usize::MAX,
+        )
+        .await
+        .context("Trino PREPARE failed")?;
+
+        let request_id = request_id.filter(|id| !id.trim().is_empty());
+        if let Some(id) = request_id {
+            self.lock_in_flight()
+                .insert(id.to_string(), self.statement_url());
+        }
+        let outcome = async {
+            let execute_sql = trino_execute_statement(&name, parameters)?;
+            self.run_statement(
+                &execute_sql,
+                location.as_ref(),
+                request_id,
+                MAX_QUERY_RESULT_ROWS,
+            )
+            .await
+        }
+        .await;
+        if let Some(id) = request_id {
+            self.lock_in_flight().remove(id);
+        }
+
+        // DEALLOCATE releases the server-side prepared statement; a failure
+        // here must not mask the EXECUTE outcome.
+        if let Err(error) = self
+            .run_statement(
+                &trino_deallocate_statement(&name),
+                location.as_ref(),
+                None,
+                usize::MAX,
+            )
+            .await
+        {
+            log::warn!("Trino DEALLOCATE PREPARE {name} failed: {error}");
+        }
+
+        let acc = outcome?;
+        Ok(self.build_result(acc, sql, start.elapsed().as_millis()))
     }
 
     /// Merge one page into the accumulator. Returns the `nextUri` to follow,
@@ -345,41 +643,10 @@ impl TrinoDriver {
 
     /// Best-effort abort of a query we stopped consuming (row cap reached).
     async fn abort_uri(&self, uri: &str) {
-        let request = self.apply_auth(self.client.delete(uri));
+        let request = self.apply_txn(self.apply_auth(self.client.delete(uri)));
         if let Err(error) = request.send().await {
             log::warn!("Failed to abort truncated Trino query at {uri}: {error}");
         }
-    }
-
-    /// POST one statement and follow `nextUri` pages until the coordinator
-    /// stops producing them or the row cap cuts the result short.
-    async fn run_statement(
-        &self,
-        sql: &str,
-        location: Option<&(String, Option<String>)>,
-        request_id: Option<&str>,
-        row_cap: usize,
-    ) -> Result<TrinoAccumulated> {
-        let mut page = self.post_statement(sql, location).await?;
-        let mut acc = TrinoAccumulated::default();
-        loop {
-            let next_uri = Self::merge_page(&mut acc, page, row_cap)?;
-            self.track_next_uri(request_id, next_uri.as_deref());
-            if acc.rows.len() >= row_cap && next_uri.is_some() {
-                acc.truncated = true;
-            }
-            if acc.truncated {
-                if let Some(uri) = next_uri {
-                    self.abort_uri(&uri).await;
-                }
-                break;
-            }
-            match next_uri {
-                Some(uri) => page = self.fetch_page(&uri).await?,
-                None => break,
-            }
-        }
-        Ok(acc)
     }
 
     fn build_result(&self, acc: TrinoAccumulated, query: &str, elapsed: u128) -> QueryResult {
@@ -550,6 +817,68 @@ fn trino_count_value(value: &serde_json::Value) -> Option<i64> {
     }
 }
 
+/// Transaction id handed back by START TRANSACTION. The protocol carries it
+/// in `X-Trino-Started-Transaction-Id`; some coordinators also echo the
+/// active id on `X-Trino-Transaction-Id`, which is accepted as a fallback
+/// (the literal `NONE` never counts as an id).
+fn trino_txn_started_id(headers: &HeaderMap) -> Option<String> {
+    for name in ["x-trino-started-transaction-id", "x-trino-transaction-id"] {
+        if let Some(value) = headers
+            .get(name)
+            .and_then(|value| value.to_str().ok())
+            .map(str::trim)
+            .filter(|value| !value.is_empty() && !value.eq_ignore_ascii_case("none"))
+        {
+            return Some(value.to_string());
+        }
+    }
+    None
+}
+
+/// True when the response reports the transaction is over: the protocol's
+/// `X-Trino-Clear-Transaction-Id: true`, or a `NONE` transaction id.
+fn trino_txn_cleared(headers: &HeaderMap) -> bool {
+    let cleared = headers
+        .get("x-trino-clear-transaction-id")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("true"));
+    let none = headers
+        .get("x-trino-transaction-id")
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.trim().eq_ignore_ascii_case("none"));
+    cleared || none
+}
+
+/// Prepared-statement names must be unique per session; a process-wide
+/// counter keeps concurrent PREPARE calls from colliding.
+static TRINO_PREPARE_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn trino_prepare_name() -> String {
+    let sequence = TRINO_PREPARE_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("tabler_p{sequence}")
+}
+
+/// `PREPARE <name> FROM <statement>` — the statement keeps its `?` markers;
+/// Trino binds them positionally at EXECUTE time.
+fn trino_prepare_statement(name: &str, statement: &str) -> String {
+    format!("PREPARE {name} FROM {statement}")
+}
+
+/// `EXECUTE <name> USING <literals>` — Trino has no wire-level binds, so
+/// values are serialized as escaped literals in the USING clause.
+fn trino_execute_statement(name: &str, parameters: &[QueryParameter]) -> Result<String> {
+    let literals = parameters
+        .iter()
+        .map(|parameter| trino_literal(&parameter.value))
+        .collect::<Result<Vec<_>>>()?;
+    Ok(format!("EXECUTE {name} USING {}", literals.join(", ")))
+}
+
+/// `DEALLOCATE PREPARE <name>` releases the server-side prepared statement.
+fn trino_deallocate_statement(name: &str) -> String {
+    format!("DEALLOCATE PREPARE {name}")
+}
+
 #[async_trait]
 impl DatabaseDriver for TrinoDriver {
     async fn ping(&self) -> Result<()> {
@@ -561,6 +890,14 @@ impl DatabaseDriver for TrinoDriver {
     }
 
     async fn disconnect(&self) -> Result<()> {
+        // A transaction left pinned (e.g. after a failed begin) would leak
+        // coordinator-side until it times out — roll it back best-effort.
+        let txn_id = self.lock_active_txn().take();
+        if let Some(txn_id) = txn_id {
+            if let Err(error) = self.end_transaction_with("ROLLBACK", &txn_id).await {
+                log::warn!("Failed to roll back Trino transaction {txn_id} on disconnect: {error}");
+            }
+        }
         Ok(())
     }
 
@@ -835,16 +1172,29 @@ impl DatabaseDriver for TrinoDriver {
         Ok(true)
     }
 
-    /// The `/v1/statement` protocol has no bind parameters; values must never
-    /// be interpolated into SQL text, so parameterized execution is rejected.
+    /// Trino's HTTP protocol has no wire-level binds, so parameterized
+    /// execution goes through PREPARE/EXECUTE: the `?` markers stay in the
+    /// prepared SQL text and the values are bound positionally as escaped
+    /// literals in the EXECUTE … USING clause.
     async fn execute_parameterized_query(
         &self,
-        _sql: &str,
-        _parameters: &[QueryParameter],
+        sql: &str,
+        parameters: &[QueryParameter],
     ) -> Result<QueryResult> {
-        Err(anyhow!(
-            "Trino's HTTP protocol has no bind parameters; parameterized queries are not supported"
-        ))
+        self.execute_parameterized_query_inner(sql, parameters, None)
+            .await
+    }
+
+    /// Request-scoped variant: the EXECUTE statement is registered for
+    /// server-side cancel the same way `execute_query_for_request` does.
+    async fn execute_parameterized_query_for_request(
+        &self,
+        request_id: &str,
+        sql: &str,
+        parameters: &[QueryParameter],
+    ) -> Result<QueryResult> {
+        self.execute_parameterized_query_inner(sql, parameters, Some(request_id))
+            .await
     }
 
     async fn get_table_data(
@@ -920,23 +1270,39 @@ impl DatabaseDriver for TrinoDriver {
     }
 
     async fn update_table_cell(&self, request: &TableCellUpdateRequest) -> Result<u64> {
-        if request.primary_keys.is_empty() {
-            return Err(anyhow!(
-                "Inline update requires at least one primary key column"
-            ));
-        }
-        let location = self.resolve_location(request.database.as_deref())?;
-        let sql = format!(
-            "UPDATE {} SET {} = {} WHERE {}",
-            Self::qualify_table_name(&request.table, Some(&location))?,
-            quote_trino_identifier(&request.target_column)?,
-            trino_literal(&request.value)?,
-            trino_pk_condition(&request.primary_keys)?,
-        );
+        let (sql, location) = self.update_statement(request)?;
         let acc = self
             .run_statement(&sql, Some(&location), None, usize::MAX)
             .await?;
         Ok(acc.update_count.unwrap_or(0))
+    }
+
+    /// Apply the staged edit queue inside one coordinator transaction:
+    /// START TRANSACTION pins a transaction id that every UPDATE re-sends,
+    /// then COMMIT persists the batch. Any failure — including a row whose
+    /// primary-key selector no longer matches — rolls the whole queue back.
+    async fn apply_table_updates_atomically(
+        &self,
+        updates: &[TableCellUpdateRequest],
+    ) -> Result<u64> {
+        self.begin_transaction().await?;
+        let outcome = async {
+            let mut affected = 0u64;
+            for request in updates {
+                let (sql, location) = self.update_statement(request)?;
+                let acc = self
+                    .run_statement(&sql, Some(&location), None, usize::MAX)
+                    .await?;
+                let count = acc.update_count.unwrap_or(0);
+                if count == 0 {
+                    bail!("An edit queue row no longer matches its primary-key selector");
+                }
+                affected += count;
+            }
+            Ok(affected)
+        }
+        .await;
+        self.finish_transaction(outcome).await
     }
 
     async fn delete_table_rows(&self, request: &TableRowDeleteRequest) -> Result<u64> {
@@ -965,26 +1331,131 @@ impl DatabaseDriver for TrinoDriver {
     }
 
     async fn insert_table_row(&self, request: &TableRowInsertRequest) -> Result<u64> {
-        if request.values.is_empty() {
-            return Err(anyhow!("Insert requires at least one column value"));
-        }
-        let location = self.resolve_location(request.database.as_deref())?;
-        let mut columns = Vec::with_capacity(request.values.len());
-        let mut values = Vec::with_capacity(request.values.len());
-        for (column, value) in &request.values {
-            columns.push(quote_trino_identifier(column)?);
-            values.push(trino_literal(value)?);
-        }
-        let sql = format!(
-            "INSERT INTO {} ({}) VALUES ({})",
-            Self::qualify_table_name(&request.table, Some(&location))?,
-            columns.join(", "),
-            values.join(", "),
-        );
+        let (sql, location) = self.insert_statement(request)?;
         let acc = self
             .run_statement(&sql, Some(&location), None, usize::MAX)
             .await?;
         Ok(acc.update_count.unwrap_or(1))
+    }
+
+    /// Insert the whole batch inside one transaction so a failed row never
+    /// leaves a partially-imported file behind. The cancel flag is honoured
+    /// between rows; cancelling rolls every inserted row back.
+    async fn insert_table_rows_atomically(
+        &self,
+        requests: &[TableRowInsertRequest],
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        if requests.is_empty() {
+            return Err(anyhow!("CSV import requires at least one row"));
+        }
+        self.begin_transaction().await?;
+        let outcome = async {
+            let mut affected = 0u64;
+            for request in requests {
+                if cancelled.load(Ordering::Relaxed) {
+                    bail!("CSV import cancelled; all rows were rolled back");
+                }
+                let (sql, location) = self.insert_statement(request)?;
+                let acc = self
+                    .run_statement(&sql, Some(&location), None, usize::MAX)
+                    .await?;
+                affected += acc.update_count.unwrap_or(1);
+            }
+            Ok(affected)
+        }
+        .await;
+        self.finish_transaction(outcome).await
+    }
+
+    /// Consume the row channel inside one transaction. A parse error, a
+    /// cancel request, or a stream that ends without any data row rolls back
+    /// everything inserted so far.
+    async fn insert_table_row_stream_atomically(
+        &self,
+        mut rows: tokio::sync::mpsc::Receiver<crate::database::models::CsvImportRow>,
+        cancelled: Arc<AtomicBool>,
+    ) -> Result<u64> {
+        self.begin_transaction().await?;
+        let outcome = async {
+            let mut affected = 0u64;
+            while let Some(row) = rows.recv().await {
+                if cancelled.load(Ordering::Relaxed) {
+                    bail!("CSV import cancelled; all rows were rolled back");
+                }
+                let request = row.map_err(anyhow::Error::msg)?;
+                let (sql, location) = self.insert_statement(&request)?;
+                let acc = self
+                    .run_statement(&sql, Some(&location), None, usize::MAX)
+                    .await?;
+                affected += acc.update_count.unwrap_or(1);
+            }
+            if affected == 0 {
+                bail!("CSV import did not contain any data rows");
+            }
+            Ok(affected)
+        }
+        .await;
+        self.finish_transaction(outcome).await
+    }
+
+    /// Run the reviewed statements inside one transaction and ALWAYS roll
+    /// back, returning each statement's result as the preview. Trino
+    /// executes one statement per POST, so multi-statement entries are
+    /// split; every piece still runs inside the same transaction.
+    async fn preview_write_transaction(&self, statements: &[String]) -> Result<Vec<QueryResult>> {
+        let mut pieces = Vec::new();
+        for entry in statements {
+            for statement in split_sql_statements(entry) {
+                if !statement.trim().is_empty() {
+                    pieces.push(statement);
+                }
+            }
+        }
+        self.begin_transaction().await?;
+        let location = self.session_location();
+        let outcome = async {
+            let mut results = Vec::with_capacity(pieces.len());
+            for statement in &pieces {
+                let start = Instant::now();
+                let acc = self
+                    .run_statement(statement, location.as_ref(), None, MAX_QUERY_RESULT_ROWS)
+                    .await?;
+                let mut result = self.build_result(acc, statement, start.elapsed().as_millis());
+                result.sandboxed = true;
+                results.push(result);
+            }
+            Ok::<Vec<QueryResult>, anyhow::Error>(results)
+        }
+        .await;
+        // The preview contract is rollback-only: the transaction is always
+        // discarded, even when every statement succeeded.
+        if let Err(error) = self.end_transaction("ROLLBACK").await {
+            log::warn!("Trino write-preview rollback failed: {error}");
+        }
+        outcome
+    }
+
+    /// Restore a reviewed SQL dump inside one transaction so a mid-dump
+    /// failure cannot leave a half-restored database. Connectors without
+    /// transaction support reject START TRANSACTION and surface that error.
+    async fn execute_restore_statements(&self, statements: &[String]) -> Result<u64> {
+        self.begin_transaction().await?;
+        let location = self.session_location();
+        let outcome = async {
+            let mut total_affected = 0u64;
+            for statement in statements {
+                let acc = self
+                    .run_statement(statement, location.as_ref(), None, MAX_QUERY_RESULT_ROWS)
+                    .await?;
+                if let Some(count) = acc.update_count {
+                    total_affected = total_affected.saturating_add(count);
+                }
+            }
+            Ok(total_affected)
+        }
+        .await;
+        self.finish_transaction(outcome).await
     }
 
     async fn use_database(&self, database: &str) -> Result<()> {
@@ -1243,16 +1714,21 @@ mod tests {
         );
     }
 
-    #[test]
-    fn cancel_bookkeeping_tracks_only_registered_requests() {
-        let driver = TrinoDriver {
+    fn test_driver() -> TrinoDriver {
+        TrinoDriver {
             client: Client::new(),
             base_url: "http://localhost:8080".to_string(),
             username: "tabler".to_string(),
             password: None,
             current_db: Arc::new(RwLock::new(None)),
             in_flight: Mutex::new(HashMap::new()),
-        };
+            active_txn: Mutex::new(None),
+        }
+    }
+
+    #[test]
+    fn cancel_bookkeeping_tracks_only_registered_requests() {
+        let driver = test_driver();
 
         // Unregistered request ids are ignored.
         driver.track_next_uri(Some("req-1"), Some("http://x/1"));
@@ -1284,5 +1760,167 @@ mod tests {
         assert_eq!(trino_count_value(&serde_json::json!("34")), Some(34));
         assert_eq!(trino_count_value(&serde_json::Value::Null), None);
         assert_eq!(trino_count_value(&serde_json::json!("abc")), None);
+    }
+
+    #[test]
+    fn txn_headers_report_started_cleared_and_none() {
+        let mut headers = HeaderMap::new();
+        headers.insert("x-trino-started-transaction-id", "txn-42".parse().unwrap());
+        assert_eq!(trino_txn_started_id(&headers).as_deref(), Some("txn-42"));
+        assert!(!trino_txn_cleared(&headers));
+
+        // A bare transaction-id echo also counts as a started id.
+        let mut headers = HeaderMap::new();
+        headers.insert("x-trino-transaction-id", "txn-7".parse().unwrap());
+        assert_eq!(trino_txn_started_id(&headers).as_deref(), Some("txn-7"));
+
+        // COMMIT/ROLLBACK answers 'NONE' or the explicit clear marker.
+        let mut headers = HeaderMap::new();
+        headers.insert("x-trino-transaction-id", "NONE".parse().unwrap());
+        assert!(trino_txn_cleared(&headers));
+        assert!(trino_txn_started_id(&headers).is_none());
+
+        let mut headers = HeaderMap::new();
+        headers.insert("x-trino-clear-transaction-id", "true".parse().unwrap());
+        assert!(trino_txn_cleared(&headers));
+
+        assert!(trino_txn_started_id(&HeaderMap::new()).is_none());
+        assert!(!trino_txn_cleared(&HeaderMap::new()));
+    }
+
+    #[test]
+    fn active_txn_id_rides_on_statement_requests() {
+        let driver = test_driver();
+        let request = driver.statement_request("SELECT 1", None).build().unwrap();
+        assert!(request.headers().get("x-trino-transaction-id").is_none());
+
+        *driver.lock_active_txn() = Some("txn-9".to_string());
+        let request = driver.statement_request("SELECT 1", None).build().unwrap();
+        assert_eq!(
+            request
+                .headers()
+                .get("x-trino-transaction-id")
+                .and_then(|value| value.to_str().ok()),
+            Some("txn-9")
+        );
+
+        // A clear marker on any response drops the pinned id.
+        let mut headers = HeaderMap::new();
+        headers.insert("x-trino-clear-transaction-id", "true".parse().unwrap());
+        driver.observe_txn_headers(&headers);
+        assert!(driver.lock_active_txn().is_none());
+    }
+
+    #[tokio::test]
+    async fn nested_transactions_are_rejected_before_any_request() {
+        let driver = test_driver();
+        *driver.lock_active_txn() = Some("txn-1".to_string());
+        let error = driver.begin_transaction().await.unwrap_err();
+        assert!(error.to_string().contains("active transaction"));
+        // The pinned id is untouched — no network call happened.
+        assert_eq!(driver.lock_active_txn().as_deref(), Some("txn-1"));
+    }
+
+    #[tokio::test]
+    async fn ending_without_a_transaction_is_an_error() {
+        let driver = test_driver();
+        let error = driver.end_transaction("COMMIT").await.unwrap_err();
+        assert!(error.to_string().contains("no active transaction"));
+    }
+
+    #[test]
+    fn prepare_execute_and_deallocate_build_valid_statements() {
+        let name = trino_prepare_name();
+        assert!(name.starts_with("tabler_p"));
+        assert_ne!(trino_prepare_name(), name);
+
+        assert_eq!(
+            trino_prepare_statement("tabler_p0", "SELECT * FROM t WHERE id = ?"),
+            "PREPARE tabler_p0 FROM SELECT * FROM t WHERE id = ?"
+        );
+        assert_eq!(
+            trino_deallocate_statement("tabler_p0"),
+            "DEALLOCATE PREPARE tabler_p0"
+        );
+    }
+
+    #[test]
+    fn execute_using_serializes_parameters_as_escaped_literals() {
+        let parameters = vec![
+            QueryParameter {
+                name: "id".to_string(),
+                value: serde_json::json!(7),
+                data_type: QueryParameterType::Integer,
+            },
+            QueryParameter {
+                name: "label".to_string(),
+                value: serde_json::json!("o'brien"),
+                data_type: QueryParameterType::Text,
+            },
+            QueryParameter {
+                name: "flag".to_string(),
+                value: serde_json::json!(true),
+                data_type: QueryParameterType::Boolean,
+            },
+            QueryParameter {
+                name: "note".to_string(),
+                value: serde_json::Value::Null,
+                data_type: QueryParameterType::Null,
+            },
+        ];
+        assert_eq!(
+            trino_execute_statement("tabler_p1", &parameters).unwrap(),
+            "EXECUTE tabler_p1 USING 7, 'o''brien', TRUE, NULL"
+        );
+
+        // Values that cannot be expressed as a Trino literal are rejected.
+        let bad = vec![QueryParameter {
+            name: "payload".to_string(),
+            value: serde_json::json!({"a": 1}),
+            data_type: QueryParameterType::Json,
+        }];
+        assert!(trino_execute_statement("tabler_p1", &bad).is_err());
+    }
+
+    #[test]
+    fn update_and_insert_statement_builders_quote_identifiers_and_literals() {
+        let driver = test_driver();
+        *driver.current_db.write().unwrap() = Some("hive.sales".to_string());
+
+        let update = TableCellUpdateRequest {
+            table: "orders".to_string(),
+            database: None,
+            target_column: "status".to_string(),
+            value: serde_json::json!("shipped"),
+            primary_keys: vec![RowKeyValue {
+                column: "id".to_string(),
+                value: serde_json::json!(3),
+            }],
+        };
+        let (sql, location) = driver.update_statement(&update).unwrap();
+        assert_eq!(
+            sql,
+            "UPDATE \"sales\".\"orders\" SET \"status\" = 'shipped' WHERE \"id\" = 3"
+        );
+        assert_eq!(location, ("hive".to_string(), Some("sales".to_string())));
+
+        let insert = TableRowInsertRequest {
+            table: "orders".to_string(),
+            database: None,
+            values: vec![
+                ("id".to_string(), serde_json::json!(4)),
+                ("note".to_string(), serde_json::json!("it's")),
+            ],
+        };
+        let (sql, _) = driver.insert_statement(&insert).unwrap();
+        assert_eq!(
+            sql,
+            "INSERT INTO \"sales\".\"orders\" (\"id\", \"note\") VALUES (4, 'it''s')"
+        );
+
+        // A row without a primary-key selector can never be targeted safely.
+        let mut no_keys = update.clone();
+        no_keys.primary_keys.clear();
+        assert!(driver.update_statement(&no_keys).is_err());
     }
 }

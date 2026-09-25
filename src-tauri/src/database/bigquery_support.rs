@@ -489,12 +489,29 @@ impl BigQueryDriver {
         preserve_query_text: &str,
         parameters: &[QueryParameter],
     ) -> Result<QueryResult> {
+        let started_at = Instant::now();
+        let (response, job_reference) = self
+            .submit_query_job(sql, dataset_override, parameters)
+            .await?;
+        self.collect_query_result(response, job_reference, preserve_query_text, started_at)
+            .await
+    }
+
+    /// Submit a `jobs.query` request and return the first response page
+    /// together with the job reference. The job id is available immediately —
+    /// even while the job is still running — so request-scoped callers can
+    /// register it for `jobs.cancel` before polling.
+    pub(super) async fn submit_query_job(
+        &self,
+        sql: &str,
+        dataset_override: Option<&str>,
+        parameters: &[QueryParameter],
+    ) -> Result<(BigQueryQueryResponse, BigQueryJobReference)> {
         let trimmed_sql = sql.trim();
         if trimmed_sql.is_empty() {
             return Err(anyhow!("BigQuery query cannot be empty"));
         }
 
-        let started_at = Instant::now();
         let default_dataset = dataset_override
             .map(str::trim)
             .filter(|value| !value.is_empty())
@@ -510,7 +527,7 @@ impl BigQueryDriver {
                     })
             });
 
-        let mut response: BigQueryQueryResponse = self
+        let response: BigQueryQueryResponse = self
             .post_json(
                 &format!("projects/{}/queries", self.project_id),
                 &BigQueryQueryRequest {
@@ -533,7 +550,18 @@ impl BigQueryDriver {
             .job_reference
             .clone()
             .ok_or_else(|| anyhow!("BigQuery did not return a job reference"))?;
+        Ok((response, job_reference))
+    }
 
+    /// Poll a submitted job to completion and convert the pages into a
+    /// `QueryResult`, applying the interactive row cap.
+    pub(super) async fn collect_query_result(
+        &self,
+        mut response: BigQueryQueryResponse,
+        job_reference: BigQueryJobReference,
+        preserve_query_text: &str,
+        started_at: Instant,
+    ) -> Result<QueryResult> {
         let mut attempts = 0usize;
         while response.job_complete == Some(false) {
             attempts += 1;

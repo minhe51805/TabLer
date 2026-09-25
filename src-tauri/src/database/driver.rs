@@ -203,6 +203,20 @@ pub trait DatabaseDriver: Send + Sync {
             "Atomic CSV imports are not supported by this database driver yet"
         ))
     }
+    /// Select the rows matching each primary-key selector — the pre-image a
+    /// rewind checkpoint stores before a write. Returns one `QueryResult` per
+    /// selector (same order). Default: unsupported; the grid then writes
+    /// without offering rewind for that engine.
+    async fn select_rows_by_keys(
+        &self,
+        _table: &str,
+        _database: Option<&str>,
+        _selectors: &[Vec<crate::database::models::RowKeyValue>],
+    ) -> Result<Vec<QueryResult>> {
+        Err(anyhow::anyhow!(
+            "Row pre-image capture is not supported by this database driver yet"
+        ))
+    }
 
     /// Consume a bounded row stream inside one transaction. Implementations
     /// must roll back the transaction when parsing fails, cancellation is

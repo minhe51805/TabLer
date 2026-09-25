@@ -52,6 +52,12 @@ jobs:
       - name: Check capability matrix
         run: npm run check:capability-matrix
 
+      # LOC test/code ratchet: a PR may not drop the measured ratio below the
+      # committed baseline (scripts/test-discipline-baseline.json). Raise it
+      # only via --ratchet after landing tests.
+      - name: Check test discipline
+        run: npm run check:test-discipline
+
       - name: Agent golden-set eval
         run: npm run eval:agent
 
@@ -133,3 +139,43 @@ jobs:
 
       - name: Check backend
         run: cargo check --locked --manifest-path src-tauri/Cargo.toml
+
+  cross-platform:
+    name: Cross-platform smoke (${{ matrix.os }})
+    # The linux jobs above gate logic; this job exists to catch platform-only
+    # failures — path separators, case sensitivity, WebView-vs-Edge targets —
+    # before the release workflow finds them. No docker services, so DB-backed
+    # integration tests (--include-ignored) stay on the linux job; the default
+    # test set still exercises the full unit suite.
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, macos-14]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --legacy-peer-deps
+
+      - name: Frontend typecheck and tests
+        run: npm run typecheck && npm run test:run
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Rust compile + unit tests (no external services)
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml

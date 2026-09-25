@@ -128,6 +128,35 @@ export interface TableRowDeleteRequest {
   rows: RowKeyValue[][];
 }
 
+/** Rewind checkpoint descriptor returned by `list_rewind_checkpoints`.
+ *  `kind` is the captured write type; `createdAtMs` is epoch milliseconds. */
+export interface RewindCheckpointInfo {
+  id: string;
+  tableName: string;
+  database: string | null;
+  kind: "update" | "delete" | "insert";
+  rowCount: number;
+  createdAtMs: number;
+}
+
+/** Why a rewind restore was refused without mutating data — returned in
+ *  `RewindRestoreOutcome.refusals`, never thrown. */
+export type RefusalCode =
+  | "capabilityMissing"
+  | "safeModeBlocked"
+  | "connectionReadOnly"
+  | "checkpointExpired"
+  | "connectionMismatch"
+  | "emptyCheckpoint"
+  | "rowDriftDetected";
+
+/** Result of `restore_rewind_checkpoint`. `restored` is the row count on
+ *  success; it is null whenever `refusals` explains why nothing was written. */
+export interface RewindRestoreOutcome {
+  restored: number | null;
+  refusals: RefusalCode[];
+}
+
 export interface TableInfo {
   name: string;
   schema?: string;

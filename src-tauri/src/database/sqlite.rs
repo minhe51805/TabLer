@@ -88,6 +88,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn select_rows_by_keys_returns_preimage_for_rewind() {
+        let driver = SqliteDriver::connect("sqlite::memory:?cache=shared")
+            .await
+            .unwrap();
+        driver
+            .execute_query("CREATE TABLE items (id INTEGER PRIMARY KEY, value TEXT)")
+            .await
+            .unwrap();
+        driver
+            .execute_query("INSERT INTO items (id, value) VALUES (1, 'a'), (2, 'b'), (3, 'c')")
+            .await
+            .unwrap();
+        let selectors = vec![
+            vec![RowKeyValue {
+                column: "id".into(),
+                value: serde_json::Value::from(1),
+            }],
+            vec![RowKeyValue {
+                column: "id".into(),
+                value: serde_json::Value::from(3),
+            }],
+            // A selector that matches nothing still returns an (empty) result.
+            vec![RowKeyValue {
+                column: "id".into(),
+                value: serde_json::Value::from(999),
+            }],
+        ];
+        let results = driver
+            .select_rows_by_keys("items", None, &selectors)
+            .await
+            .unwrap();
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].rows.len(), 1);
+        assert_eq!(results[1].rows.len(), 1);
+        assert!(results[2].rows.is_empty());
+        // Columns come back named so the checkpoint can zip values.
+        assert_eq!(results[0].columns[0].name, "id");
+        let names: Vec<_> = results[0].columns.iter().map(|c| c.name.as_str()).collect();
+        assert_eq!(names, ["id", "value"]);
+    }
+
+    #[tokio::test]
     async fn atomic_csv_import_rolls_back_when_a_later_row_violates_a_constraint() {
         let driver = SqliteDriver::connect("sqlite::memory:?cache=shared")
             .await
@@ -786,6 +828,51 @@ impl DatabaseDriver for SqliteDriver {
 
         tx.commit().await?;
         Ok(total_affected)
+    }
+    async fn select_rows_by_keys(
+        &self,
+        table: &str,
+        _database: Option<&str>,
+        selectors: &[Vec<RowKeyValue>],
+    ) -> Result<Vec<QueryResult>> {
+        use futures_util::TryStreamExt;
+        let mut results = Vec::with_capacity(selectors.len());
+        for selector in selectors {
+            if selector.is_empty() {
+                return Err(anyhow!(
+                    "A rewind selector must include at least one key column"
+                ));
+            }
+            let mut builder = QueryBuilder::<Sqlite>::new("SELECT * FROM ");
+            builder.push(quote_sqlite_identifier(table)?);
+            builder.push(" WHERE ");
+            for (index, key) in selector.iter().enumerate() {
+                if index > 0 {
+                    builder.push(" AND ");
+                }
+                builder.push(quote_sqlite_order_by(&key.column)?);
+                if key.value.is_null() {
+                    builder.push(" IS NULL");
+                } else {
+                    builder.push(" = ");
+                    Self::push_bound_value(&mut builder, &key.value)?;
+                }
+            }
+            let mut query_rows = Vec::new();
+            let mut stream = builder.build().fetch(&self.pool);
+            while let Some(row) = stream.try_next().await? {
+                query_rows.push(row);
+            }
+            results.push(Self::build_result_from_rows(
+                &query_rows,
+                0,
+                String::new(),
+                0,
+                false,
+                false,
+            ));
+        }
+        Ok(results)
     }
 
     async fn use_database(&self, _database: &str) -> Result<()> {

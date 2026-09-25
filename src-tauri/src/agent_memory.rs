@@ -282,6 +282,13 @@ pub struct SaveMemoryParams {
 fn write_memory_file(dir: &Path, frontmatter: &str, body: &str) -> Result<(), String> {
     std::fs::create_dir_all(dir)
         .map_err(|error| format!("Failed to create memory directory: {error}"))?;
+    // Memory stores query findings and schema notes — keep the directory
+    // user-only on Unix (Windows ACLs already default to the profile owner).
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
+    }
     let file_path = memory_md_path(dir);
     // Writing follows symlinks: a pre-existing MEMORY.md link would redirect
     // the write outside the scope. Refuse instead of overwriting through it.

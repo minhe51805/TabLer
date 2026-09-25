@@ -83,6 +83,9 @@ use commands::plugins::{
 use commands::profiler::{execute_profiler_sample, get_profiler_probe, get_top_queries_probe};
 use commands::query::*;
 use commands::restore::{preview_database_restore, restore_database_sql};
+use commands::rewind::{
+    delete_rewind_checkpoint, list_rewind_checkpoints, restore_rewind_checkpoint,
+};
 use commands::routines::{execute_routine, get_routine_definition, list_routines};
 use commands::safe_mode::{set_safe_mode_policy, SafeModeState};
 use commands::schedule::spawn_scheduler;
@@ -459,6 +462,9 @@ pub fn run() {
             insert_table_rows_atomically,
             import_csv_file_atomically,
             cancel_csv_import,
+            list_rewind_checkpoints,
+            restore_rewind_checkpoint,
+            delete_rewind_checkpoint,
             export_table_data,
             export_tables_to_directory,
             cancel_table_export,

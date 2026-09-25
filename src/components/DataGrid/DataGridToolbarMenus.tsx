@@ -17,6 +17,7 @@ import {
   FileUp,
   BarChart3,
   PanelRight,
+  History,
   X,
 } from "lucide-react";
 import type { useI18n } from "../../i18n";
@@ -26,6 +27,7 @@ import type { RuntimePluginFormat } from "../../utils/plugin-format-runtime";
 import type { getDataGridChartCopy } from "./datagrid-chart-copy";
 import type { getDataGridPowerCopy } from "./datagrid-power-copy";
 import type { ResolvedColumn } from "./hooks/useDataGrid";
+import { getRewindCopy, type RewindCopy } from "./rewind-copy";
 import type { useDataGridSettings } from "../../stores/datagrid-settings-store";
 
 type TFunction = ReturnType<typeof useI18n>["t"];
@@ -648,8 +650,10 @@ export function DataGridToolsMenu({
   chartCopy,
   powerCopy,
   onChart,
-  onToggleRowInspector,
   onAutoRefreshMsChange,
+  onToggleRowInspector,
+  rewindCopy,
+  onOpenRewind,
   onClose,
 }: {
   open: boolean;
@@ -661,9 +665,11 @@ export function DataGridToolsMenu({
   autoRefreshMs: number;
   chartCopy: ChartCopy;
   powerCopy: PowerCopy;
+  rewindCopy?: RewindCopy;
   onChart: () => void;
   onToggleRowInspector?: () => void;
   onAutoRefreshMsChange?: (ms: number) => void;
+  onOpenRewind?: () => void;
   onClose: () => void;
 }) {
   if (!open) return null;
@@ -719,6 +725,18 @@ export function DataGridToolsMenu({
             </button>
           ))}
         </>
+      )}
+      {onOpenRewind && (
+        <MenuOptionButton
+          opt={{
+            label: (rewindCopy ?? getRewindCopy("en")).menuItem,
+            hint: (rewindCopy ?? getRewindCopy("en")).menuHint,
+            icon: History,
+            separator: true,
+            run: onOpenRewind,
+          }}
+          onDone={onClose}
+        />
       )}
     </ToolbarMenu>
   );

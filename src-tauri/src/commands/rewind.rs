@@ -10,7 +10,7 @@ use crate::commands::safe_mode::SafeModeState;
 use crate::database::capabilities::DriverCapability;
 use crate::database::manager::DatabaseManager;
 use crate::database::models::{
-    RowKeyValue, TableCellUpdateRequest, TableRowDeleteRequest, TableRowInsertRequest,
+    QueryResult, RowKeyValue, TableCellUpdateRequest, TableRowDeleteRequest, TableRowInsertRequest,
 };
 use crate::storage::checkpoint_store::{
     self, CheckpointKind, RewindCheckpoint, RewindCheckpointInfo, StoredRow,
@@ -44,6 +44,33 @@ pub(crate) async fn capture_rewind_checkpoint(
         }
     };
 
+    let rows = stored_rows_from_results(selectors, results);
+    if rows.is_empty() {
+        // Nothing matched — the write will hit the affected-rows guard anyway;
+        // an empty checkpoint would restore nothing.
+        return;
+    }
+
+    if let Err(error) = checkpoint_store::save_checkpoint(
+        connection_id,
+        table,
+        database,
+        kind,
+        changed_columns,
+        rows,
+    ) {
+        eprintln!("[tabler] rewind checkpoint write failed: {error}");
+    }
+}
+
+/// Zips each selector with the rows it fetched, tagging every captured row
+/// with the (column, value) pairs the driver returned. Extraction keeps the
+/// selector↔result pairing testable — a misaligned zip silently restores the
+/// wrong pre-image.
+fn stored_rows_from_results(
+    selectors: Vec<Vec<RowKeyValue>>,
+    results: Vec<QueryResult>,
+) -> Vec<StoredRow> {
     let mut rows = Vec::new();
     for (selector, result) in selectors.into_iter().zip(results) {
         let column_names: Vec<String> = result
@@ -60,21 +87,81 @@ pub(crate) async fn capture_rewind_checkpoint(
             });
         }
     }
-    if rows.is_empty() {
-        // Nothing matched — the write will hit the affected-rows guard anyway;
-        // an empty checkpoint would restore nothing.
-        return;
-    }
+    rows
+}
 
-    if let Err(error) = checkpoint_store::save_checkpoint(
-        connection_id,
-        table,
-        database,
-        kind,
-        changed_columns,
-        rows,
-    ) {
-        eprintln!("[tabler] rewind checkpoint write failed: {error}");
+/// Refusals that can be decided from the checkpoint alone, in precedence
+/// order — the same order `restore_rewind_checkpoint` has always applied:
+/// a foreign payload reports mismatch before anything else is inspected.
+fn early_rewind_refusal(checkpoint: &RewindCheckpoint, connection_id: &str) -> Option<RefusalCode> {
+    if checkpoint.connection_id != connection_id {
+        return Some(RefusalCode::ConnectionMismatch);
+    }
+    if checkpoint.rows.is_empty() {
+        return Some(RefusalCode::EmptyCheckpoint);
+    }
+    let age_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+        .saturating_sub(checkpoint.created_at_ms);
+    if age_ms > crate::storage::checkpoint_store::CHECKPOINT_TTL_MS {
+        return Some(RefusalCode::CheckpointExpired);
+    }
+    None
+}
+
+/// Inverse of an Update checkpoint: one cell update per (row × changed
+/// column), restoring the captured value — or NULL when the captured row had
+/// no value recorded for that column.
+fn build_update_restore_requests(checkpoint: &RewindCheckpoint) -> Vec<TableCellUpdateRequest> {
+    let table = checkpoint.table.as_str();
+    let database = checkpoint.database.as_deref();
+    let mut updates = Vec::new();
+    for row in &checkpoint.rows {
+        for column in &checkpoint.changed_columns {
+            let value = row
+                .values
+                .iter()
+                .find(|(name, _)| name == column)
+                .map(|(_, value)| value.clone())
+                .unwrap_or(serde_json::Value::Null);
+            updates.push(TableCellUpdateRequest {
+                table: table.to_string(),
+                database: database.map(str::to_string),
+                target_column: column.clone(),
+                value,
+                primary_keys: row.selector.clone(),
+            });
+        }
+    }
+    updates
+}
+
+/// Inverse of a Delete checkpoint: re-insert every captured row verbatim.
+fn build_insert_restore_requests(checkpoint: &RewindCheckpoint) -> Vec<TableRowInsertRequest> {
+    checkpoint
+        .rows
+        .iter()
+        .map(|row| TableRowInsertRequest {
+            table: checkpoint.table.clone(),
+            database: checkpoint.database.clone(),
+            values: row.values.clone(),
+        })
+        .collect()
+}
+
+/// Inverse of an Insert checkpoint: delete the inserted rows by their
+/// captured PK selectors.
+fn build_delete_restore_request(checkpoint: &RewindCheckpoint) -> TableRowDeleteRequest {
+    TableRowDeleteRequest {
+        table: checkpoint.table.clone(),
+        database: checkpoint.database.clone(),
+        rows: checkpoint
+            .rows
+            .iter()
+            .map(|row| row.selector.clone())
+            .collect(),
     }
 }
 
@@ -96,7 +183,7 @@ pub async fn delete_rewind_checkpoint(
 /// Structured refusal — TablePro's `RewindRefusal` equivalent. A restore can
 /// be denied before it touches the database; the reason tells the user which
 /// guardrail stopped it (and whether the checkpoint survives).
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum RefusalCode {
     /// The engine cannot run the inverse write (missing capability).
@@ -178,23 +265,8 @@ pub async fn restore_rewind_checkpoint(
 ) -> Result<RewindRestoreOutcome, String> {
     let checkpoint: RewindCheckpoint =
         checkpoint_store::load_checkpoint(&connection_id, &checkpoint_id)?;
-    if checkpoint.connection_id != connection_id {
-        return Ok(RewindRestoreOutcome::refused(
-            RefusalCode::ConnectionMismatch,
-        ));
-    }
-    if checkpoint.rows.is_empty() {
-        return Ok(RewindRestoreOutcome::refused(RefusalCode::EmptyCheckpoint));
-    }
-    let age_ms = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis() as u64)
-        .unwrap_or(0)
-        .saturating_sub(checkpoint.created_at_ms);
-    if age_ms > crate::storage::checkpoint_store::CHECKPOINT_TTL_MS {
-        return Ok(RewindRestoreOutcome::refused(
-            RefusalCode::CheckpointExpired,
-        ));
+    if let Some(code) = early_rewind_refusal(&checkpoint, &connection_id) {
+        return Ok(RewindRestoreOutcome::refused(code));
     }
 
     let database_type = db_manager
@@ -205,8 +277,6 @@ pub async fn restore_rewind_checkpoint(
         .get_driver(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
-    let table = checkpoint.table.as_str();
-    let database = checkpoint.database.as_deref();
 
     let restored = match checkpoint.kind {
         // Restore = set the changed columns back to their captured values.
@@ -227,24 +297,7 @@ pub async fn restore_rewind_checkpoint(
             {
                 return Ok(RewindRestoreOutcome::refused(RefusalCode::SafeModeBlocked));
             }
-            let mut updates = Vec::new();
-            for row in &checkpoint.rows {
-                for column in &checkpoint.changed_columns {
-                    let value = row
-                        .values
-                        .iter()
-                        .find(|(name, _)| name == column)
-                        .map(|(_, value)| value.clone())
-                        .unwrap_or(serde_json::Value::Null);
-                    updates.push(TableCellUpdateRequest {
-                        table: table.to_string(),
-                        database: database.map(str::to_string),
-                        target_column: column.clone(),
-                        value,
-                        primary_keys: row.selector.clone(),
-                    });
-                }
-            }
+            let updates = build_update_restore_requests(&checkpoint);
             let expected = updates.len() as u64;
             let affected = driver
                 .apply_table_updates_atomically(&updates)
@@ -282,15 +335,7 @@ pub async fn restore_rewind_checkpoint(
             {
                 return Ok(RewindRestoreOutcome::refused(RefusalCode::SafeModeBlocked));
             }
-            let requests: Vec<TableRowInsertRequest> = checkpoint
-                .rows
-                .iter()
-                .map(|row| TableRowInsertRequest {
-                    table: table.to_string(),
-                    database: database.map(str::to_string),
-                    values: row.values.clone(),
-                })
-                .collect();
+            let requests = build_insert_restore_requests(&checkpoint);
             let expected = requests.len() as u64;
             let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let affected = driver
@@ -326,15 +371,7 @@ pub async fn restore_rewind_checkpoint(
             {
                 return Ok(RewindRestoreOutcome::refused(RefusalCode::SafeModeBlocked));
             }
-            let request = TableRowDeleteRequest {
-                table: table.to_string(),
-                database: database.map(str::to_string),
-                rows: checkpoint
-                    .rows
-                    .iter()
-                    .map(|row| row.selector.clone())
-                    .collect(),
-            };
+            let request = build_delete_restore_request(&checkpoint);
             let expected = request.rows.len() as u64;
             let affected = driver
                 .delete_table_rows(&request)
@@ -355,4 +392,201 @@ pub async fn restore_rewind_checkpoint(
     // not replay stale values over newer data.
     checkpoint_store::delete_checkpoint(&connection_id, &checkpoint_id)?;
     Ok(RewindRestoreOutcome::ok(restored))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        build_delete_restore_request, build_insert_restore_requests, build_update_restore_requests,
+        early_rewind_refusal, stored_rows_from_results, RefusalCode, RewindRestoreOutcome,
+    };
+    use crate::database::models::{ColumnInfo, QueryResult, RowKeyValue};
+    use crate::storage::checkpoint_store::{
+        CheckpointKind, RewindCheckpoint, StoredRow, CHECKPOINT_TTL_MS,
+    };
+    use serde_json::json;
+
+    fn key(column: &str, value: serde_json::Value) -> RowKeyValue {
+        RowKeyValue {
+            column: column.to_string(),
+            value,
+        }
+    }
+
+    fn query_result(columns: &[&str], rows: Vec<Vec<serde_json::Value>>) -> QueryResult {
+        QueryResult {
+            columns: columns
+                .iter()
+                .map(|name| ColumnInfo {
+                    name: (*name).to_string(),
+                    data_type: "text".to_string(),
+                    is_nullable: true,
+                    is_primary_key: false,
+                    max_length: None,
+                    default_value: None,
+                })
+                .collect(),
+            rows,
+            affected_rows: 0,
+            execution_time_ms: 0,
+            query: String::new(),
+            sandboxed: false,
+            truncated: false,
+        }
+    }
+
+    fn make_checkpoint(kind: CheckpointKind, rows: Vec<StoredRow>) -> RewindCheckpoint {
+        RewindCheckpoint {
+            id: "cp1".to_string(),
+            connection_id: "conn1".to_string(),
+            table: "users".to_string(),
+            database: Some("app".to_string()),
+            kind,
+            changed_columns: Vec::new(),
+            rows,
+            created_at_ms: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_millis() as u64)
+                .unwrap_or(0),
+        }
+    }
+
+    #[test]
+    fn capture_zips_each_selector_with_its_own_result_rows() {
+        let selectors = vec![vec![key("id", json!(1))], vec![key("id", json!(2))]];
+        let results = vec![
+            query_result(
+                &["id", "name"],
+                vec![vec![json!(1), json!("a")], vec![json!(1), json!("b")]],
+            ),
+            query_result(&["id", "name"], vec![vec![json!(2), json!("c")]]),
+        ];
+        let stored = stored_rows_from_results(selectors, results);
+        assert_eq!(stored.len(), 3);
+        // The first selector's two rows keep its PK; the second selector's
+        // row keeps the second PK — a misaligned zip would swap them.
+        assert_eq!(stored[0].selector[0].value, json!(1));
+        assert_eq!(stored[0].values[0], ("id".to_string(), json!(1)));
+        assert_eq!(stored[1].values[1], ("name".to_string(), json!("b")));
+        assert_eq!(stored[2].selector[0].value, json!(2));
+        assert_eq!(stored[2].values[1], ("name".to_string(), json!("c")));
+    }
+
+    #[test]
+    fn update_restore_emits_one_update_per_row_and_changed_column() {
+        let mut checkpoint = make_checkpoint(
+            CheckpointKind::Update,
+            vec![
+                StoredRow {
+                    selector: vec![key("id", json!(1))],
+                    values: vec![
+                        ("name".to_string(), json!("a")),
+                        ("email".to_string(), json!("a@x")),
+                    ],
+                },
+                StoredRow {
+                    selector: vec![key("id", json!(2))],
+                    // This row never captured "email" — restore must write NULL,
+                    // not skip the cell or borrow the other row's value.
+                    values: vec![("name".to_string(), json!("c"))],
+                },
+            ],
+        );
+        checkpoint.changed_columns = vec!["name".to_string(), "email".to_string()];
+
+        let updates = build_update_restore_requests(&checkpoint);
+        assert_eq!(updates.len(), 4);
+        assert_eq!(updates[0].target_column, "name");
+        assert_eq!(updates[0].value, json!("a"));
+        assert_eq!(updates[0].primary_keys[0].column, "id");
+        assert_eq!(updates[1].target_column, "email");
+        assert_eq!(updates[1].value, json!("a@x"));
+        assert_eq!(updates[2].value, json!("c"));
+        assert_eq!(updates[3].target_column, "email");
+        assert_eq!(updates[3].value, serde_json::Value::Null);
+        assert_eq!(updates[3].primary_keys[0].value, json!(2));
+        assert_eq!(updates[3].table, "users");
+        assert_eq!(updates[3].database.as_deref(), Some("app"));
+    }
+
+    #[test]
+    fn delete_restore_reinserts_rows_and_insert_restore_deletes_by_selector() {
+        let checkpoint = make_checkpoint(
+            CheckpointKind::Delete,
+            vec![
+                StoredRow {
+                    selector: vec![key("id", json!(1))],
+                    values: vec![("name".to_string(), json!("a"))],
+                },
+                StoredRow {
+                    selector: vec![key("id", json!(2))],
+                    values: vec![("name".to_string(), json!("b"))],
+                },
+            ],
+        );
+
+        let inserts = build_insert_restore_requests(&checkpoint);
+        assert_eq!(inserts.len(), 2);
+        assert_eq!(inserts[1].values[0], ("name".to_string(), json!("b")));
+        assert_eq!(inserts[1].table, "users");
+
+        let delete = build_delete_restore_request(&checkpoint);
+        assert_eq!(delete.rows.len(), 2);
+        assert_eq!(delete.rows[0][0].value, json!(1));
+        assert_eq!(delete.rows[1][0].value, json!(2));
+    }
+
+    #[test]
+    fn early_refusals_follow_mismatch_then_empty_then_expired() {
+        let row = StoredRow {
+            selector: vec![key("id", json!(1))],
+            values: vec![],
+        };
+
+        // Foreign connection always wins, even over an empty payload.
+        let mut checkpoint = make_checkpoint(CheckpointKind::Update, vec![]);
+        checkpoint.connection_id = "other".to_string();
+        assert_eq!(
+            early_rewind_refusal(&checkpoint, "conn1"),
+            Some(RefusalCode::ConnectionMismatch)
+        );
+
+        // Empty beats expired: a checkpoint that is BOTH reports empty.
+        let mut checkpoint = make_checkpoint(CheckpointKind::Update, vec![]);
+        checkpoint.created_at_ms = 0;
+        assert_eq!(
+            early_rewind_refusal(&checkpoint, "conn1"),
+            Some(RefusalCode::EmptyCheckpoint)
+        );
+
+        // A row-bearing but ancient checkpoint is expired.
+        let mut checkpoint = make_checkpoint(CheckpointKind::Update, vec![row.clone()]);
+        checkpoint.created_at_ms = 0;
+        assert_eq!(
+            early_rewind_refusal(&checkpoint, "conn1"),
+            Some(RefusalCode::CheckpointExpired)
+        );
+
+        // Fresh, row-bearing, same-connection → no early refusal.
+        let checkpoint = make_checkpoint(CheckpointKind::Update, vec![row]);
+        assert_eq!(early_rewind_refusal(&checkpoint, "conn1"), None);
+
+        // Boundary: exactly TTL old is still within the window.
+        let mut checkpoint = make_checkpoint(
+            CheckpointKind::Update,
+            vec![StoredRow {
+                selector: vec![key("id", json!(1))],
+                values: vec![],
+            }],
+        );
+        checkpoint.created_at_ms = checkpoint.created_at_ms.saturating_sub(CHECKPOINT_TTL_MS);
+        assert_eq!(early_rewind_refusal(&checkpoint, "conn1"), None);
+    }
+
+    #[test]
+    fn refused_outcome_carries_no_restore_count() {
+        let outcome = RewindRestoreOutcome::refused(RefusalCode::SafeModeBlocked);
+        assert!(outcome.restored.is_none());
+        assert_eq!(outcome.refusals, vec![RefusalCode::SafeModeBlocked]);
+    }
 }

@@ -1,0 +1,40 @@
+/* Semantic glossary manager modal — reuses the memory-manager row layout
+   and adds badge styling for kind/source. Per-feature stylesheet. */
+
+.ai-semantic-glossary-modal {
+  width: min(520px, calc(100vw - 36px));
+}
+
+.ai-semantic-glossary-list .ai-memory-manager-row-desc {
+  white-space: pre-wrap;
+}
+
+.ai-semantic-glossary-badges {
+  display: inline-flex;
+  gap: 6px;
+  margin-left: 8px;
+  vertical-align: middle;
+}
+
+.ai-semantic-glossary-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 16px;
+  letter-spacing: 0.02em;
+  background: var(--surface-secondary, rgba(128, 128, 128, 0.16));
+  color: var(--text-secondary, currentColor);
+}
+
+.ai-semantic-glossary-badge.is-source-agent {
+  background: rgba(59, 130, 246, 0.16);
+  color: #60a5fa;
+}
+
+.ai-semantic-glossary-badge.is-source-user {
+  background: rgba(16, 185, 129, 0.16);
+  color: #34d399;
+}

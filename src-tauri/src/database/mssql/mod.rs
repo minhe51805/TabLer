@@ -510,9 +510,25 @@ mod mssql_live_diagnostics {
         println!("[multi probe] sql: {sql}");
 
         use crate::database::models::{QueryParameter, QueryParameterType};
+        // Sample a real substring from the live data instead of asserting a
+        // hard-coded name that may not exist.
+        let probe = driver
+            .execute_query(
+                "SELECT TOP 1 SUBSTRING(HoTen, 1, 3) AS seed FROM [QuanLySinhVienDB].[dbo].[SinhViens] WHERE HoTen IS NOT NULL",
+            )
+            .await
+            .expect("probe");
+        let seed = probe
+            .rows
+            .first()
+            .and_then(|row| row.first())
+            .and_then(|v| v.as_str())
+            .map(|s| format!("%{s}%"))
+            .unwrap_or_else(|| "%My%".to_string());
+        println!("[multi probe] seeded LIKE {seed} from live data");
         let parameters = vec![QueryParameter {
             name: "keyword".to_string(),
-            value: serde_json::Value::String("%ninh%".to_string()),
+            value: serde_json::Value::String(seed.clone()),
             data_type: QueryParameterType::Text,
         }];
         // Compile exactly like the global-search command does.
@@ -530,7 +546,7 @@ mod mssql_live_diagnostics {
         println!("[multi probe] rows returned: {}", result.rows.len());
         assert!(
             !result.rows.is_empty(),
-            "expected matching rows for '%ninh%'"
+            "expected matching rows for seeded LIKE {seed}"
         );
     }
 

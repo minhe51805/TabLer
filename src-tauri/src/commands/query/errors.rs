@@ -76,3 +76,92 @@ pub(super) fn format_query_runtime_error(error: impl std::fmt::Display) -> Strin
         format!("Query execution failed: {}", compact_message)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{format_query_connection_error, format_query_runtime_error};
+
+    #[test]
+    fn connection_errors_distinguish_missing_from_unavailable() {
+        assert_eq!(
+            format_query_connection_error("connection not found"),
+            "The selected connection is not active. Please reconnect and try again."
+        );
+        assert_eq!(
+            format_query_connection_error("connect first"),
+            "The selected connection is not active. Please reconnect and try again."
+        );
+        assert_eq!(
+            format_query_connection_error("socket timed out"),
+            "The database connection is not available right now. Please reconnect and try again."
+        );
+    }
+
+    #[test]
+    fn runtime_error_taxonomy_maps_keyword_classes() {
+        // Permission beats everything — a 42501 must not collapse into syntax.
+        assert_eq!(
+            format_query_runtime_error("permission denied for relation users"),
+            "The current connection does not have permission to run this statement."
+        );
+        assert_eq!(
+            format_query_runtime_error("access denied for user 'app'"),
+            "The current connection does not have permission to run this statement."
+        );
+        assert_eq!(
+            format_query_runtime_error("password authentication failed"),
+            "Database authentication failed. Please verify the connection settings."
+        );
+        assert_eq!(
+            format_query_runtime_error("connection refused by remote host"),
+            "The database connection is no longer available. Please reconnect and try again."
+        );
+        assert_eq!(
+            format_query_runtime_error("connection reset by peer"),
+            "The database connection is no longer available. Please reconnect and try again."
+        );
+        for raw in [
+            "syntax error at or near \"selct\"",
+            "unterminated quoted string",
+            "unrecognized token: \"def\"",
+            "parse error near line 3",
+        ] {
+            assert!(
+                format_query_runtime_error(raw).starts_with("SQL syntax error:"),
+                "{raw:?} must classify as syntax"
+            );
+        }
+        for raw in [
+            "relation \"users\" does not exist",
+            "invalid object name 'orders'",
+            "no such table: widgets",
+            "column not found: c1",
+        ] {
+            assert!(
+                format_query_runtime_error(raw).starts_with("Database object error:"),
+                "{raw:?} must classify as object error"
+            );
+        }
+        assert!(
+            format_query_runtime_error("column reference \"id\" is ambiguous")
+                .starts_with("Query structure error:")
+        );
+    }
+
+    #[test]
+    fn whitespace_is_compacted_and_unknown_errors_stay_generic() {
+        let message = format_query_runtime_error("relation   \"t\"\ndoes not exist");
+        assert_eq!(
+            message,
+            "Database object error: relation \"t\" does not exist"
+        );
+        assert_eq!(
+            format_query_runtime_error("disk I/O error"),
+            "Query execution failed: disk I/O error"
+        );
+        assert_eq!(
+            format_query_runtime_error("   "),
+            "Query execution failed. Please review the SQL and connection state."
+        );
+    }
+}

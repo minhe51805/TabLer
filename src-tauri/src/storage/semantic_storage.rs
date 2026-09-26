@@ -122,7 +122,21 @@ impl SemanticStorage {
         if entry.term.is_empty() || entry.definition.is_empty() {
             return Err("Semantic entry requires non-empty term and definition.".to_string());
         }
-
+        // Same durable-knowledge gate as agent memory: the glossary persists
+        // into plaintext JSON, so credentials and raw row identifiers must
+        // never enter it.
+        crate::utils::content_gate::reject_sensitive_payload(&entry.term, "glossary term")?;
+        crate::utils::content_gate::reject_sensitive_payload(
+            &entry.definition,
+            "glossary definition",
+        )?;
+        // `source` is a provenance token rendered as a UI badge — anything
+        // outside the known pair normalizes to "user", matching the command's
+        // historical default for callers that never set it.
+        entry.source = match entry.source.trim() {
+            "agent" => "agent".to_string(),
+            _ => "user".to_string(),
+        };
         let timestamp = now_iso();
         if entry.id.is_empty() {
             entry.id = Uuid::new_v4().to_string();
@@ -267,5 +281,46 @@ mod tests {
         assert_eq!(updated.id, saved.id);
         assert_eq!(storage.cache.len(), 1);
         assert_eq!(updated.definition, "registered end users only");
+    }
+
+    #[test]
+    fn save_rejects_row_identifier_shaped_definitions() {
+        let mut storage = temp_storage();
+        // The glossary persists to plaintext JSON — a definition that embeds a
+        // live row identifier is data, not semantics, and must be refused.
+        let mut bad = entry(
+            "owner",
+            "the writer was user_id=6a69dd9a326709cf18a32d44",
+            None,
+        );
+        bad.source = "agent".to_string();
+        assert!(storage.save(bad).is_err());
+        assert!(storage
+            .save(entry(
+                "revenue",
+                "sum(amount) where status='paid'; excludes cancelled",
+                None,
+            ))
+            .is_ok());
+    }
+
+    #[test]
+    fn save_normalizes_source_to_the_known_pair() {
+        let mut storage = temp_storage();
+        // A caller that forgets or invents a source must not produce a badge
+        // the UI cannot classify — the store collapses it to the conservative
+        // "user" default (the command's historical fallback).
+        let mut stray = entry("alias", "orders.alias maps to order_alias", None);
+        stray.source = "system".to_string();
+        let saved = storage.save(stray).unwrap();
+        assert_eq!(saved.source, "user");
+        let agent = storage
+            .save({
+                let mut e = entry("metric", "net = gross - refunds", None);
+                e.source = "agent".to_string();
+                e
+            })
+            .unwrap();
+        assert_eq!(agent.source, "agent");
     }
 }

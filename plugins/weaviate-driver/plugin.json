@@ -8,8 +8,15 @@
   "description": "Adds Weaviate connectivity (REST + GraphQL on :8080) through the declarative HTTP driver host: class browsing, a SELECT subset, inline edits, and schema edits.",
   "author": "TableR Team",
   "entry": null,
-  "capabilities": ["database"],
-  "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+  "capabilities": [
+    "database"
+  ],
+  "permissions": [
+    "connection.metadata",
+    "query.read",
+    "query.execute",
+    "network.fetch"
+  ],
   "compatibility": {
     "minAppVersion": "0.1.4",
     "maxAppVersion": null,

@@ -77,6 +77,8 @@ describe("AIAgentLearnings", () => {
       description: "users.email is never populated",
       connectionId: "conn-a",
       database: "shop",
+      // Agent-proposed learning writes are still agent-authored.
+      origin: "agent",
     });
     // The offer is spent, so the card retires; the toast carries the evidence
     // that something was actually written.

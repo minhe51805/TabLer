@@ -13,8 +13,15 @@
         "description": "Adds Google BigQuery connectivity over the declarative HTTP driver host.",
         "author": "TableR Team",
         "entry": null,
-        "capabilities": ["database"],
-        "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute",
+          "network.fetch"
+        ],
         "compatibility": {
           "minAppVersion": "0.1.4",
           "maxAppVersion": null,
@@ -54,8 +61,14 @@
         "description": "Adds Apache Cassandra / ScyllaDB connectivity as an out-of-process driver-sidecar-v1 native driver, so a lean build can add it without recompiling the app.",
         "author": "TableR Team",
         "entry": null,
-        "capabilities": ["database"],
-        "permissions": ["connection.metadata", "query.read", "query.execute"],
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute"
+        ],
         "compatibility": {
           "minAppVersion": "0.1.4",
           "maxAppVersion": null,
@@ -95,8 +108,15 @@
         "description": "Adds ClickHouse connectivity over the declarative HTTP driver host.",
         "author": "TableR Team",
         "entry": null,
-        "capabilities": ["database"],
-        "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute",
+          "network.fetch"
+        ],
         "compatibility": {
           "minAppVersion": "0.1.4",
           "maxAppVersion": null,
@@ -136,8 +156,15 @@
         "description": "Adds Cloudflare D1 connectivity over the declarative HTTP driver host.",
         "author": "TableR Team",
         "entry": null,
-        "capabilities": ["database"],
-        "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute",
+          "network.fetch"
+        ],
         "compatibility": {
           "minAppVersion": "0.1.4",
           "maxAppVersion": null,
@@ -177,8 +204,14 @@
         "description": "Adds DuckDB connectivity as an out-of-process driver-sidecar-v1 native driver, so a lean build can add it without recompiling the app.",
         "author": "TableR Team",
         "entry": null,
-        "capabilities": ["database"],
-        "permissions": ["connection.metadata", "query.read", "query.execute"],
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute"
+        ],
         "compatibility": {
           "minAppVersion": "0.1.4",
           "maxAppVersion": null,
@@ -215,8 +248,15 @@
         "kind": "adapter",
         "author": "TableR Team",
         "entry": null,
-        "capabilities": ["database"],
-        "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute",
+          "network.fetch"
+        ],
         "compatibility": {
           "minAppVersion": "0.1.4",
           "maxAppVersion": null,
@@ -259,8 +299,15 @@
         "description": "Adds bounded, read-only Elasticsearch index browsing and JSON search through the declarative HTTP driver host.",
         "author": "TableR Team",
         "entry": null,
-        "capabilities": ["database"],
-        "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute",
+          "network.fetch"
+        ],
         "compatibility": {
           "minAppVersion": "0.1.4",
           "maxAppVersion": null,
@@ -300,8 +347,14 @@
         "description": "Adds LibSQL / Turso connectivity as an out-of-process driver-sidecar-v1 native driver, so a lean build can add it without recompiling the app.",
         "author": "TableR Team",
         "entry": null,
-        "capabilities": ["database"],
-        "permissions": ["connection.metadata", "query.read", "query.execute"],
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute"
+        ],
         "compatibility": {
           "minAppVersion": "0.1.4",
           "maxAppVersion": null,
@@ -341,8 +394,15 @@
         "description": "Adds bounded, read-only OpenSearch index browsing and JSON search through the declarative HTTP driver host.",
         "author": "TableR Team",
         "entry": null,
-        "capabilities": ["database"],
-        "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute",
+          "network.fetch"
+        ],
         "compatibility": {
           "minAppVersion": "0.1.4",
           "maxAppVersion": null,
@@ -382,8 +442,15 @@
         "description": "Adds read-only Oracle Database connectivity over Oracle REST Data Services (ORDS) through the declarative HTTP driver host.",
         "author": "TableR Team",
         "entry": null,
-        "capabilities": ["database"],
-        "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute",
+          "network.fetch"
+        ],
         "compatibility": {
           "minAppVersion": "0.1.4",
           "maxAppVersion": null,
@@ -423,7 +490,9 @@
         "description": "Adds TSV, pipe-delimited, and JSON Lines exports to the data grid.",
         "author": "TableR Team",
         "entry": null,
-        "capabilities": ["export"],
+        "capabilities": [
+          "export"
+        ],
         "permissions": [],
         "compatibility": {
           "minAppVersion": "0.1.4",
@@ -487,8 +556,14 @@
         "description": "Adds Redis connectivity as an out-of-process driver-sidecar-v1 native driver, so a lean build can add it without recompiling the app.",
         "author": "TableR Team",
         "entry": null,
-        "capabilities": ["database"],
-        "permissions": ["connection.metadata", "query.read", "query.execute"],
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute"
+        ],
         "compatibility": {
           "minAppVersion": "0.1.4",
           "maxAppVersion": null,
@@ -528,8 +603,15 @@
         "description": "Adds Snowflake connectivity over the declarative HTTP driver host.",
         "author": "TableR Team",
         "entry": null,
-        "capabilities": ["database"],
-        "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute",
+          "network.fetch"
+        ],
         "compatibility": {
           "minAppVersion": "0.1.4",
           "maxAppVersion": null,
@@ -566,8 +648,15 @@
         "kind": "adapter",
         "author": "TableR Team",
         "entry": null,
-        "capabilities": ["database"],
-        "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute",
+          "network.fetch"
+        ],
         "compatibility": {
           "minAppVersion": "0.1.4",
           "maxAppVersion": null,
@@ -610,8 +699,15 @@
         "description": "Adds SurrealDB connectivity (SurrealQL over the HTTP /rpc endpoint) through the declarative HTTP driver host.",
         "author": "TableR Team",
         "entry": null,
-        "capabilities": ["database"],
-        "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute",
+          "network.fetch"
+        ],
         "compatibility": {
           "minAppVersion": "0.1.4",
           "maxAppVersion": null,
@@ -648,8 +744,15 @@
         "kind": "adapter",
         "author": "TableR Team",
         "entry": null,
-        "capabilities": ["database"],
-        "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute",
+          "network.fetch"
+        ],
         "compatibility": {
           "minAppVersion": "0.1.4",
           "maxAppVersion": null,
@@ -692,8 +795,15 @@
         "description": "Adds Typesense connectivity — collection browsing, filtered document search, inline document edits, and JSONL batch import — over the declarative HTTP driver host.",
         "author": "TableR Team",
         "entry": null,
-        "capabilities": ["database"],
-        "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute",
+          "network.fetch"
+        ],
         "compatibility": {
           "minAppVersion": "0.1.4",
           "maxAppVersion": null,
@@ -733,8 +843,15 @@
         "description": "Adds Weaviate connectivity (REST + GraphQL on :8080) through the declarative HTTP driver host: class browsing, a SELECT subset, inline edits, and schema edits.",
         "author": "TableR Team",
         "entry": null,
-        "capabilities": ["database"],
-        "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+        "capabilities": [
+          "database"
+        ],
+        "permissions": [
+          "connection.metadata",
+          "query.read",
+          "query.execute",
+          "network.fetch"
+        ],
         "compatibility": {
           "minAppVersion": "0.1.4",
           "maxAppVersion": null,

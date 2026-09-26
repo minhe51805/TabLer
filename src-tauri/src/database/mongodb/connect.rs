@@ -256,3 +256,135 @@ impl MongoDbDriver {
             .collection(collection_name))
     }
 }
+
+#[cfg(test)]
+mod uri_tests {
+    use super::MongoDbDriver;
+    use crate::database::models::ConnectionConfig;
+    fn base_config() -> ConnectionConfig {
+        ConnectionConfig {
+            host: Some("mongo.internal".to_string()),
+            port: Some(27017),
+            ..ConnectionConfig::default()
+        }
+    }
+
+    #[test]
+    fn percent_encode_preserves_unreserved_and_uppercases_hex() {
+        assert_eq!(
+            MongoDbDriver::percent_encode("abcXYZ019-_.~"),
+            "abcXYZ019-_.~"
+        );
+        assert_eq!(
+            MongoDbDriver::percent_encode("a/b:c@d e"),
+            "a%2Fb%3Ac%40d%20e"
+        );
+    }
+
+    #[test]
+    fn credentials_are_percent_encoded_and_password_needs_username() {
+        let mut config = base_config();
+        config.username = Some("we:ird/user".to_string());
+        config.password = Some("p@ss w/rd".to_string());
+        let uri = MongoDbDriver::build_connection_uri(&config).unwrap();
+        assert!(
+            uri.contains("we%3Aird%2Fuser:p%40ss%20w%2Frd@"),
+            "credentials must be percent-encoded: {uri}"
+        );
+
+        config.username = None;
+        assert!(MongoDbDriver::build_connection_uri(&config).is_err());
+
+        for host in [None, Some(String::new()), Some("   ".to_string())] {
+            let mut config = base_config();
+            config.host = host;
+            assert!(
+                MongoDbDriver::build_connection_uri(&config).is_err(),
+                "empty host must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn explicit_srv_scheme_survives_the_direct_override() {
+        let mut config = base_config();
+        config.host = Some("mongodb+srv://cluster0.abc.mongodb.net".to_string());
+        config.port = Some(27017);
+        config.username = Some("u".to_string());
+        config
+            .additional_fields
+            .insert("srv_mode".to_string(), "direct".to_string());
+        let uri = MongoDbDriver::build_connection_uri(&config).unwrap();
+        assert!(uri.starts_with("mongodb+srv://"), "{uri}");
+        assert!(!uri.contains(":27017"), "SRV must not carry a port: {uri}");
+        assert!(uri.contains("tls=true"));
+    }
+
+    #[test]
+    fn srv_defaults_auth_source_to_admin_only_for_credentialed_users() {
+        // SRV + credentials → authSource=admin default.
+        let mut config = base_config();
+        config.host = Some("mongodb+srv://c.mongodb.net".to_string());
+        config.username = Some("u".to_string());
+        config.database = Some("appdb".to_string());
+        let uri = MongoDbDriver::build_connection_uri(&config).unwrap();
+        assert!(uri.contains("/appdb?"), "{uri}");
+        assert!(uri.contains("authSource=admin"), "{uri}");
+
+        // No credentials → no authSource (anonymous read of SRV target).
+        config.username = None;
+        let uri = MongoDbDriver::build_connection_uri(&config).unwrap();
+        assert!(!uri.contains("authSource"), "{uri}");
+
+        // Explicit auth_source always wins over the SRV default.
+        config.username = Some("u".to_string());
+        config
+            .additional_fields
+            .insert("auth_source".to_string(), "users_db".to_string());
+        let uri = MongoDbDriver::build_connection_uri(&config).unwrap();
+        assert!(uri.contains("authSource=users_db"), "{uri}");
+        assert!(!uri.contains("authSource=admin"), "{uri}");
+    }
+
+    #[test]
+    fn non_srv_tls_flag_follows_use_ssl() {
+        let mut config = base_config();
+        config.use_ssl = true;
+        let uri = MongoDbDriver::build_connection_uri(&config).unwrap();
+        assert!(uri.contains("tls=true"), "{uri}");
+        config.use_ssl = false;
+        let uri = MongoDbDriver::build_connection_uri(&config).unwrap();
+        assert!(uri.contains("tls=false"), "{uri}");
+    }
+
+    #[test]
+    fn credentials_embedded_in_a_pasted_host_are_stripped() {
+        let mut config = base_config();
+        config.host = Some("mongodb://sneaky:hunter2@db.internal".to_string());
+        config.port = Some(27017);
+        config.username = Some("real".to_string());
+        config.password = Some("pw".to_string());
+        let uri = MongoDbDriver::build_connection_uri(&config).unwrap();
+        assert!(uri.starts_with("mongodb://real:pw@"), "{uri}");
+        assert!(!uri.contains("sneaky"), "{uri}");
+        assert!(!uri.contains("hunter2"), "{uri}");
+        assert!(uri.contains("db.internal"), "{uri}");
+    }
+
+    #[test]
+    fn replica_set_and_database_route_into_the_uri() {
+        let mut config = base_config();
+        config
+            .additional_fields
+            .insert("replica_set".to_string(), "rs0 main".to_string());
+        config.database = Some("app".to_string());
+        config.port = Some(0); // zero means "no port"
+        let uri = MongoDbDriver::build_connection_uri(&config).unwrap();
+        assert!(uri.contains("/app?"), "{uri}");
+        assert!(uri.contains("replicaSet=rs0%20main"), "{uri}");
+        assert!(
+            !uri.contains(":0"),
+            "port 0 must be treated as unset: {uri}"
+        );
+    }
+}

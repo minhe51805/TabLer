@@ -83,7 +83,7 @@ impl DatabaseDriver for MssqlDriver {
              FROM [{}].sys.all_objects o \
              JOIN [{}].sys.schemas s ON s.schema_id = o.schema_id \
              LEFT JOIN [{}].sys.triggers tt ON tt.object_id = o.object_id \
-             LEFT JOIN [{}].sys.objects po ON po.object_id = tt.parent_object_id \
+             LEFT JOIN [{}].sys.objects po ON po.object_id = o.parent_object_id \
              LEFT JOIN [{}].sys.sql_modules sm ON sm.object_id = o.object_id \
              WHERE o.type IN ('V', 'TR', 'P', 'FN', 'TF', 'IF', 'SN', 'AF', 'PC', 'FS', 'FT', 'R', 'D') \
                AND (o.type <> 'TR' OR tt.parent_class <> 0) \

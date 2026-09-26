@@ -597,6 +597,28 @@ describe("remember_term", () => {
     expect(parsed.saved).toBe("churn");
   });
 
+  it("announces the save via toast + workspace-activity (no silent writes)", async () => {
+    const toastTitles: string[] = [];
+    const activityLabels: string[] = [];
+    const onToast = (event: Event) =>
+      toastTitles.push(String((event as CustomEvent).detail?.title ?? ""));
+    const onActivity = (event: Event) =>
+      activityLabels.push(String((event as CustomEvent).detail?.label ?? ""));
+    window.addEventListener("app-toast", onToast);
+    window.addEventListener("workspace-activity", onActivity);
+    try {
+      await run(mkDeps(), {
+        action: "remember_term",
+        args: { term: "churn", definition: "Users who left" },
+      } as AIAgentToolAction);
+      expect(toastTitles).toContain("Glossary term saved");
+      expect(activityLabels.some((label) => label.includes("churn"))).toBe(true);
+    } finally {
+      window.removeEventListener("app-toast", onToast);
+      window.removeEventListener("workspace-activity", onActivity);
+    }
+  });
+
   it("requires both term and definition", async () => {
     const obs = await run(mkDeps(), {
       action: "remember_term",
@@ -866,6 +888,7 @@ describe("agent memory tools", () => {
       description: "table naming",
       connectionId: CONNECTION_ID,
       database: DB,
+      origin: "agent",
     });
   });
 

@@ -624,7 +624,7 @@ const EN_POSTGRESQL: EngineSpec = {
   connString: {
     intro:
       "Instead of filling every field, you can paste a PostgreSQL connection URI. Both postgres:// and postgresql:// schemes are accepted.",
-    code: "postgresql://username:password@host:5432/database?sslmode=require",
+    code: "postgresql://<username>:<password>@host:5432/database?sslmode=require",
     bullets: [
       "Omit the password from the URI and let TableR store it in the keyring instead.",
       "Append sslmode=require (or verify-full) for remote servers.",
@@ -760,7 +760,7 @@ const EN_MYSQL: EngineSpec = {
   ],
   connString: {
     intro: "Instead of filling every field, you can paste a MySQL connection URI.",
-    code: "mysql://username:password@host:3306/database?ssl-mode=REQUIRED",
+    code: "mysql://<username>:<password>@host:3306/database?ssl-mode=REQUIRED",
     bullets: [
       "Omit the password from the URI and let TableR store it in the keyring instead.",
       "Append ssl-mode=REQUIRED (or VERIFY_IDENTITY) for remote servers.",
@@ -894,7 +894,7 @@ const EN_MARIADB: EngineSpec = {
   connString: {
     intro:
       "MariaDB uses MySQL's connection URI format, so you can paste a MySQL-style connection string.",
-    code: "mysql://username:password@host:3306/database?ssl-mode=REQUIRED",
+    code: "mysql://<username>:<password>@host:3306/database?ssl-mode=REQUIRED",
     bullets: [
       "Omit the password from the URI and let TableR store it in the keyring instead.",
       "Append ssl-mode=REQUIRED (or VERIFY_IDENTITY) for remote servers.",
@@ -1143,7 +1143,7 @@ const EN_COCKROACHDB: EngineSpec = {
   connString: {
     intro:
       "Because CockroachDB speaks the PostgreSQL protocol, you can paste a PostgreSQL connection URI. Both postgres:// and postgresql:// schemes are accepted.",
-    code: "postgresql://username:password@host:26257/database?sslmode=verify-full",
+    code: "postgresql://<username>:<password>@host:26257/database?sslmode=verify-full",
     bullets: [
       "Omit the password from the URI and let TableR store it in the keyring instead.",
       "Append sslmode=verify-full for CockroachDB Cloud, or sslmode=require for other remote clusters.",
@@ -1240,7 +1240,7 @@ const EN_GREENPLUM: EngineSpec = {
   connString: {
     intro:
       "Because Greenplum is PostgreSQL-compatible, you can paste a PostgreSQL connection URI. Both postgres:// and postgresql:// schemes are accepted.",
-    code: "postgresql://username:password@coordinator:5432/database?sslmode=require",
+    code: "postgresql://<username>:<password>@coordinator:5432/database?sslmode=require",
     bullets: [
       "Omit the password from the URI and let TableR store it in the keyring instead.",
       "Append sslmode=require (or verify-full) for remote warehouses.",
@@ -1345,7 +1345,7 @@ const EN_AMAZON_REDSHIFT: EngineSpec = {
   connString: {
     intro:
       "Because Redshift is PostgreSQL-compatible, you can paste a PostgreSQL connection URI. Both postgres:// and postgresql:// schemes are accepted.",
-    code: "postgresql://username:password@cluster.region.redshift.amazonaws.com:5439/database?sslmode=require",
+    code: "postgresql://<username>:<password>@cluster.region.redshift.amazonaws.com:5439/database?sslmode=require",
     bullets: [
       "Omit the password from the URI and let TableR store it in the keyring instead.",
       "Append sslmode=require (or verify-full) — Redshift connections cross the network.",
@@ -2130,7 +2130,7 @@ const EN_MONGODB: EngineSpec = {
   connString: {
     intro:
       "Instead of filling every field, you can paste a MongoDB connection string. Both mongodb:// and mongodb+srv:// (Atlas) schemes are accepted.",
-    code: "mongodb+srv://username:password@cluster.mongodb.net/?retryWrites=true&w=majority",
+    code: "mongodb+srv://<username>:<password>@cluster.mongodb.net/?retryWrites=true&w=majority",
     bullets: [
       "Use mongodb+srv:// for Atlas, or mongodb://host:27017 for a direct or self-hosted server.",
       "Omit the password from the URI and let TableR store it in the keyring instead.",
@@ -3134,7 +3134,7 @@ const VI_POSTGRESQL: EngineSpec = {
   connString: {
     intro:
       "Thay vì điền từng trường, bạn có thể dán một URI kết nối PostgreSQL. Chấp nhận cả scheme postgres:// và postgresql://.",
-    code: "postgresql://username:password@host:5432/database?sslmode=require",
+    code: "postgresql://<username>:<password>@host:5432/database?sslmode=require",
     bullets: [
       "Bỏ password khỏi URI và để TableR lưu vào keyring.",
       "Thêm sslmode=require (hoặc verify-full) cho server từ xa.",
@@ -3262,7 +3262,7 @@ const VI_MYSQL: EngineSpec = {
   ],
   connString: {
     intro: "Thay vì điền từng trường, bạn có thể dán một URI kết nối MySQL.",
-    code: "mysql://username:password@host:3306/database?ssl-mode=REQUIRED",
+    code: "mysql://<username>:<password>@host:3306/database?ssl-mode=REQUIRED",
     bullets: [
       "Bỏ password khỏi URI và để TableR lưu vào keyring.",
       "Thêm ssl-mode=REQUIRED (hoặc VERIFY_IDENTITY) cho server từ xa.",
@@ -3393,7 +3393,7 @@ const VI_MARIADB: EngineSpec = {
   connString: {
     intro:
       "MariaDB dùng định dạng URI kết nối của MySQL, nên bạn có thể dán một connection string kiểu MySQL.",
-    code: "mysql://username:password@host:3306/database?ssl-mode=REQUIRED",
+    code: "mysql://<username>:<password>@host:3306/database?ssl-mode=REQUIRED",
     bullets: [
       "Bỏ password khỏi URI và để TableR lưu vào keyring.",
       "Thêm ssl-mode=REQUIRED (hoặc VERIFY_IDENTITY) cho server từ xa.",
@@ -3631,7 +3631,7 @@ const VI_COCKROACHDB: EngineSpec = {
   connString: {
     intro:
       "Vì CockroachDB dùng giao thức PostgreSQL, bạn có thể dán một URI kết nối PostgreSQL. Chấp nhận cả scheme postgres:// và postgresql://.",
-    code: "postgresql://username:password@host:26257/database?sslmode=verify-full",
+    code: "postgresql://<username>:<password>@host:26257/database?sslmode=verify-full",
     bullets: [
       "Bỏ password khỏi URI và để TableR lưu vào keyring.",
       "Thêm sslmode=verify-full cho CockroachDB Cloud, hoặc sslmode=require cho các cụm từ xa khác.",
@@ -3728,7 +3728,7 @@ const VI_GREENPLUM: EngineSpec = {
   connString: {
     intro:
       "Vì Greenplum tương thích PostgreSQL, bạn có thể dán một URI kết nối PostgreSQL. Chấp nhận cả scheme postgres:// và postgresql://.",
-    code: "postgresql://username:password@coordinator:5432/database?sslmode=require",
+    code: "postgresql://<username>:<password>@coordinator:5432/database?sslmode=require",
     bullets: [
       "Bỏ password khỏi URI và để TableR lưu vào keyring.",
       "Thêm sslmode=require (hoặc verify-full) cho kho từ xa.",
@@ -3822,7 +3822,7 @@ const VI_AMAZON_REDSHIFT: EngineSpec = {
   connString: {
     intro:
       "Vì Redshift tương thích PostgreSQL, bạn có thể dán một URI kết nối PostgreSQL. Chấp nhận cả scheme postgres:// và postgresql://.",
-    code: "postgresql://username:password@cluster.region.redshift.amazonaws.com:5439/database?sslmode=require",
+    code: "postgresql://<username>:<password>@cluster.region.redshift.amazonaws.com:5439/database?sslmode=require",
     bullets: [
       "Bỏ password khỏi URI và để TableR lưu vào keyring.",
       "Thêm sslmode=require (hoặc verify-full) — kết nối Redshift đi qua mạng.",
@@ -4545,7 +4545,7 @@ const VI_MONGODB: EngineSpec = {
   connString: {
     intro:
       "Thay vì điền từng trường, bạn có thể dán một connection string MongoDB. Cả hai scheme mongodb:// và mongodb+srv:// (Atlas) đều được chấp nhận.",
-    code: "mongodb+srv://username:password@cluster.mongodb.net/?retryWrites=true&w=majority",
+    code: "mongodb+srv://<username>:<password>@cluster.mongodb.net/?retryWrites=true&w=majority",
     bullets: [
       "Dùng mongodb+srv:// cho Atlas, hoặc mongodb://host:27017 cho server trực tiếp hoặc tự cài.",
       "Bỏ password khỏi URI và để TableR lưu nó trong keyring.",

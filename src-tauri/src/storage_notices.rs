@@ -86,3 +86,16 @@ pub fn drain_storage_notices() -> Vec<StorageNotice> {
     };
     guard.pending.drain(..).collect()
 }
+
+/// Assertions for unit tests: inspect the dedupe set without draining the
+/// pending queue (draining would race other tests' notices).
+#[cfg(test)]
+pub(crate) mod test_support {
+    /// True when a notice with `id` was pushed this session. Checks the
+    /// dedupe registry rather than the pending queue, so it stays reliable
+    /// even if another test drained pending notices.
+    pub(crate) fn notice_was_raised(id: &str) -> bool {
+        let guard = super::state().lock().unwrap_or_else(|p| p.into_inner());
+        guard.sent.contains(id)
+    }
+}

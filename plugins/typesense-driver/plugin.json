@@ -8,8 +8,15 @@
   "description": "Adds Typesense connectivity — collection browsing, filtered document search, inline document edits, and JSONL batch import — over the declarative HTTP driver host.",
   "author": "TableR Team",
   "entry": null,
-  "capabilities": ["database"],
-  "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+  "capabilities": [
+    "database"
+  ],
+  "permissions": [
+    "connection.metadata",
+    "query.read",
+    "query.execute",
+    "network.fetch"
+  ],
   "compatibility": {
     "minAppVersion": "0.1.4",
     "maxAppVersion": null,

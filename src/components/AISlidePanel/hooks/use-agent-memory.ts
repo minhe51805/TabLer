@@ -4,6 +4,9 @@ export interface AgentMemoryIndexEntry {
   name: string;
   description: string;
   updatedAt: string;
+  /** `agent` for tool/learned writes today; the field exists so a future
+   *  manual write path keeps its provenance instead of blending in. */
+  origin: string;
 }
 
 // Agent-memory index cache: memory reads must be scope-faithful, so the cache

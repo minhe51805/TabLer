@@ -146,7 +146,9 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
       </div>
 
       {/* main scene: node + agent (left) | terminal → chat (right) */}
-      <div className={`agent-demo-scene ${inScene || reduced ? "is-on" : ""}`}>
+      <div
+        className={`agent-demo-scene ${inScene || reduced ? "is-on" : ""} ${handedOff ? "is-handover" : ""}`}
+      >
         <div className="agent-demo-left">
           {/* thin progress rail — the only trace of past/future steps */}
           <ol className="agent-demo-progress" aria-hidden="true">

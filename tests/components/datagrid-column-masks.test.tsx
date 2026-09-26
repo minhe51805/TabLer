@@ -1,4 +1,4 @@
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it } from "vitest";
 import { useDataGridColumnMasks } from "@/components/DataGrid/hooks/useDataGridColumnMasks";
 import type { GridCellValue, ResolvedColumn } from "@/components/DataGrid/hooks/useDataGrid";
@@ -77,10 +77,13 @@ describe("useDataGridColumnMasks — masked matrix", () => {
     const { result } = renderMasks();
     await act(async () => {});
 
+    // Salt creation re-triggers the effect; the SHA-256 digest needs one
+    // more async hop than a single act() flush on slower runners.
     const salt = useColumnMaskStore.getState().salts[SCOPE];
     expect(salt).toBeTruthy();
-    await act(async () => {});
-    expect(result.current.maskedRows?.[0][1]).toMatch(/^hashed_[0-9a-f]+$/);
+    await waitFor(() => {
+      expect(result.current.maskedRows?.[0][1]).toMatch(/^hashed_[0-9a-f]+$/);
+    });
   });
 
   it("maskRows masks only strategy columns and never mutates its input", async () => {

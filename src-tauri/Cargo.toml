@@ -1,6 +1,6 @@
 [package]
 name = "tabler"
-version = "0.1.6"
+version = "0.1.7"
 description = "TableR - Cross-platform database client"
 authors = ["TableR Team"]
 edition = "2021"

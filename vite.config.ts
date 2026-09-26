@@ -24,16 +24,28 @@ export default defineConfig(async () => ({
     target:
       tauriPlatform === "windows" ? "chrome105" : tauriPlatform === "macos" ? "safari13" : "es2020",
     cssTarget: tauriPlatform === "windows" ? "chrome105" : undefined,
-    // Disable manual chunks for production to ensure WebView2 compatibility
-    // Single bundle eliminates chunk loading race conditions
+    // vendor-monaco must stay a pure lazy chunk: previously node_modules
+    // shared by the entry graph (React internals, Rollup helpers) were merged
+    // into it, which made main.* statically import vendor-monaco and evaluate
+    // all 3.7 MB of Monaco at boot — defeating the idle prefetch. Route every
+    // other node_module to `vendor` so nothing non-Monaco lands in the lazy
+    // chunk.
     rollupOptions: {
       output: {
+        // Keep shared Rollup/Vite helpers (_ / __vitePreload) OUT of manual
+        // chunks — without this the helper lands in vendor-monaco and the
+        // entry graph pulls all of Monaco in at boot just for that symbol.
+        onlyExplicitManualChunks: true,
         manualChunks(id) {
           if (!id.includes("node_modules")) return;
-          // Only separate heavy Monaco editor to its own chunk
-          if (id.includes("@monaco-editor") || id.includes("monaco-editor")) {
+          if (
+            id.includes("monaco-editor") ||
+            id.includes("@monaco-editor") ||
+            id.includes("monaco-vim")
+          ) {
             return "vendor-monaco";
           }
+          return "vendor";
         },
       },
     },

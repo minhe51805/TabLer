@@ -53,24 +53,16 @@
   position: fixed;
   width: 320px;
   padding: 18px 18px 14px;
-  background: var(--bg-panel, #151a26);
-  border: 1px solid var(--border, #2a3346);
+  /* Light surface — the dim ring is dark, so the popover needs contrast to
+     read as a card instead of sinking into the overlay. */
+  background: #f8fafc;
+  border: 1px solid #d7dde7;
   border-radius: 12px;
   box-shadow:
-    0 12px 40px rgba(0, 0, 0, 0.55),
-    0 0 0 1px rgba(56, 189, 248, 0.12);
-  color: var(--text-primary, #e8ecf4);
+    0 12px 40px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(56, 189, 248, 0.18);
+  color: #1a2230;
   outline: none;
-}
-
-/* Arrow pointing at the cutout — the edge flips with `data-placement`. */
-.onboarding-arrow {
-  position: absolute;
-  width: 10px;
-  height: 10px;
-  background: inherit;
-  border: inherit;
-  transform: rotate(45deg);
 }
 
 .onboarding-popover[data-placement="bottom"] .onboarding-arrow {
@@ -107,7 +99,7 @@
   right: 10px;
   padding: 3px 9px;
   font-size: 11.5px;
-  color: var(--text-muted, #7a8499);
+  color: #64748b;
   background: transparent;
   border: none;
   border-radius: 5px;
@@ -119,8 +111,8 @@
 
 .onboarding-skip:hover,
 .onboarding-skip:focus-visible {
-  color: var(--text-primary, #e8ecf4);
-  background: rgba(255, 255, 255, 0.08);
+  color: #0f172a;
+  background: rgba(15, 23, 42, 0.07);
 }
 
 /* Step dots — a progress strip reads better than "3 / 8" text. */
@@ -134,7 +126,7 @@
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--border, #2a3346);
+  background: #cbd5e1;
   transition:
     background 200ms ease,
     transform 200ms ease;
@@ -161,17 +153,17 @@
   margin: 0 0 14px;
   font-size: 13px;
   line-height: 1.55;
-  color: var(--text-secondary, #b6bfd1);
+  color: #475569;
 }
 
 .onboarding-code {
   padding: 1px 5px;
   font-family: var(--font-mono, "Cascadia Code", Consolas, monospace);
   font-size: 12px;
-  background: rgba(56, 189, 248, 0.12);
-  border: 1px solid rgba(56, 189, 248, 0.22);
+  background: rgba(2, 132, 199, 0.08);
+  border: 1px solid rgba(2, 132, 199, 0.25);
   border-radius: 4px;
-  color: var(--accent, #38bdf8);
+  color: #0369a1;
 }
 
 .onboarding-actions {
@@ -186,13 +178,36 @@
   font-size: 12.5px;
 }
 
+/* Buttons live on a light card — pin readable variants instead of the
+   app's dark-theme tokens. */
+.onboarding-actions .btn {
+  color: #334155;
+  background: #eef2f7;
+  border: 1px solid #d7dde7;
+}
+
+.onboarding-actions .btn:hover {
+  background: #e2e8f0;
+}
+
+.onboarding-actions .btn.btn-primary {
+  color: #fff;
+  background: var(--accent, #0284c7);
+  border-color: var(--accent, #0284c7);
+}
+
+.onboarding-actions .btn.btn-primary:hover {
+  background: #0369a1;
+  border-color: #0369a1;
+}
+
 /* Click-through steps: a pointer icon + hint instead of a button. */
 .onboarding-click-hint {
   display: inline-flex;
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: var(--text-muted, #7a8499);
+  color: #64748b;
 }
 
 .onboarding-click-icon {
@@ -215,7 +230,7 @@
 .onboarding-spinner {
   width: 16px;
   height: 16px;
-  border: 2px solid var(--border, #2a3346);
+  border: 2px solid #d7dde7;
   border-top-color: var(--accent, #38bdf8);
   border-radius: 50%;
   animation: onboarding-spin 0.8s linear infinite;

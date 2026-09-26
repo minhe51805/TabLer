@@ -275,4 +275,25 @@ mod tests {
         assert_eq!(storage.cache.len(), 1);
         assert_eq!(updated.definition, "registered end users only");
     }
+
+    #[test]
+    fn save_rejects_row_identifier_shaped_definitions() {
+        let mut storage = temp_storage();
+        // The glossary persists to plaintext JSON — a definition that embeds a
+        // live row identifier is data, not semantics, and must be refused.
+        let mut bad = entry(
+            "owner",
+            "the writer was user_id=6a69dd9a326709cf18a32d44",
+            None,
+        );
+        bad.source = "agent".to_string();
+        assert!(storage.save(bad).is_err());
+        assert!(storage
+            .save(entry(
+                "revenue",
+                "sum(amount) where status='paid'; excludes cancelled",
+                None,
+            ))
+            .is_ok());
+    }
 }

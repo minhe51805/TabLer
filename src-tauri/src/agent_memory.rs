@@ -750,8 +750,19 @@ mod tests {
         let saved = save_memory_entry_in(&base, params.clone()).unwrap();
         assert_eq!(saved.name, "metric-definitions");
         assert!(!saved.updated_at.is_empty());
+        // Provenance: `origin: None` normalizes to "agent" — the only write
+        // path that exists — and must land in both the file and the index.
+        assert_eq!(saved.origin, "agent");
+        let raw_on_disk = std::fs::read_to_string(
+            memory_scope_dir(&base, Some("conn-9"), Some("appdb"))
+                .join("metric-definitions")
+                .join("MEMORY.md"),
+        )
+        .unwrap();
+        assert!(raw_on_disk.contains("origin: agent"));
         let scope = memory_scope_dir(&base, Some("conn-9"), Some("appdb"));
         assert_eq!(discover_memories_in_root(&scope).len(), 1);
+        assert_eq!(discover_memories_in_root(&scope)[0].origin, "agent");
         let content =
             read_memory_entry_in(&base, Some("conn-9"), Some("appdb"), "metric-definitions")
                 .unwrap();

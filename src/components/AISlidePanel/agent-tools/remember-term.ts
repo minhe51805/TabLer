@@ -27,18 +27,20 @@ export const tool: AgentToolModule = {
       });
       // remember_term used to write silently — a toast + activity event keeps
       // "the agent learned something" observable like save_memory already is.
+      // The entry may be void on mocked backends, so fall back to the term.
+      const savedTerm = savedEntry?.term ?? term;
       const semanticCopy = getAISemanticCopy(ctx.language ?? "en");
       emitAppToast({
         tone: "info",
         title: semanticCopy.savedToastTitle,
-        description: semanticCopy.savedToastBody.replace("{term}", savedEntry.term),
+        description: semanticCopy.savedToastBody.replace("{term}", savedTerm),
         durationMs: 4000,
       });
       window.dispatchEvent(
         new CustomEvent("workspace-activity", {
           detail: {
             connectionId: ctx.connectionId,
-            label: `Glossary saved: ${savedEntry.term}`,
+            label: `Glossary saved: ${savedTerm}`,
             durationMs: 0,
           },
         }),

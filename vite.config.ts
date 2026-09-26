@@ -32,9 +32,6 @@ export default defineConfig(async () => ({
     // chunk.
     rollupOptions: {
       output: {
-        // Keep shared Rollup/Vite helpers (_ / __vitePreload) OUT of manual
-        // chunks — without this the helper lands in vendor-monaco and the
-        // entry graph pulls all of Monaco in at boot just for that symbol.
         onlyExplicitManualChunks: true,
         manualChunks(id) {
           if (!id.includes("node_modules")) return;
@@ -44,6 +41,20 @@ export default defineConfig(async () => ({
             id.includes("monaco-vim")
           ) {
             return "vendor-monaco";
+          }
+          // Lazy-only heavy deps — named chunks so they load with the
+          // feature that needs them instead of inflating the eager vendor.
+          if (id.includes("@xterm") || id.includes("xterm/")) return "vendor-xterm";
+          if (id.includes("sql-formatter")) return "vendor-sqlformat";
+          if (id.includes("@xyflow")) return "vendor-xyflow";
+          if (id.includes("write-excel-file")) return "vendor-excel";
+          if (
+            id.includes("recharts") ||
+            id.includes("victory-vendor") ||
+            id.includes("d3-") ||
+            id.includes("decimal.js-light")
+          ) {
+            return "vendor-charts";
           }
           return "vendor";
         },

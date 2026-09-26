@@ -36,7 +36,8 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint:fix": "eslint src tests --fix --max-warnings=0",
-    "prepare": "husky"
+    "prepare": "husky",
+    "check:bundle-graph": "node scripts/check-bundle-graph.mjs"
   },
   "dependencies": {
     "@monaco-editor/react": "^4.7.0",

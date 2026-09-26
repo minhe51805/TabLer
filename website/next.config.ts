@@ -32,6 +32,11 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: process.cwd(),
   },
+  // the widest rendered image is ~1180px — nothing needs 3840px variants
+  images: {
+    deviceSizes: [640, 750, 828, 1080, 1200, 1600, 1920],
+    imageSizes: [16, 32, 48, 64, 96, 128, 256],
+  },
   async headers() {
     return [
       {

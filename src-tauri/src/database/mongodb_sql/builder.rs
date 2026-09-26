@@ -376,3 +376,148 @@ fn build_alias_projection(
         pipeline,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::super::translate_sql_statement;
+    use crate::database::mongodb::MongoQueryCommand;
+    use crate::database::query_common::MAX_QUERY_RESULT_ROWS;
+    use anyhow::Result;
+    use mongodb::bson::{doc, Document};
+
+    fn translate(sql: &str) -> Result<MongoQueryCommand> {
+        translate_sql_statement(sql).expect("input is SQL-shaped")
+    }
+
+    fn pipeline_keys(pipeline: &[Document]) -> Vec<String> {
+        pipeline
+            .iter()
+            .map(|stage| stage.keys().next().cloned().unwrap_or_default())
+            .collect()
+    }
+
+    #[test]
+    fn non_sql_inputs_pass_through_to_the_shell_parser() {
+        assert!(translate_sql_statement("db.users.find({})").is_none());
+        assert!(translate_sql_statement("show dbs").is_none());
+        assert!(translate_sql_statement("").is_none());
+    }
+
+    #[test]
+    fn group_by_pipeline_orders_match_group_project_then_sort_skip_limit() {
+        let command = translate(
+            "SELECT status, COUNT(*) AS total, SUM(amount) AS revenue FROM orders \
+             WHERE region = 'eu' GROUP BY status ORDER BY total DESC LIMIT 10 OFFSET 5",
+        )
+        .unwrap();
+        let MongoQueryCommand::Aggregate { pipeline, .. } = command else {
+            panic!("expected an aggregate pipeline");
+        };
+        assert_eq!(
+            pipeline_keys(&pipeline),
+            vec!["$match", "$group", "$project", "$sort", "$skip", "$limit"]
+        );
+        let group = pipeline[1].get_document("$group").unwrap();
+        assert_eq!(
+            group
+                .get_document("_id")
+                .unwrap()
+                .get_str("status")
+                .unwrap(),
+            "$status"
+        );
+        let project = pipeline[2].get_document("$project").unwrap();
+        assert_eq!(project.get_str("status").unwrap(), "$_id.status");
+        assert_eq!(project.get_i32("_id").unwrap(), 0, "_id must be hidden");
+    }
+
+    #[test]
+    fn order_by_resolves_aggregate_alias_case_insensitively() {
+        let command =
+            translate("SELECT status, COUNT(*) AS Total FROM users GROUP BY status ORDER BY total")
+                .unwrap();
+        let MongoQueryCommand::Aggregate { pipeline, .. } = command else {
+            panic!("expected an aggregate pipeline");
+        };
+        let sort = pipeline
+            .iter()
+            .find_map(|stage| stage.get_document("$sort").ok())
+            .expect("pipeline must contain a $sort stage");
+        assert_eq!(sort.get_i32("Total").unwrap(), 1);
+    }
+
+    #[test]
+    fn order_by_on_a_non_output_column_is_rejected() {
+        let result =
+            translate("SELECT status, COUNT(*) AS total FROM users GROUP BY status ORDER BY name");
+        let error = result.unwrap_err().to_string();
+        assert!(error.contains("ORDER BY"), "{error}");
+
+        // Same rule applies on the DISTINCT path.
+        assert!(translate("SELECT DISTINCT city FROM users ORDER BY name").is_err());
+    }
+
+    #[test]
+    fn pipeline_limit_is_clamped_to_the_query_row_cap() {
+        let command =
+            translate("SELECT status, COUNT(*) AS n FROM users GROUP BY status LIMIT 999999")
+                .unwrap();
+        let MongoQueryCommand::Aggregate { pipeline, .. } = command else {
+            panic!("expected an aggregate pipeline");
+        };
+        let last = pipeline.last().unwrap();
+        assert_eq!(
+            last.get_i64("$limit").unwrap(),
+            MAX_QUERY_RESULT_ROWS as i64
+        );
+    }
+
+    #[test]
+    fn zero_offset_emits_no_skip_stage() {
+        let command =
+            translate("SELECT status, COUNT(*) AS n FROM users GROUP BY status LIMIT 5 OFFSET 0")
+                .unwrap();
+        let MongoQueryCommand::Aggregate { pipeline, .. } = command else {
+            panic!("expected an aggregate pipeline");
+        };
+        assert_eq!(
+            pipeline_keys(&pipeline),
+            vec!["$group", "$project", "$limit"]
+        );
+    }
+
+    #[test]
+    fn star_cannot_mix_with_columns_or_aggregates() {
+        assert!(translate("SELECT *, name FROM users").is_err());
+        assert!(translate("SELECT *, COUNT(*) FROM users").is_err());
+        assert!(translate("SELECT * FROM users GROUP BY status").is_err());
+        assert!(translate("SELECT DISTINCT * FROM users").is_err());
+        // Plain columns require GROUP BY once aggregates appear.
+        assert!(translate("SELECT name, COUNT(*) FROM users").is_err());
+        // DISTINCT cannot combine with aggregates or GROUP BY either.
+        assert!(translate("SELECT DISTINCT COUNT(*) FROM users").is_err());
+        assert!(translate("SELECT DISTINCT status FROM users GROUP BY status").is_err());
+    }
+
+    #[test]
+    fn count_star_with_filter_becomes_count_documents() {
+        let command = translate("SELECT COUNT(*) FROM users WHERE active = true").unwrap();
+        let MongoQueryCommand::CountDocuments { collection, filter } = command else {
+            panic!("expected countDocuments");
+        };
+        assert_eq!(collection, "users");
+        assert_eq!(filter, doc! { "active": true });
+    }
+
+    #[test]
+    fn whole_collection_aggregates_still_expose_output_names_for_sort() {
+        // ORDER BY may reference the aggregate expression text (SUM(amount))
+        // or its output name.
+        let command =
+            translate("SELECT SUM(amount) AS total FROM orders ORDER BY total DESC").unwrap();
+        let MongoQueryCommand::Aggregate { pipeline, .. } = command else {
+            panic!("expected an aggregate pipeline");
+        };
+        assert_eq!(pipeline_keys(&pipeline), vec!["$group", "$sort"]);
+    }
+}

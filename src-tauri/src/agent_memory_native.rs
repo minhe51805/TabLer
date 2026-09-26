@@ -599,6 +599,18 @@ pub fn run_agent_memory_tool(
         new_path,
         view_range,
     )?;
+    // Durable-knowledge gate: the native tree persists agent-written text to
+    // disk, so write commands pass their new content through the same
+    // credential/row-value filter as MEMORY.md and the semantic glossary.
+    let written_text: Option<(&str, &str)> = match &parsed {
+        MemoryCommand::Create { file_text, .. } => Some((file_text.as_str(), "file_text")),
+        MemoryCommand::StrReplace { new_str, .. } => Some((new_str.as_str(), "new_str")),
+        MemoryCommand::Insert { insert_text, .. } => Some((insert_text.as_str(), "insert_text")),
+        _ => None,
+    };
+    if let Some((text, field)) = written_text {
+        crate::utils::content_gate::reject_sensitive_payload(text, field)?;
+    }
     let data_dir = resolve_data_dir().map_err(|error| error.to_string())?;
     let root = native_scope_root(&data_dir, connection_id.as_deref(), database.as_deref());
     execute_memory_command_in(&root, &parsed)
@@ -888,5 +900,54 @@ mod tests {
             native_scope_root(&base, Some("../../etc"), None),
             native_scope_root(&base, Some("______etc"), None)
         );
+    }
+
+    #[test]
+    fn run_tool_refuses_row_identifier_writes_end_to_end() {
+        // End-to-end through the Tauri command: the content gate must reject
+        // a create carrying a live row identifier BEFORE any file is written,
+        // and allow an ordinary semantic note through.
+        let dir = crate::utils::paths::test_support::fresh_temp_dir("tabler-native-gate");
+        crate::utils::paths::test_support::run_with_data_dir_env(&dir, || {
+            let refused = run_agent_memory_tool(
+                "create".to_string(),
+                Some("/memories/leak.md".to_string()),
+                Some("owner user_id=6a69dd9a326709cf18a32d44".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("conn-g".to_string()),
+                Some("dbg".to_string()),
+            );
+            assert!(refused.is_err(), "row identifiers must not persist");
+            assert!(refused.unwrap_err().contains("Refusing to save"));
+            // Nothing was written — the gate ran before the filesystem.
+            // `/memories` is the virtual root stripped during resolution, so
+            // files land directly under the scope dir.
+            let scope_root = dir.join("agent-memory-native").join("conn-g").join("dbg");
+            assert!(!scope_root.join("leak.md").exists());
+
+            let ok = run_agent_memory_tool(
+                "create".to_string(),
+                Some("/memories/notes.md".to_string()),
+                Some("status uses enum 'paid' | 'cancelled'".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                Some("conn-g".to_string()),
+                Some("dbg".to_string()),
+            );
+            assert!(ok.is_ok(), "semantic notes must still save");
+            assert!(scope_root.join("notes.md").exists());
+        });
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

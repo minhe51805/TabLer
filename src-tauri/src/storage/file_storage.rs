@@ -309,3 +309,130 @@ fn write_json_atomically_inner(path: &Path, json: &str, rotate_backup: bool) -> 
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        backup_path_for, file_parse_fails, quarantine_corrupt_file, read_json_map_with_backup,
+        read_json_vec_with_backup, securely_remove_file, write_json_atomically,
+        write_json_atomically_without_backup,
+    };
+    use std::collections::HashMap;
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn temp_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("tabler-storage-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn atomic_write_roundtrips_and_leaves_no_temp_residue() {
+        let path = temp_dir().join("store.json");
+        write_json_atomically(&path, "{\"a\":1}").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{\"a\":1}");
+        for entry in fs::read_dir(path.parent().unwrap()).unwrap() {
+            let name = entry.unwrap().file_name().to_string_lossy().into_owned();
+            assert!(!name.ends_with(".tmp"), "temp file leaked: {name}");
+        }
+    }
+
+    #[test]
+    fn second_write_rotates_the_previous_contents_into_bak() {
+        let path = temp_dir().join("store.json");
+        write_json_atomically(&path, "{\"v\":1}").unwrap();
+        assert!(!backup_path_for(&path).exists());
+        write_json_atomically(&path, "{\"v\":2}").unwrap();
+        assert_eq!(
+            fs::read_to_string(backup_path_for(&path)).unwrap(),
+            "{\"v\":1}",
+            "previous contents must rotate into .bak"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{\"v\":2}");
+    }
+
+    #[test]
+    fn corrupt_primary_falls_back_to_bak_for_reads() {
+        let path = temp_dir().join("store.json");
+        write_json_atomically(&path, "[{\"k\":1}]").unwrap();
+        write_json_atomically(&path, "[{\"k\":2}]").unwrap();
+        fs::write(&path, "not json {").unwrap();
+
+        let items: Vec<HashMap<String, i32>> =
+            read_json_vec_with_backup(&path, "test store").unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0]["k"], 1, "must serve the .bak snapshot");
+    }
+
+    #[test]
+    fn file_parse_fails_is_true_only_for_real_corruption() {
+        let dir = temp_dir();
+        let corrupt = dir.join("bad.json");
+        fs::write(&corrupt, "{nope").unwrap();
+        assert!(file_parse_fails::<serde_json::Value>(&corrupt));
+
+        let missing = dir.join("missing.json");
+        // IO failure (no file at all) is NOT corruption — quarantine must not
+        // move it aside or warn over a transient error.
+        assert!(!file_parse_fails::<serde_json::Value>(&missing));
+
+        let good = dir.join("good.json");
+        fs::write(&good, "{}").unwrap();
+        assert!(!file_parse_fails::<serde_json::Value>(&good));
+    }
+
+    #[test]
+    fn without_backup_writes_remove_stale_bak() {
+        let dir = temp_dir();
+        let path = dir.join("secrets.json");
+        write_json_atomically(&path, "{\"s\":1}").unwrap();
+        write_json_atomically(&path, "{\"s\":2}").unwrap();
+        assert!(backup_path_for(&path).exists());
+
+        write_json_atomically_without_backup(&path, "{}").unwrap();
+        assert!(
+            !backup_path_for(&path).exists(),
+            "no-backup writes must not keep a secret-bearing .bak"
+        );
+        assert_eq!(fs::read_to_string(&path).unwrap(), "{}");
+    }
+
+    #[test]
+    fn quarantine_moves_primary_and_bak_aside() {
+        let dir = temp_dir();
+        let path = dir.join("bad.json");
+        fs::write(&path, "{corrupt").unwrap();
+        fs::write(backup_path_for(&path), "{also bad").unwrap();
+
+        let moved = quarantine_corrupt_file(&path).unwrap();
+        assert_eq!(moved.len(), 2);
+        assert!(!path.exists());
+        assert!(!backup_path_for(&path).exists());
+        for target in &moved {
+            assert!(target.exists(), "quarantined file must survive");
+            assert!(target
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .contains(".corrupt-"));
+        }
+    }
+
+    #[test]
+    fn map_read_returns_empty_when_nothing_exists() {
+        let path = temp_dir().join("absent.json");
+        let map: HashMap<String, i32> = read_json_map_with_backup(&path, "test store").unwrap();
+        assert!(map.is_empty());
+    }
+
+    #[test]
+    fn securely_remove_zeros_then_deletes() {
+        let path = temp_dir().join("secret.json");
+        fs::write(&path, "sensitive").unwrap();
+        securely_remove_file(&path).unwrap();
+        assert!(!path.exists());
+        // Removing a missing file is a no-op, not an error.
+        securely_remove_file(&path).unwrap();
+    }
+}

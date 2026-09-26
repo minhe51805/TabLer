@@ -1,6 +1,8 @@
 import { formatExecutionError } from "../../SQLEditor/SQLEditorUtils";
 import { isSupersededAIRequestError } from "../ai-agent-action-requestor";
 import { agentToolError, isRetryableAgentToolError } from "../agent-tool-executor-helpers";
+import { emitAppToast } from "../../../utils/app-toast";
+import { getAISemanticCopy } from "../ai-semantic-copy";
 import { saveSemanticGlossaryEntry } from "../../../utils/semantic-glossary";
 import { stringifyAgentObservation, type AgentToolModule } from "./shared";
 
@@ -15,7 +17,7 @@ export const tool: AgentToolModule = {
       });
     }
     try {
-      await saveSemanticGlossaryEntry({
+      const savedEntry = await saveSemanticGlossaryEntry({
         connectionId: ctx.connectionId!,
         database: ctx.currentDatabase || undefined,
         term,
@@ -23,6 +25,26 @@ export const tool: AgentToolModule = {
         kind: args?.kind as "term" | "metric" | "relationship" | "alias" | undefined,
         source: "agent",
       });
+      // remember_term used to write silently — a toast + activity event keeps
+      // "the agent learned something" observable like save_memory already is.
+      // The entry may be void on mocked backends, so fall back to the term.
+      const savedTerm = savedEntry?.term ?? term;
+      const semanticCopy = getAISemanticCopy(ctx.language ?? "en");
+      emitAppToast({
+        tone: "info",
+        title: semanticCopy.savedToastTitle,
+        description: semanticCopy.savedToastBody.replace("{term}", savedTerm),
+        durationMs: 4000,
+      });
+      window.dispatchEvent(
+        new CustomEvent("workspace-activity", {
+          detail: {
+            connectionId: ctx.connectionId,
+            label: `Glossary saved: ${savedTerm}`,
+            durationMs: 0,
+          },
+        }),
+      );
       return stringifyAgentObservation(frame, {
         saved: term,
         definition,

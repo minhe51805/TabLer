@@ -42,6 +42,7 @@ fn sqlite_sidecar_config(path: &str) -> ConnectionConfig {
         startup_commands: None,
         query_timeout_seconds: None,
         ssh_config: None,
+        read_only: false,
     }
 }
 

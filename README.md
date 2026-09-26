@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/minhe51805/TabLer/releases">
-    <img src="https://img.shields.io/badge/version-0.1.6b-087EA4" alt="TableR version 0.1.6b" />
+    <img src="https://img.shields.io/badge/version-0.1.7-087EA4" alt="TableR version 0.1.7" />
   </a>
   <a href="LICENSE">
     <img src="https://img.shields.io/badge/license-AGPLv3-2563EB" alt="AGPLv3 license" />

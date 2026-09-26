@@ -275,6 +275,9 @@ export async function applyLearningProposal(
         description: proposal.memory.description,
         connectionId: scope.connectionId ?? null,
         database: scope.database ?? null,
+        // A learning proposal is agent-proposed even when user-approved —
+        // the agent found the fact, so origin stays "agent".
+        origin: "agent",
       }),
     );
   }

@@ -1,8 +1,8 @@
 {
   "name": "tabler",
   "private": true,
-  "version": "0.1.6",
-  "releaseLabel": "0.1.6b",
+  "version": "0.1.7",
+  "releaseLabel": "0.1.7",
   "type": "module",
   "scripts": {
     "dev": "vite",

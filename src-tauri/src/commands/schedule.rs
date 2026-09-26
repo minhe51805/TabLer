@@ -54,8 +54,79 @@ pub fn save_query_schedule(
     allow_data_read: Option<bool>,
 ) -> Result<QuerySchedule, String> {
     let mut storage = ScheduleStorage::new()?;
-    let kind = normalize_schedule_kind(kind.as_deref())?;
+    let draft = validate_schedule_draft(
+        kind.as_deref(),
+        sql,
+        prompt,
+        connection_id.as_deref(),
+        interval_seconds,
+        allow_data_read,
+    )?;
     let catch_up_policy = normalize_catch_up_policy(catch_up_policy.as_deref())?;
+    // Carry run history forward when the caller edits an existing schedule —
+    // the frontend edits by full replace, so history comes from the store.
+    let history = id
+        .as_deref()
+        .and_then(|existing| storage.get(existing))
+        .map(|existing| {
+            (
+                existing.last_ran_at,
+                existing.last_status,
+                existing.last_rows,
+                existing.last_error,
+                existing.last_summary,
+                existing.missed_count,
+                existing.next_due_at,
+                existing.created_at,
+            )
+        })
+        .unwrap_or((None, None, None, None, None, 0, None, String::new()));
+    storage.save(QuerySchedule {
+        id: id.unwrap_or_default(),
+        name,
+        sql: draft.sql,
+        kind: draft.kind.to_string(),
+        prompt: draft.prompt,
+        // Only agent tasks may carry the data-read consent; a SQL schedule
+        // never reads data through the agent, so the flag stays off there.
+        allow_data_read: draft.allow_data_read,
+        connection_id,
+        database,
+        interval_seconds: draft.interval_seconds,
+        enabled,
+        last_ran_at: history.0,
+        last_status: history.1,
+        last_rows: history.2,
+        last_error: history.3,
+        last_summary: history.4,
+        catch_up_policy: catch_up_policy.to_string(),
+        missed_count: history.5,
+        next_due_at: history.6,
+        created_at: history.7,
+        updated_at: String::new(),
+    })
+}
+
+/// Field normalization shared by every schedule save: kind defaults, per-kind
+/// payload rules, interval clamping, and the data-read consent gate. Pure so
+/// the save-time guardrails can be tested without touching storage.
+struct ValidatedScheduleDraft {
+    kind: &'static str,
+    sql: String,
+    prompt: Option<String>,
+    allow_data_read: bool,
+    interval_seconds: u64,
+}
+
+fn validate_schedule_draft(
+    kind: Option<&str>,
+    sql: String,
+    prompt: Option<String>,
+    connection_id: Option<&str>,
+    interval_seconds: u64,
+    allow_data_read: Option<bool>,
+) -> Result<ValidatedScheduleDraft, String> {
+    let kind = normalize_schedule_kind(kind)?;
     let (sql, prompt) = match kind {
         SCHEDULE_KIND_AGENT => {
             let task = prompt.unwrap_or_default().trim().to_string();
@@ -74,7 +145,7 @@ pub fn save_query_schedule(
             // Reject non-readonly SQL at SAVE time, not first run: a schedule
             // that can never execute should not be storable (the runner
             // re-checks the same predicate before every fire).
-            if !is_readonly_schedulable(&sql, schedule_database_type(connection_id.as_deref())) {
+            if !is_readonly_schedulable(&sql, schedule_database_type(connection_id)) {
                 return Err(
                     "Only a single read-only SELECT/WITH statement can be scheduled — writes, DDL, and filesystem-access SQL are not schedulable."
                         .into(),
@@ -83,46 +154,12 @@ pub fn save_query_schedule(
             (sql, None)
         }
     };
-    // Carry run history forward when the caller edits an existing schedule —
-    // the frontend edits by full replace, so history comes from the store.
-    let history = id
-        .as_deref()
-        .and_then(|existing| storage.get(existing))
-        .map(|existing| {
-            (
-                existing.last_ran_at,
-                existing.last_status,
-                existing.last_rows,
-                existing.last_error,
-                existing.last_summary,
-                existing.missed_count,
-                existing.next_due_at,
-            )
-        })
-        .unwrap_or((None, None, None, None, None, 0, None));
-    storage.save(QuerySchedule {
-        id: id.unwrap_or_default(),
-        name,
+    Ok(ValidatedScheduleDraft {
+        kind,
         sql,
-        kind: kind.to_string(),
         prompt,
-        // Only agent tasks may carry the data-read consent; a SQL schedule
-        // never reads data through the agent, so the flag stays off there.
         allow_data_read: kind == SCHEDULE_KIND_AGENT && allow_data_read.unwrap_or(false),
-        connection_id,
-        database,
         interval_seconds: interval_seconds.clamp(60, MAX_INTERVAL_SECONDS),
-        enabled,
-        last_ran_at: history.0,
-        last_status: history.1,
-        last_rows: history.2,
-        last_error: history.3,
-        last_summary: history.4,
-        catch_up_policy: catch_up_policy.to_string(),
-        missed_count: history.5,
-        next_due_at: history.6,
-        created_at: String::new(),
-        updated_at: String::new(),
     })
 }
 
@@ -522,5 +559,153 @@ mod tests {
         assert!(ScheduleRunOutcome::parse("dispatched").is_err());
         assert!(ScheduleRunOutcome::parse("success").is_err());
         assert!(ScheduleRunOutcome::parse("").is_err());
+    }
+}
+
+#[cfg(test)]
+mod draft_tests {
+    use super::{save_query_schedule, validate_schedule_draft, MAX_INTERVAL_SECONDS};
+    use crate::storage::schedule_storage::{QuerySchedule, ScheduleStorage, SCHEDULE_STATUS_ERROR};
+
+    #[test]
+    fn agent_kind_requires_a_prompt_and_drops_sql() {
+        // Missing or blank prompt must refuse — an empty task would dispatch
+        // nothing forever.
+        assert!(
+            validate_schedule_draft(Some("agent"), "SELECT 1".into(), None, None, 300, None)
+                .is_err()
+        );
+        assert!(validate_schedule_draft(
+            Some("agent"),
+            "SELECT 1".into(),
+            Some("   ".into()),
+            None,
+            300,
+            None
+        )
+        .is_err());
+
+        let draft = validate_schedule_draft(
+            Some("agent"),
+            "DROP TABLE users".into(), // even mutating SQL text is discarded
+            Some("  check locks  ".into()),
+            None,
+            300,
+            Some(true),
+        )
+        .unwrap();
+        assert_eq!(draft.sql, "", "agent tasks must never store SQL");
+        assert_eq!(draft.prompt.as_deref(), Some("check locks"));
+        assert!(draft.allow_data_read, "consent survives for agent kind");
+    }
+
+    #[test]
+    fn sql_kind_enforces_readonly_and_never_allows_data_read() {
+        for sql in [
+            "DELETE FROM users",
+            "SELECT 1; DROP TABLE users",
+            "SELECT pg_read_file('/etc/passwd')",
+            "   ",
+        ] {
+            assert!(
+                validate_schedule_draft(None, sql.into(), None, None, 300, None).is_err(),
+                "{sql:?} must not be schedulable"
+            );
+        }
+        let draft = validate_schedule_draft(
+            None,
+            "SELECT * FROM users".into(),
+            Some("ignored prompt".into()),
+            None,
+            300,
+            Some(true), // consent flag must not leak onto SQL schedules
+        )
+        .unwrap();
+        assert_eq!(draft.sql, "SELECT * FROM users");
+        assert!(draft.prompt.is_none());
+        assert!(!draft.allow_data_read);
+        assert_eq!(draft.kind, "sql");
+    }
+
+    #[test]
+    fn interval_is_clamped_to_the_supported_window() {
+        let low = validate_schedule_draft(None, "SELECT 1".into(), None, None, 0, None).unwrap();
+        assert_eq!(low.interval_seconds, 60);
+        let high =
+            validate_schedule_draft(None, "SELECT 1".into(), None, None, u64::MAX, None).unwrap();
+        assert_eq!(high.interval_seconds, MAX_INTERVAL_SECONDS);
+    }
+
+    #[test]
+    fn unknown_kind_is_refused() {
+        assert!(
+            validate_schedule_draft(Some("agentic"), "SELECT 1".into(), None, None, 300, None)
+                .is_err()
+        );
+    }
+
+    fn base_schedule() -> QuerySchedule {
+        QuerySchedule {
+            id: "sched-1".to_string(),
+            name: "old".to_string(),
+            sql: "SELECT 1".to_string(),
+            kind: "sql".to_string(),
+            prompt: None,
+            allow_data_read: false,
+            connection_id: None,
+            database: None,
+            interval_seconds: 300,
+            enabled: true,
+            last_ran_at: Some(1_700_000_000_000),
+            last_status: Some(SCHEDULE_STATUS_ERROR.to_string()),
+            last_rows: Some(3),
+            last_error: Some("old error".to_string()),
+            last_summary: Some("old summary".to_string()),
+            catch_up_policy: "skip".to_string(),
+            missed_count: 4,
+            next_due_at: Some(1_700_000_100_000),
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            updated_at: "2024-01-01T00:00:00Z".to_string(),
+        }
+    }
+
+    /// The edit path replaces the whole row from UI fields; a regression that
+    /// drops stored run history would silently erase the "last run" UI.
+    #[test]
+    fn editing_a_schedule_carries_run_history_forward() {
+        let dir = crate::utils::paths::test_support::fresh_temp_dir("tabler-sched-hist");
+        crate::utils::paths::test_support::run_with_data_dir_env(&dir, || {
+            {
+                let mut storage = ScheduleStorage::new().unwrap();
+                storage.save(base_schedule()).unwrap();
+            }
+
+            let saved = save_query_schedule(
+                Some("sched-1".to_string()),
+                "renamed".to_string(),
+                "SELECT 2".to_string(),
+                None,
+                None,
+                120,
+                true,
+                None,
+                None,
+                None,
+                None,
+            )
+            .unwrap();
+
+            assert_eq!(saved.id, "sched-1");
+            assert_eq!(saved.sql, "SELECT 2");
+            assert_eq!(saved.name, "renamed");
+            assert_eq!(saved.last_ran_at, Some(1_700_000_000_000));
+            assert_eq!(saved.last_status.as_deref(), Some(SCHEDULE_STATUS_ERROR));
+            assert_eq!(saved.last_rows, Some(3));
+            assert_eq!(saved.last_error.as_deref(), Some("old error"));
+            assert_eq!(saved.last_summary.as_deref(), Some("old summary"));
+            assert_eq!(saved.missed_count, 4);
+            assert_eq!(saved.next_due_at, Some(1_700_000_100_000));
+            assert_eq!(saved.created_at, "2024-01-01T00:00:00Z");
+        });
     }
 }

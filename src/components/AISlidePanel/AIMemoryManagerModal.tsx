@@ -213,6 +213,14 @@ export function AIMemoryManagerModal({
                       <span className="ai-memory-manager-row-desc">{entry.description}</span>
                     ) : null}
                     <span className="ai-memory-manager-row-meta">
+                      {entry.origin ? (
+                        <span
+                          className={`ai-memory-origin-badge is-${entry.origin === "user" ? "user" : "agent"}`}
+                          title={entry.origin === "user" ? copy.originUser : copy.originAgent}
+                        >
+                          {entry.origin === "user" ? copy.originUser : copy.originAgent}
+                        </span>
+                      ) : null}
                       {formatMemoryTimestamp(entry.updatedAt)}
                     </span>
                     {bodies[entry.name] !== undefined ? (

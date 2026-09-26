@@ -612,3 +612,122 @@ fn field_accumulator(operator: &str, path: Option<&str>) -> Document {
     accumulator.insert(operator, path.map(field_ref).unwrap_or(Bson::Int32(1)));
     accumulator
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_select_statement, Expr, Parser, SelectItem};
+    use crate::database::mongodb_sql::lexer::tokenize;
+    use anyhow::Result;
+    use mongodb::bson::{doc, Bson, Document};
+
+    fn parse(sql: &str) -> Result<super::SelectStatement> {
+        let mut parser = Parser::new(tokenize(sql)?);
+        parse_select_statement(&mut parser)
+    }
+
+    fn compile_where(statement: super::SelectStatement) -> Document {
+        statement.where_expr.map(Expr::compile).unwrap_or_default()
+    }
+
+    #[test]
+    fn dollar_prefixed_field_names_are_rejected() {
+        // $-names are MongoDB operators; a quoted "$where" reaching a filter
+        // would execute server-side JavaScript.
+        for sql in [
+            "SELECT * FROM users WHERE \"$where\" = 'x'",
+            "SELECT * FROM users WHERE $where = 'x'",
+            "SELECT \"$where\" FROM users",
+            "SELECT * FROM \"$where\"",
+        ] {
+            assert!(parse(sql).is_err(), "expected rejection: {sql}");
+        }
+    }
+
+    #[test]
+    fn having_is_refused_with_a_shell_hint() {
+        let error = parse("SELECT status, COUNT(*) FROM users GROUP BY status HAVING COUNT(*) > 2")
+            .err()
+            .expect("HAVING must be rejected");
+        assert!(error.to_string().contains("HAVING"));
+    }
+
+    #[test]
+    fn a_second_statement_or_trailing_input_is_rejected() {
+        assert!(parse("SELECT * FROM users; DROP TABLE users").is_err());
+        assert!(parse("SELECT * FROM users UNION SELECT * FROM secrets").is_err());
+        assert!(parse("SELECT * FROM users;").is_err());
+        assert!(parse("SELECT * FROM a JOIN b ON a.id = b.id").is_err());
+    }
+
+    #[test]
+    fn escaped_string_literals_survive_the_parser() {
+        let statement = parse("SELECT * FROM users WHERE name = 'O''Neil'").unwrap();
+        assert_eq!(
+            compile_where(statement),
+            doc! { "name": "O'Neil" },
+            "doubled SQL quotes must collapse to one literal quote"
+        );
+    }
+
+    #[test]
+    fn numeric_literals_cover_ints_floats_and_exponents() {
+        let statement = parse("SELECT * FROM t WHERE a = 1e5").unwrap();
+        assert_eq!(compile_where(statement), doc! { "a": Bson::Double(1e5) });
+        let statement = parse("SELECT * FROM t WHERE a = -3").unwrap();
+        assert_eq!(compile_where(statement), doc! { "a": Bson::Int64(-3) });
+        let statement = parse("SELECT * FROM t WHERE a = 2.5e-3").unwrap();
+        assert_eq!(compile_where(statement), doc! { "a": Bson::Double(0.0025) });
+    }
+
+    #[test]
+    fn limit_offset_and_mysql_comma_form_parse() {
+        let statement = parse("SELECT * FROM users LIMIT 10 OFFSET 5").unwrap();
+        assert_eq!(statement.limit, Some(10));
+        assert_eq!(statement.offset, Some(5));
+
+        let statement = parse("SELECT * FROM users LIMIT 5, 10").unwrap();
+        assert_eq!(statement.limit, Some(10));
+        assert_eq!(statement.offset, Some(5));
+
+        let statement = parse("SELECT * FROM users OFFSET 7").unwrap();
+        assert_eq!(statement.limit, None);
+        assert_eq!(statement.offset, Some(7));
+
+        assert!(parse("SELECT * FROM users LIMIT -3").is_err());
+        assert!(parse("SELECT * FROM users LIMIT 2.5").is_err());
+    }
+
+    #[test]
+    fn aliases_read_as_names_not_clause_keywords() {
+        let statement = parse("SELECT name AS full_name FROM users").unwrap();
+        match &statement.items[..] {
+            [SelectItem::Column { path, alias }] => {
+                assert_eq!(path, "name");
+                assert_eq!(alias.as_deref(), Some("full_name"));
+            }
+            _ => panic!("expected a single column item"),
+        }
+
+        // FROM is a clause keyword, never an implicit alias.
+        let statement = parse("SELECT name FROM users WHERE status = 'a'").unwrap();
+        match &statement.items[..] {
+            [SelectItem::Column { path, alias }] => {
+                assert_eq!(path, "name");
+                assert!(alias.is_none());
+            }
+            _ => panic!("expected a single column item"),
+        }
+        assert_eq!(statement.from, "users");
+    }
+
+    #[test]
+    fn is_null_variants_compile_to_match_documents() {
+        let statement = parse("SELECT * FROM users WHERE deleted IS NULL").unwrap();
+        assert_eq!(compile_where(statement), doc! { "deleted": Bson::Null });
+        let statement = parse("SELECT * FROM users WHERE deleted IS NOT NULL").unwrap();
+        assert_eq!(
+            compile_where(statement),
+            doc! { "deleted": { "$ne": Bson::Null } }
+        );
+    }
+}

@@ -18,3 +18,17 @@ secret:
     # passwords are stripped from exported bundles.
     - match: super-secret
       name: bundle test fixture password
+    # Content-gate test fixtures — deliberately shaped like secrets so the
+    # rejection tests exercise the detector, but they are literals in test
+    # code, not live credentials.
+    - match: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c
+      name: content-gate JWT fixture (public jwt.io sample)
+    - match: 6a69dd9a326709cf18a32d44
+      name: content-gate ObjectId fixture
+    - match: sk-123
+      name: content-gate API-key fixture
+    # Website docs placeholders — connection-URI examples use the literal
+    # word "password" as a stand-in, not a real credential.
+    - match: password
+      name: docs connection-URI placeholder
+      name: bundle test fixture password

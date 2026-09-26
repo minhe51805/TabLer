@@ -357,13 +357,26 @@ mod tests {
                     .await
             })
         };
-        // Wait until the request slot exists, then cancel it.
-        for _ in 0..100 {
+        // Wait until the request slot exists, then cancel it. Blind
+        // `yield_now` bounding was flaky: on a loaded runner the spawned
+        // task can still be queued after 100 yields, the cancel loop ends
+        // having cancelled NOTHING (NotRunning is not sticky), and the
+        // statement runs to completion — the unwrap_err panic the release
+        // build hit. Poll until the slot registers, with a real deadline.
+        let deadline = Instant::now() + std::time::Duration::from_secs(10);
+        let cancelled = loop {
             if driver.cancel_query_request("req-cancel").await.unwrap() {
-                break;
+                break true;
             }
-            tokio::task::yield_now().await;
-        }
+            if Instant::now() >= deadline {
+                break false;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+        };
+        assert!(
+            cancelled,
+            "cancel request never reached a running statement"
+        );
         let outcome = running.await.unwrap();
         assert_eq!(
             outcome.unwrap_err().to_string(),

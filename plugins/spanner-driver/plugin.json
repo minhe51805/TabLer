@@ -5,8 +5,15 @@
   "kind": "adapter",
   "author": "TableR Team",
   "entry": null,
-  "capabilities": ["database"],
-  "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+  "capabilities": [
+    "database"
+  ],
+  "permissions": [
+    "connection.metadata",
+    "query.read",
+    "query.execute",
+    "network.fetch"
+  ],
   "compatibility": {
     "minAppVersion": "0.1.4",
     "maxAppVersion": null,

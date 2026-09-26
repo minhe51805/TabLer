@@ -77,11 +77,18 @@ const MULTILINE_KEYS = new Set(["description"]);
 
 /** Tools the agent can actually call, read from the single source of truth. */
 function readToolNames() {
-  const specs = readFileSync("src/components/AISlidePanel/tool-schema/specs.ts", "utf8");
+  // specs.ts composes sibling specs-*.ts files (one file per concern) —
+  // scan the whole directory so a new spec module can't be invisible to
+  // the tool allowlist validation.
+  const dir = "src/components/AISlidePanel/tool-schema";
+  const files = readdirSync(dir).filter((f) => /^specs[^/]*\.ts$/.test(f) || f === "specs.ts");
   const names = new Set();
   const pattern = /^\s*name:\s*"([a-z0-9_]+)"/gm;
-  let match;
-  while ((match = pattern.exec(specs)) !== null) names.add(match[1]);
+  for (const file of files) {
+    const src = readFileSync(join(dir, file), "utf8");
+    let match;
+    while ((match = pattern.exec(src)) !== null) names.add(match[1]);
+  }
   return names;
 }
 

@@ -15,6 +15,9 @@ export interface AIMemoryCopy {
   emptyHint: string;
   scopeLabel: string;
   updatedLabel: string;
+  /** Provenance badge: who wrote this memory file. */
+  originAgent: string;
+  originUser: string;
   viewAction: string;
   hideAction: string;
   deleteAction: string;
@@ -49,6 +52,8 @@ const EN: AIMemoryCopy = {
   emptyHint: "The agent saves durable facts here with save_memory.",
   scopeLabel: "Scope",
   updatedLabel: "Updated",
+  originAgent: "agent",
+  originUser: "user",
   viewAction: "View",
   hideAction: "Hide",
   deleteAction: "Delete",
@@ -82,6 +87,8 @@ const VI: AIMemoryCopy = {
   emptyHint: "Agent lưu các ghi nhớ lâu dài ở đây bằng save_memory.",
   scopeLabel: "Phạm vi",
   updatedLabel: "Cập nhật",
+  originAgent: "agent",
+  originUser: "user",
   viewAction: "Xem",
   hideAction: "Ẩn",
   deleteAction: "Xóa",
@@ -115,6 +122,8 @@ const KO: AIMemoryCopy = {
   emptyHint: "에이전트가 save_memory로 저장한 내용이 여기에 표시됩니다.",
   scopeLabel: "범위",
   updatedLabel: "업데이트",
+  originAgent: "agent",
+  originUser: "user",
   viewAction: "보기",
   hideAction: "숨기기",
   deleteAction: "삭제",
@@ -148,6 +157,8 @@ const TR: AIMemoryCopy = {
   emptyHint: "Agent, save_memory ile kalıcı bilgileri buraya kaydeder.",
   scopeLabel: "Kapsam",
   updatedLabel: "Güncellendi",
+  originAgent: "agent",
+  originUser: "user",
   viewAction: "Görüntüle",
   hideAction: "Gizle",
   deleteAction: "Sil",
@@ -181,6 +192,8 @@ const ZH: AIMemoryCopy = {
   emptyHint: "智能体通过 save_memory 保存的内容会显示在这里。",
   scopeLabel: "范围",
   updatedLabel: "更新时间",
+  originAgent: "agent",
+  originUser: "user",
   viewAction: "查看",
   hideAction: "隐藏",
   deleteAction: "删除",

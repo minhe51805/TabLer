@@ -68,3 +68,10 @@ export async function saveSemanticGlossaryEntry(params: {
   invalidateSemanticGlossary(params.connectionId);
   return entry;
 }
+
+/** Removes one entry by id; used by the glossary manager modal so a bad
+ *  agent-learned meaning can be revoked instead of silently steering every
+ *  future run. */
+export async function deleteSemanticGlossaryEntry(id: string): Promise<void> {
+  await invokeMutation("delete_semantic_entry", { id });
+}

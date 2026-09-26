@@ -31,7 +31,10 @@ describe("useMonacoPrefetchOnWorkspace", () => {
     await vi.waitFor(() => expect(prefetchMonacoBundle).toHaveBeenCalledTimes(1));
     rerender({ active: false });
     rerender({ active: true });
-    const { promise, resolve } = Promise.withResolvers<void>();
+    let resolve!: () => void;
+    const promise = new Promise<void>((res) => {
+      resolve = res;
+    });
     setTimeout(resolve, 50);
     await promise;
     expect(prefetchMonacoBundle).toHaveBeenCalledTimes(1);

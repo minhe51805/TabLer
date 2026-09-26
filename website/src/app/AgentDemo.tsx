@@ -1,23 +1,22 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { Check, Circle, Loader2, Terminal, UserRound } from "lucide-react";
-import { CountUp, DecryptedText, DotGrid, Magnet, ShinyText, SplitText, TextType } from "./bits";
+import { Bot, Check, ChevronRight, Circle, Loader2, UserRound } from "lucide-react";
+import { CountUp, ShinyText, TextType } from "./bits";
 
 /**
- * Live agent-loop demo inside the agent section's product frame — a flat
- * task trace in the spirit of cline.bot: hairline rows, mono log lines,
- * a bottom-pinned trace that auto-scrolls as work streams in. The
- * signature bits are reactbits-style text effects (TextType /
- * DecryptedText / ShinyText) ported dependency-free in ./bits.
+ * Live agent session inside the agent section's product frame — styled
+ * after Anthropic's task demos: a calm session panel — the request on
+ * top, a numbered trace of the agent's work with the active step's log
+ * expanding in place, and the deliverable card handed to the client at
+ * the end. Quiet borders, no glow — the work is the spectacle.
  *
- *   1. ask — the user request types out (TextType + caret)
- *   2. arrive — the trace fades in, all four planned steps listed
- *   3. step ×4 — the row activates: label decrypts, a spinner runs, and
- *      its log lines expand in place; older work scrolls up under the
- *      top mask like a real task view
- *   4. handover — the answer streams in: text, result table, and a
- *      "delivered" foot with the client chip
+ *   1. ask — the request types out in the session header
+ *   2. arrive — the agent avatar fades in beside "working…" status
+ *   3. step ×4 — each numbered row activates; its mono log expands in
+ *      place and the trace auto-scrolls like a real session view
+ *   4. handover — the deliverable card opens with the answer and the
+ *      client's avatar claim
  *   5. hold, reset, replay
  *
  * Pure CSS/timeout choreography — no animation library; runs only while
@@ -31,7 +30,7 @@ const HANDOVER_MS = 3400;
 const DONE_MS = 2800;
 const STATION_COUNT = 4;
 
-const STEP_MS = ["120 ms", "1.4 s", "210 ms", "38 ms"];
+const STEP_MS = ["0.1 s", "1.4 s", "0.2 s", "38 ms"];
 
 const RESULT_ROWS: [string, string][] = [
   ["Acme Corporation", "$48,210"],
@@ -78,7 +77,7 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
 
   // Phase machine: prompt typing ends → arrive → station 0..3 →
   // handover → done → replay. The prompt phase advances from TextType's
-  // onDone callback (startRun below); reduced-motion jumps straight in.
+  // onDone callback (startRun below).
   useEffect(() => {
     if (!active || reduced || phase === "prompt") return;
     if (phase === "arrive") {
@@ -108,7 +107,7 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
     return () => clearTimeout(t);
   }, [active, reduced, phase, station]);
 
-  // Result rows stream into the answer during the handover.
+  // Result rows stream into the deliverable during the handover.
   useEffect(() => {
     if (!active || reduced || phase !== "handover") return;
     if (rowCount >= RESULT_ROWS.length) return;
@@ -116,7 +115,7 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
     return () => clearTimeout(t);
   }, [active, reduced, phase, rowCount]);
 
-  // Reduced-motion users get the final transcript at once — derived
+  // Reduced-motion users get the finished session at once — derived
   // directly, no effect.
   const shownStation = reduced ? STATION_COUNT - 1 : station;
   const shownPhase: Phase = reduced ? "done" : phase;
@@ -126,8 +125,8 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
   const handedOff = shownPhase === "handover" || shownPhase === "done";
 
   // Auto-scroll: the inner column is bottom-pinned; translate it up as
-  // content grows so the newest work stays in view — like cline's task
-  // view. The observer fires on observe and on every resize.
+  // content grows so the newest work stays in view — like the product's
+  // own session view.
   useLayoutEffect(() => {
     const trace = traceRef.current;
     const inner = innerRef.current;
@@ -146,14 +145,10 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
 
   return (
     <div className="agent-demo" ref={rootRef} aria-label={copy.prompt}>
-      {/* dot grid — reactbits' interactive dot-field background, dots
-          swell toward the pointer inside the demo frame */}
-      <DotGrid className="agent-demo-dots" />
-
-      {/* ask — the request that starts the run; stays pinned on top */}
+      {/* session header — agent avatar + the request it took on */}
       <div className="agent-demo-ask">
         <span className="agent-demo-ask-icon" aria-hidden="true">
-          <UserRound size={12} />
+          <Bot size={13} />
         </span>
         {reduced ? (
           <span className="agent-demo-ask-text">{copy.prompt}</span>
@@ -162,14 +157,28 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
             key={runId}
             className="agent-demo-ask-text"
             text={copy.prompt}
-            speed={24}
+            speed={26}
             onDone={startRun}
           />
         )}
+        <span
+          className={`agent-demo-live ${inScene && !handedOff ? "is-on" : ""}`}
+          aria-hidden="true"
+        >
+          {handedOff ? (
+            <>
+              <Check size={10} strokeWidth={3} /> done
+            </>
+          ) : inScene ? (
+            <>
+              <Loader2 size={10} className="agent-demo-spin" /> working
+            </>
+          ) : null}
+        </span>
       </div>
 
-      {/* trace — bottom-pinned, auto-scrolling list of the run's work;
-          a top mask fades out whatever scrolled past */}
+      {/* trace — bottom-pinned, auto-scrolling list of the session's
+          work; a top mask fades whatever scrolled past */}
       <div className={`agent-demo-trace ${inScene || reduced ? "is-on" : ""}`} ref={traceRef}>
         <div
           className="agent-demo-trace-inner"
@@ -196,13 +205,14 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
                       ) : state === "on" ? (
                         <Loader2 size={12} className="agent-demo-spin" />
                       ) : (
-                        <Circle size={9} />
+                        <Circle size={8} strokeWidth={1.5} />
                       )}
                     </span>
-                    <span className="agent-demo-row-label">
-                      {state === "on" ? <DecryptedText text={label} duration={550} /> : label}
-                    </span>
+                    <span className="agent-demo-row-label">{label}</span>
                     {state === "done" && <span className="agent-demo-row-ms">{STEP_MS[i]}</span>}
+                    {state === "on" && (
+                      <ChevronRight size={12} className="agent-demo-row-more" aria-hidden="true" />
+                    )}
                   </div>
                   <div className={`agent-demo-card ${showBody ? "is-open" : ""}`}>
                     <div className="agent-demo-card-inner">
@@ -224,19 +234,17 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
             })}
           </ol>
 
-          {/* answer — the final flat block handed to the client */}
+          {/* deliverable — the final answer handed to the client */}
           <div
             className={`agent-demo-answer ${handedOff || reduced ? "is-open" : ""}`}
             aria-hidden={!handedOff && !reduced}
           >
             <div className="agent-demo-answer-inner">
               <div className="agent-demo-answer-head">
-                <Terminal size={11} aria-hidden="true" />
-                <span>agent.respond()</span>
+                <Check size={11} strokeWidth={3} aria-hidden="true" />
+                <span>{copy.done}</span>
               </div>
-              <p className="agent-demo-answer-text">
-                <SplitText text={copy.handover} on={handedOff} step={16} />
-              </p>
+              <p className="agent-demo-answer-text">{copy.handover}</p>
               <table className="agent-demo-answer-rows">
                 <tbody>
                   {(reduced ? RESULT_ROWS : RESULT_ROWS.slice(0, shownRows)).map(
@@ -260,20 +268,18 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
                 </tbody>
               </table>
               <div className="agent-demo-answer-foot">
-                {handedOff || reduced ? <ShinyText>{copy.done}</ShinyText> : copy.done}
-                <Magnet
+                {handedOff || reduced ? (
+                  <ShinyText>delivered</ShinyText>
+                ) : (
+                  <span aria-hidden="true">&nbsp;</span>
+                )}
+                <span
                   className={`agent-demo-client ${handedOff || reduced ? "is-on" : ""}`}
-                  strength={0.5}
-                  radius={90}
+                  aria-hidden="true"
                 >
-                  <span
-                    aria-hidden="true"
-                    style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
-                  >
-                    <UserRound size={11} />
-                    {copy.client}
-                  </span>
-                </Magnet>
+                  <UserRound size={11} />
+                  {copy.client}
+                </span>
               </div>
             </div>
           </div>

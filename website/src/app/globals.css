@@ -3723,76 +3723,48 @@ a {
   }
 }
 
-/* ---------- agent demo: dark cinematic task trace ------------------- */
-/* obsidian canvas + bone-white type, amber-free blue accents: an ask
-   command bar glows in, a bottom-pinned hairline trace auto-scrolls
-   through the run — active rows carry a soft ember glow and their log
-   lines expand in place — then the answer lands with a delivered foot. */
-
-.neu .agent-mock {
-  background: linear-gradient(180deg, #10151c 0%, #0b0f14 55%, #0a0d12 100%);
-  border: 1px solid rgba(125, 145, 170, 0.16);
-  box-shadow:
-    var(--neu-shadow-out),
-    inset 0 1px 0 rgba(255, 255, 255, 0.05);
-}
-
-.neu .agent-mock .frame-bar {
-  background: rgba(13, 17, 22, 0.85);
-  border-bottom-color: rgba(125, 145, 170, 0.14);
-}
-
-.neu .agent-mock .frame-bar strong {
-  color: #9aa7b8;
-}
+/* ---------- agent demo: calm session view -------------------------- */
+/* the Anthropic task-demo language: a quiet session panel — request
+   header on top, numbered work rows with the active step's log
+   expanding in place, a bottom-pinned auto-scroll, and the deliverable
+   card handed to the client at the end. Borders, not glow. */
 
 .neu .agent-demo {
   position: relative;
   z-index: 0;
-  padding: 6px 20px 10px;
+  padding: 4px 20px 12px;
   display: flex;
   flex-direction: column;
   height: 372px;
-  /* ember glow breathing from the bottom corners — the cinematic cue */
-  background:
-    radial-gradient(420px 180px at 18% 112%, rgba(8, 126, 252, 0.14), transparent 70%),
-    radial-gradient(360px 160px at 86% 108%, rgba(255, 138, 61, 0.07), transparent 70%);
 }
 
-/* ask — the request bar, centered glow like a launch-video command line */
+/* session header — agent avatar + the request + a live/done status */
 .neu .agent-demo-ask {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 11px 14px;
-  margin: 8px 0 14px;
-  border-radius: 10px;
-  border: 1px solid rgba(125, 145, 170, 0.2);
-  background: rgba(255, 255, 255, 0.025);
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.04),
-    0 0 0 1px rgba(0, 0, 0, 0.2),
-    0 0 24px rgba(8, 126, 252, 0.08);
+  gap: 11px;
+  padding: 12px 2px;
+  border-bottom: 1px solid var(--neu-line);
 }
 
 .neu .agent-demo-ask-icon {
-  width: 22px;
-  height: 22px;
+  width: 26px;
+  height: 26px;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
-  background: linear-gradient(135deg, #087efc, #0067d7);
+  border-radius: 8px;
+  background: var(--neu-accent-deep);
   color: #fff;
-  box-shadow: 0 0 12px rgba(8, 126, 252, 0.45);
 }
 
 .neu .agent-demo-ask-text {
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: 0.01em;
-  color: #e7edf3;
+  flex: 1;
+  min-width: 0;
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--neu-ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3807,19 +3779,30 @@ a {
   margin-left: 2px;
   vertical-align: -1px;
   border-radius: 1px;
-  background: #6fb5ff;
-  box-shadow: 0 0 6px rgba(111, 181, 255, 0.8);
+  background: var(--neu-accent-deep);
   animation: agent-demo-blink 0.9s step-end infinite;
 }
+.neu .agent-demo-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: 0 0 auto;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--neu-accent-deep);
+  opacity: 0;
+  transition: opacity 0.3s ease;
+}
 
-@keyframes agent-demo-blink {
-  50% {
-    opacity: 0;
-  }
+.neu .agent-demo-live.is-on {
+  opacity: 1;
 }
 
 /* trace — bottom-pinned, auto-scrolling column; the ::before mask fades
-   older work out like a real task view */
+   older work out like a real session view */
 .neu .agent-demo-trace {
   position: relative;
   flex: 1 1 auto;
@@ -3838,10 +3821,10 @@ a {
   top: 0;
   left: 0;
   right: 0;
-  height: 34px;
+  height: 30px;
   z-index: 4;
   pointer-events: none;
-  background: linear-gradient(180deg, #0d1117, rgba(13, 17, 23, 0));
+  background: linear-gradient(180deg, var(--neu-bg-soft), rgba(238, 241, 245, 0));
 }
 
 .neu .agent-demo-trace.is-on {
@@ -3851,20 +3834,27 @@ a {
 .neu .agent-demo-trace-inner {
   display: flex;
   flex-direction: column;
-  flex: 0 0 auto;
+  justify-content: flex-end;
+  flex: 1 0 auto;
+  min-height: 100%;
   transition: transform 0.55s cubic-bezier(0.33, 1, 0.68, 1);
 }
 
-/* step rows — flat entries with a soft ember glow while active */
-.neu .agent-demo-steps {
-  margin: 0;
-  padding: 0;
-  list-style: none;
+.neu .agent-demo-row {
+  border-bottom: 1px solid var(--neu-line);
+  counter-increment: step;
+  animation: agent-demo-row-in 0.4s ease backwards;
 }
 
-.neu .agent-demo-row {
-  border-bottom: 1px solid rgba(125, 145, 170, 0.12);
-  animation: agent-demo-row-in 0.4s ease backwards;
+.neu .agent-demo-row-head::before {
+  content: counter(step);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--neu-muted);
+  width: 14px;
+  flex: 0 0 auto;
+  text-align: right;
 }
 
 @keyframes agent-demo-row-in {
@@ -3877,6 +3867,13 @@ a {
     opacity: 1;
     transform: none;
   }
+}
+
+.neu .agent-demo-steps {
+  margin: 0;
+  padding: 2px 0;
+  list-style: none;
+  counter-reset: step;
 }
 
 .neu .agent-demo-row:nth-child(2) {
@@ -3896,14 +3893,13 @@ a {
   align-items: center;
   gap: 11px;
   height: 38px;
-  padding: 0 4px;
-  border-radius: 6px;
-  transition: background 0.35s ease;
+  padding: 0 6px;
+  border-radius: 7px;
+  transition: background 0.3s ease;
 }
 
 .neu .agent-demo-row.is-on .agent-demo-row-head {
-  background: rgba(8, 126, 252, 0.07);
-  box-shadow: inset 0 0 0 1px rgba(8, 126, 252, 0.16);
+  background: rgba(8, 126, 252, 0.06);
 }
 
 .neu .agent-demo-row-status {
@@ -3912,15 +3908,15 @@ a {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #56616f;
+  color: var(--neu-muted);
 }
 
 .neu .agent-demo-row.is-done .agent-demo-row-status {
-  color: #34d399;
+  color: #169a63;
 }
 
 .neu .agent-demo-row.is-on .agent-demo-row-status {
-  color: #6fb5ff;
+  color: var(--neu-accent-deep);
 }
 
 .neu .agent-demo-spin {
@@ -3936,40 +3932,37 @@ a {
 .neu .agent-demo-row-label {
   flex: 1;
   min-width: 0;
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 600;
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
-  color: #cfd8e2;
+  color: var(--neu-ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 
 .neu .agent-demo-row.is-todo .agent-demo-row-label {
-  color: #5b6673;
-  opacity: 0.65;
-}
-
-.neu .agent-demo-row.is-on .agent-demo-row-label {
-  color: #eef3f8;
-  text-shadow: 0 0 14px rgba(111, 181, 255, 0.35);
+  color: var(--neu-muted);
+  opacity: 0.6;
 }
 
 .neu .agent-demo-row-ms {
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-size: 10.5px;
-  color: #5b6673;
+  color: var(--neu-muted);
 }
 
-/* step log — expands in place under the active row, dimmer mono lines */
+.neu .agent-demo-row-more {
+  color: var(--neu-accent-deep);
+}
+
+/* step log — expands in place under the active row */
 .neu .agent-demo-card {
   display: grid;
   grid-template-rows: 0fr;
   opacity: 0;
   transition:
     grid-template-rows 0.45s cubic-bezier(0.33, 1, 0.68, 1),
-    opacity 0.3s ease,
-    margin 0.45s cubic-bezier(0.33, 1, 0.68, 1);
+    opacity 0.3s ease;
 }
 
 .neu .agent-demo-card.is-open {
@@ -3980,8 +3973,8 @@ a {
 .neu .agent-demo-card-inner {
   overflow: hidden;
   min-height: 0;
-  margin: 0 4px 0 31px;
-  border-left: 1px solid rgba(125, 145, 170, 0.2);
+  margin: 0 6px 0 33px;
+  border-left: 2px solid var(--neu-line);
   padding: 0 0 0 12px;
 }
 
@@ -3994,7 +3987,7 @@ a {
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-size: 11px;
   line-height: 1.75;
-  color: #78838f;
+  color: var(--neu-muted);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -4015,23 +4008,21 @@ a {
 }
 
 .neu .agent-demo-card-line.is-cmd {
-  color: #6fb5ff;
+  color: var(--neu-accent-deep);
   font-weight: 600;
 }
 
 .neu .agent-demo-card-line.is-ok {
-  color: #34d399;
+  color: #169a63;
 }
 
-/* answer — a raised glass panel, the cinematic landing card */
+/* deliverable — the final bordered card, handed to the client */
 .neu .agent-demo-answer {
   display: grid;
   grid-template-rows: 0fr;
-  border-top: 1px solid transparent;
   opacity: 0;
   transition:
     grid-template-rows 0.5s cubic-bezier(0.33, 1, 0.68, 1),
-    border-color 0.4s ease,
     opacity 0.45s ease;
 }
 
@@ -4046,27 +4037,29 @@ a {
 }
 
 .neu .agent-demo-answer.is-open .agent-demo-answer-inner {
-  padding: 12px 0 8px;
-  border-top: 1px solid rgba(125, 145, 170, 0.18);
+  padding: 10px 0 4px;
 }
 
 .neu .agent-demo-answer-head {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 7px;
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: #e9f8f1;
+  color: #169a63;
   font-size: 10.5px;
   font-weight: 700;
-  letter-spacing: 0.05em;
-  color: #78838f;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
 }
 
 .neu .agent-demo-answer-text {
-  margin: 8px 0 0;
+  margin: 9px 0 0;
   font-size: 13px;
   font-weight: 500;
-  color: #e7edf3;
-  line-height: 1.45;
+  color: var(--neu-ink);
+  line-height: 1.5;
 }
 
 .neu .agent-demo-answer-rows {
@@ -4077,16 +4070,16 @@ a {
 }
 
 .neu .agent-demo-answer-rows td {
-  padding: 4px 0;
-  border-top: 1px solid rgba(125, 145, 170, 0.12);
-  color: #aab4c0;
+  padding: 5px 0;
+  border-top: 1px solid var(--neu-line);
+  color: var(--neu-ink);
   animation: agent-demo-line-in 0.35s ease both;
 }
 
 .neu .agent-demo-answer-rows td:last-child {
   text-align: right;
   font-family: var(--font-geist-mono), ui-monospace, monospace;
-  color: #6fb5ff;
+  color: var(--neu-accent-deep);
   font-weight: 600;
 }
 
@@ -4096,18 +4089,18 @@ a {
   justify-content: space-between;
   margin-top: 8px;
   padding-top: 8px;
-  border-top: 1px solid rgba(125, 145, 170, 0.12);
+  border-top: 1px solid var(--neu-line);
   font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: #34d399;
+  color: #169a63;
 }
 
 /* shiny text — reactbits' gradient sweep on the delivered foot */
 .neu .shiny-text {
   color: transparent;
-  background: linear-gradient(120deg, #34d399 30%, #a7f3d0 50%, #34d399 70%);
+  background: linear-gradient(120deg, #169a63 30%, #52c691 50%, #169a63 70%);
   background-size: 220% 100%;
   -webkit-background-clip: text;
   background-clip: text;
@@ -4124,22 +4117,21 @@ a {
   }
 }
 
-/* client chip — the handover target, glows in at the answer's foot */
+/* client chip — the handover target, soft-popping at the foot */
 .neu .agent-demo-client {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   padding: 4px 10px;
   border-radius: 999px;
-  background: linear-gradient(135deg, #087efc, #0067d7);
+  background: var(--neu-accent-deep);
   color: #fff;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.04em;
   text-transform: none;
-  box-shadow: 0 0 14px rgba(8, 126, 252, 0.4);
   opacity: 0;
-  transform: translateX(-10px) scale(0.8);
+  transform: translateX(-10px) scale(0.85);
   transition:
     opacity 0.4s ease 0.3s,
     transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) 0.3s;
@@ -4150,50 +4142,11 @@ a {
   transform: none;
 }
 
-/* reactbits accents used inside the trace */
-
-/* dot grid — the interactive dot-field backdrop; sits behind the rows.
-   height:0 keeps the canvas from eating the flex container's space. */
-.neu .agent-demo-dots {
-  position: absolute;
-  inset: 0;
-  height: 0;
-  z-index: 0;
-  pointer-events: none;
-}
-
-.neu .agent-demo-ask,
-.neu .agent-demo-trace {
-  position: relative;
-  z-index: 1;
-}
-
-/* split text — per-character drop-in for the answer headline */
-.neu .split-char {
-  display: inline-block;
-  opacity: 0;
-  transform: translateY(9px) rotate(5deg);
-  transition:
-    opacity 0.35s ease,
-    transform 0.5s cubic-bezier(0.34, 1.5, 0.64, 1);
-}
-
-.neu .split-char.is-in {
-  opacity: 1;
-  transform: none;
-}
-
-/* magnet — the client chip drifts toward the pointer, springy return */
-.neu .magnet {
-  transition: transform 0.5s cubic-bezier(0.33, 1, 0.68, 1);
-  will-change: transform;
-}
-
 /* tighten on small screens */
 @media (max-width: 720px) {
   .neu .agent-demo {
-    height: 360px;
-    padding: 6px 14px 10px;
+    height: 340px;
+    padding: 4px 14px 10px;
   }
 
   .neu .agent-demo-ask-text {

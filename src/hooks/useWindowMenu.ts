@@ -35,7 +35,7 @@ import { useOnboardingStore } from "../stores/onboarding-store";
 
 /** GitHub targets for the Help menu's outbound links. */
 const ISSUES_NEW_URL = "https://github.com/minhe51805/TabLer/issues/new";
-const DISCUSSIONS_URL = "https://github.com/minhe51805/TabLer/discussions";
+const ISSUES_URL = "https://github.com/minhe51805/TabLer/issues";
 
 // ─── Action interface ─────────────────────────────────────────────────────────
 
@@ -669,7 +669,7 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
           {
             label: getWindowMenuCopy(language).sendFeedback,
             action: () => {
-              void openExternalUrl(DISCUSSIONS_URL);
+              void openExternalUrl(ISSUES_URL);
               closeMenu();
             },
           },

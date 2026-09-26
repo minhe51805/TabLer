@@ -19,9 +19,8 @@ upgrade first and re-check the issue there.
 - **GitHub Security Advisories** (preferred):
   [Report a vulnerability](https://github.com/minhe51805/TabLer/security/advisories/new)
   — a private channel where we can coordinate a fix before disclosure.
-- If advisories are unavailable, start a private thread in
-  [Discussions → General](https://github.com/minhe51805/TabLer/discussions)
-  asking for a maintainer contact.
+- If advisories are unavailable, open an issue titled `[SECURITY-INQUIRY]`
+  with no technical detail — a maintainer will move the thread private.
 
 ### What to include
 

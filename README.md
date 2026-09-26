@@ -31,8 +31,6 @@
   <a href="https://github.com/minhe51805/TabLer/releases">Releases</a>
   &middot;
   <a href="https://github.com/minhe51805/TabLer/issues">Report an issue</a>
-  &middot;
-  <a href="https://github.com/minhe51805/TabLer/discussions">Discussions</a>
 </p>
 
 ![TableR SQL workspace](docs/screenshots/table-r-query-workspace.png)
@@ -235,8 +233,4 @@ TableR is distributed under the
 ## Support
 
 Use [GitHub Issues](https://github.com/minhe51805/TabLer/issues) for
-reproducible bugs and [GitHub Discussions](https://github.com/minhe51805/TabLer/discussions)
-for ideas or general questions.
-
-You can also support continued development through
-[Buy Me a Coffee](https://buymeacoffee.com/minjev).
+reproducible bugs, feature requests and general questions.

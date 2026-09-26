@@ -14,6 +14,11 @@ pub struct MemoryEntrySummary {
     /// ISO-8601 last-write time. Freshness signal so agents (and users) can
     /// reason about how stale a memory is before trusting it.
     pub updated_at: String,
+    /// Who wrote the entry — `agent` for tool/learned writes today; the field
+    /// exists so a future user-authored write path keeps its provenance
+    /// instead of blending into agent output. Missing on pre-provenance
+    /// files, which were all agent-written, so the index reports "agent".
+    pub origin: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -150,24 +155,37 @@ fn sanitize_memory_name(raw: &str) -> Result<String, String> {
     Ok(trimmed.to_string())
 }
 
-/// Same minimal frontmatter reader as skills, plus an `updated` timestamp key.
-fn parse_memory_md(raw: &str) -> (Option<String>, Option<String>, Option<String>, String) {
+/// Same minimal frontmatter reader as skills, plus `updated`/`origin` keys.
+/// Unknown keys are ignored so files written before `origin` still parse.
+/// Returns (name, description, updated, origin, body); origin is `None` for
+/// pre-provenance files — callers treat that as "agent" since every write
+/// path so far is agent-driven.
+fn parse_memory_md(
+    raw: &str,
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    String,
+) {
     // A UTF-8 BOM survives `trim_start()` (it is not whitespace), so a
     // BOM-saved MEMORY.md would fail the `---` check and be silently dropped.
     let trimmed = raw.trim_start_matches('\u{feff}').trim_start();
     let rest = match trimmed.strip_prefix("---") {
         Some(rest) => rest,
-        None => return (None, None, None, trimmed.to_string()),
+        None => return (None, None, None, None, trimmed.to_string()),
     };
     let end = match rest.find("\n---") {
         Some(index) => index,
-        None => return (None, None, None, trimmed.to_string()),
+        None => return (None, None, None, None, trimmed.to_string()),
     };
     let frontmatter = &rest[..end];
     let body = rest[end + 4..].trim_start_matches(['\r', '\n']).to_string();
     let mut name = None;
     let mut description = None;
     let mut updated = None;
+    let mut origin = None;
     for line in frontmatter.lines() {
         let line = line.trim();
         let read_value = |prefix: &str| -> Option<String> {
@@ -178,12 +196,13 @@ fn parse_memory_md(raw: &str) -> (Option<String>, Option<String>, Option<String>
         name = name.or_else(|| read_value("name:"));
         description = description.or_else(|| read_value("description:"));
         updated = updated.or_else(|| read_value("updated:"));
+        origin = origin.or_else(|| read_value("origin:"));
     }
     // Keep the per-run index bounded: descriptions are injected for every
     // remembered entry on every agent run.
     let description =
         description.map(|value| value.chars().take(MAX_MEMORY_DESCRIPTION_CHARS).collect());
-    (name, description, updated, body)
+    (name, description, updated, origin, body)
 }
 
 fn memory_md_path(dir: &Path) -> PathBuf {
@@ -234,7 +253,8 @@ pub fn discover_memories_in_root(root: &Path) -> Vec<MemoryEntrySummary> {
             log::warn!("agent_memory: cannot read {}", file_path.display());
             continue;
         };
-        let (parsed_name, parsed_description, parsed_updated, _) = parse_memory_md(&raw);
+        let (parsed_name, parsed_description, parsed_updated, parsed_origin, _) =
+            parse_memory_md(&raw);
         // Same strictness as skills: name must equal the directory name.
         let Some(parsed_name) = parsed_name else {
             log::warn!(
@@ -254,6 +274,9 @@ pub fn discover_memories_in_root(root: &Path) -> Vec<MemoryEntrySummary> {
             name: parsed_name,
             description: parsed_description.unwrap_or_default(),
             updated_at: parsed_updated.unwrap_or_default(),
+            // Pre-provenance files carry no `origin:` line — but every write
+            // path so far is agent-driven, so "agent" is the true default.
+            origin: parsed_origin.unwrap_or_else(|| "agent".to_string()),
         });
     }
     summaries.sort_by(|left, right| left.name.cmp(&right.name));
@@ -268,8 +291,6 @@ pub fn discover_memories_in_root(root: &Path) -> Vec<MemoryEntrySummary> {
     summaries
 }
 
-// __PART3__
-
 #[derive(Clone)]
 pub struct SaveMemoryParams {
     pub connection_id: Option<String>,
@@ -277,6 +298,10 @@ pub struct SaveMemoryParams {
     pub name: String,
     pub description: Option<String>,
     pub body: String,
+    /// `agent` for tool/learned writes; reserved `user` for a future manual
+    /// write path. Persisted as the frontmatter `origin:` line so an audited
+    /// file shows where it came from without depending on the write path.
+    pub origin: Option<String>,
 }
 
 fn write_memory_file(dir: &Path, frontmatter: &str, body: &str) -> Result<(), String> {
@@ -349,6 +374,13 @@ pub fn save_memory_entry_in(
             .collect::<String>()
     });
     reject_secret_shaped_payload(&name, &body, &description)?;
+    // Frontmatter `origin` records who wrote the entry — `agent` today for
+    // tool/learned writes. It is a single-token value, so any caller-supplied
+    // value outside the known set is normalized rather than trusted.
+    let origin = match params.origin.as_deref().map(str::trim) {
+        Some("user") => "user",
+        _ => "agent",
+    };
     let scope = memory_scope_dir(
         data_dir,
         params.connection_id.as_deref(),
@@ -371,7 +403,7 @@ pub fn save_memory_entry_in(
     }
     let now = chrono::Utc::now().to_rfc3339();
     let frontmatter = format!(
-        "name: {name}\ndescription: {}\nupdated: {now}\n",
+        "name: {name}\ndescription: {}\nupdated: {now}\norigin: {origin}\n",
         description.as_deref().unwrap_or("")
     );
     write_memory_file(&dir, &frontmatter, &body)?;
@@ -379,6 +411,7 @@ pub fn save_memory_entry_in(
         name,
         description: description.unwrap_or_default(),
         updated_at: now,
+        origin: origin.to_string(),
     })
 }
 
@@ -511,7 +544,8 @@ fn read_memory_entry_in(
     }
     let raw = std::fs::read_to_string(&file_path)
         .map_err(|_| format!("Memory '{name}' was not found in this scope."))?;
-    let (Some(parsed_name), parsed_description, parsed_updated, body) = parse_memory_md(&raw)
+    let (Some(parsed_name), parsed_description, parsed_updated, _origin, body) =
+        parse_memory_md(&raw)
     else {
         return Err(format!(
             "Memory '{name}' has no frontmatter name — it cannot be loaded."
@@ -582,6 +616,7 @@ pub fn save_agent_memory(
     connection_id: Option<String>,
     database: Option<String>,
     description: Option<String>,
+    origin: Option<String>,
 ) -> Result<MemoryEntrySummary, String> {
     save_memory_entry(SaveMemoryParams {
         connection_id,
@@ -589,6 +624,7 @@ pub fn save_agent_memory(
         name,
         description,
         body,
+        origin,
     })
 }
 
@@ -650,13 +686,13 @@ mod tests {
     #[test]
     fn frontmatter_roundtrip_and_description_cap() {
         let raw = "---\nname: metric-definitions\ndescription: curated metric semantics\nupdated: 2026-01-01T00:00:00Z\n---\n\nbody text";
-        let (name, description, updated, body) = parse_memory_md(raw);
+        let (name, description, updated, _origin, body) = parse_memory_md(raw);
         assert_eq!(name.as_deref(), Some("metric-definitions"));
         assert_eq!(description.as_deref(), Some("curated metric semantics"));
         assert_eq!(updated.as_deref(), Some("2026-01-01T00:00:00Z"));
         assert_eq!(body.trim(), "body text");
         let long = format!("---\nname: n\ndescription: {}\n---\nbody", "x".repeat(500));
-        let (_, capped, _, _) = parse_memory_md(&long);
+        let (_, capped, _, _, _) = parse_memory_md(&long);
         assert_eq!(
             capped.unwrap().chars().count(),
             MAX_MEMORY_DESCRIPTION_CHARS
@@ -709,6 +745,7 @@ mod tests {
             name: "metric-definitions".to_string(),
             description: Some("curated metrics".to_string()),
             body: "revenue = net sales minus refunds".to_string(),
+            origin: None,
         };
         let saved = save_memory_entry_in(&base, params.clone()).unwrap();
         assert_eq!(saved.name, "metric-definitions");
@@ -757,13 +794,14 @@ mod tests {
                     "harmless text\nupdated: 1999-01-01T00:00:00Z\npoisoned: yes".to_string(),
                 ),
                 body: "body".to_string(),
+                origin: None,
             },
         )
         .unwrap();
         assert!(!saved.description.contains('\n'));
         let scope = memory_scope_dir(&base, Some("conn-x"), Some("db"));
         let raw = std::fs::read_to_string(scope.join("injection-probe").join("MEMORY.md")).unwrap();
-        let (_, parsed_description, parsed_updated, _) = parse_memory_md(&raw);
+        let (_, parsed_description, parsed_updated, _, _) = parse_memory_md(&raw);
         // The forged timestamp must NOT win — the real write time survives,
         // and no injected line exists as a standalone frontmatter key.
         assert_eq!(parsed_updated.as_deref(), Some(saved.updated_at.as_str()));
@@ -789,6 +827,7 @@ mod tests {
             name,
             description: None,
             body: "body".to_string(),
+            origin: None,
         };
         for index in 0..MAX_MEMORY_ENTRIES {
             save_memory_entry_in(&base, make_params(format!("mem-{index:02}"))).unwrap();
@@ -828,6 +867,7 @@ mod tests {
                 name: "obsolete".to_string(),
                 description: None,
                 body: "stale".to_string(),
+                origin: None,
             },
         )
         .unwrap();
@@ -899,6 +939,7 @@ mod tests {
                 name: "atomic".to_string(),
                 description: None,
                 body: "body".to_string(),
+                origin: None,
             },
         )
         .unwrap();

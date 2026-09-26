@@ -157,6 +157,7 @@ export const tools: AgentToolModule[] = [
             description: memoryDescription || null,
             connectionId: ctx.memoryScope.connectionId,
             database: ctx.memoryScope.database ?? null,
+            origin: "agent",
           },
         );
         // Memory writes are invisible to the user by default — a toast keeps

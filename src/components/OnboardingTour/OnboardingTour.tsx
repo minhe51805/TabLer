@@ -6,7 +6,11 @@ import { useConnectionStore } from "../../stores/connectionStore";
 import { useOnboardingStore } from "../../stores/onboarding-store";
 import { getOnboardingCopy } from "./onboarding-tour-copy";
 import { TOUR_STEPS, type TourStep } from "./tour-steps";
+import { openExternalUrl } from "../../utils/tauri-utils";
 import "./OnboardingTour.css";
+
+/** The repo README is the documentation entry point today. */
+const ONBOARDING_DOCS_URL = "https://github.com/minhe51805/TabLer";
 
 const CUTOUT_PAD = 8;
 const POPOVER_W = 320;
@@ -316,6 +320,14 @@ export function OnboardingTour() {
         <h3 className="onboarding-title">{stepCopy.title}</h3>
         <p className="onboarding-body">{renderCopyBody(stepCopy.body)}</p>
         <div className="onboarding-actions">
+          <button
+            type="button"
+            className="onboarding-docs-link"
+            onClick={() => void openExternalUrl(ONBOARDING_DOCS_URL)}
+          >
+            {copy.docsLink}
+          </button>
+          <span className="onboarding-actions-spacer" />
           {tourStepIndex > 0 && (
             <button type="button" className="btn" onClick={back}>
               {copy.back}

@@ -175,10 +175,28 @@
   color: #0369a1;
 }
 
+.onboarding-docs-link {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--accent, #0284c7);
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.onboarding-docs-link:hover {
+  text-decoration: underline;
+  background: rgba(2, 132, 199, 0.08);
+}
+
+.onboarding-actions-spacer {
+  flex: 1;
+}
+
 .onboarding-actions {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 8px;
 }
 

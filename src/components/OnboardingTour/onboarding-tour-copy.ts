@@ -40,6 +40,8 @@ export interface OnboardingCopy {
   skip: string;
   /** Hint shown on click-through steps (replaces the old emoji). */
   clickHint: string;
+  /** Docs entry point in the popover footer. */
+  docsLink: string;
   /** Step counter, e.g. "3 / 8". */
   stepOf(current: number, total: number): string;
 }
@@ -94,6 +96,7 @@ const EN: OnboardingCopy = {
   done: "Done",
   skip: "Skip tour",
   clickHint: "Click the highlighted area",
+  docsLink: "Docs",
   stepOf: (current, total) => `${current} / ${total}`,
 };
 
@@ -148,6 +151,7 @@ const VI: OnboardingCopy = {
   done: "Xong",
   skip: "Bỏ qua",
   clickHint: "Bấm vào vùng được tô sáng",
+  docsLink: "Tài liệu",
 };
 
 const KO: OnboardingCopy = {
@@ -201,6 +205,7 @@ const KO: OnboardingCopy = {
   done: "완료",
   skip: "건너뛰기",
   clickHint: "강조된 영역을 클릭하세요",
+  docsLink: "문서",
 };
 
 const TR: OnboardingCopy = {
@@ -254,6 +259,7 @@ const TR: OnboardingCopy = {
   done: "Bitti",
   skip: "Turu atla",
   clickHint: "Vurgulanan alana tıklayın",
+  docsLink: "Belgeler",
 };
 
 const ZH: OnboardingCopy = {
@@ -307,6 +313,7 @@ const ZH: OnboardingCopy = {
   done: "完成",
   skip: "跳过导览",
   clickHint: "点击高亮区域",
+  docsLink: "文档",
 };
 
 const COPY: Record<AppLanguage, OnboardingCopy> = {

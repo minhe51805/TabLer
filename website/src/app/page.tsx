@@ -433,6 +433,7 @@ export default async function Home() {
                 prompt: t.agent.demo.prompt,
                 steps: t.agent.demo.steps as [string, string, string, string],
                 term: t.agent.demo.term,
+                client: t.agent.demo.client,
                 handover: t.agent.demo.handover,
                 done: t.agent.demo.done,
               }}

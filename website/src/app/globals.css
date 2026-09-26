@@ -3723,17 +3723,16 @@ a {
   }
 }
 
-/* ---------- agent demo: split-pane agent-loop storyboard ------------- */
-/* scene 1: prompt bar alone → scene 2: agent drops in (grow + spin) →
-   scene 3: left pane shows the current step node + working agent (past
-   and future steps only exist as rail dots), right pane runs a mock
-   terminal log per step → scene 4: agent slides to the client avatar,
-   terminal crossfades into a chat bubble with streamed result rows */
+/* ---------- agent demo: single-rail agent-loop storyboard ------------- */
+/* prompt bar types and exits → the agent drops in, spins, and slides
+   onto a work rail → it orbits the node of the step it's running while
+   an activity card slides along underneath, tail pinned to the node →
+   past the last node it slides to the client and a result bubble pops */
 .neu .agent-demo {
   position: relative;
   display: flex;
   flex-direction: column;
-  min-height: 420px;
+  min-height: 460px;
   padding: 22px;
   background:
     radial-gradient(120% 90% at 15% 0%, rgba(255, 255, 255, 0.5), transparent 55%),
@@ -3747,7 +3746,7 @@ a {
   align-items: center;
   justify-content: center;
   flex: 1;
-  min-height: 360px;
+  min-height: 400px;
   transition:
     opacity 0.4s ease,
     transform 0.4s cubic-bezier(0.16, 1, 0.3, 1);
@@ -3789,13 +3788,11 @@ a {
   }
 }
 
-/* scene — the two-pane stage */
+/* scene — the rail stage */
 .neu .agent-demo-scene {
-  display: grid;
-  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
-  gap: 18px;
+  position: relative;
   flex: 1;
-  min-height: 360px;
+  min-height: 400px;
   opacity: 0;
   transform: translateY(10px);
   transition:
@@ -3808,113 +3805,201 @@ a {
   transform: none;
 }
 
-/* left pane — progress rail, current node, agent, client */
-.neu .agent-demo-left {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  border-radius: 14px;
+/* work rail — recessed track with a fill that chases the agent */
+.neu .agent-demo-rail {
+  position: absolute;
+  left: 4%;
+  right: 3%;
+  top: 106px;
+  height: 6px;
+  border-radius: 999px;
   background: var(--neu-surface);
   box-shadow: var(--neu-shadow-in);
-  overflow: hidden;
 }
 
-.neu .agent-demo-progress {
-  display: flex;
-  gap: 7px;
-  justify-content: center;
+.neu .agent-demo-rail-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--green) 0%, var(--neu-accent-deep) 100%);
+  transition: width 0.9s cubic-bezier(0.45, 0, 0.25, 1);
+}
+
+/* step nodes — circles on the rail; done turns green, current glows */
+.neu .agent-demo-stations {
+  position: absolute;
+  inset: 0;
   margin: 0;
-  padding: 16px 0 0;
+  padding: 0;
   list-style: none;
 }
 
-.neu .agent-demo-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-  background: var(--neu-surface);
-  box-shadow: var(--neu-shadow-out-sm);
-  transition: all 0.3s ease;
-}
-
-.neu .agent-demo-dot.is-on {
-  width: 22px;
-  border-radius: 999px;
-  background: var(--neu-accent-deep);
-  box-shadow: none;
-}
-
-.neu .agent-demo-dot.is-done {
-  background: var(--green);
-  box-shadow: none;
-}
-
-/* center stage — the current step node; the agent orbits it */
-.neu .agent-demo-orbit {
+.neu .agent-demo-station {
   position: absolute;
-  inset: 0;
-}
-
-.neu .agent-demo-node-card {
-  position: absolute;
-  left: 50%;
-  top: 50%;
+  top: 91px;
   display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 12px;
-  transform: translate(-50%, -50%);
-  animation: agent-demo-node-in 0.45s cubic-bezier(0.16, 1, 0.3, 1) backwards;
-  transition:
-    opacity 0.35s ease,
-    transform 0.35s ease;
+  transform: translateX(-50%);
 }
 
-.neu .agent-demo-node-card.is-out {
-  opacity: 0;
-  transform: translate(-50%, -50%) scale(0.85);
-}
-
-@keyframes agent-demo-node-in {
-  from {
-    opacity: 0;
-    transform: translate(-50%, -50%) translateX(-14px);
-  }
-  to {
-    opacity: 1;
-    transform: translate(-50%, -50%) translateX(0);
-  }
-}
-
-.neu .agent-demo-node-icon {
+.neu .agent-demo-node {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 46px;
-  height: 46px;
-  border-radius: 14px;
-  background: var(--neu-bg-soft);
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  background: var(--neu-surface);
   box-shadow: var(--neu-shadow-out-sm);
+  color: var(--neu-muted);
+  transition:
+    color 0.3s ease,
+    box-shadow 0.3s ease;
+}
+
+.neu .agent-demo-station.is-on .agent-demo-node {
+  color: var(--neu-accent-deep);
+  box-shadow:
+    var(--neu-shadow-out-sm),
+    0 0 0 6px rgba(8, 126, 252, 0.14);
+}
+
+.neu .agent-demo-station.is-done .agent-demo-node {
+  color: #fff;
+  background: var(--green);
+  box-shadow:
+    var(--neu-shadow-out-sm),
+    0 6px 14px rgba(22, 154, 99, 0.35);
+}
+
+.neu .agent-demo-station-label {
+  margin-top: 9px;
+  color: var(--neu-muted);
+  font-size: 11.5px;
+  font-weight: 650;
+  white-space: nowrap;
+  transition: color 0.3s ease;
+}
+
+.neu .agent-demo-station.is-on .agent-demo-station-label,
+.neu .agent-demo-station.is-done .agent-demo-station-label {
+  color: var(--neu-ink);
+}
+
+/* client node — the rail's destination */
+.neu .agent-demo-station.is-client .agent-demo-node {
+  color: var(--neu-muted);
+}
+
+.neu .agent-demo-station.is-client.is-on .agent-demo-node {
+  color: var(--green);
+  box-shadow:
+    var(--neu-shadow-out-sm),
+    0 0 0 6px rgba(22, 154, 99, 0.14);
+}
+
+/* activity card — slides under the working node, tail pinned to it */
+.neu .agent-demo-card {
+  position: absolute;
+  top: 158px;
+  width: 300px;
+  padding: 12px 14px 13px;
+  border-radius: 14px;
+  background: var(--paper);
+  box-shadow: var(--neu-shadow-out);
+  transform: translateX(-50%) translateY(10px) scale(0.9);
+  transform-origin: top center;
+  opacity: 0;
+  transition:
+    left 0.8s cubic-bezier(0.45, 0, 0.25, 1),
+    opacity 0.3s ease,
+    transform 0.35s cubic-bezier(0.34, 1.56, 0.64, 1);
+  z-index: 2;
+}
+
+.neu .agent-demo-card::before {
+  content: "";
+  position: absolute;
+  top: -7px;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: var(--paper);
+  transform: translateX(-50%) rotate(45deg);
+}
+
+.neu .agent-demo-card.is-open {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0) scale(1);
+}
+
+.neu .agent-demo-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 9px;
+  border-bottom: 1px solid var(--soft-line);
+  color: var(--neu-accent-deep);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.neu .agent-demo-card-head span:first-of-type {
+  color: var(--neu-ink);
+}
+
+.neu .agent-demo-card-status {
+  margin-left: auto;
+  color: var(--green);
+  font-weight: 700;
+}
+
+.neu .agent-demo-card-body {
+  padding-top: 9px;
+  font-family: var(--font-geist-mono), monospace;
+  font-size: 11.5px;
+  line-height: 1.85;
+}
+
+.neu .agent-demo-card-line {
+  color: var(--neu-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  animation: agent-demo-line-in 0.3s ease both;
+}
+
+@keyframes agent-demo-line-in {
+  from {
+    opacity: 0;
+    transform: translateX(-8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.neu .agent-demo-card-line.is-cmd {
   color: var(--neu-accent-deep);
 }
 
-.neu .agent-demo-node-label {
-  color: var(--neu-ink);
-  font-size: 14px;
-  font-weight: 650;
+.neu .agent-demo-card-line.is-ok {
+  color: var(--green);
 }
 
-/* agent avatar — a zero-size pivot pinned to the orbit center; the icon
-   rides translateX(78px) around it so it circles the node */
+/* agent avatar — zero-size pivot on the rail; the icon rides
+   translateX(34px) around it so it orbits the node it's working on */
 .neu .agent-demo-avatar {
   position: absolute;
-  left: 50%;
-  top: 50%;
+  top: 106px;
   width: 0;
   height: 0;
   z-index: 3;
   transition:
-    left 0.7s cubic-bezier(0.45, 0, 0.25, 1),
-    transform 0.7s cubic-bezier(0.45, 0, 0.25, 1),
+    left 0.8s cubic-bezier(0.45, 0, 0.25, 1),
     opacity 0.25s ease;
 }
 
@@ -3922,15 +4007,15 @@ a {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 42px;
-  height: 42px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
   background: var(--blue);
   box-shadow:
     0 10px 24px rgba(8, 126, 252, 0.35),
     inset 0 1px 0 rgba(255, 255, 255, 0.35);
   color: #fff;
-  transform: translate(calc(92px - 50%), -50%);
+  transform: translate(calc(34px - 50%), -50%);
   transition: transform 0.6s cubic-bezier(0.45, 0, 0.25, 1);
 }
 
@@ -3938,7 +4023,7 @@ a {
   opacity: 0;
 }
 
-/* arrival — drop from above, scale up + one spin, slide onto the ring */
+/* arrival — drop above the rail, scale + one spin, slide onto the ring */
 .neu .agent-demo-avatar.is-arriving .agent-demo-avatar-icon {
   animation: agent-demo-arrive 1.2s cubic-bezier(0.34, 1.3, 0.64, 1) forwards;
 }
@@ -3946,7 +4031,7 @@ a {
 @keyframes agent-demo-arrive {
   0% {
     opacity: 0;
-    transform: translate(-50%, -60%) translateY(-70px) scale(0.3) rotate(0deg);
+    transform: translate(-50%, -60%) translateY(-80px) scale(0.3) rotate(0deg);
   }
   45% {
     opacity: 1;
@@ -3957,11 +4042,11 @@ a {
   }
   100% {
     opacity: 1;
-    transform: translate(calc(92px - 50%), -50%) scale(1) rotate(360deg);
+    transform: translate(calc(34px - 50%), -50%) scale(1) rotate(360deg);
   }
 }
 
-/* orbit — the pivot spins; the icon counter-spins to stay upright */
+/* orbit — pivot spins, icon counter-spins to stay upright */
 .neu .agent-demo-avatar.is-working {
   animation: agent-demo-orbit 2.2s linear infinite;
 }
@@ -3978,184 +4063,51 @@ a {
 
 @keyframes agent-demo-orbit-counter {
   from {
-    transform: translate(calc(92px - 50%), -50%) rotate(0deg);
+    transform: translate(calc(34px - 50%), -50%) rotate(0deg);
   }
   to {
-    transform: translate(calc(92px - 50%), -50%) rotate(-360deg);
+    transform: translate(calc(34px - 50%), -50%) rotate(-360deg);
   }
 }
 
-/* handover — the pivot eases right toward the client avatar; the icon
-   parks centered on it (orbit animation stops, transition takes over) */
-.neu .agent-demo-avatar.is-handing {
-  left: 80%;
-}
-
-.neu .agent-demo-avatar.is-handing .agent-demo-avatar-icon {
-  transform: translate(-50%, -50%);
-}
-
-/* client avatar — slides in at the right edge for the handover */
-.neu .agent-demo-client {
+/* result bubble — pops under the client, tail up toward it */
+.neu .agent-demo-result {
   position: absolute;
-  top: 50%;
-  right: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 38px;
-  height: 38px;
-  border-radius: 50%;
-  background: var(--neu-surface);
-  box-shadow: var(--neu-shadow-out-sm);
-  color: var(--neu-muted);
-  transform: translateY(-50%) translateX(24px) scale(0.5);
-  opacity: 0;
-  transition:
-    opacity 0.35s ease,
-    transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-.neu .agent-demo-client.is-on {
-  opacity: 1;
-  transform: translateY(-50%) translateX(0) scale(1);
-}
-
-/* during the handover the left pane spotlights the agent → client pair */
-.neu .agent-demo-left {
-  transition: background 0.5s ease;
-}
-
-.neu .agent-demo-scene.is-handover .agent-demo-left {
-  background:
-    radial-gradient(46% 60% at 82% 50%, rgba(8, 126, 252, 0.1), transparent 70%), var(--neu-surface);
-}
-
-/* right pane — terminal and chat swap in place */
-.neu .agent-demo-right {
-  position: relative;
-  display: grid;
-}
-
-.neu .agent-demo-terminal,
-.neu .agent-demo-chat {
-  grid-area: 1 / 1;
-}
-
-/* mock terminal */
-.neu .agent-demo-terminal {
-  display: flex;
-  flex-direction: column;
-  border-radius: 14px;
-  background: #141a22;
-  box-shadow: var(--neu-shadow-in);
-  overflow: hidden;
-  transition:
-    opacity 0.35s ease,
-    transform 0.35s ease;
-}
-
-.neu .agent-demo-terminal.is-off {
-  opacity: 0;
-  transform: translateY(8px);
-  pointer-events: none;
-}
-
-.neu .agent-demo-term-bar {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 10px 14px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.07);
-}
-
-.neu .agent-demo-term-bar span {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  background: rgba(255, 255, 255, 0.16);
-}
-
-.neu .agent-demo-term-bar strong {
-  margin-left: 8px;
-  color: #7d8a99;
-  font-family: var(--font-geist-mono), monospace;
-  font-size: 11px;
-  font-weight: 500;
-}
-
-.neu .agent-demo-term-body {
-  padding: 14px 16px;
-  font-family: var(--font-geist-mono), monospace;
-  font-size: 12px;
-  line-height: 1.9;
-}
-
-.neu .agent-demo-term-line {
-  color: #b8c4d2;
-  white-space: pre-wrap;
-  animation: agent-demo-term-in 0.35s ease both;
-}
-
-@keyframes agent-demo-term-in {
-  from {
-    opacity: 0;
-    transform: translateX(-8px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-.neu .agent-demo-term-line.is-cmd {
-  color: #6ec1ff;
-}
-
-.neu .agent-demo-term-line.is-ok {
-  color: #58c98d;
-}
-
-/* handover chat bubble — tail points back-left at the agent/client pair */
-.neu .agent-demo-chat {
-  position: relative;
-  align-self: center;
-  justify-self: start;
-  width: min(300px, 100%);
+  top: 158px;
+  width: min(300px, 78%);
   padding: 14px 16px;
   border-radius: 16px;
-  border-bottom-left-radius: 5px;
+  border-top-right-radius: 5px;
   background: var(--paper);
   box-shadow: var(--neu-shadow-out);
-  transform: translateX(14px) scale(0.82);
-  transform-origin: bottom left;
+  transform: translateX(-100%) translateY(12px) scale(0.82);
+  transform-origin: top right;
   opacity: 0;
   transition:
     opacity 0.35s ease 0.1s,
     transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) 0.1s;
   pointer-events: none;
+  z-index: 2;
 }
 
-/* dashed connector from the bubble's tail toward the agent/client pair —
-   a "passing the parcel" line across the pane gap */
-.neu .agent-demo-chat::before {
+.neu .agent-demo-result::before {
   content: "";
   position: absolute;
-  left: -34px;
-  bottom: 22px;
-  width: 30px;
-  height: 2px;
-  background-image: linear-gradient(90deg, var(--neu-accent-deep) 55%, transparent 55%);
-  background-size: 7px 2px;
-  opacity: 0.6;
+  top: -7px;
+  right: 18px;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  background: var(--paper);
+  transform: rotate(45deg);
 }
 
-.neu .agent-demo-chat.is-open {
+.neu .agent-demo-result.is-open {
   opacity: 1;
-  transform: none;
+  transform: translateX(-100%) translateY(0) scale(1);
 }
 
-.neu .agent-demo-chat-text {
+.neu .agent-demo-result-text {
   display: block;
   color: var(--neu-ink);
   font-size: 13px;
@@ -4168,36 +4120,36 @@ a {
     transform 0.4s cubic-bezier(0.16, 1, 0.3, 1) 0.35s;
 }
 
-.neu .agent-demo-chat.is-open .agent-demo-chat-text {
+.neu .agent-demo-result.is-open .agent-demo-result-text {
   opacity: 1;
   transform: none;
 }
 
-.neu .agent-demo-chat-rows {
+.neu .agent-demo-result-rows {
   width: 100%;
   margin-top: 10px;
   border-collapse: collapse;
   font-size: 11.5px;
 }
 
-.neu .agent-demo-chat-rows td {
+.neu .agent-demo-result-rows td {
   padding: 5px 8px;
   border-bottom: 1px solid rgba(163, 177, 198, 0.22);
   color: var(--neu-ink);
 }
 
-.neu .agent-demo-chat-rows tr:first-child td {
+.neu .agent-demo-result-rows tr:first-child td {
   border-top: 1px solid rgba(163, 177, 198, 0.35);
 }
 
-.neu .agent-demo-chat-rows td:last-child {
+.neu .agent-demo-result-rows td:last-child {
   text-align: right;
   font-family: var(--font-geist-mono), monospace;
   font-weight: 650;
   color: var(--neu-accent-deep);
 }
 
-.neu .agent-demo-chat-rows tr {
+.neu .agent-demo-result-rows tr {
   opacity: 0;
   transform: translateY(5px);
   transition:
@@ -4205,12 +4157,12 @@ a {
     transform 0.3s ease;
 }
 
-.neu .agent-demo-chat.is-open .agent-demo-chat-rows tr {
+.neu .agent-demo-result.is-open .agent-demo-result-rows tr {
   opacity: 1;
   transform: none;
 }
 
-.neu .agent-demo-chat-foot {
+.neu .agent-demo-result-foot {
   display: block;
   margin-top: 8px;
   color: var(--neu-muted);
@@ -4224,13 +4176,14 @@ a {
   .neu .agent-demo-intro,
   .neu .agent-demo-scene,
   .neu .agent-demo-avatar,
-  .neu .agent-demo-client,
-  .neu .agent-demo-terminal,
-  .neu .agent-demo-chat,
-  .neu .agent-demo-chat-text,
-  .neu .agent-demo-chat-rows tr,
-  .neu .agent-demo-term-line,
-  .neu .agent-demo-dot {
+  .neu .agent-demo-avatar-icon,
+  .neu .agent-demo-rail-fill,
+  .neu .agent-demo-node,
+  .neu .agent-demo-station-label,
+  .neu .agent-demo-card,
+  .neu .agent-demo-result,
+  .neu .agent-demo-result-text,
+  .neu .agent-demo-result-rows tr {
     transition: none;
   }
 
@@ -4238,43 +4191,35 @@ a {
   .neu .agent-demo-avatar.is-arriving .agent-demo-avatar-icon,
   .neu .agent-demo-avatar.is-working,
   .neu .agent-demo-avatar.is-working .agent-demo-avatar-icon,
-  .neu .agent-demo-term-line,
-  .neu .agent-demo-node-card {
+  .neu .agent-demo-card-line {
     animation: none;
   }
 }
 
 @media (max-width: 720px) {
   .neu .agent-demo {
-    min-height: 0;
+    min-height: 400px;
     padding: 14px;
   }
 
   .neu .agent-demo-intro {
-    min-height: 200px;
+    min-height: 320px;
   }
 
-  .neu .agent-demo-scene {
-    grid-template-columns: 1fr;
-    min-height: 0;
-    gap: 12px;
+  .neu .agent-demo-station-label {
+    font-size: 10px;
   }
 
-  .neu .agent-demo-left {
-    min-height: 240px;
+  .neu .agent-demo-card {
+    width: 230px;
   }
 
-  .neu .agent-demo-terminal {
-    min-height: 150px;
+  .neu .agent-demo-card-line {
+    font-size: 10.5px;
   }
 
-  .neu .agent-demo-avatar.is-handing {
-    transform: translateX(80px);
-  }
-
-  .neu .agent-demo-chat {
-    justify-self: stretch;
-    width: auto;
+  .neu .agent-demo-result {
+    width: min(270px, 82%);
   }
 }
 

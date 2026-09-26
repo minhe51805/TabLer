@@ -1,25 +1,23 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { Bot, Code2, Play, ShieldCheck, Table2, UserRound } from "lucide-react";
+import { Bot, Check, Code2, Play, ShieldCheck, Table2, UserRound } from "lucide-react";
 
 /**
  * Live agent-loop storyboard inside the agent section's product frame.
  *
- * Scene sequence:
- *   1. prompt — only the input bar exists; the user's question types in,
- *      then the bar fades away entirely
- *   2. arrive — the agent avatar drops into the left pane center, scales
- *      up, spins once, and settles onto the work line
- *   3. station ×4 — the pane splits: on the left the current step node
- *      (unreached and finished steps stay out of sight — a thin progress
- *      rail tracks them) with the agent beside it; on the right a mock
- *      terminal streams what the agent is doing at that step. The step
- *      advances and the terminal swaps its log.
- *   4. handover — the node fades out, the agent slides right toward the
- *      client avatar, and the terminal crossfades into a chat bubble:
- *      the handover line slides out and the result table streams in
- *   5. done — hold, then reset and replay
+ * Scene sequence (one stage, no split):
+ *   1. prompt — a lone input bar types the user's question, then exits
+ *   2. arrive — the agent drops into center stage, scales up, spins once,
+ *      and slides down onto the work rail
+ *   3. station ×4 — the agent walks the rail and orbits the node it's
+ *      working on; an activity card slides along underneath, its tail
+ *      pinned to the node, streaming that step's log. Past nodes turn
+ *      green + check; the rail fill chases the agent.
+ *   4. handover — past the last node the agent slides right to the client
+ *      avatar; a result bubble pops under it — handover line slides out,
+ *      result table streams in
+ *   5. done — hold, reset, replay
  *
  * Pure CSS/timeout choreography — no animation library. Runs only while
  * on screen (IntersectionObserver); reduced-motion users get the final
@@ -28,10 +26,14 @@ import { Bot, Code2, Play, ShieldCheck, Table2, UserRound } from "lucide-react";
 type Phase = "prompt" | "arrive" | "station" | "handover" | "done";
 
 const ARRIVE_MS = 1700;
-const STATION_MS = 2400;
-const HANDOVER_MS = 3600;
-const DONE_MS = 2400;
-const STATION_COUNT = 4;
+const STATION_MS = 2600;
+const HANDOVER_MS = 3400;
+const DONE_MS = 2600;
+
+/** Rail x-positions (%) — four work stations, then the client at the end. */
+const STATION_X = [16, 37, 58, 79];
+const CLIENT_X = 93;
+const STATION_COUNT = STATION_X.length;
 
 const STEP_ICONS = [Table2, Code2, ShieldCheck, Play];
 
@@ -46,8 +48,9 @@ const RESULT_ROWS: [string, string][] = [
 export type AgentDemoCopy = {
   prompt: string;
   steps: [string, string, string, string];
-  /** terminal log lines per step — first char "$" renders as a command */
+  /** activity log lines per step — "$" lines render as commands, "✓" as success */
   term: string[][];
+  client: string;
   handover: string;
   done: string;
 };
@@ -116,7 +119,7 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
     return () => clearTimeout(t);
   }, [active, reduced, phase, station]);
 
-  // Result rows stream into the chat during the handover.
+  // Result rows stream into the bubble during the handover.
   useEffect(() => {
     if (!active || reduced || phase !== "handover") return;
     if (rowCount >= RESULT_ROWS.length) return;
@@ -127,13 +130,22 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
   const inScene = phase !== "prompt";
   const inStation = phase === "station";
   const handedOff = phase === "handover" || phase === "done";
-  const StepIcon = STEP_ICONS[Math.min(station, STEP_ICONS.length - 1)];
 
-  const avatarGone = !inScene;
+  // The agent rides the rail: arrive at center, then walk station→station,
+  // finally reach the client. Same position drives the rail fill.
+  const agentX = reduced
+    ? CLIENT_X
+    : handedOff
+      ? CLIENT_X - 6
+      : inStation
+        ? STATION_X[station]
+        : 50;
+  const fillX = reduced ? 100 : handedOff ? CLIENT_X : inStation ? STATION_X[station] : 0;
+  const StepIcon = STEP_ICONS[Math.min(station, STEP_ICONS.length - 1)];
 
   return (
     <div className="agent-demo" ref={rootRef} aria-label={copy.prompt}>
-      {/* intro: the prompt bar alone — it leaves once the question lands */}
+      {/* intro — the prompt bar alone, centered; leaves once typed */}
       <div className={`agent-demo-intro ${inScene || reduced ? "is-out" : ""}`}>
         <div className="agent-demo-prompt">
           <span className="agent-demo-prompt-text">
@@ -145,102 +157,107 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
         </div>
       </div>
 
-      {/* main scene: node + agent (left) | terminal → chat (right) */}
-      <div
-        className={`agent-demo-scene ${inScene || reduced ? "is-on" : ""} ${handedOff ? "is-handover" : ""}`}
-      >
-        <div className="agent-demo-left">
-          {/* thin progress rail — the only trace of past/future steps */}
-          <ol className="agent-demo-progress" aria-hidden="true">
-            {copy.steps.map((label, i) => {
-              const state =
-                reduced || handedOff || i < station ? "done" : i === station ? "on" : "todo";
-              return <li className={`agent-demo-dot is-${state}`} key={label} title={label} />;
-            })}
-          </ol>
+      {/* the stage — one rail the agent walks */}
+      <div className={`agent-demo-scene ${inScene || reduced ? "is-on" : ""}`}>
+        {/* rail + progress fill chasing the agent */}
+        <div className="agent-demo-rail" aria-hidden="true">
+          <div className="agent-demo-rail-fill" style={{ width: `${fillX}%` }} />
+        </div>
 
-          {/* center stage — node card with the agent orbiting it */}
-          <div className="agent-demo-orbit" aria-hidden={!inScene || handedOff}>
-            <div
-              className={`agent-demo-node-card ${handedOff ? "is-out" : ""}`}
-              key={reduced ? "r" : station}
-            >
-              <span className="agent-demo-node-icon">
-                <StepIcon size={20} strokeWidth={1.9} aria-hidden="true" />
-              </span>
-              <span className="agent-demo-node-label">
-                {reduced ? copy.steps[3] : copy.steps[Math.min(station, 3)]}
-              </span>
-            </div>
+        {/* step nodes on the rail */}
+        <ol className="agent-demo-stations">
+          {copy.steps.map((label, i) => {
+            const Icon = STEP_ICONS[i];
+            const state =
+              reduced || handedOff || i < station
+                ? "done"
+                : inStation && i === station
+                  ? "on"
+                  : "todo";
+            return (
+              <li
+                className={`agent-demo-station is-${state}`}
+                style={{ left: `${STATION_X[i]}%` }}
+                key={label}
+              >
+                <span className="agent-demo-node" aria-hidden="true">
+                  {state === "done" ? <Check size={11} strokeWidth={3} /> : <Icon size={13} />}
+                </span>
+                <span className="agent-demo-station-label">{label}</span>
+              </li>
+            );
+          })}
+          {/* client node at the rail's end */}
+          <li
+            className={`agent-demo-station is-client ${handedOff || reduced ? "is-on" : ""}`}
+            style={{ left: `${CLIENT_X}%` }}
+          >
+            <span className="agent-demo-node" aria-hidden="true">
+              <UserRound size={13} />
+            </span>
+            <span className="agent-demo-station-label">{copy.client}</span>
+          </li>
+        </ol>
 
-            {/* agent avatar — orbits the node on stations, slides right
-                to the client for the handover */}
-            <div
-              className={`agent-demo-avatar ${avatarGone && !reduced ? "is-gone" : ""} ${
-                phase === "arrive" && !reduced ? "is-arriving" : ""
-              } ${inStation && !reduced ? "is-working" : ""} ${handedOff ? "is-handing" : ""}`}
-              aria-hidden="true"
-            >
-              <span className="agent-demo-avatar-icon">
-                <Bot size={18} />
-              </span>
-            </div>
-
-            {/* client avatar — slides in at the right edge for the handover */}
-            <div
-              className={`agent-demo-client ${handedOff || reduced ? "is-on" : ""}`}
-              aria-hidden="true"
-            >
-              <UserRound size={16} />
-            </div>
+        {/* activity card — slides along under the working node */}
+        <div
+          className={`agent-demo-card ${inStation && !reduced ? "is-open" : ""}`}
+          style={{ left: `clamp(132px, ${STATION_X[station]}%, calc(100% - 132px))` }}
+          aria-hidden={!inStation}
+        >
+          <div className="agent-demo-card-head">
+            <StepIcon size={14} aria-hidden="true" />
+            <span>{copy.steps[Math.min(station, 3)]}</span>
+            <span className="agent-demo-card-status">
+              {handedOff ? <Check size={12} strokeWidth={3} /> : "…"}
+            </span>
+          </div>
+          <div className="agent-demo-card-body" key={station}>
+            {copy.term[Math.min(station, 3)].map((line, i) => (
+              <div
+                className={`agent-demo-card-line ${line.startsWith("$") ? "is-cmd" : ""} ${
+                  line.includes("✓") ? "is-ok" : ""
+                }`}
+                style={{ animationDelay: `${0.25 + i * 0.5}s` }}
+                key={i}
+              >
+                {line}
+              </div>
+            ))}
           </div>
         </div>
 
-        <div className="agent-demo-right">
-          {/* mock terminal — one log per station, swapped on advance */}
-          <div
-            className={`agent-demo-terminal ${handedOff || reduced ? "is-off" : ""}`}
-            aria-hidden={handedOff}
-          >
-            <div className="agent-demo-term-bar">
-              <span />
-              <span />
-              <span />
-              <strong>{reduced ? copy.steps[3] : copy.steps[Math.min(station, 3)]}</strong>
-            </div>
-            <div className="agent-demo-term-body" key={reduced ? 3 : station}>
-              {(reduced ? copy.term[3] : copy.term[Math.min(station, 3)]).map((line, i) => (
-                <div
-                  className={`agent-demo-term-line ${line.startsWith("$") ? "is-cmd" : ""} ${
-                    line.includes("✓") ? "is-ok" : ""
-                  }`}
-                  style={{ animationDelay: `${0.3 + i * 0.55}s` }}
-                  key={i}
-                >
-                  {line}
-                </div>
-              ))}
-            </div>
-          </div>
+        {/* agent avatar — pivot on the rail, icon orbits the node, parks at client */}
+        <div
+          className={`agent-demo-avatar ${!inScene && !reduced ? "is-gone" : ""} ${
+            phase === "arrive" && !reduced ? "is-arriving" : ""
+          } ${inStation && !reduced ? "is-working" : ""}`}
+          style={{ left: `${agentX}%` }}
+          aria-hidden="true"
+        >
+          <span className="agent-demo-avatar-icon">
+            <Bot size={17} />
+          </span>
+        </div>
 
-          {/* handover chat — replaces the terminal for the final beat */}
-          <div
-            className={`agent-demo-chat ${handedOff || reduced ? "is-open" : ""}`}
-            aria-hidden={!handedOff && !reduced}
-          >
-            <span className="agent-demo-chat-text">{copy.handover}</span>
-            <table className="agent-demo-chat-rows">
-              <tbody>
-                {(reduced ? RESULT_ROWS : RESULT_ROWS.slice(0, rowCount)).map(([name, revenue]) => (
-                  <tr key={name}>
-                    <td>{name}</td>
-                    <td>{revenue}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <span className="agent-demo-chat-foot">{copy.done}</span>
-          </div>
+        {/* result bubble — pops under the client for the handover */}
+        <div
+          className={`agent-demo-result ${handedOff || reduced ? "is-open" : ""}`}
+          style={{ left: `${CLIENT_X}%` }}
+          aria-hidden={!handedOff && !reduced}
+        >
+          <span className="agent-demo-result-text">{copy.handover}</span>
+          <table className="agent-demo-result-rows">
+            <tbody>
+              {(reduced ? RESULT_ROWS : RESULT_ROWS.slice(0, rowCount)).map(([name, revenue]) => (
+                <tr key={name}>
+                  <td>{name}</td>
+                  <td>{revenue}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <span className="agent-demo-result-foot">{copy.done}</span>
         </div>
       </div>
     </div>

@@ -3723,65 +3723,60 @@ a {
   }
 }
 
-/* ---------- agent demo: Claude-style agent transcript --------------- */
-/* one quiet column: the user bubble types in -> a trace fades in — the
-   agent dot orbits the node of the step it's running while the step's
-   card expands in place (pushing later rows down, like a real tool
-   call) -> the response card hands the answer to the client chip. */
+/* ---------- agent demo: cline-style flat task trace ---------------- */
+/* hairline rows, mono log lines, a bottom-pinned trace that
+   auto-scrolls as work streams in — with reactbits-style text effects
+   (typing ask, decrypting step labels, a shiny "delivered" foot). */
 
 .neu .agent-demo {
   position: relative;
   z-index: 0;
-  padding: 0;
+  padding: 6px 18px 10px;
   display: flex;
   flex-direction: column;
+  height: 356px;
 }
 
-/* user bubble — the request that starts the run; exits once typed */
-.neu .agent-demo-user {
-  position: relative;
-  align-self: center;
+/* ask — the user request, pinned to the top like cline's task header */
+.neu .agent-demo-ask {
   display: flex;
   align-items: center;
-  gap: 2px;
-  max-width: 88%;
-  margin-bottom: 16px;
-  padding: 9px 14px;
-  border-radius: 12px;
-  border-bottom-right-radius: 4px;
+  gap: 10px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--neu-line);
+}
+
+.neu .agent-demo-ask-icon {
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
   background: var(--neu-accent-deep);
   color: #fff;
-  font-size: 12.5px;
-  font-weight: 500;
-  line-height: 1.4;
-  box-shadow: 0 2px 8px rgba(11, 61, 145, 0.25);
-  transition:
-    opacity 0.35s ease,
-    transform 0.35s ease;
 }
 
-.neu .agent-demo-user.is-done {
-  position: absolute;
-  top: 0;
-  left: 50%;
-  opacity: 0;
-  transform: translateX(-50%) translateY(-10px);
-  pointer-events: none;
-}
-
-.neu .agent-demo-user-text {
+.neu .agent-demo-ask-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--neu-ink);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  min-height: 16px;
 }
 
-/* typing caret inside the bubble */
-.neu .agent-demo-caret {
+/* typing caret inside the ask */
+.neu .type-caret {
+  display: inline-block;
   width: 2px;
-  height: 13px;
-  flex: 0 0 auto;
+  height: 12px;
+  margin-left: 2px;
+  vertical-align: -1px;
   border-radius: 1px;
-  background: rgba(255, 255, 255, 0.9);
+  background: var(--neu-accent-deep);
   animation: agent-demo-blink 0.9s step-end infinite;
 }
 
@@ -3791,197 +3786,168 @@ a {
   }
 }
 
-/* trace — the connector line + step rows + response; natural flow so
-   an expanding card pushes later rows down like a real trace */
+/* trace — bottom-pinned, auto-scrolling column; the ::before masks the
+   top so older work fades out like a real scrolling task view */
 .neu .agent-demo-trace {
   position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  overflow: hidden;
   opacity: 0;
-  transform: translateY(8px);
-  transition:
-    opacity 0.4s ease 0.15s,
-    transform 0.4s ease 0.15s;
+  transition: opacity 0.4s ease 0.1s;
+}
+
+.neu .agent-demo-trace::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 40px;
+  z-index: 4;
+  pointer-events: none;
+  background: linear-gradient(180deg, var(--neu-bg-soft), rgba(238, 241, 245, 0));
 }
 
 .neu .agent-demo-trace.is-on {
   opacity: 1;
-  transform: none;
+}
+.neu .agent-demo-trace-inner {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  transition: transform 0.55s cubic-bezier(0.33, 1, 0.68, 1);
 }
 
-/* the connector runs behind the node column, first node center down */
-.neu .agent-demo-line {
-  position: absolute;
-  top: 12px;
-  bottom: 0;
-  left: 29px;
-  width: 2px;
-  border-radius: 1px;
-  background: var(--neu-line);
-  overflow: hidden;
-}
-
-/* the blue fill chases the agent down the trace */
-.neu .agent-demo-line-fill {
-  width: 100%;
-  background: linear-gradient(180deg, #169a63, var(--neu-accent-deep));
-  transition: height 0.75s cubic-bezier(0.45, 0, 0.2, 1);
-}
-
-/* steps — flex rows; a step is row (node + label + state) + the card */
+/* step rows — flat hairline entries, the cline task-list look */
 .neu .agent-demo-steps {
-  position: relative;
-  z-index: 1;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.neu .agent-demo-step {
-  padding: 5px 0;
+.neu .agent-demo-row {
+  border-bottom: 1px solid var(--neu-line);
+  animation: agent-demo-row-in 0.4s ease backwards;
 }
 
-.neu .agent-demo-step-row {
+@keyframes agent-demo-row-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.neu .agent-demo-row:nth-child(2) {
+  animation-delay: 0.08s;
+}
+
+.neu .agent-demo-row:nth-child(3) {
+  animation-delay: 0.16s;
+}
+
+.neu .agent-demo-row:nth-child(4) {
+  animation-delay: 0.24s;
+}
+
+.neu .agent-demo-row-head {
   display: flex;
   align-items: center;
-  gap: 12px;
-  height: 24px;
+  gap: 10px;
+  height: 38px;
 }
 
-.neu .agent-demo-dot {
-  position: relative;
-  z-index: 2;
-  width: 24px;
-  height: 24px;
-  margin-left: 18px;
+.neu .agent-demo-row-status {
+  width: 16px;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
-  border: 1.5px solid var(--neu-line);
-  background: var(--neu-surface);
   color: var(--neu-muted);
-  transition:
-    background 0.35s ease,
-    border-color 0.35s ease,
-    color 0.35s ease,
-    box-shadow 0.35s ease,
-    opacity 0.35s ease;
 }
 
-.neu .agent-demo-step.is-todo .agent-demo-dot,
-.neu .agent-demo-step.is-todo .agent-demo-step-label {
-  opacity: 0.5;
-}
-
-.neu .agent-demo-step.is-on .agent-demo-dot {
-  border-color: var(--neu-accent-deep);
-  color: var(--neu-accent-deep);
-  box-shadow: 0 0 0 5px rgba(11, 61, 145, 0.1);
-}
-
-.neu .agent-demo-step.is-done .agent-demo-dot {
-  border-color: #169a63;
-  background: #169a63;
-  color: #fff;
-}
-
-.neu .agent-demo-step-label {
-  font-size: 12.5px;
-  font-weight: 600;
-  color: var(--neu-muted);
-  transition:
-    color 0.3s ease,
-    opacity 0.3s ease;
-}
-
-.neu .agent-demo-step.is-on .agent-demo-step-label,
-.neu .agent-demo-step.is-done .agent-demo-step-label {
-  color: var(--neu-ink);
-}
-
-.neu .agent-demo-step-state {
-  display: flex;
-  align-items: center;
+.neu .agent-demo-row.is-done .agent-demo-row-status {
   color: #169a63;
 }
 
-/* typing dots on the active step — like Claude's thinking indicator */
-.neu .agent-demo-typing {
-  display: inline-flex;
-  gap: 3px;
+.neu .agent-demo-row.is-on .agent-demo-row-status {
+  color: var(--neu-accent-deep);
 }
 
-.neu .agent-demo-typing i {
-  width: 4px;
-  height: 4px;
-  border-radius: 50%;
-  background: var(--neu-accent-deep);
-  animation: agent-demo-think 1s ease-in-out infinite;
+.neu .agent-demo-spin {
+  animation: agent-demo-spin 0.9s linear infinite;
 }
 
-.neu .agent-demo-typing i:nth-child(2) {
-  animation-delay: 0.15s;
-}
-
-.neu .agent-demo-typing i:nth-child(3) {
-  animation-delay: 0.3s;
-}
-
-@keyframes agent-demo-think {
-  0%,
-  60%,
-  100% {
-    opacity: 0.25;
-    transform: translateY(0);
-  }
-
-  30% {
-    opacity: 1;
-    transform: translateY(-3px);
+@keyframes agent-demo-spin {
+  to {
+    transform: rotate(360deg);
   }
 }
 
-/* step detail card — expands in place, pushing later rows down */
+.neu .agent-demo-row-label {
+  flex: 1;
+  min-width: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  color: var(--neu-ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.neu .agent-demo-row.is-todo .agent-demo-row-label {
+  color: var(--neu-muted);
+  opacity: 0.55;
+}
+
+.neu .agent-demo-row-ms {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10.5px;
+  color: var(--neu-muted);
+}
+
+/* step log — expands in place under the active row, flat hairline-free */
 .neu .agent-demo-card {
   display: grid;
   grid-template-rows: 0fr;
-  margin-left: 54px;
   opacity: 0;
-  transform: translateY(-4px);
   transition:
     grid-template-rows 0.45s cubic-bezier(0.33, 1, 0.68, 1),
     opacity 0.3s ease,
-    transform 0.45s cubic-bezier(0.33, 1, 0.68, 1),
-    margin-top 0.45s cubic-bezier(0.33, 1, 0.68, 1);
+    margin 0.45s cubic-bezier(0.33, 1, 0.68, 1);
 }
 
 .neu .agent-demo-card.is-open {
   grid-template-rows: 1fr;
-  margin-top: 8px;
   opacity: 1;
-  transform: none;
 }
 
 .neu .agent-demo-card-inner {
   overflow: hidden;
   min-height: 0;
-  border-radius: 10px;
-  border-top-left-radius: 4px;
+  margin-left: 26px;
+  border-left: 2px solid var(--neu-line);
+  padding: 0 0 0 12px;
 }
 
 .neu .agent-demo-card.is-open .agent-demo-card-inner {
-  padding: 9px 13px;
-  background: var(--neu-surface);
-  border: 1px solid var(--neu-line);
-  border-top-left-radius: 4px;
-  box-shadow: var(--neu-shadow-out);
+  padding-bottom: 10px;
 }
 
 .neu .agent-demo-card-line {
   display: block;
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-size: 11px;
-  line-height: 1.7;
+  line-height: 1.75;
   color: var(--neu-muted);
   white-space: nowrap;
   overflow: hidden;
@@ -3993,7 +3959,7 @@ a {
 @keyframes agent-demo-line-in {
   from {
     opacity: 0;
-    transform: translateX(-6px);
+    transform: translateX(-5px);
   }
 
   to {
@@ -4011,96 +3977,118 @@ a {
   color: #169a63;
 }
 
-/* response — the final row on the trace: node + card handed to client */
-.neu .agent-demo-response {
+/* answer — the final flat block, hairline-separated from the steps */
+.neu .agent-demo-answer {
+  display: grid;
+  grid-template-rows: 0fr;
+  border-top: 1px solid transparent;
+  opacity: 0;
+  transition:
+    grid-template-rows 0.5s cubic-bezier(0.33, 1, 0.68, 1),
+    border-color 0.4s ease,
+    opacity 0.45s ease;
+}
+
+.neu .agent-demo-answer.is-open {
+  grid-template-rows: 1fr;
+  border-top-color: var(--neu-line-strong);
+  opacity: 1;
+}
+
+/* reactbits accents used inside the trace */
+
+/* dot grid — the interactive dot-field backdrop; sits behind the rows.
+   height:0 keeps the canvas from eating the flex container's space. */
+.neu .agent-demo-dots {
+  position: absolute;
+  inset: 0;
+  height: 0;
+  z-index: 0;
+  pointer-events: none;
+}
+
+.neu .agent-demo-ask,
+.neu .agent-demo-trace {
   position: relative;
   z-index: 1;
-  display: flex;
-  gap: 12px;
-  padding: 12px 0 0;
 }
 
-.neu .agent-demo-response-dot {
-  width: 24px;
-  height: 24px;
-  margin-left: 18px;
-  flex: 0 0 auto;
+/* split text — per-character drop-in for the answer headline */
+.neu .split-char {
+  display: inline-block;
+  opacity: 0;
+  transform: translateY(9px) rotate(5deg);
+  transition:
+    opacity 0.35s ease,
+    transform 0.5s cubic-bezier(0.34, 1.5, 0.64, 1);
+}
+
+.neu .split-char.is-in {
+  opacity: 1;
+  transform: none;
+}
+
+/* magnet — the client chip drifts toward the pointer, springy return */
+.neu .magnet {
+  transition: transform 0.5s cubic-bezier(0.33, 1, 0.68, 1);
+  will-change: transform;
+}
+
+.neu .agent-demo-answer-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+.neu .agent-demo-answer.is-open .agent-demo-answer-inner {
+  padding: 14px 0 8px;
+}
+
+.neu .agent-demo-answer-head {
   display: flex;
   align-items: center;
-  justify-content: center;
-  border-radius: 50%;
-  background: var(--neu-accent-deep);
-  color: #fff;
-  box-shadow: 0 0 0 5px rgba(11, 61, 145, 0.1);
-  opacity: 0;
-  transform: scale(0.4);
-  transition:
-    opacity 0.3s ease,
-    transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1);
+  gap: 7px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--neu-muted);
 }
 
-.neu .agent-demo-response.is-open .agent-demo-response-dot {
-  opacity: 1;
-  transform: none;
-}
-
-.neu .agent-demo-response-body {
-  flex: 1;
-  min-width: 0;
-  padding: 11px 14px;
-  border-radius: 14px;
-  border-top-left-radius: 4px;
-  background: var(--neu-surface);
-  border: 1px solid var(--neu-line);
-  box-shadow: var(--neu-shadow-out);
-  opacity: 0;
-  transform: translateY(8px) scale(0.97);
-  transform-origin: top left;
-  transition:
-    opacity 0.4s ease,
-    transform 0.5s cubic-bezier(0.34, 1.4, 0.64, 1);
-}
-
-.neu .agent-demo-response.is-open .agent-demo-response-body {
-  opacity: 1;
-  transform: none;
-}
-
-.neu .agent-demo-response-text {
-  display: block;
-  font-size: 12.5px;
+.neu .agent-demo-answer-text {
+  margin: 8px 0 0;
+  font-size: 13px;
   font-weight: 600;
   color: var(--neu-ink);
   line-height: 1.45;
 }
 
-.neu .agent-demo-response-rows {
+.neu .agent-demo-answer-rows {
   width: 100%;
-  margin-top: 7px;
+  margin-top: 8px;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: 11.5px;
 }
 
-.neu .agent-demo-response-rows td {
+.neu .agent-demo-answer-rows td {
   padding: 4px 0;
   border-top: 1px solid var(--neu-line);
   color: var(--neu-ink);
   animation: agent-demo-line-in 0.35s ease both;
 }
 
-.neu .agent-demo-response-rows td:last-child {
+.neu .agent-demo-answer-rows td:last-child {
   text-align: right;
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   color: var(--neu-accent-deep);
   font-weight: 600;
 }
 
-.neu .agent-demo-response-foot {
+.neu .agent-demo-answer-foot {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 7px;
-  padding-top: 7px;
+  margin-top: 8px;
+  padding-top: 8px;
   border-top: 1px solid var(--neu-line);
   font-size: 10px;
   font-weight: 700;
@@ -4109,7 +4097,27 @@ a {
   color: #169a63;
 }
 
-/* client chip — the handover target, popping in at the card's foot */
+/* shiny text — reactbits' gradient sweep on the delivered foot */
+.neu .shiny-text {
+  color: transparent;
+  background: linear-gradient(120deg, #169a63 30%, #7ee0b6 50%, #169a63 70%);
+  background-size: 220% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  animation: agent-demo-shine 2.4s linear infinite;
+}
+
+@keyframes agent-demo-shine {
+  from {
+    background-position: 200% 0;
+  }
+
+  to {
+    background-position: -20% 0;
+  }
+}
+
+/* client chip — the handover target, popping in at the answer's foot */
 .neu .agent-demo-client {
   display: inline-flex;
   align-items: center;
@@ -4123,10 +4131,10 @@ a {
   letter-spacing: 0.04em;
   text-transform: none;
   opacity: 0;
-  transform: translateX(-12px) scale(0.8);
+  transform: translateX(-10px) scale(0.8);
   transition:
-    opacity 0.4s ease 0.35s,
-    transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) 0.35s;
+    opacity 0.4s ease 0.3s,
+    transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) 0.3s;
 }
 
 .neu .agent-demo-client.is-on {
@@ -4134,79 +4142,15 @@ a {
   transform: none;
 }
 
-/* agent dot — rides the connector: orbits the node it's running, then
-   slides to the response node for the handover; pivot is the node
-   center measured from the layout */
-.neu .agent-demo-avatar {
-  position: absolute;
-  top: 0;
-  left: 30px;
-  z-index: 3;
-  transition:
-    top 0.6s cubic-bezier(0.45, 0, 0.2, 1),
-    opacity 0.3s ease;
-}
-
-.neu .agent-demo-avatar.is-gone {
-  opacity: 0;
-}
-
-.neu .agent-demo-avatar-icon {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 26px;
-  height: 26px;
-  border-radius: 50%;
-  background: var(--neu-accent-deep);
-  color: #fff;
-  box-shadow:
-    0 2px 8px rgba(11, 61, 145, 0.35),
-    0 0 0 4px rgba(11, 61, 145, 0.1);
-  transform: translate(-50%, -50%);
-}
-
-/* arrive — drops to the first node with a settle spin */
-.neu .agent-demo-avatar.is-arriving .agent-demo-avatar-icon {
-  animation: agent-demo-arrive 1.25s cubic-bezier(0.34, 1.3, 0.64, 1) both;
-}
-
-@keyframes agent-demo-arrive {
-  from {
-    transform: translate(-50%, -110px) scale(0.3) rotate(-180deg);
-    opacity: 0;
-  }
-
-  to {
-    transform: translate(-50%, -50%) scale(1) rotate(0deg);
-    opacity: 1;
-  }
-}
-
-/* working — a calm orbit around the active node, upright throughout */
-.neu .agent-demo-avatar.is-working .agent-demo-avatar-icon {
-  animation: agent-demo-orbit 1.5s linear infinite;
-}
-
-@keyframes agent-demo-orbit {
-  from {
-    transform: translate(-50%, -50%) rotate(0deg) translateX(16px) rotate(0deg);
-  }
-
-  to {
-    transform: translate(-50%, -50%) rotate(360deg) translateX(16px) rotate(-360deg);
-  }
-}
-
 /* tighten on small screens */
 @media (max-width: 720px) {
-  .neu .agent-demo-user {
-    max-width: 96%;
-    font-size: 12px;
+  .neu .agent-demo {
+    min-height: 320px;
   }
 
-  .neu .agent-demo-card {
-    margin-left: 44px;
+  .neu .agent-demo-ask-text {
+    font-size: 12px;
+    white-space: normal;
   }
 
   .neu .agent-demo-card-line {

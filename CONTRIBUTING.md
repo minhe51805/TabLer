@@ -262,7 +262,7 @@ Brief description of the changes made.
 ### Getting Help
 
 - **GitHub Issues**: Bug reports and feature requests
-- **Discussions**: General questions and community discussions
+- **Issues**: General questions and community discussions
 - **Documentation**: Check the [docs folder](docs/) for detailed guides
 
 ### Recognition

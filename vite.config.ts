@@ -24,16 +24,39 @@ export default defineConfig(async () => ({
     target:
       tauriPlatform === "windows" ? "chrome105" : tauriPlatform === "macos" ? "safari13" : "es2020",
     cssTarget: tauriPlatform === "windows" ? "chrome105" : undefined,
-    // Disable manual chunks for production to ensure WebView2 compatibility
-    // Single bundle eliminates chunk loading race conditions
+    // vendor-monaco must stay a pure lazy chunk: previously node_modules
+    // shared by the entry graph (React internals, Rollup helpers) were merged
+    // into it, which made main.* statically import vendor-monaco and evaluate
+    // all 3.7 MB of Monaco at boot — defeating the idle prefetch. Route every
+    // other node_module to `vendor` so nothing non-Monaco lands in the lazy
+    // chunk.
     rollupOptions: {
       output: {
+        onlyExplicitManualChunks: true,
         manualChunks(id) {
           if (!id.includes("node_modules")) return;
-          // Only separate heavy Monaco editor to its own chunk
-          if (id.includes("@monaco-editor") || id.includes("monaco-editor")) {
+          if (
+            id.includes("monaco-editor") ||
+            id.includes("@monaco-editor") ||
+            id.includes("monaco-vim")
+          ) {
             return "vendor-monaco";
           }
+          // Lazy-only heavy deps — named chunks so they load with the
+          // feature that needs them instead of inflating the eager vendor.
+          if (id.includes("@xterm") || id.includes("xterm/")) return "vendor-xterm";
+          if (id.includes("sql-formatter")) return "vendor-sqlformat";
+          if (id.includes("@xyflow")) return "vendor-xyflow";
+          if (id.includes("write-excel-file")) return "vendor-excel";
+          if (
+            id.includes("recharts") ||
+            id.includes("victory-vendor") ||
+            id.includes("d3-") ||
+            id.includes("decimal.js-light")
+          ) {
+            return "vendor-charts";
+          }
+          return "vendor";
         },
       },
     },

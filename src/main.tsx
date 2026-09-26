@@ -198,7 +198,8 @@ async function startApp() {
       </React.StrictMode>,
     );
     reportFirstRender();
-    prefetchHeavyChunks();
+    // Monaco warm-up is gated on workspace entry inside App.tsx
+    // (useMonacoPrefetchOnWorkspace) so launcher-only sessions never fetch it.
 
     // After 2 seconds, consider it successfully booted and prevent future errors from turning into boot failures
     setTimeout(() => {
@@ -206,24 +207,6 @@ async function startApp() {
     }, 2000);
   } catch (error) {
     renderBootFailure("boot.import", error);
-  }
-}
-function prefetchHeavyChunks() {
-  // Monaco is the largest lazy chunk (~3.7 MB). Fetching it while the window
-  // is idle makes the first SQL tab open instantly without delaying first
-  // paint. The import goes through a shim so Vite keeps vendor-monaco out of
-  // index.html's modulepreload list.
-  const prefetch = () => {
-    import("./utils/monaco-prefetch")
-      .then((module) => module.prefetchMonacoBundle())
-      .catch(() => {
-        // Prefetch failure is harmless — the real import retries on demand.
-      });
-  };
-  if ("requestIdleCallback" in window) {
-    window.requestIdleCallback(prefetch, { timeout: 4000 });
-  } else {
-    setTimeout(prefetch, 1500);
   }
 }
 

@@ -38,6 +38,10 @@ export interface OnboardingCopy {
   next: string;
   done: string;
   skip: string;
+  /** Hint shown on click-through steps (replaces the old emoji). */
+  clickHint: string;
+  /** Docs entry point in the popover footer. */
+  docsLink: string;
   /** Step counter, e.g. "3 / 8". */
   stepOf(current: number, total: number): string;
 }
@@ -45,7 +49,7 @@ export interface OnboardingCopy {
 const EN: OnboardingCopy = {
   stepLauncherSample: {
     title: "Start with the sample data",
-    body: "Click the card below — it loads a demo SQLite database (customers, orders, products) with zero setup. Your own connection comes later from the same screen.",
+    body: "Click the highlighted card — it loads a demo SQLite database (customers, orders, products) with zero setup. Your own connection comes later from the same screen.",
   },
   stepLauncherCreating: {
     title: "Setting up…",
@@ -91,6 +95,8 @@ const EN: OnboardingCopy = {
   next: "Next",
   done: "Done",
   skip: "Skip tour",
+  clickHint: "Click the highlighted area",
+  docsLink: "Docs",
   stepOf: (current, total) => `${current} / ${total}`,
 };
 
@@ -98,7 +104,7 @@ const VI: OnboardingCopy = {
   ...EN,
   stepLauncherSample: {
     title: "Bắt đầu với dữ liệu mẫu",
-    body: "Bấm vào thẻ bên dưới — nó sẽ tải một database SQLite mẫu (customers, orders, products) mà không cần cài đặt gì. Kết nối database của bạn làm sau ở cùng màn hình này.",
+    body: "Bấm vào thẻ được tô sáng — nó sẽ tải một database SQLite mẫu (customers, orders, products) mà không cần cài đặt gì. Kết nối database của bạn làm sau ở cùng màn hình này.",
   },
   stepLauncherCreating: {
     title: "Đang thiết lập…",
@@ -144,13 +150,15 @@ const VI: OnboardingCopy = {
   next: "Tiếp",
   done: "Xong",
   skip: "Bỏ qua",
+  clickHint: "Bấm vào vùng được tô sáng",
+  docsLink: "Tài liệu",
 };
 
 const KO: OnboardingCopy = {
   ...EN,
   stepLauncherSample: {
     title: "샘플 데이터로 시작하기",
-    body: "아래 카드를 클릭하세요 — 별도 설정 없이 데모 SQLite 데이터베이스(customers, orders, products)가 로드됩니다. 실제 연결은 같은 화면에서 나중에 추가합니다.",
+    body: "강조 표시된 카드를 클릭하세요 — 별도 설정 없이 데모 SQLite 데이터베이스(customers, orders, products)가 로드됩니다. 실제 연결은 같은 화면에서 나중에 추가합니다.",
   },
   stepLauncherCreating: {
     title: "설정 중…",
@@ -196,13 +204,15 @@ const KO: OnboardingCopy = {
   next: "다음",
   done: "완료",
   skip: "건너뛰기",
+  clickHint: "강조된 영역을 클릭하세요",
+  docsLink: "문서",
 };
 
 const TR: OnboardingCopy = {
   ...EN,
   stepLauncherSample: {
     title: "Örnek veriyle başla",
-    body: "Aşağıdaki karta tıklayın — hiçbir kurulum olmadan demo SQLite veritabanı (customers, orders, products) yüklenir. Kendi bağlantınızı daha sonra aynı ekrandan eklersiniz.",
+    body: "Vurgulanan karta tıklayın — hiçbir kurulum olmadan demo SQLite veritabanı (customers, orders, products) yüklenir. Kendi bağlantınızı daha sonra aynı ekrandan eklersiniz.",
   },
   stepLauncherCreating: {
     title: "Kuruluyor…",
@@ -248,13 +258,15 @@ const TR: OnboardingCopy = {
   next: "İleri",
   done: "Bitti",
   skip: "Turu atla",
+  clickHint: "Vurgulanan alana tıklayın",
+  docsLink: "Belgeler",
 };
 
 const ZH: OnboardingCopy = {
   ...EN,
   stepLauncherSample: {
     title: "先用示例数据",
-    body: "点击下方卡片 — 无需配置即可加载示例 SQLite 数据库(customers、orders、products)。之后可在同一页面连接你自己的数据库。",
+    body: "点击高亮的卡片 — 无需配置即可加载示例 SQLite 数据库(customers、orders、products)。之后可在同一页面连接你自己的数据库。",
   },
   stepLauncherCreating: {
     title: "正在设置…",
@@ -300,6 +312,8 @@ const ZH: OnboardingCopy = {
   next: "下一步",
   done: "完成",
   skip: "跳过导览",
+  clickHint: "点击高亮区域",
+  docsLink: "文档",
 };
 
 const COPY: Record<AppLanguage, OnboardingCopy> = {

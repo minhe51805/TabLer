@@ -32,9 +32,12 @@ function isCsvPath(path: string): boolean {
 
 export function useCsvFileDrop() {
   useEffect(() => {
+    // Plain browsers/tests have no Tauri window bridge — getCurrentWindow()
+    // dereferences __TAURI_INTERNALS__.metadata and would throw here.
+    if (!("__TAURI_INTERNALS__" in window)) return;
+
     let unlisten: UnlistenFn | undefined;
     let disposed = false;
-
     getCurrentWindow()
       .onDragDropEvent((event) => {
         if (event.payload.type !== "drop") return;

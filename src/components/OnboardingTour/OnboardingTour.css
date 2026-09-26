@@ -7,10 +7,17 @@
   position: fixed;
   inset: 0;
   z-index: 10000;
+  /* The root layer must NOT capture input — pointer-events:none lets real
+     clicks fall through the cutout hole to the spotlighted element. The dim
+     rects and popover re-enable events on themselves. */
+  pointer-events: none;
 }
 
 .onboarding-dim {
   position: fixed;
+  /* Re-enable events on the dim rects — they block interaction outside the
+     cutout, which is the point of the dim. */
+  pointer-events: auto;
   background: rgba(8, 11, 20, 0.62);
 }
 
@@ -50,59 +57,146 @@
 }
 
 .onboarding-popover {
+  /* The popover is interactive (buttons, focus) — re-enable events. */
+  pointer-events: auto;
   position: fixed;
   width: 320px;
-  padding: 16px 18px 14px;
-  background: var(--bg-panel, #151a26);
-  border: 1px solid var(--border, #2a3346);
-  border-radius: 10px;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
-  color: var(--text-primary, #e8ecf4);
+  padding: 18px 18px 14px;
+  /* Light surface — the dim ring is dark, so the popover needs contrast to
+     read as a card instead of sinking into the overlay. */
+  background: #f8fafc;
+  border: 1px solid #d7dde7;
+  border-radius: 12px;
+  box-shadow:
+    0 12px 40px rgba(0, 0, 0, 0.45),
+    0 0 0 1px rgba(56, 189, 248, 0.18);
+  color: #1a2230;
   outline: none;
+}
+
+.onboarding-popover[data-placement="bottom"] .onboarding-arrow {
+  top: -5px;
+  left: calc(50% - 5px);
+  border-right: none;
+  border-bottom: none;
+}
+
+.onboarding-popover[data-placement="top"] .onboarding-arrow {
+  bottom: -5px;
+  left: calc(50% - 5px);
+  border-left: none;
+  border-top: none;
+}
+
+.onboarding-popover[data-placement="right"] .onboarding-arrow {
+  left: -5px;
+  top: calc(50% - 5px);
+  border-right: none;
+  border-top: none;
+}
+
+.onboarding-popover[data-placement="left"] .onboarding-arrow {
+  right: -5px;
+  top: calc(50% - 5px);
+  border-left: none;
+  border-bottom: none;
 }
 
 .onboarding-skip {
   position: absolute;
   top: 8px;
   right: 10px;
-  padding: 2px 8px;
-  font-size: 11px;
-  color: var(--text-muted, #7a8499);
+  padding: 3px 9px;
+  font-size: 11.5px;
+  color: #64748b;
   background: transparent;
   border: none;
-  border-radius: 4px;
+  border-radius: 5px;
   cursor: pointer;
+  transition:
+    color 120ms ease,
+    background 120ms ease;
 }
 
-.onboarding-skip:hover {
-  color: var(--text-primary, #e8ecf4);
-  background: rgba(255, 255, 255, 0.06);
+.onboarding-skip:hover,
+.onboarding-skip:focus-visible {
+  color: #0f172a;
+  background: rgba(15, 23, 42, 0.07);
 }
 
+/* Step dots — a progress strip reads better than "3 / 8" text. */
 .onboarding-step-count {
-  font-size: 11px;
-  color: var(--text-muted, #7a8499);
-  letter-spacing: 0.04em;
-  margin-bottom: 4px;
+  display: flex;
+  gap: 5px;
+  margin-bottom: 8px;
+}
+
+.onboarding-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #cbd5e1;
+  transition:
+    background 200ms ease,
+    transform 200ms ease;
+}
+
+.onboarding-dot.done {
+  background: var(--accent, #38bdf8);
+  opacity: 0.45;
+}
+
+.onboarding-dot.active {
+  background: var(--accent, #38bdf8);
+  transform: scale(1.3);
 }
 
 .onboarding-title {
   margin: 0 0 6px;
   font-size: 15px;
   font-weight: 600;
+  letter-spacing: -0.01em;
 }
 
 .onboarding-body {
   margin: 0 0 14px;
   font-size: 13px;
   line-height: 1.55;
-  color: var(--text-secondary, #b6bfd1);
+  color: #475569;
+}
+
+.onboarding-code {
+  padding: 1px 5px;
+  font-family: var(--font-mono, "Cascadia Code", Consolas, monospace);
+  font-size: 12px;
+  background: rgba(2, 132, 199, 0.08);
+  border: 1px solid rgba(2, 132, 199, 0.25);
+  border-radius: 4px;
+  color: #0369a1;
+}
+
+.onboarding-docs-link {
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--accent, #0284c7);
+  background: transparent;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.onboarding-docs-link:hover {
+  text-decoration: underline;
+  background: rgba(2, 132, 199, 0.08);
+}
+
+.onboarding-actions-spacer {
+  flex: 1;
 }
 
 .onboarding-actions {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 8px;
 }
 
@@ -111,8 +205,42 @@
   font-size: 12.5px;
 }
 
+/* Buttons live on a light card — pin readable variants instead of the
+   app's dark-theme tokens. */
+.onboarding-actions .btn {
+  color: #334155;
+  background: #eef2f7;
+  border: 1px solid #d7dde7;
+}
+
+.onboarding-actions .btn:hover {
+  background: #e2e8f0;
+}
+
+.onboarding-actions .btn.btn-primary {
+  color: #fff;
+  background: var(--accent, #0284c7);
+  border-color: var(--accent, #0284c7);
+}
+
+.onboarding-actions .btn.btn-primary:hover {
+  background: #0369a1;
+  border-color: #0369a1;
+}
+
+/* Click-through steps: a pointer icon + hint instead of a button. */
 .onboarding-click-hint {
-  font-size: 18px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #64748b;
+}
+
+.onboarding-click-icon {
+  width: 15px;
+  height: 15px;
+  color: var(--accent, #38bdf8);
   animation: onboarding-hint-bounce 1.2s ease-in-out infinite;
 }
 
@@ -122,14 +250,14 @@
     transform: translateY(0);
   }
   50% {
-    transform: translateY(-4px);
+    transform: translateY(-3px);
   }
 }
 
 .onboarding-spinner {
   width: 16px;
   height: 16px;
-  border: 2px solid var(--border, #2a3346);
+  border: 2px solid #d7dde7;
   border-top-color: var(--accent, #38bdf8);
   border-radius: 50%;
   animation: onboarding-spin 0.8s linear infinite;

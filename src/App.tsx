@@ -23,6 +23,7 @@ import { useWorkspaceShellSync } from "./hooks/useWorkspaceShellSync";
 import { useAppNotifications } from "./hooks/useAppNotifications";
 import { useRecoverableConnectionError } from "./hooks/useRecoverableConnectionError";
 import { useCsvFileDrop } from "./hooks/useCsvFileDrop";
+import { useMonacoPrefetchOnWorkspace } from "./hooks/useMonacoPrefetchOnWorkspace";
 import { useQueryWorkspaceState } from "./hooks/useQueryWorkspaceState";
 import { useRowInspectorEvents } from "./hooks/useRowInspectorEvents";
 import { GlobalToastRegion } from "./components/layout/GlobalToastRegion";
@@ -143,6 +144,11 @@ function App() {
     connectedIds.has(activeConnectionId)
   );
   const isConnected = hasRenderableWorkspace;
+  // Warm the Monaco chunk only once a workspace is actually open — a session
+  // that never leaves the launcher then never pays the ~3.9 MB fetch/eval.
+  // (Boot-time prefetch used to fetch it unconditionally after first paint,
+  // which made "Monaco is lazy" untrue in practice.)
+  useMonacoPrefetchOnWorkspace(isConnected);
   const { toast: globalToast, dismissToast: dismissGlobalToast } = useAppNotifications();
   const isRecoverableErrorDelayActive = useRecoverableConnectionError({
     error,

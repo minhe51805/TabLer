@@ -8,7 +8,7 @@ import type { AppLanguage } from "../i18n";
 export interface WindowMenuCopy {
   /** Help → opens the GitHub "new issue" page. */
   reportIssue: string;
-  /** Help → opens the GitHub discussions page. */
+  /** Help → opens the GitHub issues list. */
   sendFeedback: string;
   /** Help → replays the first-run onboarding tour. */
   restartTour: string;

@@ -1,39 +1,37 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { Bot, Check, Code2, Play, ShieldCheck, Table2, UserRound } from "lucide-react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Check, Circle, Loader2, Terminal, UserRound } from "lucide-react";
+import { CountUp, DecryptedText, DotGrid, Magnet, ShinyText, SplitText, TextType } from "./bits";
 
 /**
- * Live agent-loop storyboard inside the agent section's product frame.
+ * Live agent-loop demo inside the agent section's product frame — a flat
+ * task trace in the spirit of cline.bot: hairline rows, mono log lines,
+ * a bottom-pinned trace that auto-scrolls as work streams in. The
+ * signature bits are reactbits-style text effects (TextType /
+ * DecryptedText / ShinyText) ported dependency-free in ./bits.
  *
- * Scene sequence:
- *   1. prompt — only the input bar exists; the user's question types in,
- *      then the bar fades away entirely
- *   2. arrive — the agent avatar drops into the left pane center, scales
- *      up, spins once, and settles onto the work line
- *   3. station ×4 — the pane splits: on the left the current step node
- *      (unreached and finished steps stay out of sight — a thin progress
- *      rail tracks them) with the agent beside it; on the right a mock
- *      terminal streams what the agent is doing at that step. The step
- *      advances and the terminal swaps its log.
- *   4. handover — the node fades out, the agent slides right toward the
- *      client avatar, and the terminal crossfades into a chat bubble:
- *      the handover line slides out and the result table streams in
- *   5. done — hold, then reset and replay
+ *   1. ask — the user request types out (TextType + caret)
+ *   2. arrive — the trace fades in, all four planned steps listed
+ *   3. step ×4 — the row activates: label decrypts, a spinner runs, and
+ *      its log lines expand in place; older work scrolls up under the
+ *      top mask like a real task view
+ *   4. handover — the answer streams in: text, result table, and a
+ *      "delivered" foot with the client chip
+ *   5. hold, reset, replay
  *
- * Pure CSS/timeout choreography — no animation library. Runs only while
- * on screen (IntersectionObserver); reduced-motion users get the final
- * scene rendered statically.
+ * Pure CSS/timeout choreography — no animation library; runs only while
+ * on screen; reduced-motion users get the finished transcript.
  */
 type Phase = "prompt" | "arrive" | "station" | "handover" | "done";
 
-const ARRIVE_MS = 1700;
+const ARRIVE_MS = 1400;
 const STATION_MS = 2400;
-const HANDOVER_MS = 3600;
-const DONE_MS = 2400;
+const HANDOVER_MS = 3400;
+const DONE_MS = 2800;
 const STATION_COUNT = 4;
 
-const STEP_ICONS = [Table2, Code2, ShieldCheck, Play];
+const STEP_MS = ["120 ms", "1.4 s", "210 ms", "38 ms"];
 
 const RESULT_ROWS: [string, string][] = [
   ["Acme Corporation", "$48,210"],
@@ -46,8 +44,9 @@ const RESULT_ROWS: [string, string][] = [
 export type AgentDemoCopy = {
   prompt: string;
   steps: [string, string, string, string];
-  /** terminal log lines per step — first char "$" renders as a command */
+  /** activity log lines per step — "$" lines render as commands, "✓" as success */
   term: string[][];
+  client: string;
   handover: string;
   done: string;
 };
@@ -55,10 +54,13 @@ export type AgentDemoCopy = {
 export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
   const [phase, setPhase] = useState<Phase>("prompt");
   const [station, setStation] = useState(0);
-  const [typed, setTyped] = useState(0);
   const [rowCount, setRowCount] = useState(0);
+  const [runId, setRunId] = useState(0);
   const [active, setActive] = useState(false);
+  const [traceShift, setTraceShift] = useState(0);
   const rootRef = useRef<HTMLDivElement>(null);
+  const traceRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
 
   const reduced =
     typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -74,19 +76,9 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
     return () => observer.disconnect();
   }, []);
 
-  // Prompt types character by character, then the bar exits and the
-  // agent drops in.
-  useEffect(() => {
-    if (!active || reduced || phase !== "prompt") return;
-    if (typed >= copy.prompt.length) {
-      const t = setTimeout(() => setPhase("arrive"), 600);
-      return () => clearTimeout(t);
-    }
-    const t = setTimeout(() => setTyped((n) => n + 1), 26);
-    return () => clearTimeout(t);
-  }, [active, reduced, phase, typed, copy.prompt]);
-
-  // Phase machine: arrive → station 0..3 → handover → done → replay.
+  // Phase machine: prompt typing ends → arrive → station 0..3 →
+  // handover → done → replay. The prompt phase advances from TextType's
+  // onDone callback (startRun below); reduced-motion jumps straight in.
   useEffect(() => {
     if (!active || reduced || phase === "prompt") return;
     if (phase === "arrive") {
@@ -108,141 +100,182 @@ export function AgentDemo({ copy }: { copy: AgentDemoCopy }) {
       return () => clearTimeout(t);
     }
     const t = setTimeout(() => {
-      setTyped(0);
       setRowCount(0);
       setStation(0);
+      setRunId((n) => n + 1);
       setPhase("prompt");
     }, DONE_MS);
     return () => clearTimeout(t);
   }, [active, reduced, phase, station]);
 
-  // Result rows stream into the chat during the handover.
+  // Result rows stream into the answer during the handover.
   useEffect(() => {
     if (!active || reduced || phase !== "handover") return;
     if (rowCount >= RESULT_ROWS.length) return;
-    const t = setTimeout(() => setRowCount((n) => n + 1), 240);
+    const t = setTimeout(() => setRowCount((n) => n + 1), 220);
     return () => clearTimeout(t);
   }, [active, reduced, phase, rowCount]);
 
-  const inScene = phase !== "prompt";
-  const inStation = phase === "station";
-  const handedOff = phase === "handover" || phase === "done";
-  const StepIcon = STEP_ICONS[Math.min(station, STEP_ICONS.length - 1)];
+  // Reduced-motion users get the final transcript at once — derived
+  // directly, no effect.
+  const shownStation = reduced ? STATION_COUNT - 1 : station;
+  const shownPhase: Phase = reduced ? "done" : phase;
+  const shownRows = reduced ? RESULT_ROWS.length : rowCount;
+  const inScene = shownPhase !== "prompt";
+  const inStation = shownPhase === "station";
+  const handedOff = shownPhase === "handover" || shownPhase === "done";
 
-  // Left pane, % coordinates: avatar parks beside the node, then slides
-  // to the client avatar for the handover.
-  const avatarX = handedOff ? 82 : inStation ? 62 : 50;
-  const avatarGone = !inScene;
+  // Auto-scroll: the inner column is bottom-pinned; translate it up as
+  // content grows so the newest work stays in view — like cline's task
+  // view. The observer fires on observe and on every resize.
+  useLayoutEffect(() => {
+    const trace = traceRef.current;
+    const inner = innerRef.current;
+    if (!trace || !inner) return;
+    const observer = new ResizeObserver(() => {
+      setTraceShift(Math.max(0, inner.scrollHeight - trace.clientHeight));
+    });
+    observer.observe(inner);
+    observer.observe(trace);
+    return () => observer.disconnect();
+  }, []);
+
+  const startRun = () => {
+    if (phase === "prompt") setPhase("arrive");
+  };
 
   return (
     <div className="agent-demo" ref={rootRef} aria-label={copy.prompt}>
-      {/* intro: the prompt bar alone — it leaves once the question lands */}
-      <div className={`agent-demo-intro ${inScene || reduced ? "is-out" : ""}`}>
-        <div className="agent-demo-prompt">
-          <span className="agent-demo-prompt-text">
-            {reduced ? copy.prompt : copy.prompt.slice(0, typed)}
-          </span>
-          {!reduced && phase === "prompt" && (
-            <span className="agent-demo-caret" aria-hidden="true" />
-          )}
-        </div>
+      {/* dot grid — reactbits' interactive dot-field background, dots
+          swell toward the pointer inside the demo frame */}
+      <DotGrid className="agent-demo-dots" />
+
+      {/* ask — the request that starts the run; stays pinned on top */}
+      <div className="agent-demo-ask">
+        <span className="agent-demo-ask-icon" aria-hidden="true">
+          <UserRound size={12} />
+        </span>
+        {reduced ? (
+          <span className="agent-demo-ask-text">{copy.prompt}</span>
+        ) : (
+          <TextType
+            key={runId}
+            className="agent-demo-ask-text"
+            text={copy.prompt}
+            speed={24}
+            onDone={startRun}
+          />
+        )}
       </div>
 
-      {/* main scene: node + agent (left) | terminal → chat (right) */}
-      <div className={`agent-demo-scene ${inScene || reduced ? "is-on" : ""}`}>
-        <div className="agent-demo-left">
-          {/* thin progress rail — the only trace of past/future steps */}
-          <ol className="agent-demo-progress" aria-hidden="true">
+      {/* trace — bottom-pinned, auto-scrolling list of the run's work;
+          a top mask fades out whatever scrolled past */}
+      <div className={`agent-demo-trace ${inScene || reduced ? "is-on" : ""}`} ref={traceRef}>
+        <div
+          className="agent-demo-trace-inner"
+          ref={innerRef}
+          style={{ transform: `translateY(${reduced ? 0 : -traceShift}px)` }}
+        >
+          <ol className="agent-demo-steps">
             {copy.steps.map((label, i) => {
               const state =
-                reduced || handedOff || i < station ? "done" : i === station ? "on" : "todo";
-              return <li className={`agent-demo-dot is-${state}`} key={label} title={label} />;
+                reduced || handedOff || i < shownStation
+                  ? "done"
+                  : inStation && i === shownStation
+                    ? "on"
+                    : "todo";
+              // the log block only lives under the step being worked —
+              // it collapses as the agent moves on
+              const showBody = !reduced && inStation && i === shownStation;
+              return (
+                <li className={`agent-demo-row is-${state}`} key={`${runId}-${i}`}>
+                  <div className="agent-demo-row-head">
+                    <span className="agent-demo-row-status" aria-hidden="true">
+                      {state === "done" ? (
+                        <Check size={11} strokeWidth={3} />
+                      ) : state === "on" ? (
+                        <Loader2 size={12} className="agent-demo-spin" />
+                      ) : (
+                        <Circle size={9} />
+                      )}
+                    </span>
+                    <span className="agent-demo-row-label">
+                      {state === "on" ? <DecryptedText text={label} duration={550} /> : label}
+                    </span>
+                    {state === "done" && <span className="agent-demo-row-ms">{STEP_MS[i]}</span>}
+                  </div>
+                  <div className={`agent-demo-card ${showBody ? "is-open" : ""}`}>
+                    <div className="agent-demo-card-inner">
+                      {(copy.term[i] ?? []).map((line, j) => (
+                        <span
+                          className={`agent-demo-card-line ${line.startsWith("$") ? "is-cmd" : ""} ${
+                            line.includes("✓") ? "is-ok" : ""
+                          }`}
+                          style={{ animationDelay: `${0.15 + j * 0.45}s` }}
+                          key={j}
+                        >
+                          {line}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                </li>
+              );
             })}
           </ol>
 
-          {/* current step node — swaps content each station */}
-          {inScene && !handedOff && !reduced && (
-            <div className="agent-demo-node-card" key={station}>
-              <span className="agent-demo-node-icon">
-                <StepIcon size={20} strokeWidth={1.9} aria-hidden="true" />
-              </span>
-              <span className="agent-demo-node-label">{copy.steps[station]}</span>
-            </div>
-          )}
-          {reduced && (
-            <div className="agent-demo-node-card">
-              <span className="agent-demo-node-icon">
-                <Check size={20} strokeWidth={2} aria-hidden="true" />
-              </span>
-              <span className="agent-demo-node-label">{copy.steps[3]}</span>
-            </div>
-          )}
-
-          {/* client avatar — appears for the handover */}
+          {/* answer — the final flat block handed to the client */}
           <div
-            className={`agent-demo-client ${handedOff || reduced ? "is-on" : ""}`}
-            aria-hidden="true"
-          >
-            <UserRound size={16} />
-          </div>
-          {/* agent avatar */}
-          <div
-            className={`agent-demo-avatar ${avatarGone && !reduced ? "is-gone" : ""} ${
-              phase === "arrive" && !reduced ? "is-arriving" : ""
-            } ${inStation && !reduced ? "is-working" : ""}`}
-            style={{ left: `${avatarX}%` }}
-            aria-hidden="true"
-          >
-            <span className="agent-demo-avatar-icon">
-              <Bot size={18} />
-            </span>
-          </div>
-        </div>
-
-        <div className="agent-demo-right">
-          {/* mock terminal — one log per station, swapped on advance */}
-          <div
-            className={`agent-demo-terminal ${handedOff || reduced ? "is-off" : ""}`}
-            aria-hidden={handedOff}
-          >
-            <div className="agent-demo-term-bar">
-              <span />
-              <span />
-              <span />
-              <strong>{reduced ? copy.steps[3] : copy.steps[Math.min(station, 3)]}</strong>
-            </div>
-            <div className="agent-demo-term-body" key={reduced ? 3 : station}>
-              {(reduced ? copy.term[3] : copy.term[Math.min(station, 3)]).map((line, i) => (
-                <div
-                  className={`agent-demo-term-line ${line.startsWith("$") ? "is-cmd" : ""} ${
-                    line.includes("✓") ? "is-ok" : ""
-                  }`}
-                  style={{ animationDelay: `${0.3 + i * 0.55}s` }}
-                  key={i}
-                >
-                  {line}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          {/* handover chat — replaces the terminal for the final beat */}
-          <div
-            className={`agent-demo-chat ${handedOff || reduced ? "is-open" : ""}`}
+            className={`agent-demo-answer ${handedOff || reduced ? "is-open" : ""}`}
             aria-hidden={!handedOff && !reduced}
           >
-            <span className="agent-demo-chat-text">{copy.handover}</span>
-            <table className="agent-demo-chat-rows">
-              <tbody>
-                {(reduced ? RESULT_ROWS : RESULT_ROWS.slice(0, rowCount)).map(([name, revenue]) => (
-                  <tr key={name}>
-                    <td>{name}</td>
-                    <td>{revenue}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            <span className="agent-demo-chat-foot">{copy.done}</span>
+            <div className="agent-demo-answer-inner">
+              <div className="agent-demo-answer-head">
+                <Terminal size={11} aria-hidden="true" />
+                <span>agent.respond()</span>
+              </div>
+              <p className="agent-demo-answer-text">
+                <SplitText text={copy.handover} on={handedOff} step={16} />
+              </p>
+              <table className="agent-demo-answer-rows">
+                <tbody>
+                  {(reduced ? RESULT_ROWS : RESULT_ROWS.slice(0, shownRows)).map(
+                    ([name, revenue]) => (
+                      <tr key={name}>
+                        <td>{name}</td>
+                        <td>
+                          {reduced ? (
+                            revenue
+                          ) : (
+                            <CountUp
+                              to={parseInt(revenue.replace(/[$,]/g, ""), 10)}
+                              format={(n) => `$${Math.round(n).toLocaleString("en-US")}`}
+                              duration={800}
+                            />
+                          )}
+                        </td>
+                      </tr>
+                    ),
+                  )}
+                </tbody>
+              </table>
+              <div className="agent-demo-answer-foot">
+                {handedOff || reduced ? <ShinyText>{copy.done}</ShinyText> : copy.done}
+                <Magnet
+                  className={`agent-demo-client ${handedOff || reduced ? "is-on" : ""}`}
+                  strength={0.5}
+                  radius={90}
+                >
+                  <span
+                    aria-hidden="true"
+                    style={{ display: "inline-flex", alignItems: "center", gap: 5 }}
+                  >
+                    <UserRound size={11} />
+                    {copy.client}
+                  </span>
+                </Magnet>
+              </div>
+            </div>
           </div>
         </div>
       </div>

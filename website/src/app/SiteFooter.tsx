@@ -54,7 +54,7 @@ export function SiteFooter({ t }: { t: Dictionary }) {
                   {link.label}
                 </a>
               ) : (
-                <Link href={link.href} key={link.href}>
+                <Link href={link.href} key={link.href} prefetch={false}>
                   {link.label}
                 </Link>
               ),

@@ -45,6 +45,9 @@ The next release automatically emits signed installers + `latest.json`;
 - **2026-09-24 — rotated.** The private key for the previous pubkey
   (`79A12FBBA30111FA`) was lost; `latest.json` had never been emitted, so no
   shipped build could verify updates anyway. New pubkey
-  (`5F9E9AC9B58C6059`) is in `tauri.conf.json`; the private key is in the
-  `TAURI_SIGNING_PRIVATE_KEY` repo secret (no password — the stale
-  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` secret was removed the same day).
+  (`5F9E9AC9B58C6059`) is in `tauri.conf.json`; the private key lives in
+  `~/.tauri/tabler.key` and the `TAURI_SIGNING_PRIVATE_KEY` repo secret.
+  The key IS passphrase-encrypted (`rsign encrypted secret key`) —
+  `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` must hold the real passphrase, or the
+  release build dies at bundling with "incorrect updater private key
+  password".

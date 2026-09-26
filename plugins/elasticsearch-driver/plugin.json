@@ -8,8 +8,15 @@
   "description": "Adds bounded, read-only Elasticsearch index browsing and JSON search through the declarative HTTP driver host.",
   "author": "TableR Team",
   "entry": null,
-  "capabilities": ["database"],
-  "permissions": ["connection.metadata", "query.read", "query.execute", "network.fetch"],
+  "capabilities": [
+    "database"
+  ],
+  "permissions": [
+    "connection.metadata",
+    "query.read",
+    "query.execute",
+    "network.fetch"
+  ],
   "compatibility": {
     "minAppVersion": "0.1.4",
     "maxAppVersion": null,

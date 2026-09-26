@@ -3723,40 +3723,40 @@ a {
   }
 }
 
-/* ---------- agent demo: calm session view -------------------------- */
-/* the Anthropic task-demo language: a quiet session panel — request
-   header on top, numbered work rows with the active step's log
-   expanding in place, a bottom-pinned auto-scroll, and the deliverable
-   card handed to the client at the end. Borders, not glow. */
+/* ---------- agent demo: split-pane live session -------------------- */
+/* the launch-demo shape: work streams down a glowing spine on the
+   left while a deliverable materializes on the right. Quiet borders,
+   a mini terminal under the active step, a self-drawing result card. */
 
 .neu .agent-demo {
   position: relative;
   z-index: 0;
-  padding: 4px 20px 12px;
+  padding: 4px 22px 14px;
   display: flex;
   flex-direction: column;
-  height: 372px;
+  height: 380px;
 }
 
-/* session header — agent avatar + the request + a live/done status */
+/* command bar — avatar glyph + typed request + a live/done status */
 .neu .agent-demo-ask {
   display: flex;
   align-items: center;
   gap: 11px;
-  padding: 12px 2px;
+  padding: 12px 2px 13px;
   border-bottom: 1px solid var(--neu-line);
 }
 
-.neu .agent-demo-ask-icon {
-  width: 26px;
-  height: 26px;
+.neu .agent-demo-ask-glyph {
+  width: 27px;
+  height: 27px;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  background: var(--neu-accent-deep);
+  background: linear-gradient(135deg, var(--neu-accent-deep), #4f9dff);
   color: #fff;
+  box-shadow: 0 4px 12px rgba(8, 126, 252, 0.28);
 }
 
 .neu .agent-demo-ask-text {
@@ -3771,7 +3771,6 @@ a {
   min-height: 16px;
 }
 
-/* typing caret inside the ask */
 .neu .type-caret {
   display: inline-block;
   width: 2px;
@@ -3782,10 +3781,18 @@ a {
   background: var(--neu-accent-deep);
   animation: agent-demo-blink 0.9s step-end infinite;
 }
+
+@keyframes agent-demo-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+/* live/done status — heartbeat while the agent works */
 .neu .agent-demo-live {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   flex: 0 0 auto;
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-size: 10px;
@@ -3794,73 +3801,99 @@ a {
   text-transform: uppercase;
   color: var(--neu-accent-deep);
   opacity: 0;
-  transition: opacity 0.3s ease;
+  transition:
+    opacity 0.3s ease,
+    color 0.3s ease;
 }
 
 .neu .agent-demo-live.is-on {
   opacity: 1;
 }
 
-/* trace — bottom-pinned, auto-scrolling column; the ::before mask fades
-   older work out like a real session view */
-.neu .agent-demo-trace {
-  position: relative;
+.neu .agent-demo-live.is-done {
+  color: #169a63;
+}
+
+.neu .agent-demo-pulse {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--neu-accent-deep);
+  animation: agent-demo-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes agent-demo-pulse {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(8, 126, 252, 0.45);
+  }
+
+  55% {
+    box-shadow: 0 0 0 6px rgba(8, 126, 252, 0);
+  }
+}
+
+/* two-pane body: spine of work left, artifact stage right */
+.neu .agent-demo-body {
   flex: 1 1 auto;
   min-height: 0;
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  overflow: hidden;
+  display: grid;
+  grid-template-columns: minmax(0, 46%) minmax(0, 54%);
+  gap: 0;
+}
+
+/* left — the spine: nodes on a track the fill chases */
+.neu .agent-demo-spine {
+  position: relative;
+  margin: 0;
+  padding: 16px 20px 8px 2px;
+  list-style: none;
+  border-right: 1px solid var(--neu-line);
   opacity: 0;
-  transition: opacity 0.4s ease 0.1s;
+  transition: opacity 0.4s ease 0.15s;
 }
 
-.neu .agent-demo-trace::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 0;
-  right: 0;
-  height: 30px;
-  z-index: 4;
-  pointer-events: none;
-  background: linear-gradient(180deg, var(--neu-bg-soft), rgba(238, 241, 245, 0));
-}
-
-.neu .agent-demo-trace.is-on {
+.neu .agent-demo-spine.is-on {
   opacity: 1;
 }
 
-.neu .agent-demo-trace-inner {
+.neu .agent-demo-spine::before {
+  content: "";
+  position: absolute;
+  left: 9px;
+  top: 24px;
+  bottom: 20px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--neu-line);
+}
+
+.neu .agent-demo-spine-fill {
+  position: absolute;
+  left: 9px;
+  top: 24px;
+  bottom: 20px;
+  width: 2px;
+  border-radius: 2px;
+  background: linear-gradient(180deg, #4f9dff, var(--neu-accent-deep) 60%, #169a63);
+  transform-origin: top;
+  transform: scaleY(0);
+  transition: transform 0.6s cubic-bezier(0.33, 1, 0.68, 1);
+  z-index: 1;
+}
+
+.neu .agent-demo-step {
+  position: relative;
   display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-  flex: 1 0 auto;
-  min-height: 100%;
-  transition: transform 0.55s cubic-bezier(0.33, 1, 0.68, 1);
-}
-
-.neu .agent-demo-row {
-  border-bottom: 1px solid var(--neu-line);
-  counter-increment: step;
-  animation: agent-demo-row-in 0.4s ease backwards;
-}
-
-.neu .agent-demo-row-head::before {
-  content: counter(step);
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
-  font-size: 10.5px;
-  font-weight: 600;
-  color: var(--neu-muted);
-  width: 14px;
-  flex: 0 0 auto;
-  text-align: right;
+  gap: 12px;
+  padding: 5px 0;
+  animation: agent-demo-row-in 0.45s ease backwards;
 }
 
 @keyframes agent-demo-row-in {
   from {
     opacity: 0;
-    transform: translateY(6px);
+    transform: translateY(7px);
   }
 
   to {
@@ -3869,54 +3902,61 @@ a {
   }
 }
 
-.neu .agent-demo-steps {
-  margin: 0;
-  padding: 2px 0;
-  list-style: none;
-  counter-reset: step;
-}
-
-.neu .agent-demo-row:nth-child(2) {
+.neu .agent-demo-step:nth-child(3) {
   animation-delay: 0.08s;
 }
 
-.neu .agent-demo-row:nth-child(3) {
+.neu .agent-demo-step:nth-child(4) {
   animation-delay: 0.16s;
 }
 
-.neu .agent-demo-row:nth-child(4) {
+.neu .agent-demo-step:nth-child(5) {
   animation-delay: 0.24s;
 }
 
-.neu .agent-demo-row-head {
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  height: 38px;
-  padding: 0 6px;
-  border-radius: 7px;
-  transition: background 0.3s ease;
-}
-
-.neu .agent-demo-row.is-on .agent-demo-row-head {
-  background: rgba(8, 126, 252, 0.06);
-}
-
-.neu .agent-demo-row-status {
-  width: 16px;
+.neu .agent-demo-node {
+  position: relative;
+  z-index: 2;
+  width: 20px;
+  height: 20px;
   flex: 0 0 auto;
+  margin-top: 1px;
   display: flex;
   align-items: center;
   justify-content: center;
+  border-radius: 50%;
+  background: var(--neu-bg-soft);
+  border: 1.5px solid var(--neu-line);
   color: var(--neu-muted);
+  transition:
+    border-color 0.3s ease,
+    background 0.3s ease,
+    color 0.3s ease,
+    box-shadow 0.4s ease;
 }
 
-.neu .agent-demo-row.is-done .agent-demo-row-status {
-  color: #169a63;
-}
-
-.neu .agent-demo-row.is-on .agent-demo-row-status {
+.neu .agent-demo-step.is-on .agent-demo-node {
+  border-color: var(--neu-accent-deep);
   color: var(--neu-accent-deep);
+  background: #fff;
+  box-shadow:
+    0 0 0 4px rgba(8, 126, 252, 0.14),
+    0 0 14px rgba(8, 126, 252, 0.35);
+  animation: agent-demo-node-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes agent-demo-node-pulse {
+  50% {
+    box-shadow:
+      0 0 0 7px rgba(8, 126, 252, 0.07),
+      0 0 18px rgba(8, 126, 252, 0.3);
+  }
+}
+
+.neu .agent-demo-step.is-done .agent-demo-node {
+  border-color: #169a63;
+  background: #169a63;
+  color: #fff;
 }
 
 .neu .agent-demo-spin {
@@ -3929,7 +3969,19 @@ a {
   }
 }
 
-.neu .agent-demo-row-label {
+.neu .agent-demo-step-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.neu .agent-demo-step-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 22px;
+}
+
+.neu .agent-demo-step-label {
   flex: 1;
   min-width: 0;
   font-size: 13px;
@@ -3940,54 +3992,64 @@ a {
   text-overflow: ellipsis;
 }
 
-.neu .agent-demo-row.is-todo .agent-demo-row-label {
+.neu .agent-demo-step.is-todo .agent-demo-step-label {
   color: var(--neu-muted);
-  opacity: 0.6;
+  opacity: 0.55;
 }
 
-.neu .agent-demo-row-ms {
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
-  font-size: 10.5px;
-  color: var(--neu-muted);
-}
-
-.neu .agent-demo-row-more {
+.neu .agent-demo-step.is-on .agent-demo-step-label {
   color: var(--neu-accent-deep);
 }
 
-/* step log — expands in place under the active row */
-.neu .agent-demo-card {
+.neu .agent-demo-step-ms {
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10px;
+  color: var(--neu-muted);
+}
+
+.neu .agent-demo-step-more {
+  color: var(--neu-accent-deep);
+}
+
+/* the agent "thinking" — a caption typing under the active step */
+.neu .agent-demo-step-think {
+  font-size: 11px;
+  font-style: italic;
+  color: var(--neu-muted);
+  padding: 2px 0 4px;
+}
+
+/* mini terminal — expands beneath the active step */
+.neu .agent-demo-term {
   display: grid;
   grid-template-rows: 0fr;
   opacity: 0;
   transition:
-    grid-template-rows 0.45s cubic-bezier(0.33, 1, 0.68, 1),
+    grid-template-rows 0.5s cubic-bezier(0.33, 1, 0.68, 1),
     opacity 0.3s ease;
 }
 
-.neu .agent-demo-card.is-open {
+.neu .agent-demo-term.is-open {
   grid-template-rows: 1fr;
   opacity: 1;
 }
 
-.neu .agent-demo-card-inner {
+.neu .agent-demo-term-inner {
   overflow: hidden;
   min-height: 0;
-  margin: 0 6px 0 33px;
-  border-left: 2px solid var(--neu-line);
-  padding: 0 0 0 12px;
+  margin: 6px 0 4px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #0e141b;
+  box-shadow: 0 8px 20px rgba(14, 20, 27, 0.18);
 }
 
-.neu .agent-demo-card.is-open .agent-demo-card-inner {
-  padding-bottom: 8px;
-}
-
-.neu .agent-demo-card-line {
+.neu .agent-demo-term-line {
   display: block;
   font-family: var(--font-geist-mono), ui-monospace, monospace;
-  font-size: 11px;
-  line-height: 1.75;
-  color: var(--neu-muted);
+  font-size: 10.5px;
+  line-height: 1.7;
+  color: #8b98a8;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -3998,7 +4060,7 @@ a {
 @keyframes agent-demo-line-in {
   from {
     opacity: 0;
-    transform: translateX(-5px);
+    transform: translateX(-6px);
   }
 
   to {
@@ -4007,97 +4069,152 @@ a {
   }
 }
 
-.neu .agent-demo-card-line.is-cmd {
-  color: var(--neu-accent-deep);
+.neu .agent-demo-term-line.is-cmd {
+  color: #7db8ff;
   font-weight: 600;
 }
 
-.neu .agent-demo-card-line.is-ok {
-  color: #169a63;
+.neu .agent-demo-term-line.is-ok {
+  color: #4ecb8f;
 }
 
-/* deliverable — the final bordered card, handed to the client */
-.neu .agent-demo-answer {
-  display: grid;
-  grid-template-rows: 0fr;
-  opacity: 0;
-  transition:
-    grid-template-rows 0.5s cubic-bezier(0.33, 1, 0.68, 1),
-    opacity 0.45s ease;
+/* right — the artifact stage */
+.neu .agent-demo-stage {
+  position: relative;
+  min-width: 0;
+  padding: 16px 0 8px 20px;
+  display: flex;
 }
 
-.neu .agent-demo-answer.is-open {
-  grid-template-rows: 1fr;
-  opacity: 1;
-}
-
-.neu .agent-demo-answer-inner {
-  overflow: hidden;
-  min-height: 0;
-}
-
-.neu .agent-demo-answer.is-open .agent-demo-answer-inner {
-  padding: 10px 0 4px;
-}
-
-.neu .agent-demo-answer-head {
-  display: inline-flex;
+/* dashed idle preview — the artifact slot waiting to be filled */
+.neu .agent-demo-stage-empty {
+  position: absolute;
+  inset: 16px 0 8px 20px;
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
-  border-radius: 999px;
-  background: #e9f8f1;
-  color: #169a63;
-  font-size: 10.5px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
+  justify-content: center;
+  gap: 7px;
+  border: 1.5px dashed var(--neu-line);
+  border-radius: 12px;
+  color: var(--neu-muted);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 10px;
+  letter-spacing: 0.08em;
   text-transform: uppercase;
+  opacity: 1;
+  transition: opacity 0.45s ease;
 }
 
-.neu .agent-demo-answer-text {
-  margin: 9px 0 0;
-  font-size: 13px;
-  font-weight: 500;
+.neu .agent-demo-stage.is-on .agent-demo-stage-empty {
+  opacity: 0;
+}
+
+/* the deliverable card */
+.neu .agent-demo-card {
+  flex: 1;
+  min-width: 0;
+  align-self: stretch;
+  display: flex;
+  flex-direction: column;
+  padding: 14px 16px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--neu-line);
+  background: #fff;
+  box-shadow: 0 12px 32px rgba(16, 24, 33, 0.08);
+  opacity: 0;
+  transform: translateY(14px) scale(0.97);
+  transition:
+    opacity 0.5s ease 0.25s,
+    transform 0.55s cubic-bezier(0.34, 1.4, 0.64, 1) 0.25s;
+}
+
+.neu .agent-demo-stage.is-on .agent-demo-card {
+  opacity: 1;
+  transform: none;
+}
+
+.neu .agent-demo-card-head {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  color: #169a63;
+}
+
+.neu .agent-demo-card-head p {
+  margin: 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.45;
   color: var(--neu-ink);
-  line-height: 1.5;
 }
 
-.neu .agent-demo-answer-rows {
+.neu .agent-demo-rows {
   width: 100%;
-  margin-top: 8px;
+  margin-top: 10px;
   border-collapse: collapse;
-  font-size: 11.5px;
 }
 
-.neu .agent-demo-answer-rows td {
-  padding: 5px 0;
+.neu .agent-demo-rows td {
+  padding: 5.5px 0;
   border-top: 1px solid var(--neu-line);
+  font-size: 11.5px;
   color: var(--neu-ink);
   animation: agent-demo-line-in 0.35s ease both;
 }
 
-.neu .agent-demo-answer-rows td:last-child {
-  text-align: right;
-  font-family: var(--font-geist-mono), ui-monospace, monospace;
-  color: var(--neu-accent-deep);
-  font-weight: 600;
+.neu .agent-demo-rows td.is-name {
+  white-space: nowrap;
+  padding-right: 10px;
 }
 
-.neu .agent-demo-answer-foot {
+.neu .agent-demo-rows td.is-bar {
+  width: 100%;
+}
+
+.neu .agent-demo-bar {
+  display: block;
+  height: 6px;
+  width: var(--bar);
+  border-radius: 3px;
+  background: linear-gradient(90deg, #7db8ff, var(--neu-accent-deep));
+  transform-origin: left;
+  animation: agent-demo-bar-in 0.7s cubic-bezier(0.33, 1, 0.68, 1) both;
+}
+
+@keyframes agent-demo-bar-in {
+  from {
+    transform: scaleX(0);
+  }
+
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.neu .agent-demo-rows td.is-num {
+  text-align: right;
+  padding-left: 10px;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-weight: 600;
+  color: var(--neu-accent-deep);
+  white-space: nowrap;
+}
+
+.neu .agent-demo-card-foot {
+  margin-top: auto;
+  padding-top: 10px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--neu-line);
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
   color: #169a63;
 }
 
-/* shiny text — reactbits' gradient sweep on the delivered foot */
+/* shiny text — the gradient sweep on the delivered foot */
 .neu .shiny-text {
   color: transparent;
   background: linear-gradient(120deg, #169a63 30%, #52c691 50%, #169a63 70%);
@@ -4117,7 +4234,7 @@ a {
   }
 }
 
-/* client chip — the handover target, soft-popping at the foot */
+/* client chip — who the deliverable landed with */
 .neu .agent-demo-client {
   display: inline-flex;
   align-items: center;
@@ -4128,13 +4245,13 @@ a {
   color: #fff;
   font-size: 10px;
   font-weight: 600;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.03em;
   text-transform: none;
   opacity: 0;
-  transform: translateX(-10px) scale(0.85);
+  transform: translateX(-8px) scale(0.9);
   transition:
-    opacity 0.4s ease 0.3s,
-    transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) 0.3s;
+    opacity 0.4s ease 0.35s,
+    transform 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) 0.35s;
 }
 
 .neu .agent-demo-client.is-on {
@@ -4142,11 +4259,12 @@ a {
   transform: none;
 }
 
-/* tighten on small screens */
+/* tighten on small screens — single column, stage drops under */
 @media (max-width: 720px) {
   .neu .agent-demo {
-    height: 340px;
-    padding: 4px 14px 10px;
+    height: auto;
+    min-height: 0;
+    padding: 4px 14px 12px;
   }
 
   .neu .agent-demo-ask-text {
@@ -4154,8 +4272,26 @@ a {
     white-space: normal;
   }
 
-  .neu .agent-demo-card-line {
-    font-size: 10px;
+  .neu .agent-demo-body {
+    grid-template-columns: 1fr;
+  }
+
+  .neu .agent-demo-spine {
+    border-right: 0;
+    padding-right: 0;
+  }
+
+  .neu .agent-demo-stage {
+    padding-left: 0;
+    min-height: 300px;
+  }
+
+  .neu .agent-demo-stage-empty {
+    inset: 16px 0 8px 0;
+  }
+
+  .neu .agent-demo-term-line {
+    font-size: 9.5px;
   }
 }
 

@@ -29,7 +29,7 @@ import { getSiteLanguage } from "@/lib/language";
 import { getDictionary, type Dictionary } from "@/lib/i18n";
 import { repositoryUrl } from "@/lib/site";
 import { LanguageToggle } from "./LanguageToggle";
-import { AgentDemo } from "./AgentDemo";
+import { AgentDemoLazy } from "./AgentDemoLazy";
 import {
   DockToggle,
   MobileNav,
@@ -173,7 +173,15 @@ export default async function Home() {
 
           <nav className="main-nav" aria-label="Main navigation">
             {navLinks(t).map(({ href, label, icon: NavIcon }) => (
-              <Link href={href} key={href} aria-label={label} title={label}>
+              <Link
+                href={href}
+                key={href}
+                aria-label={label}
+                title={label}
+                // anchor links aren't routable — but page links would prefetch
+                // each route's client bundle, so keep them manual
+                prefetch={href.startsWith("/") ? false : undefined}
+              >
                 <NavIcon className="nav-icon" size={17} strokeWidth={1.9} aria-hidden="true" />
                 <span className="nav-label">{label}</span>
               </Link>
@@ -428,7 +436,7 @@ export default async function Home() {
               <span />
               <strong>TableR / AI workspace</strong>
             </div>
-            <AgentDemo
+            <AgentDemoLazy
               copy={{
                 prompt: t.agent.demo.prompt,
                 steps: t.agent.demo.steps as [string, string, string, string],

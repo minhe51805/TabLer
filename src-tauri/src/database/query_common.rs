@@ -43,3 +43,97 @@ pub fn statement_returns_rows(sql: &str, prefixes: &[&str]) -> bool {
     let trimmed = strip_leading_sql_noise(sql).trim().to_uppercase();
     prefixes.iter().any(|prefix| trimmed.starts_with(prefix)) || trimmed.contains(" RETURNING ")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::statement_returns_rows;
+
+    const READ_PREFIXES: &[&str] = &[
+        "SELECT", "WITH", "EXPLAIN", "SHOW", "PRAGMA", "DESCRIBE", "DESC", "TABLE", "VALUES",
+    ];
+
+    #[test]
+    fn leading_comments_do_not_hide_the_real_verb() {
+        for sql in [
+            "-- note\nSELECT 1",
+            "# mysql note\nSELECT 1",
+            "/* block */ SELECT 1",
+            "/* multi\nline */ WITH x AS (SELECT 1) SELECT * FROM x",
+            "  \n\t-- a\n-- b\nSELECT 1",
+        ] {
+            assert!(statement_returns_rows(sql, &["SELECT", "WITH"]), "{sql:?}");
+        }
+        // A comment prefix cannot launder a write into a "read".
+        for sql in [
+            "-- innocent\nDROP TABLE t",
+            "/* c */ DELETE FROM t",
+            "# note\nUPDATE t SET x = 1",
+        ] {
+            assert!(!statement_returns_rows(sql, READ_PREFIXES), "{sql:?}");
+        }
+    }
+
+    #[test]
+    fn mutating_and_session_statements_report_no_rows() {
+        for sql in [
+            "INSERT INTO t VALUES (1)",
+            "UPDATE t SET x = 1",
+            "DELETE FROM t",
+            "DROP TABLE t",
+            "CREATE TABLE t (a int)",
+            "ALTER TABLE t ADD COLUMN b int",
+            "TRUNCATE t",
+            "USE mydb",
+            "SET foreign_key_checks = 0",
+            "BEGIN",
+        ] {
+            assert!(!statement_returns_rows(sql, READ_PREFIXES), "{sql:?}");
+        }
+    }
+
+    #[test]
+    fn read_prefixes_classify_as_row_producing() {
+        for sql in [
+            "SELECT * FROM t",
+            "  select 1",
+            "WITH c AS (SELECT 1) SELECT * FROM c",
+            "EXPLAIN SELECT * FROM t",
+            "PRAGMA table_info(t)",
+            "SHOW TABLES",
+            "DESCRIBE users",
+            "VALUES (1, 2)",
+        ] {
+            assert!(statement_returns_rows(sql, READ_PREFIXES), "{sql:?}");
+        }
+    }
+
+    #[test]
+    fn returning_clause_marks_writes_as_row_producing() {
+        assert!(statement_returns_rows(
+            "INSERT INTO t (a) VALUES (1) RETURNING id",
+            &[]
+        ));
+        assert!(statement_returns_rows(
+            "update t set x = 1 returning id",
+            &[]
+        ));
+        assert!(statement_returns_rows(
+            "DELETE FROM t WHERE id = 1 RETURNING *",
+            &[]
+        ));
+    }
+
+    #[test]
+    fn empty_and_comment_only_inputs_report_no_rows() {
+        for sql in [
+            "",
+            "   ",
+            "-- nothing",
+            "# nothing",
+            "/* unterminated",
+            "-- a\n-- b",
+        ] {
+            assert!(!statement_returns_rows(sql, READ_PREFIXES), "{sql:?}");
+        }
+    }
+}

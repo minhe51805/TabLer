@@ -630,3 +630,201 @@ pub fn sanitize_sqlite_filter_clause(filter: Option<&str>) -> Result<Option<Stri
 pub fn sanitize_oracle_filter_clause(filter: Option<&str>) -> Result<Option<String>> {
     sanitize_filter_clause_with(filter, quote_oracle_order_by, false)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identifier_quoting_escapes_the_dialect_quote_char() {
+        assert_eq!(
+            quote_postgres_identifier("we\"ird").unwrap(),
+            "\"we\"\"ird\""
+        );
+        assert_eq!(quote_mysql_identifier("we`ird").unwrap(), "`we``ird`");
+        assert_eq!(quote_clickhouse_identifier("we`ird").unwrap(), "`we``ird`");
+        assert_eq!(quote_mssql_identifier("we]ird").unwrap(), "[we]]ird]");
+        // Oracle folds unquoted names, so the driver uppercases before quoting.
+        assert_eq!(
+            quote_oracle_identifier("employees").unwrap(),
+            "\"EMPLOYEES\""
+        );
+    }
+
+    #[test]
+    fn identifiers_reject_empty_and_control_characters() {
+        for result in [
+            quote_postgres_identifier("   "),
+            quote_mysql_identifier("a\0b"),
+            quote_mssql_identifier("line\nbreak"),
+            quote_snowflake_identifier("tab\tname"),
+        ] {
+            assert!(result.is_err(), "identifier must be rejected: {result:?}");
+        }
+    }
+
+    #[test]
+    fn qualified_names_quote_each_segment_and_cap_depth() {
+        assert_eq!(
+            qualify_postgres_table_name("public.orders", "dbo").unwrap(),
+            "\"public\".\"orders\""
+        );
+        assert_eq!(
+            qualify_postgres_table_name("orders", "app").unwrap(),
+            "\"app\".\"orders\""
+        );
+        assert_eq!(
+            qualify_mysql_table_name("orders", Some("shop")).unwrap(),
+            "`shop`.`orders`"
+        );
+        assert_eq!(
+            qualify_mysql_table_name("orders", None).unwrap(),
+            "`orders`"
+        );
+        assert_eq!(
+            qualify_mssql_table_name("dbo.users", "guest").unwrap(),
+            "[dbo].[users]"
+        );
+        assert_eq!(
+            qualify_cassandra_table_name("users", "ks").unwrap(),
+            "\"ks\".\"users\""
+        );
+        // Three segments exceed the two-part schema.table contract everywhere
+        // that uses split_qualified_name.
+        assert!(qualify_postgres_table_name("a.b.c", "dbo").is_err());
+        assert!(quote_postgres_order_by("a.b.c").is_err());
+    }
+
+    #[test]
+    fn bigquery_order_by_allows_deep_paths_but_caps_them() {
+        assert_eq!(quote_bigquery_order_by("ds.t.c").unwrap(), "`ds`.`t`.`c`");
+        let deep = (0..17)
+            .map(|i| format!("s{i}"))
+            .collect::<Vec<_>>()
+            .join(".");
+        assert!(quote_bigquery_order_by(&deep).is_err());
+        let at_cap = (0..16)
+            .map(|i| format!("s{i}"))
+            .collect::<Vec<_>>()
+            .join(".");
+        assert!(quote_bigquery_order_by(&at_cap).is_ok());
+    }
+
+    #[test]
+    fn normalize_order_dir_accepts_only_asc_desc() {
+        assert_eq!(normalize_order_dir(None).unwrap(), "ASC");
+        assert_eq!(normalize_order_dir(Some(" desc ")).unwrap(), "DESC");
+        for bad in ["DESC; DROP TABLE t", "random", "ascending", ""] {
+            assert!(normalize_order_dir(Some(bad)).is_err(), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn empty_and_missing_filters_pass_through_as_none() {
+        assert_eq!(sanitize_postgres_filter_clause(None).unwrap(), None);
+        assert_eq!(sanitize_postgres_filter_clause(Some("   ")).unwrap(), None);
+    }
+
+    #[test]
+    fn filters_render_dialect_quoted_conditions() {
+        assert_eq!(
+            sanitize_postgres_filter_clause(Some("age >= 18 AND name = 'O''Neil'")).unwrap(),
+            Some("\"age\" >= 18 AND \"name\" = 'O''Neil'".to_string())
+        );
+        assert_eq!(
+            sanitize_mysql_filter_clause(Some("status = 'x' OR total < 5")).unwrap(),
+            Some("`status` = 'x' OR `total` < 5".to_string())
+        );
+        // Dotted identifiers quote per segment.
+        assert_eq!(
+            sanitize_mssql_filter_clause(Some("orders.total > 5")).unwrap(),
+            Some("[orders].[total] > 5".to_string())
+        );
+    }
+
+    #[test]
+    fn filter_injection_payloads_are_rejected() {
+        for payload in [
+            "1=1; DROP TABLE users",
+            "age = 1; SELECT 1",
+            "age = 1 --",
+            "age = 1 /* comment",
+            "age = 1 */",
+            "x = 'a\0b'",
+            "a = 1 UNION SELECT password",
+            "a = 1) OR (1 = 1",
+            "a = 1 OR 1=1; --",
+            "true",
+        ] {
+            assert!(
+                sanitize_postgres_filter_clause(Some(payload)).is_err(),
+                "payload slipped through postgres filter: {payload:?}"
+            );
+            assert!(
+                sanitize_mysql_filter_clause(Some(payload)).is_err(),
+                "payload slipped through mysql filter: {payload:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn filter_operators_and_literals_stay_in_the_safe_subset() {
+        assert_eq!(
+            sanitize_postgres_filter_clause(Some("deleted IS NULL")).unwrap(),
+            Some("\"deleted\" IS NULL".to_string())
+        );
+        assert_eq!(
+            sanitize_postgres_filter_clause(Some("active IS NOT TRUE")).unwrap(),
+            Some("\"active\" IS NOT TRUE".to_string())
+        );
+        assert_eq!(
+            sanitize_postgres_filter_clause(Some("balance <= -1.5")).unwrap(),
+            Some("\"balance\" <= -1.5".to_string())
+        );
+        assert_eq!(
+            sanitize_postgres_filter_clause(Some("note != 'it''s'")).unwrap(),
+            Some("\"note\" != 'it''s'".to_string())
+        );
+        // Anything outside the approved grammar must not reach the database.
+        for bad in [
+            "a IN (1, 2)",
+            "a BETWEEN 1 AND 2",
+            "a IS 'y'",
+            "a = 'unterminated",
+            "a = 5.",
+            "a =",
+            "= 1",
+            "a ~~ 'x'",
+            "(a = 1)",
+        ] {
+            assert!(
+                sanitize_postgres_filter_clause(Some(bad)).is_err(),
+                "unsupported filter slipped through: {bad:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn ilike_is_gated_per_dialect() {
+        assert_eq!(
+            sanitize_postgres_filter_clause(Some("name ILIKE 'jo%'")).unwrap(),
+            Some("\"name\" ILIKE 'jo%'".to_string())
+        );
+        // MySQL/SQLite have no ILIKE — the parser must not emit it there.
+        assert!(sanitize_mysql_filter_clause(Some("name ILIKE 'jo%'")).is_err());
+        assert!(sanitize_sqlite_filter_clause(Some("name ILIKE 'jo%'")).is_err());
+        // LIKE stays available everywhere.
+        assert_eq!(
+            sanitize_mysql_filter_clause(Some("name LIKE 'jo%'")).unwrap(),
+            Some("`name` LIKE 'jo%'".to_string())
+        );
+    }
+
+    #[test]
+    fn overlong_filters_are_rejected() {
+        let over = format!("a = '{}'", "x".repeat(MAX_FILTER_LEN));
+        assert!(sanitize_postgres_filter_clause(Some(&over)).is_err());
+        let at_cap = format!("a = '{}'", "x".repeat(MAX_FILTER_LEN - "a = ''".len()));
+        assert!(sanitize_postgres_filter_clause(Some(&at_cap)).is_ok());
+    }
+}

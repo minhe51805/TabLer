@@ -1152,3 +1152,202 @@ mod csv_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod csv_import_tests {
+    use super::{
+        canonical_csv_path, parse_csv_value, validate_csv_mappings, AtomicCsvImportSummary,
+        CsvImportCancellationState,
+    };
+    use crate::database::models::{ColumnDetail, CsvColumnMapping, CsvFileImportRequest};
+    use serde_json::json;
+    use std::fs;
+    use std::sync::atomic::Ordering;
+    use uuid::Uuid;
+
+    fn column(data_type: &str, nullable: bool) -> ColumnDetail {
+        ColumnDetail {
+            name: "value".into(),
+            data_type: data_type.into(),
+            is_nullable: nullable,
+            is_primary_key: false,
+            default_value: None,
+            extra: None,
+            column_type: None,
+            comment: None,
+        }
+    }
+
+    fn temp_dir() -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("tabler-csv-test-{}", Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn cancellation_state_tracks_flags_per_operation() {
+        let state = CsvImportCancellationState::default();
+
+        // Empty ids are refused; unknown ids cannot be cancelled.
+        assert!(state.start("  ").is_err());
+        assert!(!state.cancel("missing"));
+
+        let flag = state.start("op-1").unwrap();
+        assert!(!flag.load(Ordering::Relaxed));
+        assert!(state.cancel("op-1"));
+        assert!(
+            flag.load(Ordering::Relaxed),
+            "cancel must set the flag the importer polls"
+        );
+
+        // finish() forgets the operation: a later cancel on a stale id is a no-op.
+        state.finish("op-1");
+        assert!(!state.cancel("op-1"));
+
+        // A restarted operation gets a FRESH flag registered under the id —
+        // cancel hits the new flag, not the orphaned old one.
+        let stale_flag = state.start("op-2").unwrap();
+        let restarted = state.start("op-2").unwrap();
+        assert!(!restarted.load(Ordering::Relaxed));
+        assert!(state.cancel("op-2"));
+        assert!(
+            restarted.load(Ordering::Relaxed),
+            "cancel must reach the flag currently registered for the id"
+        );
+        assert!(
+            !stale_flag.load(Ordering::Relaxed),
+            "the superseded flag must not be seen by the registry"
+        );
+    }
+
+    #[test]
+    fn csv_value_parsing_typed_edges() {
+        // Exponents parse as numbers, not text.
+        assert_eq!(
+            parse_csv_value("1e3", &column("DECIMAL", false)).unwrap(),
+            json!(1000.0)
+        );
+        assert_eq!(
+            parse_csv_value("1e3", &column("INTEGER", false)).unwrap_err(),
+            "expected an integer value"
+        );
+        // Signed integers work.
+        assert_eq!(
+            parse_csv_value("+7", &column("INT", false)).unwrap(),
+            json!(7)
+        );
+        // Boolean spellings.
+        for (raw, expected) in [("Yes", true), ("NO", false), ("1", true), ("0", false)] {
+            assert_eq!(
+                parse_csv_value(raw, &column("BOOLEAN", false)).unwrap(),
+                json!(expected),
+                "{raw}"
+            );
+        }
+        assert!(parse_csv_value("maybe", &column("BOOLEAN", false)).is_err());
+        // Quoted/whitespace empties are still empty.
+        assert!(parse_csv_value("   ", &column("TEXT", false)).is_err());
+        assert_eq!(
+            parse_csv_value("   ", &column("TEXT", true)).unwrap(),
+            json!(null)
+        );
+        // Date-like text must NOT be guessed into a number or bool.
+        assert_eq!(
+            parse_csv_value("2024-03-01", &column("DATE", false)).unwrap(),
+            json!("2024-03-01")
+        );
+        assert_eq!(
+            parse_csv_value("a,b", &column("TEXT", false)).unwrap(),
+            json!("a,b")
+        );
+        // JSON must be valid JSON; numeric must be finite.
+        assert!(parse_csv_value("{not json", &column("JSONB", false)).is_err());
+        assert!(parse_csv_value("NaN", &column("FLOAT8", false)).is_err());
+    }
+
+    #[test]
+    fn mappings_reject_unknown_and_duplicate_targets() {
+        let columns = vec![
+            ColumnDetail {
+                name: "id".into(),
+                ..column("INT", false)
+            },
+            ColumnDetail {
+                name: "name".into(),
+                ..column("TEXT", true)
+            },
+        ];
+        let request = |targets: &[&str]| CsvFileImportRequest {
+            file_path: "in.csv".into(),
+            table: "users".into(),
+            database: None,
+            delimiter: ",".into(),
+            has_headers: true,
+            mappings: targets
+                .iter()
+                .enumerate()
+                .map(|(source_index, target)| CsvColumnMapping {
+                    source_index,
+                    target_column: (*target).to_string(),
+                })
+                .collect(),
+        };
+
+        let valid = validate_csv_mappings(&request(&["id", "name"]), &columns).unwrap();
+        assert_eq!(valid.len(), 2);
+        assert!(valid.contains_key("id") && valid.contains_key("name"));
+
+        let error = validate_csv_mappings(&request(&["id", "ghost"]), &columns).unwrap_err();
+        assert!(error.contains("does not exist"), "{error}");
+
+        let error = validate_csv_mappings(&request(&["id", "id"]), &columns).unwrap_err();
+        assert!(error.contains("more than once"), "{error}");
+    }
+
+    #[test]
+    fn canonical_csv_path_accepts_only_real_csv_like_files() {
+        let dir = temp_dir();
+        let csv_path = dir.join("data.csv");
+        fs::write(&csv_path, "a,b").unwrap();
+        assert_eq!(
+            canonical_csv_path(csv_path.to_str().unwrap()).unwrap(),
+            fs::canonicalize(&csv_path).unwrap()
+        );
+
+        // Extension matching is case-insensitive.
+        let tsv_path = dir.join("data.TSV");
+        fs::write(&tsv_path, "a\tb").unwrap();
+        assert!(canonical_csv_path(tsv_path.to_str().unwrap()).is_ok());
+
+        let json_path = dir.join("data.json");
+        fs::write(&json_path, "{}").unwrap();
+        let error = canonical_csv_path(json_path.to_str().unwrap()).unwrap_err();
+        assert!(error.contains(".csv"), "{error}");
+
+        let no_ext = dir.join("data");
+        fs::write(&no_ext, "a,b").unwrap();
+        assert!(canonical_csv_path(no_ext.to_str().unwrap()).is_err());
+        assert!(canonical_csv_path(dir.to_str().unwrap()).is_err());
+        assert!(canonical_csv_path("definitely/missing.csv").is_err());
+    }
+
+    #[test]
+    fn import_summary_serializes_the_frontend_shape() {
+        let summary = AtomicCsvImportSummary {
+            inserted_rows: 10,
+            verified_rows: Some(9),
+            total_rows_after: Some(109),
+            warnings: vec!["row count drift".to_string()],
+        };
+        let value = serde_json::to_value(&summary).unwrap();
+        assert_eq!(
+            value,
+            json!({
+                "insertedRows": 10,
+                "verifiedRows": 9,
+                "totalRowsAfter": 109,
+                "warnings": ["row count drift"],
+            })
+        );
+    }
+}

@@ -35,7 +35,9 @@ impl MssqlDriver {
         fragments: u32,
         fragments_per_second: f64,
     ) -> String {
-        let base = NaiveDate::from_ymd_opt(1900, 1, 1).expect("valid base date");
+        let base = NaiveDate::from_ymd_opt(1900, 1, 1)
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .expect("valid base datetime");
         let seconds = f64::from(fragments) / fragments_per_second;
         let whole_seconds = seconds.floor() as i64;
         let date_time =
@@ -70,10 +72,12 @@ impl MssqlDriver {
                 Self::ms_datetime_to_string(v.days(), v.seconds_fragments(), 300.0),
             ),
             ColumnData::SmallDateTime(Some(v)) => {
+                // `seconds_fragments` counts MINUTES for smalldatetime, so the
+                // fragment rate is 1/60 s⁻¹ (not 60 s⁻¹ like datetime's 300).
                 serde_json::Value::String(Self::ms_datetime_to_string(
                     i32::from(v.days()),
-                    u32::from(v.seconds_fragments()) * 60,
-                    60.0,
+                    u32::from(v.seconds_fragments()),
+                    1.0 / 60.0,
                 ))
             }
             ColumnData::Time(Some(v)) => {
@@ -203,5 +207,146 @@ impl MssqlDriver {
             sandboxed,
             truncated,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::MssqlDriver;
+    use serde_json::json;
+    use std::borrow::Cow;
+    use tiberius::time::{Date, DateTime, DateTime2, DateTimeOffset, SmallDateTime, Time};
+    use tiberius::ColumnData;
+
+    #[test]
+    fn ms_date_renders_iso_calendar_dates() {
+        assert_eq!(MssqlDriver::ms_date_to_string(0), "0001-01-01");
+        assert_eq!(MssqlDriver::ms_date_to_string(738885), "2024-01-01");
+        assert_eq!(MssqlDriver::ms_date_to_string(738886), "2024-01-02");
+    }
+
+    #[test]
+    fn ms_time_converts_increments_at_each_scale() {
+        // Scale 0: increments are whole seconds.
+        assert_eq!(MssqlDriver::ms_time_to_string(3_600, 0), "01:00:00");
+        assert_eq!(MssqlDriver::ms_time_to_string(86_399, 0), "23:59:59");
+        // Scale 7: 10^7 increments per second — the TDS default.
+        assert_eq!(
+            MssqlDriver::ms_time_to_string(15_000_000, 7),
+            "00:00:01.5000000"
+        );
+        assert_eq!(
+            MssqlDriver::ms_time_to_string(36_000_000_000, 7),
+            "01:00:00"
+        );
+    }
+
+    #[test]
+    fn ms_datetime_uses_the_1900_epoch_with_second_fragments() {
+        // days=0, fragments=0 → the epoch itself.
+        assert_eq!(
+            MssqlDriver::ms_datetime_to_string(0, 0, 300.0),
+            "1900-01-01 00:00:00"
+        );
+        // 300 fragments/s → 450 s = 7.5 minutes.
+        assert_eq!(
+            MssqlDriver::ms_datetime_to_string(0, 135_000, 300.0),
+            "1900-01-01 00:07:30"
+        );
+        // One fragment is 1/300 s ≈ 3.3 ms → rounds to .003.
+        assert_eq!(
+            MssqlDriver::ms_datetime_to_string(0, 1, 300.0),
+            "1900-01-01 00:00:00.003"
+        );
+    }
+
+    #[test]
+    fn small_datetime_fragments_are_minutes_not_seconds() {
+        // 12 fragments at smalldatetime = 12 minutes, not 12 seconds.
+        let value = ColumnData::SmallDateTime(Some(SmallDateTime::new(0, 12)));
+        assert_eq!(
+            MssqlDriver::ms_cell_to_json(&value),
+            json!("1900-01-01 00:12:00")
+        );
+    }
+    #[test]
+    fn datetime2_and_datetimeoffset_render_full_values() {
+        let dt2 = DateTime2::new(
+            Date::new(738_885),
+            Time::new(162_000_000_000, 7), // 16,200 s = 04:30:00
+        );
+        assert_eq!(
+            MssqlDriver::ms_cell_to_json(&ColumnData::DateTime2(Some(dt2))),
+            json!("2024-01-01 04:30:00")
+        );
+
+        let dto = DateTimeOffset::new(dt2, -330);
+        assert_eq!(
+            MssqlDriver::ms_cell_to_json(&ColumnData::DateTimeOffset(Some(dto))),
+            json!("2024-01-01 04:30:00-05:30")
+        );
+        let dto = DateTimeOffset::new(dt2, 60);
+        assert_eq!(
+            MssqlDriver::ms_cell_to_json(&ColumnData::DateTimeOffset(Some(dto))),
+            json!("2024-01-01 04:30:00+01:00")
+        );
+
+        let dt = DateTime::new(45_960, 10_800 * 300); // +45,960 days, 3 h
+                                                      // +45,960 days from 1900-01-01 is 2025-11-01.
+        assert_eq!(
+            MssqlDriver::ms_cell_to_json(&ColumnData::DateTime(Some(dt))),
+            json!("2025-11-01 03:00:00")
+        );
+    }
+
+    #[test]
+    fn scalar_cells_convert_and_null_stays_null() {
+        assert_eq!(
+            MssqlDriver::ms_cell_to_json(&ColumnData::I32(Some(7))),
+            json!(7)
+        );
+        assert_eq!(
+            MssqlDriver::ms_cell_to_json(&ColumnData::Bit(Some(true))),
+            json!(true)
+        );
+        assert_eq!(
+            MssqlDriver::ms_cell_to_json(&ColumnData::String(Some(Cow::Borrowed("x")))),
+            json!("x")
+        );
+        // Binary renders as lowercase hex (what the grid's hex editor expects).
+        assert_eq!(
+            MssqlDriver::ms_cell_to_json(&ColumnData::Binary(Some(Cow::Owned(vec![
+                0xde, 0xad, 0xbe, 0xef
+            ])))),
+            json!("deadbeef")
+        );
+        for value in [
+            ColumnData::I32(None),
+            ColumnData::String(None),
+            ColumnData::Binary(None),
+            ColumnData::DateTime(None),
+        ] {
+            assert_eq!(MssqlDriver::ms_cell_to_json(&value), json!(null));
+        }
+    }
+
+    #[test]
+    fn column_type_names_match_the_tds_family() {
+        assert_eq!(
+            MssqlDriver::ms_column_type(&ColumnData::DateTimeOffset(None)),
+            "datetimeoffset"
+        );
+        assert_eq!(
+            MssqlDriver::ms_column_type(&ColumnData::DateTime2(None)),
+            "datetime2"
+        );
+        assert_eq!(
+            MssqlDriver::ms_column_type(&ColumnData::Binary(None)),
+            "varbinary"
+        );
+        assert_eq!(
+            MssqlDriver::ms_column_type(&ColumnData::U8(None)),
+            "tinyint"
+        );
     }
 }

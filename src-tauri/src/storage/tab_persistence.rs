@@ -59,6 +59,16 @@ impl TabPersistence {
         })
     }
 
+    /// Test seam: point persistence at an isolated file instead of the
+    /// resolved data directory.
+    #[cfg(test)]
+    fn for_test(storage_path: PathBuf) -> Self {
+        Self {
+            storage_path,
+            cache: Arc::new(RwLock::new(HashMap::new())),
+        }
+    }
+
     /// Save tabs for a connection. Performs LRU eviction if over MAX_TABS_PER_CONNECTION.
     pub fn save_tabs(&self, connection_id: &str, tabs: Vec<PersistedTab>) -> Result<()> {
         // Enforce LRU: keep most recently used tabs (active first, then by recency)
@@ -189,5 +199,118 @@ impl TabPersistence {
         if let Ok(mut cache) = self.cache.write() {
             cache.clear();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{PersistedTab, TabPersistence, MAX_TABS_PER_CONNECTION};
+    use std::fs;
+    use std::path::PathBuf;
+
+    fn temp_path() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("tabler-tabs-{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        dir.join("tab_persistence.json")
+    }
+
+    fn tab(id: &str, active: bool, created_at_ms: i64) -> PersistedTab {
+        PersistedTab {
+            tab_id: id.to_string(),
+            tab_type: "query".to_string(),
+            title: id.to_string(),
+            database: None,
+            table_name: None,
+            content: None,
+            cursor_line: None,
+            cursor_column: None,
+            scroll_top: None,
+            panel_heights: None,
+            is_active: active,
+            created_at_ms,
+        }
+    }
+
+    #[test]
+    fn saved_tabs_roundtrip_through_the_file() {
+        let path = temp_path();
+        let persistence = TabPersistence::for_test(path.clone());
+        persistence
+            .save_tabs("conn-a", vec![tab("t1", false, 1), tab("t2", true, 2)])
+            .unwrap();
+
+        // A fresh store (cold cache) restores exactly what was persisted.
+        let cold = TabPersistence::for_test(path);
+        let restored = cold.load_tabs("conn-a").unwrap();
+        assert_eq!(restored.len(), 2);
+        assert!(restored[0].is_active, "active tab must sort first");
+        assert_eq!(restored[0].tab_id, "t2");
+    }
+
+    #[test]
+    fn eviction_keeps_active_then_newest_tabs() {
+        let path = temp_path();
+        let persistence = TabPersistence::for_test(path.clone());
+        let mut tabs: Vec<PersistedTab> = (0..(MAX_TABS_PER_CONNECTION + 6))
+            .map(|i| tab(&format!("t{i:03}"), false, i as i64))
+            .collect();
+        // The OLDEST tab is the active one — recency must not evict the tab
+        // the user is looking at.
+        tabs[0].is_active = true;
+        persistence.save_tabs("conn-a", tabs).unwrap();
+
+        let cold = TabPersistence::for_test(path);
+        let kept = cold.load_tabs("conn-a").unwrap();
+        assert_eq!(kept.len(), MAX_TABS_PER_CONNECTION);
+        assert!(kept.iter().any(|t| t.tab_id == "t000" && t.is_active));
+        // The six oldest non-active tabs are gone.
+        for evicted in ["t001", "t002", "t003", "t004", "t005", "t006"] {
+            assert!(
+                !kept.iter().any(|t| t.tab_id == evicted),
+                "{evicted} should have been evicted"
+            );
+        }
+        assert!(kept.iter().any(|t| t.tab_id == "t055"));
+    }
+
+    #[test]
+    fn corrupt_file_restores_empty_with_a_notice_instead_of_failing() {
+        let path = temp_path();
+        fs::write(&path, "{ this is not json").unwrap();
+        let persistence = TabPersistence::for_test(path);
+        let restored = persistence.load_tabs("conn-a").unwrap();
+        assert!(restored.is_empty());
+        assert!(
+            crate::storage_notices::test_support::notice_was_raised("corrupt:tab_persistence.json"),
+            "corrupt restore must raise the 'Session restore failed' notice"
+        );
+    }
+
+    #[test]
+    fn connections_are_isolated_and_delete_drops_only_the_target() {
+        let path = temp_path();
+        let persistence = TabPersistence::for_test(path.clone());
+        persistence
+            .save_tabs("conn-a", vec![tab("a1", true, 1)])
+            .unwrap();
+        persistence
+            .save_tabs("conn-b", vec![tab("b1", false, 2)])
+            .unwrap();
+
+        let cold = TabPersistence::for_test(path.clone());
+        assert_eq!(cold.load_tabs("conn-a").unwrap()[0].tab_id, "a1");
+        assert_eq!(cold.load_tabs("conn-b").unwrap()[0].tab_id, "b1");
+        assert!(cold.load_tabs("conn-c").unwrap().is_empty());
+
+        persistence.delete_tabs("conn-a").unwrap();
+        let cold = TabPersistence::for_test(path);
+        assert!(cold.load_tabs("conn-a").unwrap().is_empty());
+        assert_eq!(cold.load_tabs("conn-b").unwrap()[0].tab_id, "b1");
+    }
+
+    #[test]
+    fn missing_file_loads_empty() {
+        let persistence = TabPersistence::for_test(temp_path().join("absent.json"));
+        assert!(persistence.load_tabs("conn-a").unwrap().is_empty());
     }
 }

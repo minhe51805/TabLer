@@ -599,6 +599,18 @@ pub fn run_agent_memory_tool(
         new_path,
         view_range,
     )?;
+    // Durable-knowledge gate: the native tree persists agent-written text to
+    // disk, so write commands pass their new content through the same
+    // credential/row-value filter as MEMORY.md and the semantic glossary.
+    let written_text: Option<(&str, &str)> = match &parsed {
+        MemoryCommand::Create { file_text, .. } => Some((file_text.as_str(), "file_text")),
+        MemoryCommand::StrReplace { new_str, .. } => Some((new_str.as_str(), "new_str")),
+        MemoryCommand::Insert { insert_text, .. } => Some((insert_text.as_str(), "insert_text")),
+        _ => None,
+    };
+    if let Some((text, field)) = written_text {
+        crate::utils::content_gate::reject_sensitive_payload(text, field)?;
+    }
     let data_dir = resolve_data_dir().map_err(|error| error.to_string())?;
     let root = native_scope_root(&data_dir, connection_id.as_deref(), database.as_deref());
     execute_memory_command_in(&root, &parsed)

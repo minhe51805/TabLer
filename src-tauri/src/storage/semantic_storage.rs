@@ -122,7 +122,14 @@ impl SemanticStorage {
         if entry.term.is_empty() || entry.definition.is_empty() {
             return Err("Semantic entry requires non-empty term and definition.".to_string());
         }
-
+        // Same durable-knowledge gate as agent memory: the glossary persists
+        // into plaintext JSON, so credentials and raw row identifiers must
+        // never enter it.
+        crate::utils::content_gate::reject_sensitive_payload(&entry.term, "glossary term")?;
+        crate::utils::content_gate::reject_sensitive_payload(
+            &entry.definition,
+            "glossary definition",
+        )?;
         let timestamp = now_iso();
         if entry.id.is_empty() {
             entry.id = Uuid::new_v4().to_string();

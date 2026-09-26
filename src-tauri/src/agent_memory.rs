@@ -538,46 +538,20 @@ fn read_memory_entry_in(
     })
 }
 
-/// Secret-shaped payloads must never enter memory: credentials in the prompt
-/// would be persisted verbatim and replayed into every future run's context.
-const SECRET_PAYLOAD_PATTERNS: [(&str, &str); 8] = [
-    ("password\\s*[:=]\\s*\\S+", "password"),
-    ("passwd\\s*[:=]\\s*\\S+", "password"),
-    ("pwd\\s*[:=]\\s*\\S+", "password"),
-    ("ssh_password\\s*[:=]\\s*\\S+", "ssh password"),
-    ("ssh_private_key\\s*[:=]\\s*\\S+", "ssh private key"),
-    ("passphrase\\s*[:=]\\s*\\S+", "passphrase"),
-    ("private[_-]?key\\s*[:=]\\s*\\S+", "private key"),
-    ("api[_-]?key\\s*[:=]\\s*\\S+", "api key"),
-];
-
+/// Secret- and row-value-shaped payloads must never enter memory: credentials
+/// in a durable note would be persisted verbatim and replayed into every
+/// future run's context. The shared gate lives in
+/// [`crate::utils::content_gate`] so semantic_storage and the native memory
+/// tree enforce the same policy.
 fn reject_secret_shaped_payload(
     name: &str,
     body: &str,
     description: &Option<String>,
 ) -> Result<(), String> {
-    let haystacks = [
-        (name, "memory name"),
-        (description.as_deref().unwrap_or(""), "memory description"),
-        (body, "memory body"),
-    ];
-    let regexes = SECRET_PAYLOAD_PATTERNS
-        .iter()
-        .filter_map(|(pattern, label)| {
-            regex::Regex::new(&format!("(?i){pattern}"))
-                .ok()
-                .map(|r| (r, *label))
-        });
-    for (text, where_label) in haystacks {
-        for (regex, what) in regexes.clone() {
-            if regex.is_match(text) {
-                return Err(format!(
-                    "Refusing to save: the {where_label} looks like it contains a {what}. Never store credentials in memory."
-                ));
-            }
-        }
-    }
-    Ok(())
+    use crate::utils::content_gate::reject_sensitive_payload;
+    reject_sensitive_payload(name, "memory name")?;
+    reject_sensitive_payload(description.as_deref().unwrap_or(""), "memory description")?;
+    reject_sensitive_payload(body, "memory body")
 }
 
 // __PART5__

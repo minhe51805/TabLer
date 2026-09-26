@@ -1,4 +1,5 @@
 import {
+  BookMarked,
   Brain,
   Coins,
   History,
@@ -36,6 +37,8 @@ import { AIConversationView } from "./AIConversationView";
 import { AIWorkspaceSwitcher } from "./AIWorkspaceSwitcher";
 import { AIWorkspaceChatActionModal } from "./AIWorkspaceChatActionModal";
 import { AIMemoryManagerModal } from "./AIMemoryManagerModal";
+import { AISemanticGlossaryModal } from "./AISemanticGlossaryModal";
+import { getAISemanticCopy } from "./ai-semantic-copy";
 import { getAIMemoryCopy } from "./ai-memory-copy";
 import { AISkillsManagerModal } from "./AISkillsManagerModal";
 import { AIRulesManagerModal } from "./AIRulesManagerModal";
@@ -338,6 +341,7 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
   // instead of starting a thread immediately.
   const [isChatActionModalOpen, setChatActionModalOpen] = useState(false);
   const [isSkillsModalOpen, setSkillsModalOpen] = useState(false);
+  const [isGlossaryModalOpen, setGlossaryModalOpen] = useState(false);
   const [isMemoryModalOpen, setMemoryModalOpen] = useState(false);
   const [isRulesModalOpen, setRulesModalOpen] = useState(false);
   // Escalating to "full" run access is a risky switch, so it asks first —
@@ -451,6 +455,14 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
                     title={getAIMemoryCopy(m.language).openButton}
                   >
                     <Brain className="w-3.5 h-3.5" />
+                  </button>
+                  <button
+                    type="button"
+                    className="toolbar-btn icon-only"
+                    onClick={() => setGlossaryModalOpen(true)}
+                    title={getAISemanticCopy(m.language).openButton}
+                  >
+                    <BookMarked className="w-3.5 h-3.5" />
                   </button>
                   <button
                     type="button"
@@ -775,6 +787,13 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
         connectionId={m.connectionId}
         database={m.currentDatabase}
         onClose={() => setMemoryModalOpen(false)}
+      />
+      <AISemanticGlossaryModal
+        open={isGlossaryModalOpen}
+        language={m.language}
+        connectionId={m.connectionId}
+        database={m.currentDatabase}
+        onClose={() => setGlossaryModalOpen(false)}
       />
       <AIRulesManagerModal open={isRulesModalOpen} onClose={() => setRulesModalOpen(false)} />
     </div>

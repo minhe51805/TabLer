@@ -7,10 +7,17 @@
   position: fixed;
   inset: 0;
   z-index: 10000;
+  /* The root layer must NOT capture input — pointer-events:none lets real
+     clicks fall through the cutout hole to the spotlighted element. The dim
+     rects and popover re-enable events on themselves. */
+  pointer-events: none;
 }
 
 .onboarding-dim {
   position: fixed;
+  /* Re-enable events on the dim rects — they block interaction outside the
+     cutout, which is the point of the dim. */
+  pointer-events: auto;
   background: rgba(8, 11, 20, 0.62);
 }
 
@@ -50,6 +57,8 @@
 }
 
 .onboarding-popover {
+  /* The popover is interactive (buttons, focus) — re-enable events. */
+  pointer-events: auto;
   position: fixed;
   width: 320px;
   padding: 18px 18px 14px;

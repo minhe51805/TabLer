@@ -1,6 +1,10 @@
 import { useEffect, useState } from "react";
 import { ChevronRight, LoaderCircle, Pencil, Trash2 } from "lucide-react";
 import type { ConnectionPingResult, ConnectionRowProps } from "./types";
+import { useI18n } from "../../i18n";
+import { detectInsecureTls } from "../../utils/connection-tls";
+import { getConnectionTlsCopy } from "../ConnectionForm/connection-tls-copy";
+import "../ConnectionForm/connection-tls.css";
 
 interface Props extends ConnectionRowProps {
   tagName?: string;
@@ -54,6 +58,9 @@ export function ConnectionRow({
 
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(connection.name);
+  const { language } = useI18n();
+  const insecureTls = detectInsecureTls(connection);
+  const tlsCopy = getConnectionTlsCopy(language);
 
   // Context-menu "Rename" bumps renameNonce; enter rename mode on change.
   useEffect(() => {
@@ -151,6 +158,12 @@ export function ConnectionRow({
                 title={`Environment: ${envBadge.label}`}
               >
                 {envBadge.label}
+              </span>
+            ) : null}
+
+            {insecureTls ? (
+              <span className="connection-tls-badge" title={insecureTls.reason}>
+                {tlsCopy.badge}
               </span>
             ) : null}
 

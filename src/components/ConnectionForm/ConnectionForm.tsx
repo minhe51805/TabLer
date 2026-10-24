@@ -32,6 +32,8 @@ import {
   type ConnectionTestResult,
 } from "./connection-form-utils";
 import { parseConnectionError } from "../../utils/connection-error";
+import { detectInsecureTls } from "../../utils/connection-tls";
+import { InsecureTlsWarning } from "./InsecureTlsWarning";
 
 interface PickerSection {
   key: string;
@@ -168,6 +170,7 @@ export function ConnectionForm({
   const showSslToggle = !!currentEngine?.supportsSsl;
   const engineExtraFields = currentEngine?.extraFields ?? [];
   const additionalFields = formData.additional_fields ?? {};
+  const insecureTlsWarning = useMemo(() => detectInsecureTls(formData), [formData]);
   const hasBootstrapDatabaseName = !!formData.database?.trim();
   const isBootstrappingWorkspace = isCreatingDatabase || isConnecting;
   const sqliteDatabaseName =
@@ -1264,65 +1267,68 @@ export function ConnectionForm({
   }
 
   const formContent = (
-    <ConnectionDetailsStep
-      language={language}
-      editConnection={!!editConnection}
-      showCloseButton={!embeddedInStartupShell}
-      bootstrapMode={bootstrapMode}
-      formData={formData}
-      selectedDb={selectedDb}
-      isFileEngine={!!isFileEngine}
-      supportsLocalBootstrap={supportsLocalBootstrap}
-      showBootstrapWorkflow={showBootstrapWorkflow}
-      hasBootstrapDatabaseName={hasBootstrapDatabaseName}
-      showPassword={showPassword}
-      showUsernameField={showUsernameField}
-      showPasswordField={showPasswordField}
-      showDatabaseField={showDatabaseField}
-      showSslToggle={showSslToggle}
-      showSqliteAdvancedPath={showSqliteAdvancedPath}
-      sqlitePathTouched={sqlitePathTouched}
-      bootstrapPreset={bootstrapPreset}
-      bootstrapPresetLabels={bootstrapPresetLabels}
-      bootstrapSql={bootstrapSql}
-      bootstrapFileName={bootstrapFileName}
-      engineExtraFields={engineExtraFields}
-      suggestedUsernamePlaceholder={suggestedUsernamePlaceholder}
-      hostPlaceholder={hostPlaceholder}
-      portPlaceholder={portPlaceholder}
-      databasePlaceholder={databasePlaceholder}
-      passwordLabel={passwordLabel}
-      passwordPlaceholder={passwordPlaceholder}
-      additionalFields={additionalFields}
-      connectionTitle={connectionTitle}
-      testResult={testResult}
-      isTesting={isTesting}
-      isConnecting={isConnecting}
-      isBootstrappingWorkspace={isBootstrappingWorkspace}
-      strings={detailsStrings}
-      passwordDraftRef={passwordDraftRef}
-      bootstrapFileInputRef={bootstrapFileInputRef}
-      onFieldChange={updateField}
-      onAdditionalFieldChange={updateAdditionalField}
-      onTogglePasswordVisibility={() => setShowPassword((v) => !v)}
-      onPasswordChange={(v) => {
-        passwordDraftRef.current = v;
-      }}
-      onBack={() => setStep("pick")}
-      onClose={onClose}
-      onTest={handleTest}
-      onConnect={handleConnect}
-      onCreateDatabase={handleCreateDatabase}
-      onImportBootstrapFile={handleImportBootstrapFile}
-      onToggleSqliteAdvancedPath={() => setShowSqliteAdvancedPath((v) => !v)}
-      onResetSqlitePath={() => {
-        setSqlitePathTouched(false);
-        setShowSqliteAdvancedPath(false);
-      }}
-      onPickSqlitePath={handlePickSqlitePath}
-      onBootstrapPresetChange={(v) => setBootstrapPreset(v as BootstrapPreset)}
-      onBootstrapSqlChange={setBootstrapSql}
-    />
+    <>
+      {insecureTlsWarning ? <InsecureTlsWarning warning={insecureTlsWarning} /> : null}
+      <ConnectionDetailsStep
+        language={language}
+        editConnection={!!editConnection}
+        showCloseButton={!embeddedInStartupShell}
+        bootstrapMode={bootstrapMode}
+        formData={formData}
+        selectedDb={selectedDb}
+        isFileEngine={!!isFileEngine}
+        supportsLocalBootstrap={supportsLocalBootstrap}
+        showBootstrapWorkflow={showBootstrapWorkflow}
+        hasBootstrapDatabaseName={hasBootstrapDatabaseName}
+        showPassword={showPassword}
+        showUsernameField={showUsernameField}
+        showPasswordField={showPasswordField}
+        showDatabaseField={showDatabaseField}
+        showSslToggle={showSslToggle}
+        showSqliteAdvancedPath={showSqliteAdvancedPath}
+        sqlitePathTouched={sqlitePathTouched}
+        bootstrapPreset={bootstrapPreset}
+        bootstrapPresetLabels={bootstrapPresetLabels}
+        bootstrapSql={bootstrapSql}
+        bootstrapFileName={bootstrapFileName}
+        engineExtraFields={engineExtraFields}
+        suggestedUsernamePlaceholder={suggestedUsernamePlaceholder}
+        hostPlaceholder={hostPlaceholder}
+        portPlaceholder={portPlaceholder}
+        databasePlaceholder={databasePlaceholder}
+        passwordLabel={passwordLabel}
+        passwordPlaceholder={passwordPlaceholder}
+        additionalFields={additionalFields}
+        connectionTitle={connectionTitle}
+        testResult={testResult}
+        isTesting={isTesting}
+        isConnecting={isConnecting}
+        isBootstrappingWorkspace={isBootstrappingWorkspace}
+        strings={detailsStrings}
+        passwordDraftRef={passwordDraftRef}
+        bootstrapFileInputRef={bootstrapFileInputRef}
+        onFieldChange={updateField}
+        onAdditionalFieldChange={updateAdditionalField}
+        onTogglePasswordVisibility={() => setShowPassword((v) => !v)}
+        onPasswordChange={(v) => {
+          passwordDraftRef.current = v;
+        }}
+        onBack={() => setStep("pick")}
+        onClose={onClose}
+        onTest={handleTest}
+        onConnect={handleConnect}
+        onCreateDatabase={handleCreateDatabase}
+        onImportBootstrapFile={handleImportBootstrapFile}
+        onToggleSqliteAdvancedPath={() => setShowSqliteAdvancedPath((v) => !v)}
+        onResetSqlitePath={() => {
+          setSqlitePathTouched(false);
+          setShowSqliteAdvancedPath(false);
+        }}
+        onPickSqlitePath={handlePickSqlitePath}
+        onBootstrapPresetChange={(v) => setBootstrapPreset(v as BootstrapPreset)}
+        onBootstrapSqlChange={setBootstrapSql}
+      />
+    </>
   );
 
   if (embeddedInStartupShell) {

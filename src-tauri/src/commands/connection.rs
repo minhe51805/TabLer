@@ -214,7 +214,6 @@ mod connection_diagnostic_tests {
 
     #[tokio::test]
     async fn limiter_rejection_logs_warn_without_credentials() {
-        let _guard = begin_log_capture();
         let config = ConnectionConfig {
             host: Some("postgresql://user:secret@example.test:5432/db".to_string()),
             password: Some("do-not-log-this-password".to_string()),
@@ -230,6 +229,7 @@ mod connection_diagnostic_tests {
             .await
             .expect_err("zero-capacity limiter rejects");
         assert_eq!(error, "connection limit reached");
+        let _guard = begin_log_capture();
         log_connection_limiter_rejection("connection.connect");
         let logs = captured_logs();
         assert!(logs.contains("WARN"));

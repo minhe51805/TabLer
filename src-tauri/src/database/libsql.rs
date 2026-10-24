@@ -63,14 +63,44 @@ impl LibSqlDriver {
             .map(str::trim)
             .filter(|value| !value.is_empty())
             .context("LibSQL host is required")?;
-
-        let host = if raw_host.contains(':') && !raw_host.starts_with('[') {
-            format!("[{raw_host}]")
+        let (explicit_plaintext, host) = if let Some(host) = raw_host.strip_prefix("http://") {
+            (Some(true), host)
+        } else if let Some(host) = raw_host
+            .strip_prefix("https://")
+            .or_else(|| raw_host.strip_prefix("libsql://"))
+        {
+            (Some(false), host)
+        } else if raw_host.contains("://") {
+            return Err(anyhow!("LibSQL supports only http, https, and libsql URLs"));
         } else {
-            raw_host.to_string()
+            (None, raw_host)
+        };
+        if host.is_empty() {
+            return Err(anyhow!("LibSQL host is required"));
+        }
+        if config.use_ssl && explicit_plaintext == Some(true) {
+            return Err(anyhow!(
+                "LibSQL plaintext HTTP cannot be used when SSL is enabled"
+            ));
+        }
+
+        let loopback = match host
+            .strip_prefix('[')
+            .and_then(|value| value.strip_suffix(']'))
+        {
+            Some(host) => host == "::1",
+            None => host == "::1" || host == "127.0.0.1" || host.eq_ignore_ascii_case("localhost"),
+        };
+        let plaintext = explicit_plaintext == Some(true)
+            || (explicit_plaintext.is_none() && !config.use_ssl && loopback);
+        let scheme = if plaintext { "http" } else { "libsql" };
+        let host = if host.contains(':') && !host.starts_with('[') {
+            format!("[{host}]")
+        } else {
+            host.to_string()
         };
 
-        let mut url = format!("libsql://{host}");
+        let mut url = format!("{scheme}://{host}");
         if let Some(port) = config.port.filter(|value| *value > 0) {
             url.push(':');
             url.push_str(&port.to_string());
@@ -1054,6 +1084,51 @@ mod tests {
             value,
             data_type,
         }
+    }
+
+    fn remote_config(host: &str) -> ConnectionConfig {
+        ConnectionConfig {
+            host: Some(host.to_string()),
+            port: Some(8080),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn remote_url_uses_plaintext_only_for_local_or_explicit_http() {
+        let local = LibSqlDriver::build_remote_url(&remote_config("127.0.0.1")).unwrap();
+        assert_eq!(local, "http://127.0.0.1:8080");
+
+        let cloud = LibSqlDriver::build_remote_url(&remote_config("example.turso.io")).unwrap();
+        assert_eq!(cloud, "libsql://example.turso.io:8080");
+
+        let explicit_http =
+            LibSqlDriver::build_remote_url(&remote_config("http://db.internal")).unwrap();
+        assert_eq!(explicit_http, "http://db.internal:8080");
+
+        let explicit_https =
+            LibSqlDriver::build_remote_url(&remote_config("https://db.internal")).unwrap();
+        assert_eq!(explicit_https, "libsql://db.internal:8080");
+    }
+
+    #[test]
+    fn remote_url_honours_tls_ipv6_and_database_path() {
+        let mut tls = remote_config("localhost");
+        tls.use_ssl = true;
+        tls.database = Some("iku.db".to_string());
+        assert_eq!(
+            LibSqlDriver::build_remote_url(&tls).unwrap(),
+            "libsql://localhost:8080/iku.db"
+        );
+
+        assert_eq!(
+            LibSqlDriver::build_remote_url(&remote_config("::1")).unwrap(),
+            "http://[::1]:8080"
+        );
+
+        let mut conflicting = remote_config("http://localhost");
+        conflicting.use_ssl = true;
+        assert!(LibSqlDriver::build_remote_url(&conflicting).is_err());
     }
 
     #[test]

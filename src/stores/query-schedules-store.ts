@@ -78,7 +78,7 @@ interface ScheduleFiredPayload {
 interface QuerySchedulesState {
   schedules: QuerySchedule[];
   isLoading: boolean;
-  loadSchedules: () => Promise<void>;
+  loadSchedules: () => Promise<QuerySchedule[] | null>;
   saveSchedule: (params: {
     id?: string;
     name: string;
@@ -116,6 +116,22 @@ interface QuerySchedulesState {
 
 let eventsAttached = false;
 
+export function replayDispatchedAgentTasks(schedules: QuerySchedule[]) {
+  for (const schedule of schedules) {
+    if (schedule.kind !== "agent" || schedule.lastStatus !== "dispatched") continue;
+    const prompt = schedule.prompt?.trim() ?? "";
+    if (!prompt) continue;
+    useAgentScheduleStore.getState().enqueueAgentTask({
+      scheduleId: schedule.id,
+      name: schedule.name,
+      prompt,
+      connectionId: schedule.connectionId ?? null,
+      database: schedule.database ?? null,
+      allowDataRead: schedule.allowDataRead === true,
+    });
+  }
+}
+
 export const useQuerySchedulesStore = create<QuerySchedulesState>((set) => ({
   schedules: [],
   isLoading: false,
@@ -124,7 +140,12 @@ export const useQuerySchedulesStore = create<QuerySchedulesState>((set) => ({
     set({ isLoading: true });
     try {
       const schedules = await invokeMutation<QuerySchedule[]>("list_query_schedules", {});
+      if (!Array.isArray(schedules)) {
+        set({ isLoading: false });
+        return null;
+      }
       set({ schedules, isLoading: false });
+      return schedules;
     } catch (error) {
       // A silent list failure leaves the panel on a stale/empty view; surface
       // it so the user knows the schedules they see may not be current.
@@ -134,6 +155,7 @@ export const useQuerySchedulesStore = create<QuerySchedulesState>((set) => ({
         tone: "error",
       });
       set({ isLoading: false });
+      return null;
     }
   },
 
@@ -202,6 +224,11 @@ export const useQuerySchedulesStore = create<QuerySchedulesState>((set) => ({
     if (eventsAttached) return () => {};
     eventsAttached = true;
     const unlisteners: UnlistenFn[] = [];
+    let active = true;
+    void (async () => {
+      const schedules = await useQuerySchedulesStore.getState().loadSchedules();
+      if (active && schedules) replayDispatchedAgentTasks(schedules);
+    })();
     // Boot reconciliation reports occurrences that elapsed while the app was
     // closed. Refresh the list so `missedCount`/`missed` statuses land, and
     // surface the count as a toast — the panel badge carries the detail.
@@ -302,6 +329,7 @@ export const useQuerySchedulesStore = create<QuerySchedulesState>((set) => ({
         // Browser-only tests and previews do not expose Tauri's event bridge.
       });
     return () => {
+      active = false;
       unlisteners.forEach((unlisten) => unlisten());
       eventsAttached = false;
     };

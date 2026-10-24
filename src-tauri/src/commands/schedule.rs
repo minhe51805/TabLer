@@ -334,6 +334,12 @@ async fn run_schedule(
 /// to fake: the row is persisted as `dispatched` (not `ok`), and only a
 /// `complete_agent_schedule_run` call from the run itself can turn it into a
 /// real outcome.
+fn persist_agent_dispatch(mut schedule: QuerySchedule) -> Result<QuerySchedule, String> {
+    mark_agent_task_dispatched(&mut schedule);
+    let mut storage = ScheduleStorage::new()?;
+    storage.save(schedule)
+}
+
 async fn dispatch_agent_schedule(
     app: &AppHandle,
     mut schedule: QuerySchedule,
@@ -360,7 +366,7 @@ async fn dispatch_agent_schedule(
         return Ok(());
     }
 
-    mark_agent_task_dispatched(&mut schedule);
+    let schedule = persist_agent_dispatch(schedule)?;
     let _ = app.emit(
         "schedule-fired",
         json!({
@@ -376,8 +382,6 @@ async fn dispatch_agent_schedule(
             "error": null,
         }),
     );
-    let mut storage = ScheduleStorage::new()?;
-    storage.save(schedule)?;
     Ok(())
 }
 
@@ -564,7 +568,9 @@ mod tests {
 
 #[cfg(test)]
 mod draft_tests {
-    use super::{save_query_schedule, validate_schedule_draft, MAX_INTERVAL_SECONDS};
+    use super::{
+        persist_agent_dispatch, save_query_schedule, validate_schedule_draft, MAX_INTERVAL_SECONDS,
+    };
     use crate::storage::schedule_storage::{QuerySchedule, ScheduleStorage, SCHEDULE_STATUS_ERROR};
 
     #[test]
@@ -706,6 +712,36 @@ mod draft_tests {
             assert_eq!(saved.missed_count, 4);
             assert_eq!(saved.next_due_at, Some(1_700_000_100_000));
             assert_eq!(saved.created_at, "2024-01-01T00:00:00Z");
+        });
+    }
+
+    #[test]
+    fn agent_dispatch_is_persisted_before_it_can_be_emitted() {
+        let dir = crate::utils::paths::test_support::fresh_temp_dir("tabler-agent-dispatch-save");
+        crate::utils::paths::test_support::run_with_data_dir_env(&dir, || {
+            let mut schedule = base_schedule();
+            schedule.kind = "agent".to_string();
+            schedule.prompt = Some("Check stuck orders".to_string());
+            let saved = persist_agent_dispatch(schedule).unwrap();
+            assert_eq!(saved.last_status.as_deref(), Some("dispatched"));
+            let stored = ScheduleStorage::new()
+                .unwrap()
+                .get("sched-1")
+                .expect("dispatch is persisted");
+            assert_eq!(stored.last_status.as_deref(), Some("dispatched"));
+            assert_eq!(stored.prompt.as_deref(), Some("Check stuck orders"));
+        });
+    }
+
+    #[test]
+    fn agent_dispatch_storage_failure_is_returned_before_emission() {
+        let dir = crate::utils::paths::test_support::fresh_temp_dir("tabler-agent-dispatch-error");
+        crate::utils::paths::test_support::run_with_data_dir_env(&dir, || {
+            std::fs::create_dir(dir.join("query_schedules.json")).unwrap();
+            let mut schedule = base_schedule();
+            schedule.kind = "agent".to_string();
+            schedule.prompt = Some("Check stuck orders".to_string());
+            assert!(persist_agent_dispatch(schedule).is_err());
         });
     }
 }

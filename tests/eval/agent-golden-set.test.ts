@@ -239,7 +239,7 @@ describe("eval: Mongo HAVING recovery stays bounded", () => {
       stepBudget: 8,
       requestAction: async () => actions[actionIndex++],
       runTool: async (action) => {
-        const sql = String(action.args?.sql ?? "");
+        const sql = String((action.args as { sql?: string } | undefined)?.sql ?? "");
         statements.push(sql);
         if (sql === havingSql) {
           return "Tool error: This sandbox accepts SQL only. HAVING is not supported — wrap the aggregation in an outer SELECT; use LIMIT/OFFSET for paging.";

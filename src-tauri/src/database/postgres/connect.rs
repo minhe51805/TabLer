@@ -5,7 +5,7 @@ use crate::database::pgpass::read_pgpass;
 use crate::database::query_cancel::QueryCancelRegistry;
 use anyhow::{Context, Result};
 use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
-use sqlx::ConnectOptions;
+use sqlx::{ConnectOptions, Executor};
 use std::sync::{Arc, RwLock as StdRwLock};
 use tokio::sync::RwLock;
 
@@ -83,7 +83,7 @@ impl PostgresDriver {
         }
 
         let pool_max_connections = resolve_pool_max_connections(config.pool_max_connections());
-        let pool = Self::open_pool(options.clone(), pool_max_connections).await?;
+        let pool = Self::open_pool(options.clone(), pool_max_connections, config.db_type).await?;
         Ok(Self {
             pool: StdRwLock::new(pool),
             connect_options: options,
@@ -105,10 +105,11 @@ impl PostgresDriver {
     pub(super) async fn open_pool(
         options: PgConnectOptions,
         max_connections: u32,
+        database_type: DatabaseType,
     ) -> Result<PgPool> {
         let mut last_error = None;
         for attempt in 1..=3 {
-            let pool_opts = PgPoolOptions::new()
+            let mut pool_opts = PgPoolOptions::new()
                 .min_connections(1)
                 .max_connections(max_connections)
                 .max_lifetime(std::time::Duration::from_secs(1800))
@@ -118,6 +119,14 @@ impl PostgresDriver {
                 // connect path already proves the pool is live, and query failures
                 // surface naturally if the server drops later.
                 .test_before_acquire(false);
+            if database_type == DatabaseType::Vertica {
+                pool_opts = pool_opts.after_connect(|conn, _metadata| {
+                    Box::pin(async move {
+                        conn.execute("SET AUTOCOMMIT = ON").await?;
+                        Ok(())
+                    })
+                });
+            }
 
             match pool_opts.connect_with(options.clone()).await {
                 Ok(pool) => return Ok(pool),

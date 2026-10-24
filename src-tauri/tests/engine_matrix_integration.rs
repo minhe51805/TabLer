@@ -133,7 +133,7 @@ engine_case!(
         config
     },
     None,
-    EngineProbe::Sql("SELECT 1")
+    EngineProbe::VerticaWorkspace
 );
 
 engine_case!(

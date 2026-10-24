@@ -287,6 +287,13 @@ pub async fn connect_database(
     let started_at = std::time::Instant::now();
     config.resolve_env_vars();
     config.fill_generated_name();
+    conn_storage
+        .complete_connection_secrets(&mut config)
+        .map_err(|error| {
+            ConnectionErrorInfo::unclassified(format!(
+                "Failed to load saved connection secrets: {error}"
+            ))
+        })?;
     // Validate connection config before attempting to connect
     config.validate().map_err(|e| {
         ConnectionErrorInfo::unclassified(format!("Invalid connection config: {}", e))
@@ -368,12 +375,20 @@ pub async fn disconnect_database(
 pub async fn test_connection(
     mut config: ConnectionConfig,
     request_id: Option<String>,
+    conn_storage: State<'_, ConnectionStorage>,
     connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
     cancellation_state: State<'_, ConnectionAttemptCancellationState>,
 ) -> Result<String, ConnectionErrorInfo> {
     let started_at = std::time::Instant::now();
     config.resolve_env_vars();
     config.fill_generated_name();
+    conn_storage
+        .complete_connection_secrets(&mut config)
+        .map_err(|error| {
+            ConnectionErrorInfo::unclassified(format!(
+                "Failed to load saved connection secrets: {error}"
+            ))
+        })?;
     // Validate connection config before testing
     config.validate().map_err(|e| {
         ConnectionErrorInfo::unclassified(format!("Invalid connection config: {}", e))

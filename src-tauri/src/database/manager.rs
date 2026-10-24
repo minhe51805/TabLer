@@ -515,6 +515,11 @@ impl DatabaseManager {
             if let Some(old_handle) = ssh_tunnels.insert(config.id.clone(), handle) {
                 let _ = self.ssh_manager.disconnect_tunnel(old_handle);
             }
+        } else {
+            let mut ssh_tunnels = self.ssh_tunnels.write().await;
+            if let Some(handle) = ssh_tunnels.remove(&config.id) {
+                let _ = self.ssh_manager.disconnect_tunnel(handle);
+            }
         }
 
         if let Some(previous_driver) = previous_driver {
@@ -538,16 +543,18 @@ impl DatabaseManager {
             .write()
             .await
             .remove(connection_id);
-        if let Some(driver) = driver {
-            driver.disconnect().await?;
-        }
+        let disconnect_result = if let Some(driver) = driver {
+            driver.disconnect().await
+        } else {
+            Ok(())
+        };
 
         let mut tunnels = self.ssh_tunnels.write().await;
         if let Some(handle) = tunnels.remove(connection_id) {
             let _ = self.ssh_manager.disconnect_tunnel(handle);
         }
 
-        Ok(())
+        disconnect_result
     }
 
     /// Disconnect all connections
@@ -796,6 +803,34 @@ mod tests {
         assert!(!manager.is_connected(&config.id).await);
 
         server.abort();
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[tokio::test]
+    async fn reconnect_without_ssh_removes_the_stale_tunnel() {
+        let root = std::env::temp_dir().join(format!("tabler-manager-ssh-{}", Uuid::new_v4()));
+        let storage = PluginStorage::from_data_dir(root.clone()).unwrap();
+        let manager = DatabaseManager::with_plugin_storage(storage);
+        manager.ssh_tunnels.write().await.insert(
+            "sqlite-no-ssh".to_string(),
+            crate::ssh::ssh_tunnel::tunnel_handle_for_test(1),
+        );
+        let config = ConnectionConfig {
+            id: "sqlite-no-ssh".to_string(),
+            name: "SQLite without SSH".to_string(),
+            db_type: DatabaseType::SQLite,
+            file_path: Some(":memory:".to_string()),
+            ..ConnectionConfig::default()
+        };
+
+        manager.connect(&config).await.unwrap();
+        assert!(!manager
+            .ssh_tunnels
+            .read()
+            .await
+            .contains_key("sqlite-no-ssh"));
+
+        manager.disconnect(&config.id).await.unwrap();
         let _ = fs::remove_dir_all(root);
     }
 }

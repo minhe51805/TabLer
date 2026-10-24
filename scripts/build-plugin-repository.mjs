@@ -39,7 +39,7 @@
 import { createHash } from "node:crypto";
 import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import JSZip from "jszip";
 import {
   canonicalManifest,
@@ -47,7 +47,9 @@ import {
   computeBundleDigest,
 } from "./build-plugin-registry.mjs";
 
-const PLUGINS_ROOT = fileURLToPath(new URL("../plugins/", import.meta.url));
+const PLUGINS_ROOT = process.env.PLUGINS_ROOT
+  ? fileURLToPath(pathToFileURL(join(process.cwd(), process.env.PLUGINS_ROOT) + "/"))
+  : fileURLToPath(new URL("../plugins/", import.meta.url));
 const OUT_DIR = fileURLToPath(new URL("../website/public/plugins/", import.meta.url));
 
 // Public origin the desktop app downloads from. MUST be https for real installs

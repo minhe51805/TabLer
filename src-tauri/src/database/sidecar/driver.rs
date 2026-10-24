@@ -216,6 +216,7 @@ impl DatabaseDriver for SidecarDriver {
         let child = self.child.lock().unwrap().take();
         if let Some(mut child) = child {
             let _ = child.start_kill();
+            let _ = child.wait().await;
         }
         Ok(())
     }

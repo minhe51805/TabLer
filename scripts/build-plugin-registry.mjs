@@ -6,7 +6,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 // Base URL sidecar/binary assets are downloaded from at install time. Assets are
 // hosted per release (not committed); override with PLUGIN_ASSET_BASE_URL.
 const assetBaseUrl = (
-  process.env.PLUGIN_ASSET_BASE_URL ?? "https://plugins.tabler.app/assets/"
+  process.env.PLUGIN_ASSET_BASE_URL ?? "https://tabler.app/plugins/assets/"
 ).replace(/\/?$/, "/");
 
 export function canonicalManifest(manifest) {
@@ -164,14 +164,14 @@ export async function buildRegistry(pluginsRootPath, { write = true } = {}) {
 
 // CLI entry point (skipped when the module is imported by a test).
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  const pluginsRootPath = fileURLToPath(new URL("../plugins/", import.meta.url));
+  const pluginsRootPath = process.env.PLUGINS_ROOT
+    ? fileURLToPath(pathToFileURL(join(process.cwd(), process.env.PLUGINS_ROOT) + "/"))
+    : fileURLToPath(new URL("../plugins/", import.meta.url));
   const registry = await buildRegistry(pluginsRootPath);
   await writeFile(
     new URL("../plugin-registry.json", import.meta.url),
     `${JSON.stringify(registry, null, 2)}\n`,
     "utf8",
   );
-  console.log(
-    `Generated plugin-registry.json with ${registry.packages.length} package(s).`,
-  );
+  console.log(`Generated plugin-registry.json with ${registry.packages.length} package(s).`);
 }

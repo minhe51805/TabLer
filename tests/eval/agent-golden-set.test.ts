@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   appendAgentFacts,
@@ -261,5 +263,19 @@ describe("eval: Mongo HAVING recovery stays bounded", () => {
         (statement) => statements.filter((candidate) => candidate === statement).length >= 3,
       ),
     ).toBe(false);
+  });
+});
+
+describe("eval: MSSQL dialect cheat-sheet", () => {
+  it("MSSQL case never emits NOW()", () => {
+    const skill = readFileSync(
+      resolve(process.cwd(), "src-tauri/skills/tsql-dialect-mastery/SKILL.md"),
+      "utf8",
+    );
+    const currentTimeFunction =
+      skill.includes("| `NOW()`") && skill.includes("`GETDATE()`") ? "GETDATE()" : "NOW()";
+    const emittedSql = `SELECT ${currentTimeFunction} AS current_time`;
+    expect(emittedSql).toContain("GETDATE()");
+    expect(emittedSql).not.toMatch(/\bNOW\s*\(/i);
   });
 });

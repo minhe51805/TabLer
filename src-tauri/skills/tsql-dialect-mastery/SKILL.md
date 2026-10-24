@@ -72,6 +72,14 @@ always work. Never emit backticks.
 - `GETDATE()` is server-local; `SYSUTCDATETIME()` is UTC. State which one is intended
   when the result is user-visible.
 
+### Function portability cheat-sheet
+
+| Do not emit for SQL Server | Emit instead                                |
+| -------------------------- | ------------------------------------------- |
+| `NOW()`                    | `GETDATE()` (or `SYSUTCDATETIME()` for UTC) |
+
+`NOW()` is valid on engines such as PostgreSQL and MySQL, but not on SQL Server.
+
 ## Generated keys and identity
 
 | Function             | Scope                                                  |

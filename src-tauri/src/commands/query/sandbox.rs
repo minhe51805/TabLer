@@ -3,7 +3,10 @@ use crate::database::mongodb_sql::{
     MONGO_DDL_SHELL_GUIDANCE, MONGO_DELETE_SHELL_GUIDANCE, MONGO_INSERT_SHELL_GUIDANCE,
     MONGO_SELECT_SHELL_GUIDANCE, MONGO_UPDATE_SHELL_GUIDANCE,
 };
-use crate::utils::sql::{classify_sql_with_dialect, detect_dangerous_capability, SqlStatementKind};
+use crate::utils::sql::{
+    classify_sql_with_dialect, detect_dangerous_capability, lint_engine_specific_functions,
+    SqlStatementKind,
+};
 use sha2::{Digest, Sha256};
 use tokio::time::Duration;
 
@@ -136,6 +139,12 @@ pub(super) fn validate_sandbox_statement(
             "Sandbox gateway could not parse SQL: {error}"
         )));
     }
+    if let Some(hint) = lint_engine_specific_functions(statement, database_type) {
+        return Err(sandbox_denied(format!(
+            "{} is not supported on SQL Server. Use {} instead.",
+            hint.function_name, hint.suggested_function
+        )));
+    }
     if decision.statements.len() != 1 {
         return Err(sandbox_denied(
             "Sandbox gateway requires exactly one SQL statement per execution item.",
@@ -201,6 +210,14 @@ mod tests {
             .expect_err("Mongo shell syntax must stay outside the sandbox");
         assert!(error.contains("accepts SQL statements only"));
         assert!(error.contains("query editor outside the sandbox"));
+    }
+
+    #[test]
+    fn sandbox_denies_mssql_now_with_getdate_guidance() {
+        let error = validate_sandbox_statement("SELECT NOW()", Some(DatabaseType::MSSQL))
+            .expect_err("MSSQL NOW() must be rejected");
+        assert!(error.contains("GETDATE()"));
+        assert!(validate_sandbox_statement("SELECT 'NOW()'", Some(DatabaseType::MSSQL)).is_ok());
     }
 
     #[test]

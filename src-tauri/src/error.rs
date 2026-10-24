@@ -18,6 +18,8 @@ pub enum AppError {
     Storage(String),
     #[error("Rate limited: {0}")]
     RateLimited(String),
+    #[error("Sandbox execution throttled: {0}")]
+    SandboxThrottled(String),
     #[error("{0}")]
     Other(String),
 }
@@ -106,6 +108,10 @@ mod tests {
         assert_eq!(
             AppError::RateLimited("too many".to_string()).to_string(),
             "Rate limited: too many"
+        );
+        assert_eq!(
+            AppError::SandboxThrottled("burst exceeded".to_string()).to_string(),
+            "Sandbox execution throttled: burst exceeded"
         );
     }
 }

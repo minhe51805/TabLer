@@ -10,6 +10,7 @@ use crate::database::parameterized_query::{
     compile_parameterized_query, placeholder_style_for_database,
 };
 use crate::error::AppError;
+use crate::utils::rate_limiter::SandboxExecutionLimiter;
 use crate::utils::sql::{classify_sql_with_dialect, split_sql_statements, SqlSafetyDecision};
 use tauri::{Emitter, State};
 use tokio::time::timeout;
@@ -30,6 +31,7 @@ use crate::config::{SANDBOX_AGENT_MAX_RESULT_BYTES, SANDBOX_AGENT_MAX_ROWS};
 mod cancellation;
 mod errors;
 mod sandbox;
+mod sandbox_gate;
 #[cfg(test)]
 mod tests;
 
@@ -39,6 +41,7 @@ use sandbox::{
     cap_sandbox_result, log_sandbox_denial, reject_dangerous_capability,
     rewrite_mongo_error_for_sandbox, timeout_for_statements, validate_sandbox_batch,
 };
+pub use sandbox_gate::SandboxGateState;
 /// Per-connection read-only pin for SQL-executing commands: when the live
 /// session was opened with `ConnectionConfig::read_only`, any batch that does
 /// not classify as fully read-only is rejected before the driver is touched.
@@ -586,55 +589,75 @@ pub async fn execute_sandboxed_query(
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, QueryCancellationState>,
     safe_mode: State<'_, SafeModeState>,
+    sandbox_limiter: State<'_, SandboxExecutionLimiter>,
+    sandbox_gate: State<'_, SandboxGateState>,
 ) -> Result<QueryResult, AppError> {
-    assert_connection_writable_sql(db_manager.inner(), &connection_id, &statements.join(";\n"))
-        .await?;
-    let db_type = db_manager
-        .connection_database_type(&connection_id)
+    let execution_permit = sandbox_gate.acquire_execution_slot().await?;
+    sandbox_limiter
+        .check(&connection_id)
         .await
-        .ok();
-    safe_mode
-        .assert_sql_allowed_with_approval(
-            &connection_id,
-            &statements.join(";\n"),
-            db_type,
-            safe_mode_approved_by_user.unwrap_or(false),
-        )
-        .await?;
-    let operation_id = Uuid::new_v4();
-    db_manager
-        .require_capability(&connection_id, DriverCapability::Query)
-        .await
-        .map_err(|error| error.to_string())?;
-    log::info!(
-        "operation_id={} operation=query.execute_sandboxed status=started connection_id={} statements_count={}",
-        operation_id,
-        connection_id,
-        statements.len()
-    );
-    if let Err(error) =
-        validate_sandbox_batch(&statements, require_read_only.unwrap_or(false), db_type)
-    {
-        log::error!(
-            "operation_id={} operation=query.execute_sandboxed status=failed stage=validation error={}",
-            operation_id,
-            error
-        );
-        log_sandbox_denial(&connection_id, statements.len(), &error);
-        return Err(AppError::from(error));
-    }
+        .map_err(AppError::SandboxThrottled)?;
+    sandbox_gate.check_breaker(&connection_id).await?;
 
-    run_sandboxed_statements(
-        &connection_id,
-        &statements,
-        request_id,
-        require_read_only.unwrap_or(false),
-        max_rows,
-        db_manager.inner(),
-        cancellation_state.inner(),
-        "query.execute_sandboxed",
-    )
-    .await
+    let result = async {
+        assert_connection_writable_sql(db_manager.inner(), &connection_id, &statements.join(";\n"))
+            .await?;
+        let db_type = db_manager
+            .connection_database_type(&connection_id)
+            .await
+            .ok();
+        safe_mode
+            .assert_sql_allowed_with_approval(
+                &connection_id,
+                &statements.join(";\n"),
+                db_type,
+                safe_mode_approved_by_user.unwrap_or(false),
+            )
+            .await?;
+        let operation_id = Uuid::new_v4();
+        db_manager
+            .require_capability(&connection_id, DriverCapability::Query)
+            .await
+            .map_err(|error| error.to_string())?;
+        log::info!(
+            "operation_id={} operation=query.execute_sandboxed status=started connection_id={} statements_count={}",
+            operation_id,
+            connection_id,
+            statements.len()
+        );
+        if let Err(error) =
+            validate_sandbox_batch(&statements, require_read_only.unwrap_or(false), db_type)
+        {
+            log::error!(
+                "operation_id={} operation=query.execute_sandboxed status=failed stage=validation error={}",
+                operation_id,
+                error
+            );
+            log_sandbox_denial(&connection_id, statements.len(), &error);
+            return Err(AppError::from(error));
+        }
+
+        run_sandboxed_statements(
+            &connection_id,
+            &statements,
+            request_id,
+            require_read_only.unwrap_or(false),
+            max_rows,
+            db_manager.inner(),
+            cancellation_state.inner(),
+            "query.execute_sandboxed",
+        )
+        .await
+    }
+    .await;
+
+    if result.is_ok() {
+        sandbox_gate.record_success(&connection_id).await;
+    } else {
+        sandbox_gate.record_failure(&connection_id).await;
+    }
+    drop(execution_permit);
+    result
 }
 
 /// Shared tail of the sandboxed execution path: resolve the driver, run the
@@ -863,6 +886,8 @@ pub async fn execute_agent_readonly_query(
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, QueryCancellationState>,
     safe_mode: State<'_, SafeModeState>,
+    sandbox_limiter: State<'_, SandboxExecutionLimiter>,
+    sandbox_gate: State<'_, SandboxGateState>,
 ) -> Result<QueryResult, AppError> {
     let database_type = db_manager
         .connection_database_type(&connection_id)
@@ -890,6 +915,8 @@ pub async fn execute_agent_readonly_query(
         db_manager,
         cancellation_state,
         safe_mode,
+        sandbox_limiter,
+        sandbox_gate,
     )
     .await
 }

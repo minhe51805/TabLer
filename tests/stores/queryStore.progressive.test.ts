@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isProgressiveEligible } from "../../src/stores/queryStore";
+import { canFallbackToLegacyQuery, isProgressiveEligible } from "../../src/stores/queryStore";
 
 describe("isProgressiveEligible (Phase 3B progressive delivery gating)", () => {
   it("routes single read-only row-returning statements to the progressive channel", () => {
@@ -23,5 +23,15 @@ describe("isProgressiveEligible (Phase 3B progressive delivery gating)", () => {
     expect(isProgressiveEligible("SELECT 1;")).toBe(true); // trailing semicolon is fine
     expect(isProgressiveEligible("")).toBe(false);
     expect(isProgressiveEligible("   ")).toBe(false);
+  });
+});
+
+describe("progressive fallback policy", () => {
+  it("never retries a sandbox throttle on the unrestricted query path", () => {
+    expect(
+      canFallbackToLegacyQuery(
+        new Error("Sandbox execution throttled: 10 executions per second exceeded"),
+      ),
+    ).toBe(false);
   });
 });

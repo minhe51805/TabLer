@@ -1,6 +1,6 @@
 use std::collections::HashMap;
-use std::time::{Duration, Instant};
 use tokio::sync::Mutex as AsyncMutex;
+use tokio::time::{Duration, Instant};
 
 pub struct SlidingWindowRateLimiter {
     attempts: AsyncMutex<HashMap<String, Vec<Instant>>>,
@@ -32,6 +32,39 @@ impl SlidingWindowRateLimiter {
 
         entry.push(now);
         Ok(())
+    }
+}
+
+pub struct SandboxExecutionLimiter {
+    per_minute: SlidingWindowRateLimiter,
+    per_second: SlidingWindowRateLimiter,
+}
+
+impl SandboxExecutionLimiter {
+    pub fn new() -> Self {
+        Self {
+            per_minute: SlidingWindowRateLimiter::new(
+                Duration::from_secs(60),
+                20,
+                "20 executions per minute exceeded; retry shortly",
+            ),
+            per_second: SlidingWindowRateLimiter::new(
+                Duration::from_secs(1),
+                10,
+                "10 executions per second exceeded; retry shortly",
+            ),
+        }
+    }
+
+    pub async fn check(&self, key: &str) -> Result<(), String> {
+        self.per_minute.check(key).await?;
+        self.per_second.check(key).await
+    }
+}
+
+impl Default for SandboxExecutionLimiter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

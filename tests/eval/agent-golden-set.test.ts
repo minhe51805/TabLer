@@ -21,6 +21,8 @@ import {
   nativeToolPayloadForProvider,
 } from "@/components/AISlidePanel/ai-agent-tool-schema";
 import { verifyAgentResponseAgainstEvidence } from "@/components/AISlidePanel/ai-agent-verification";
+import { runAIAgentToolLoop } from "@/components/AISlidePanel/ai-agent-runner";
+import type { AIAgentToolAction } from "@/components/AISlidePanel/ai-agent-tools";
 
 /**
  * Agent golden-set eval (audit follow-up): table-driven checks over the agent's
@@ -191,7 +193,7 @@ describe("eval: regrounding prompts are localized for ko/tr", () => {
 });
 
 describe("eval: @@facts footer survives prompt clamping and never reaches the UI", () => {
-  const footer = appendAgentFacts("body", { rowsReturned: 7, tables: ["orders"] });
+  const footer = appendAgentFacts("body", { rowsReturned: 7 });
   const longObservation = `${"x".repeat(3000)}\n${footer}`;
 
   it("keeps the footer parseable after the observation clamp", () => {
@@ -217,5 +219,47 @@ describe("eval: @@facts footer survives prompt clamping and never reaches the UI
     expect(text).not.toContain("@@facts:");
     expect(facts?.rowsReturned).toBe(7);
     expect(text.startsWith("x")).toBe(true);
+  });
+});
+
+describe("eval: Mongo HAVING recovery stays bounded", () => {
+  it("aggregate with HAVING on Mongo finishes within eight steps without a statement storm", async () => {
+    const havingSql = "SELECT status, COUNT(*) FROM orders GROUP BY status HAVING COUNT(*) > 1";
+    const recoveredSql =
+      "SELECT * FROM (SELECT status, COUNT(*) AS total FROM orders GROUP BY status) WHERE total > 1 LIMIT 50";
+    const actions: AIAgentToolAction[] = [
+      { action: "run_readonly_sql", message: "Aggregate orders", args: { sql: havingSql } },
+      { action: "run_readonly_sql", message: "Wrap the aggregation", args: { sql: recoveredSql } },
+      { action: "finish", message: "Report", args: { response: "Aggregation completed." } },
+    ];
+    const statements: string[] = [];
+    let actionIndex = 0;
+    const result = await runAIAgentToolLoop({
+      workspaceToolsEnabled: true,
+      stepBudget: 8,
+      requestAction: async () => actions[actionIndex++],
+      runTool: async (action) => {
+        const sql = String(action.args?.sql ?? "");
+        statements.push(sql);
+        if (sql === havingSql) {
+          return "Tool error: This sandbox accepts SQL only. HAVING is not supported — wrap the aggregation in an outer SELECT; use LIMIT/OFFSET for paging.";
+        }
+        return '{"sandboxed":true,"rows":[]}';
+      },
+      recoverFinish: async () => ({
+        action: "finish",
+        message: "Recover",
+        args: { response: "Recovered." },
+      }),
+    });
+
+    expect(result.finalAction.action).toBe("finish");
+    expect(result.steps.length).toBeLessThanOrEqual(8);
+    expect(statements).toEqual([havingSql, recoveredSql]);
+    expect(
+      statements.some(
+        (statement) => statements.filter((candidate) => candidate === statement).length >= 3,
+      ),
+    ).toBe(false);
   });
 });

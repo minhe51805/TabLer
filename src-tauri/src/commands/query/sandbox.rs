@@ -1,6 +1,34 @@
-use crate::database::models::QueryResult;
+use crate::database::models::{DatabaseType, QueryResult};
+use crate::database::mongodb_sql::{
+    MONGO_DDL_SHELL_GUIDANCE, MONGO_DELETE_SHELL_GUIDANCE, MONGO_INSERT_SHELL_GUIDANCE,
+    MONGO_SELECT_SHELL_GUIDANCE, MONGO_UPDATE_SHELL_GUIDANCE,
+};
 use crate::utils::sql::{classify_sql_with_dialect, detect_dangerous_capability, SqlStatementKind};
 use tokio::time::Duration;
+
+const MONGO_SELECT_SANDBOX_GUIDANCE: &str = "This sandbox accepts SQL only. HAVING is not supported — wrap the aggregation in an outer SELECT; use LIMIT/OFFSET for paging.";
+const MONGO_WRITE_SANDBOX_GUIDANCE: &str =
+    "Use the data grid or the write-preview flow for changes.";
+
+/// Rewrites the direct driver's shell advice so it cannot send a sandbox caller
+/// into syntax that the sandbox itself refuses.
+pub(super) fn rewrite_mongo_error_for_sandbox(message: &str, require_read_only: bool) -> String {
+    let write_guidance = if require_read_only {
+        format!("The sandbox permits read-only SQL. {MONGO_WRITE_SANDBOX_GUIDANCE}")
+    } else {
+        format!("This sandbox accepts SQL only. {MONGO_WRITE_SANDBOX_GUIDANCE}")
+    };
+    let mut rewritten = message.replace(MONGO_SELECT_SHELL_GUIDANCE, MONGO_SELECT_SANDBOX_GUIDANCE);
+    for suffix in [
+        MONGO_INSERT_SHELL_GUIDANCE,
+        MONGO_UPDATE_SHELL_GUIDANCE,
+        MONGO_DELETE_SHELL_GUIDANCE,
+        MONGO_DDL_SHELL_GUIDANCE,
+    ] {
+        rewritten = rewritten.replace(suffix, &write_guidance);
+    }
+    rewritten
+}
 
 /// Cheap upper-bound estimate of a row's JSON footprint — avoids serializing the
 /// whole result set just to measure it.
@@ -87,6 +115,11 @@ pub(super) fn validate_sandbox_statement(
     statement: &str,
     database_type: Option<crate::database::models::DatabaseType>,
 ) -> Result<(), String> {
+    if database_type == Some(DatabaseType::MongoDB) && statement.trim_start().starts_with("db.") {
+        return Err(sandbox_denied(
+            "The MongoDB sandbox accepts SQL statements only. Run Mongo shell commands from the query editor outside the sandbox, or write SQL.",
+        ));
+    }
     reject_dangerous_capability(statement, database_type)?;
     let decision = classify_sql_with_dialect(statement, database_type);
     if let Some(error) = decision.parse_error {
@@ -145,5 +178,19 @@ pub(super) fn timeout_for_statements<'a>(
         crate::config::read_only_query_timeout()
     } else {
         crate::config::mutating_query_timeout()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_sandbox_statement;
+    use crate::database::models::DatabaseType;
+
+    #[test]
+    fn sandbox_denies_mongo_shell_with_sql_only_guidance() {
+        let error = validate_sandbox_statement("  db.users.find({})", Some(DatabaseType::MongoDB))
+            .expect_err("Mongo shell syntax must stay outside the sandbox");
+        assert!(error.contains("accepts SQL statements only"));
+        assert!(error.contains("query editor outside the sandbox"));
     }
 }

@@ -16,7 +16,7 @@ pub mod libsql;
 pub mod manager;
 pub mod models;
 pub mod mongodb;
-mod mongodb_sql;
+pub(crate) mod mongodb_sql;
 mod mongodb_support;
 pub mod mssql;
 pub mod mysql;

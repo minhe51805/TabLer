@@ -36,8 +36,8 @@ mod tests;
 pub use cancellation::QueryCancellationState;
 use errors::{format_query_connection_error, format_query_runtime_error};
 use sandbox::{
-    cap_sandbox_result, log_sandbox_denial, reject_dangerous_capability, timeout_for_statements,
-    validate_sandbox_batch,
+    cap_sandbox_result, log_sandbox_denial, reject_dangerous_capability,
+    rewrite_mongo_error_for_sandbox, timeout_for_statements, validate_sandbox_batch,
 };
 /// Per-connection read-only pin for SQL-executing commands: when the live
 /// session was opened with `ConnectionConfig::read_only`, any batch that does
@@ -628,6 +628,7 @@ pub async fn execute_sandboxed_query(
         &connection_id,
         &statements,
         request_id,
+        require_read_only.unwrap_or(false),
         max_rows,
         db_manager.inner(),
         cancellation_state.inner(),
@@ -644,6 +645,7 @@ async fn run_sandboxed_statements(
     connection_id: &str,
     statements: &[String],
     request_id: Option<String>,
+    require_read_only: bool,
     max_rows: Option<usize>,
     db_manager: &DatabaseManager,
     cancellation_state: &QueryCancellationState,
@@ -699,6 +701,11 @@ async fn run_sandboxed_statements(
             })
             .and_then(|result| result.map_err(|e| {
                 let formatted = format_query_runtime_error(e);
+                let formatted = if db_type == Some(DatabaseType::MongoDB) {
+                    rewrite_mongo_error_for_sandbox(&formatted, require_read_only)
+                } else {
+                    formatted
+                };
                 log::error!(
                     "operation_id={operation_id} operation={operation} status=failed stage=runtime error={formatted}"
                 );
@@ -770,6 +777,7 @@ pub async fn explain_agent_statement(
         &connection_id,
         &[explain_sql],
         None,
+        false,
         Some(SANDBOX_AGENT_MAX_ROWS),
         db_manager.inner(),
         cancellation_state.inner(),

@@ -51,7 +51,10 @@ describe("OnboardingTour", () => {
     seedLauncherDom();
     render(<OnboardingTour />);
     expect(screen.getByText("Start with the sample data")).toBeTruthy();
-    expect(screen.getByLabelText("1 / 3")).toBeTruthy();
+    const progress = screen.getByRole("progressbar", { name: "1 / 3" });
+    expect(progress.getAttribute("aria-valuemin")).toBe("1");
+    expect(progress.getAttribute("aria-valuemax")).toBe("3");
+    expect(progress.getAttribute("aria-valuenow")).toBe("1");
   });
 
   it("clicking the sample CTA advances to the creating step", () => {

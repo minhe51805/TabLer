@@ -1,0 +1,13 @@
+.metrics-widget-paused-chip {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  margin-top: 8px;
+  padding: 3px 8px;
+  border: 1px solid color-mix(in srgb, var(--warning, #d97706) 45%, transparent);
+  border-radius: 999px;
+  color: var(--warning, #d97706);
+  background: color-mix(in srgb, var(--warning, #d97706) 10%, transparent);
+  font-size: 11px;
+  font-weight: 600;
+}

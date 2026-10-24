@@ -403,6 +403,7 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "metrics.widgets": "组件",
   "metrics.lastRefresh": "更新于",
   "metrics.widget.retry": "重试",
+  "metrics.widget.pausedRunAgain": "已暂停 — 重新运行",
   "metrics.widget.stale": "数据过期",
   "metrics.editor.color": "强调色",
   "metrics.editor.colorDefault": "默认",

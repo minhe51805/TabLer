@@ -416,6 +416,7 @@ export const tr: Record<keyof typeof en, string> = {
   "metrics.widgets": "widget",
   "metrics.lastRefresh": "güncellendi",
   "metrics.widget.retry": "Yeniden dene",
+  "metrics.widget.pausedRunAgain": "duraklatıldı — yeniden çalıştır",
   "metrics.widget.stale": "Eski veri",
   "metrics.editor.color": "Vurgu rengi",
   "metrics.editor.colorDefault": "Varsayılan",

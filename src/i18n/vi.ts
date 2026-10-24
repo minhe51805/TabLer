@@ -411,6 +411,7 @@ export const vi: Record<keyof typeof en, string> = {
   "metrics.widgets": "widget",
   "metrics.lastRefresh": "cập nhật",
   "metrics.widget.retry": "Thử lại",
+  "metrics.widget.pausedRunAgain": "tạm dừng — chạy lại",
   "metrics.widget.stale": "Dữ liệu cũ",
   "metrics.editor.color": "Màu nhấn",
   "metrics.editor.colorDefault": "Mặc định",

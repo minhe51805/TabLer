@@ -385,6 +385,7 @@ export const en = {
   "metrics.widgets": "widgets",
   "metrics.lastRefresh": "updated",
   "metrics.widget.retry": "Retry",
+  "metrics.widget.pausedRunAgain": "paused — run again",
   "metrics.widget.stale": "Stale",
   "metrics.editor.color": "Accent color",
   "metrics.editor.colorDefault": "Default",

@@ -668,6 +668,7 @@ pub async fn execute_sandboxed_query(
 /// combined statements under the classified timeout with cancellation, and
 /// apply the agent result cap. Callers own their own validation and Safe Mode
 /// policy — this helper only executes what it is given.
+#[allow(clippy::too_many_arguments)]
 async fn run_sandboxed_statements(
     connection_id: &str,
     statements: &[String],
@@ -884,6 +885,7 @@ pub async fn execute_agent_parameterized_query(
 /// ever reaches the driver. This keeps the agent read tool safe even if a
 /// frontend caller forgets (or is manipulated) to request read-only mode.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn execute_agent_readonly_query(
     connection_id: String,
     statements: Vec<String>,

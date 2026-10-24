@@ -173,6 +173,19 @@ fn agent_parameterized_boundary_blocks_mutations_and_keeps_placeholders() {
 }
 
 #[test]
+fn query_row_batch_payload_scopes_request_and_delivered_rows() {
+    let rows = vec![vec![serde_json::json!(1)], vec![serde_json::json!(2)]];
+    let payload =
+        super::query_row_batch_payload("conn-1", Some("req-1"), &[], &rows, 500, 10_000, false);
+    assert_eq!(payload["requestId"], "req-1");
+    assert_eq!(payload["connectionId"], "conn-1");
+    assert_eq!(payload["offset"], 500);
+    assert_eq!(payload["totalRows"], 10_000);
+    assert_eq!(payload["rows"].as_array().unwrap().len(), 2);
+    assert!(!payload["done"].as_bool().unwrap());
+}
+
+#[test]
 fn chunk_rows_covers_all_rows_with_bounded_batches() {
     use super::chunk_rows;
     assert!(chunk_rows(0, 500).is_empty());

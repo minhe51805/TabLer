@@ -238,13 +238,22 @@ export const useQueryStore = create<QueryState>((set, get) => ({
         // progress; the command still resolves with the complete result.
         // A listener-setup failure is a transport problem — always fall back.
         try {
-          unlisten = await listen<{ connectionId: string; rows: unknown[][]; totalRows: number }>(
-            "query-row-batch",
-            (event) => {
-              if (event.payload.connectionId !== connectionId) return;
-              set({ progressiveRowCount: event.payload.totalRows });
-            },
-          );
+          unlisten = await listen<{
+            connectionId: string;
+            requestId: string;
+            rows: unknown[][];
+            offset: number;
+            totalRows: number;
+          }>("query-row-batch", (event) => {
+            if (
+              event.payload.connectionId !== connectionId ||
+              event.payload.requestId !== requestId ||
+              get().activeQueryRequestId !== requestId
+            ) {
+              return;
+            }
+            set({ progressiveRowCount: event.payload.offset + event.payload.rows.length });
+          });
         } catch (listenError) {
           console.warn("[Query] Progressive listener unavailable, using legacy path:", listenError);
           unlisten = null;

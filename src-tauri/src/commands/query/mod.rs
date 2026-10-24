@@ -3,9 +3,9 @@ use crate::database::capabilities::{
     agent_sql_read_unsupported_error, agent_sql_write_preview_unsupported_error, DriverCapability,
 };
 use crate::database::manager::DatabaseManager;
-use crate::database::models::DatabaseType;
 use crate::database::models::QueryParameter;
 use crate::database::models::QueryResult;
+use crate::database::models::{ColumnInfo, DatabaseType};
 use crate::database::parameterized_query::{
     compile_parameterized_query, placeholder_style_for_database,
 };
@@ -353,20 +353,45 @@ pub async fn execute_query_progressive(
         }
         let _ = app_handle.emit(
             "query-row-batch",
-            serde_json::json!({
-                "connectionId": connection_id,
-                "columns": if batch_index == 0 { result.columns.clone() } else { Vec::new() },
-                "rows": &result.rows[chunk.0..chunk.1],
-                "offset": chunk.0,
-                "totalRows": total_rows,
-                "done": chunk.1 >= total_rows,
-            }),
+            query_row_batch_payload(
+                &connection_id,
+                request_id.as_deref(),
+                if batch_index == 0 {
+                    &result.columns
+                } else {
+                    &[]
+                },
+                &result.rows[chunk.0..chunk.1],
+                chunk.0,
+                total_rows,
+                chunk.1 >= total_rows,
+            ),
         );
     }
     if let Some(ref id) = request_id {
         cancellation_state.finish(id).await;
     }
     Ok(result)
+}
+
+fn query_row_batch_payload(
+    connection_id: &str,
+    request_id: Option<&str>,
+    columns: &[ColumnInfo],
+    rows: &[Vec<serde_json::Value>],
+    offset: usize,
+    total_rows: usize,
+    done: bool,
+) -> serde_json::Value {
+    serde_json::json!({
+        "connectionId": connection_id,
+        "requestId": request_id,
+        "columns": columns,
+        "rows": rows,
+        "offset": offset,
+        "totalRows": total_rows,
+        "done": done,
+    })
 }
 
 /// Contiguous `(start, end)` boundaries for `total` rows in `chunk_size` steps.

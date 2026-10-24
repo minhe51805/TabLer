@@ -22,6 +22,8 @@ describe("detectInsecureTls", () => {
     [{ "ssl-mode": "VERIFY_IDENTITY" }, "verify identity"],
     [{ ssl_mode: "verify_full", use_ssl: true }, "verify full"],
     [{ trustServerCertificate: false, ssl_mode: "require" }, "required TLS"],
+    [{ db_type: "sqlite", use_ssl: false }, "SQLite file database"],
+    [{ db_type: "duckdb", use_ssl: false }, "DuckDB file database"],
     [{}, "no insecure options"],
   ])("returns null for a secure or unspecified profile: %s", (params, _label) => {
     expect(detectInsecureTls(params)).toBeNull();

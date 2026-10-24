@@ -81,6 +81,9 @@ export function detectInsecureTls(params: ConnectionTlsParams): InsecureTlsWarni
     return undefined;
   };
 
+  const databaseType = normalizeValue(read("db_type", "dbType", "engine"));
+  if (databaseType === "sqlite" || databaseType === "duckdb") return null;
+
   if (isTrue(read("trustServerCertificate", "trust-server-certificate"))) {
     return {
       insecure: true,

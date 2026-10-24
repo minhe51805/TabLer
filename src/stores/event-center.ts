@@ -81,9 +81,21 @@ export type EventMap = {
     primaryKeyValues: Record<string, string | number | boolean | null>;
     tableName?: string;
     database?: string;
+    canEdit?: boolean;
+    maskedColumnNames?: string[];
+    gridInstanceId?: string;
+    connectionId?: string;
   };
   "row-inspector-close": void;
-  "row-inspector-edit-cell": { columnName: string; value: string | number | boolean | null };
+  "row-inspector-edit-cell": {
+    gridInstanceId?: string;
+    connectionId?: string;
+    tableName?: string;
+    database?: string;
+    rowIndex: number;
+    columnName: string;
+    value: string | number | boolean | null;
+  };
 
   // App lifecycle
   "app-ready": void;

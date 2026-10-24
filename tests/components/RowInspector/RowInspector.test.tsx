@@ -110,3 +110,51 @@ describe("RowInspector filtered columns", () => {
     expect(screen.queryByText("first-value")).not.toBeInTheDocument();
   });
 });
+
+describe("RowInspector editing affordances", () => {
+  it("enables editing only for eligible unmasked non-PK columns", () => {
+    const onEditCell = vi.fn();
+    render(
+      <RowInspector
+        isOpen
+        data={{
+          rowIndex: 1,
+          row: [7, "alice@example.com", "classified"],
+          columns,
+          primaryKeyValues: {},
+          tableName: "users",
+          canEdit: true,
+          maskedColumnNames: ["secret"],
+        }}
+        onClose={vi.fn()}
+        onEditCell={onEditCell}
+      />,
+    );
+    expect(screen.getAllByTitle("Edit value")).toHaveLength(1);
+
+    fireEvent.click(screen.getByTitle("Edit value"));
+    const input = document.querySelector(".ri-field-edit-input");
+    expect(input).toHaveValue("alice@example.com");
+    fireEvent.change(input!, { target: { value: "next@example.com" } });
+    fireEvent.click(screen.getByTitle("Commit"));
+    expect(onEditCell).toHaveBeenCalledWith("email", "next@example.com");
+  });
+
+  it("hides editing entirely when the grid is not editable", () => {
+    render(
+      <RowInspector
+        isOpen
+        data={{
+          rowIndex: 1,
+          row: [7, "alice@example.com", "classified"],
+          columns,
+          primaryKeyValues: {},
+          canEdit: false,
+        }}
+        onClose={vi.fn()}
+        onEditCell={vi.fn()}
+      />,
+    );
+    expect(screen.queryByTitle("Edit value")).not.toBeInTheDocument();
+  });
+});

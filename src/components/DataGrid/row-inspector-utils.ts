@@ -11,3 +11,22 @@ export function buildRowInspectorPrimaryKeyValues(
   }
   return values;
 }
+
+export interface RowInspectorEditScope {
+  gridInstanceId?: string;
+  connectionId?: string;
+  tableName?: string;
+  database?: string | null;
+}
+
+export function matchesRowInspectorEditScope(
+  detail: RowInspectorEditScope,
+  current: RowInspectorEditScope,
+): boolean {
+  return (
+    detail.gridInstanceId === current.gridInstanceId &&
+    detail.connectionId === current.connectionId &&
+    detail.tableName === current.tableName &&
+    (detail.database ?? null) === (current.database ?? null)
+  );
+}

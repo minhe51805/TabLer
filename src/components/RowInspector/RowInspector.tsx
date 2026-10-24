@@ -20,6 +20,10 @@ export interface RowInspectorData {
   primaryKeyValues: Record<string, GridCellValue>;
   tableName?: string;
   database?: string;
+  canEdit?: boolean;
+  maskedColumnNames?: string[];
+  gridInstanceId?: string;
+  connectionId?: string;
 }
 
 interface Props {
@@ -122,6 +126,7 @@ interface FieldRowProps {
   onCommitEdit: () => void;
   onCancelEdit: () => void;
   onCopy: (v: string) => void;
+  canEdit: boolean;
 }
 
 function FieldRow({
@@ -134,6 +139,7 @@ function FieldRow({
   onCommitEdit,
   onCancelEdit,
   onCopy,
+  canEdit,
 }: FieldRowProps) {
   const isNull = isNullish(value);
   const isJson = isJSONColumn(column);
@@ -203,14 +209,16 @@ function FieldRow({
                 >
                   <Copy className="w-3 h-3" />
                 </button>
-                <button
-                  type="button"
-                  className="ri-field-action-btn"
-                  onClick={onStartEdit}
-                  title="Edit value"
-                >
-                  <Edit3 className="w-3 h-3" />
-                </button>
+                {canEdit ? (
+                  <button
+                    type="button"
+                    className="ri-field-action-btn"
+                    onClick={onStartEdit}
+                    title="Edit value"
+                  >
+                    <Edit3 className="w-3 h-3" />
+                  </button>
+                ) : null}
               </div>
             )}
           </div>
@@ -403,6 +411,11 @@ export function RowInspector({ isOpen, data, onClose, onEditCell }: Props) {
                         onCommitEdit={handleCommitEdit}
                         onCancelEdit={handleCancelEdit}
                         onCopy={handleCopyValue}
+                        canEdit={
+                          Boolean(data.canEdit) &&
+                          !column.is_primary_key &&
+                          !(data.maskedColumnNames ?? []).includes(column.name)
+                        }
                       />
                     );
                   })

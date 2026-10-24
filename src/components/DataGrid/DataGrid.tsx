@@ -49,7 +49,6 @@ import {
   buildResolvedColumns,
   isBooleanColumn,
   isNumericColumn,
-  buildRowPrimaryKeys,
   resolveTableFilter,
   type ResolvedColumn,
   type GridCellValue,
@@ -95,7 +94,11 @@ import type { ColumnDisplayFormat } from "./editors";
 import { DataGridOverlays } from "./DataGridOverlays";
 import { DataGridTableView } from "./DataGridTableView";
 import { DataGridFooter } from "./DataGridFooter";
-import { buildRowInspectorPrimaryKeyValues } from "./row-inspector-utils";
+import {
+  buildRowInspectorPrimaryKeyValues,
+  matchesRowInspectorEditScope,
+} from "./row-inspector-utils";
+import { getRowInspectorCopy } from "../RowInspector/row-inspector-copy";
 
 /** Minimum width that must remain for scrollable (unpinned) columns. Pinning
  *  that would leave less than this is refused so the grid never becomes a
@@ -330,6 +333,10 @@ export function DataGrid({
   const isActiveRef = useRef(isActive);
   const rowSelectionAnchorRef = useRef<string | null>(null);
   const dataGridInstanceIdRef = useRef(`datagrid-${Math.random().toString(36).slice(2)}`);
+  const inspectorTargetRef = useRef<{
+    rowIndex: number;
+    rowIdentity: string | null;
+  } | null>(null);
   const csvImportOperationIdRef = useRef<string | null>(null);
   const tableExportOperationIdRef = useRef<string | null>(null);
   // A table-data-updated event that arrived while this grid was in a
@@ -1189,11 +1196,24 @@ export function DataGrid({
     };
   }, [contextMenu]);
 
+  const isTableEditable = Boolean(
+    tableName &&
+    !externalResult &&
+    allowsInlineEdit &&
+    allowsAtomicEdits &&
+    structureStatus === "ready" &&
+    primaryKeyColumns.length > 0,
+  );
+
   const handleOpenRowInspector = useCallback(
     (rowIndex: number) => {
       if (!data || !data.rows[rowIndex]) return;
       const row = data.rows[rowIndex];
       const absoluteRowNumber = rowIndex + 1;
+      inspectorTargetRef.current = {
+        rowIndex,
+        rowIdentity: buildStableRowIdentity(row, resolvedColumns),
+      };
       // Masked columns must not leak into the inspector — mask the row before
       // emitting so the panel shows exactly what the grid shows.
       void columnMasks.maskRows([row]).then(([maskedRow]) => {
@@ -1209,10 +1229,23 @@ export function DataGrid({
           ),
           tableName,
           database,
+          canEdit: isTableEditable,
+          maskedColumnNames: [...columnMasks.activeMaskedNames],
+          gridInstanceId: dataGridInstanceIdRef.current,
+          connectionId,
         });
       });
     },
-    [data, resolvedColumns, primaryKeyColumns, tableName, database, columnMasks],
+    [
+      data,
+      resolvedColumns,
+      primaryKeyColumns,
+      tableName,
+      database,
+      columnMasks,
+      isTableEditable,
+      connectionId,
+    ],
   );
 
   const rowInspectorOpen = useAppLayoutStore((state) => state.showRowInspector);
@@ -1299,14 +1332,6 @@ export function DataGrid({
     tableName && !externalResult && allowsInlineEdit && allowsAtomicEdits,
   );
   const canSelectRows = Boolean(tableName && !externalResult && primaryKeyColumns.length > 0);
-  const isTableEditable = Boolean(
-    tableName &&
-    !externalResult &&
-    allowsInlineEdit &&
-    allowsAtomicEdits &&
-    structureStatus === "ready" &&
-    primaryKeyColumns.length > 0,
-  );
   const selectedRowCount = selectedRows.size;
   const allVisibleRowsSelected = Boolean(
     canSelectRows &&
@@ -1314,30 +1339,76 @@ export function DataGrid({
     filteredTableRowIndices.every((rowIndex) => selectedRows.has(rowIndex)),
   );
 
-  const { startEditingCell, cancelEditingCell, commitEditingCell } = useDataGridInlineEditing({
-    canAttemptInlineEdit,
+  const { startEditingCell, cancelEditingCell, commitEditingCell, editCellFromInspector } =
+    useDataGridInlineEditing({
+      canAttemptInlineEdit,
+      connectionId,
+      data,
+      tableName,
+      database: database || undefined,
+      resolvedColumns,
+      primaryKeyColumns,
+      structureStatus,
+      editingCell,
+      setEditingCell,
+      setEditingSeedValue,
+      setSavingCell,
+      setStagedRowIndices,
+      setData,
+      setSelectedCell,
+      setError,
+      stageChange,
+      patchLoadedTableCell,
+      ensureStructureLoaded,
+      maskedColumnNames: columnMasks.activeMaskedNames,
+      editingDraftRef,
+      editingTouchedRef,
+    });
+
+  useEffect(() => {
+    const offEdit = EventCenter.on("row-inspector-edit-cell", (event) => {
+      const detail = event.detail;
+      if (
+        !matchesRowInspectorEditScope(detail, {
+          gridInstanceId: dataGridInstanceIdRef.current,
+          connectionId,
+          tableName,
+          database,
+        }) ||
+        externalResult ||
+        !isTableEditable
+      ) {
+        return;
+      }
+      const target = inspectorTargetRef.current;
+      const sourceRowIndex = detail.rowIndex - 1;
+      const row = target?.rowIndex === sourceRowIndex ? data?.rows[sourceRowIndex] : undefined;
+      if (!target || !row || buildStableRowIdentity(row, resolvedColumns) !== target.rowIdentity) {
+        setError(getRowInspectorCopy(getCurrentAppLanguage()).staleRow);
+        return;
+      }
+      const colIndex = resolvedColumns.findIndex((column) => column.name === detail.columnName);
+      if (colIndex < 0) return;
+      void editCellFromInspector(sourceRowIndex, colIndex, detail.value);
+    });
+    const offClose = EventCenter.on("row-inspector-close", () => {
+      inspectorTargetRef.current = null;
+    });
+    return () => {
+      offEdit();
+      offClose();
+    };
+  }, [
     connectionId,
-    data,
     tableName,
-    database: database || undefined,
+    database,
+    externalResult,
+    isTableEditable,
+    data,
     resolvedColumns,
-    primaryKeyColumns,
-    structureStatus,
-    editingCell,
-    setEditingCell,
-    setEditingSeedValue,
-    setSavingCell,
-    setStagedRowIndices,
-    setData,
-    setSelectedCell,
+    editCellFromInspector,
     setError,
-    stageChange,
-    patchLoadedTableCell,
-    ensureStructureLoaded,
-    maskedColumnNames: columnMasks.activeMaskedNames,
-    editingDraftRef,
-    editingTouchedRef,
-  });
+  ]);
 
   const {
     handleRangeCopy,

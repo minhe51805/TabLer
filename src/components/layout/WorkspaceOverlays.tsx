@@ -8,13 +8,27 @@ import { StartupConnectionManager } from "../StartupConnectionManager";
 import type { ConnectionConfig, Tab } from "../../types/database";
 import type { RowInspectorData } from "../RowInspector/RowInspector";
 
-const AISlidePanel = lazy(() => import("../AISlidePanel/AISlidePanel").then((m) => ({ default: m.AISlidePanel })));
-const ConnectionForm = lazy(() => import("../ConnectionForm").then((m) => ({ default: m.ConnectionForm })));
-const AppGlobalModals = lazy(() => import("./AppGlobalModals").then((m) => ({ default: m.AppGlobalModals })));
-const QueryHistoryPanel = lazy(() => import("../QueryHistory/QueryHistoryPanel").then((m) => ({ default: m.QueryHistoryPanel })));
-const SQLFavoritesPanel = lazy(() => import("../SQLFavorites/SQLFavoritesPanel").then((m) => ({ default: m.SQLFavoritesPanel })));
-const QuerySchedulesPanel = lazy(() => import("../QuerySchedules/QuerySchedulesPanel").then((m) => ({ default: m.QuerySchedulesPanel })));
-const RowInspector = lazy(() => import("../RowInspector/RowInspector").then((m) => ({ default: m.RowInspector })));
+const AISlidePanel = lazy(() =>
+  import("../AISlidePanel/AISlidePanel").then((m) => ({ default: m.AISlidePanel })),
+);
+const ConnectionForm = lazy(() =>
+  import("../ConnectionForm").then((m) => ({ default: m.ConnectionForm })),
+);
+const AppGlobalModals = lazy(() =>
+  import("./AppGlobalModals").then((m) => ({ default: m.AppGlobalModals })),
+);
+const QueryHistoryPanel = lazy(() =>
+  import("../QueryHistory/QueryHistoryPanel").then((m) => ({ default: m.QueryHistoryPanel })),
+);
+const SQLFavoritesPanel = lazy(() =>
+  import("../SQLFavorites/SQLFavoritesPanel").then((m) => ({ default: m.SQLFavoritesPanel })),
+);
+const QuerySchedulesPanel = lazy(() =>
+  import("../QuerySchedules/QuerySchedulesPanel").then((m) => ({ default: m.QuerySchedulesPanel })),
+);
+const RowInspector = lazy(() =>
+  import("../RowInspector/RowInspector").then((m) => ({ default: m.RowInspector })),
+);
 
 interface WorkspaceOverlaysProps {
   activeTab: Tab | null;
@@ -172,11 +186,11 @@ export function WorkspaceOverlays(props: WorkspaceOverlaysProps) {
 
       {connectionFormIntent && (
         <Suspense fallback={null}>
-            <ConnectionForm
-              initialIntent={connectionFormIntent ?? undefined}
-              embeddedInStartupShell={false}
-              onClose={handleCloseConnectionForm}
-            />
+          <ConnectionForm
+            initialIntent={connectionFormIntent ?? undefined}
+            embeddedInStartupShell={false}
+            onClose={handleCloseConnectionForm}
+          />
         </Suspense>
       )}
       {shouldRenderGlobalModals && (
@@ -233,11 +247,15 @@ export function WorkspaceOverlays(props: WorkspaceOverlaysProps) {
               isOpen={showAISlidePanel}
               initialPrompt={aiPanelDraft?.prompt ?? ""}
               initialPromptNonce={aiPanelDraft?.nonce ?? 0}
-              initialAttachment={aiPanelAttachment ? {
-                text: aiPanelAttachment.text,
-                source: aiPanelAttachment.source,
-                boardId: aiPanelAttachment.boardId,
-              } : undefined}
+              initialAttachment={
+                aiPanelAttachment
+                  ? {
+                      text: aiPanelAttachment.text,
+                      source: aiPanelAttachment.source,
+                      boardId: aiPanelAttachment.boardId,
+                    }
+                  : undefined
+              }
               initialAttachmentNonce={aiPanelAttachment?.nonce ?? 0}
               onClose={() => setShowAISlidePanel(false)}
             />
@@ -282,7 +300,15 @@ export function WorkspaceOverlays(props: WorkspaceOverlaysProps) {
             onClose={handleRowInspectorClose}
             onEditCell={(columnName, value) => {
               if (rowInspectorData?.tableName && activeConnectionId) {
-                void EventCenter.emit("row-inspector-edit-cell", { columnName, value });
+                void EventCenter.emit("row-inspector-edit-cell", {
+                  gridInstanceId: rowInspectorData.gridInstanceId,
+                  connectionId: rowInspectorData.connectionId ?? activeConnectionId,
+                  tableName: rowInspectorData.tableName,
+                  database: rowInspectorData.database,
+                  rowIndex: rowInspectorData.rowIndex,
+                  columnName,
+                  value,
+                });
               }
             }}
           />

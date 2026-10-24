@@ -84,8 +84,8 @@ export function useDataGridInlineEditing({
   editingTouchedRef,
 }: DataGridInlineEditingParams) {
   const startEditingCell = useCallback(
-    async (rowIndex: number, colIndex: number) => {
-      if (!canAttemptInlineEdit || !data || !tableName) return;
+    async (rowIndex: number, colIndex: number): Promise<boolean> => {
+      if (!canAttemptInlineEdit || !data || !tableName) return false;
 
       setSelectedCell({ row: rowIndex, col: colIndex });
 
@@ -97,7 +97,7 @@ export function useDataGridInlineEditing({
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           setError(`Inline edit unavailable: ${message}`);
-          return;
+          return false;
         }
       }
 
@@ -106,31 +106,31 @@ export function useDataGridInlineEditing({
       const rowValues = data.rows[rowIndex];
 
       if (!column || !rowValues) {
-        return;
+        return false;
       }
 
       if (primaryKeys.length === 0) {
         setError(`Inline edit unavailable for ${tableName}: no primary key was detected.`);
-        return;
+        return false;
       }
 
       if (!buildStableRowIdentity(rowValues, nextResolvedColumns)) {
         setError(
           `Inline edit unavailable for ${tableName}: this row has an incomplete primary key.`,
         );
-        return;
+        return false;
       }
 
       if (column.is_primary_key) {
         setError(`Primary key column "${column.name}" is read-only in inline edit mode.`);
-        return;
+        return false;
       }
 
       if (maskedColumnNames?.has(column.name)) {
         setError(
           `Column "${column.name}" is masked — remove the mask or reveal it before editing.`,
         );
-        return;
+        return false;
       }
 
       const seedValue = editorValueFromCell(rowValues[colIndex] as GridCellValue);
@@ -138,6 +138,7 @@ export function useDataGridInlineEditing({
       editingDraftRef.current = seedValue;
       editingTouchedRef.current = false;
       setEditingCell({ row: rowIndex, col: colIndex });
+      return true;
     },
     [
       canAttemptInlineEdit,
@@ -163,11 +164,12 @@ export function useDataGridInlineEditing({
     editingTouchedRef.current = false;
   }, [editingDraftRef, editingTouchedRef, setEditingCell, setEditingSeedValue]);
   const commitEditingCell = useCallback(
-    async (committed?: GridCellValue) => {
-      if (!editingCell || !data || !tableName) return;
+    async (committed?: GridCellValue, cellOverride?: EditingCell) => {
+      const targetCell = cellOverride ?? editingCell;
+      if (!targetCell || !data || !tableName) return;
 
-      const targetColumn = resolvedColumns[editingCell.col];
-      const rowValues = data.rows[editingCell.row];
+      const targetColumn = resolvedColumns[targetCell.col];
+      const rowValues = data.rows[targetCell.row];
       if (
         !targetColumn ||
         !rowValues ||
@@ -186,7 +188,7 @@ export function useDataGridInlineEditing({
         return;
       }
 
-      const currentValue = rowValues[editingCell.col] as GridCellValue;
+      const currentValue = rowValues[targetCell.col] as GridCellValue;
 
       // Unedited commit (e.g. blur right after opening): the draft still holds
       // the seed — including the "NULL" placeholder shown for null cells — so
@@ -205,7 +207,7 @@ export function useDataGridInlineEditing({
         return;
       }
 
-      setSavingCell({ row: editingCell.row, col: editingCell.col });
+      setSavingCell({ row: targetCell.row, col: targetCell.col });
       try {
         // `committed` is the editor's resolved value: null is the explicit NULL
         // gesture (never re-parsed), strings still go through the column-aware
@@ -237,29 +239,29 @@ export function useDataGridInlineEditing({
           connectionId,
           tableName,
           database,
-          rowIndex: editingCell.row,
+          rowIndex: targetCell.row,
           rowKey: rowKeyRecord,
           columns: {
-            [editingCell.col]: { old: currentValue, new: nextValue },
+            [targetCell.col]: { old: currentValue, new: nextValue },
           },
           originalRow: rowValues as (string | number | boolean | null)[],
         });
 
         // Keep the authoritative chunk cache in sync before virtual scrolling loads another page.
-        patchLoadedTableCell(editingCell.row, editingCell.col, nextValue);
+        patchLoadedTableCell(targetCell.row, targetCell.col, nextValue);
         setData((previous) => {
           if (!previous) return previous;
           const nextRows = previous.rows.map((row, index) => {
-            if (index !== editingCell.row) return row;
+            if (index !== targetCell.row) return row;
             const nextRow = [...row];
-            nextRow[editingCell.col] = nextValue;
+            nextRow[targetCell.col] = nextValue;
             return nextRow;
           });
           return { ...previous, rows: nextRows };
         });
 
         // Track staged row for visual indicator
-        setStagedRowIndices((prev) => new Set([...prev, editingCell.row]));
+        setStagedRowIndices((prev) => new Set([...prev, targetCell.row]));
         cancelEditingCell();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -288,9 +290,19 @@ export function useDataGridInlineEditing({
     ],
   );
 
+  const editCellFromInspector = useCallback(
+    async (rowIndex: number, colIndex: number, committed: GridCellValue) => {
+      const started = await startEditingCell(rowIndex, colIndex);
+      if (!started) return;
+      await commitEditingCell(committed, { row: rowIndex, col: colIndex });
+    },
+    [commitEditingCell, startEditingCell],
+  );
+
   return {
     startEditingCell,
     cancelEditingCell,
     commitEditingCell,
+    editCellFromInspector,
   };
 }

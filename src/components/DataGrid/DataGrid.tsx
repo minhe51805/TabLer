@@ -31,7 +31,6 @@ import {
 import type { ColumnDetail, ConnectionConfig, QueryResult, TableRowFocus } from "../../types";
 import { devLogError } from "../../utils/logger";
 import { invokeMutation } from "../../utils/tauri-utils";
-import { quoteIdentifier } from "../../utils/sql-generator";
 import { emitAppToast } from "../../utils/app-toast";
 import { isMutatingStatement } from "../SQLEditor/SQLEditorUtils";
 import { lazy, Suspense } from "react";
@@ -48,7 +47,6 @@ import {
   inlineStructureCacheRef,
   buildResolvedColumns,
   isBooleanColumn,
-  isNumericColumn,
   resolveTableFilter,
   type ResolvedColumn,
   type GridCellValue,
@@ -89,7 +87,6 @@ import { useDataGridColumnMasks } from "./hooks/useDataGridColumnMasks";
 import { buildRowFocusFilter } from "./row-focus";
 import { InsertRowDialog } from "./dialogs/InsertRowDialog";
 import { type ColumnStats } from "./dialogs/ColumnStatsPopover";
-import { hasNumericValues } from "./chart-utils";
 import type { ColumnDisplayFormat } from "./editors";
 import { DataGridOverlays } from "./DataGridOverlays";
 import { DataGridTableView } from "./DataGridTableView";
@@ -99,6 +96,7 @@ import {
   matchesRowInspectorEditScope,
 } from "./row-inspector-utils";
 import { getRowInspectorCopy } from "../RowInspector/row-inspector-copy";
+import { loadColumnStats } from "./column-stats-runner";
 
 /** Minimum width that must remain for scrollable (unpinned) columns. Pinning
  *  that would leave less than this is refused so the grid never becomes a
@@ -324,6 +322,7 @@ export function DataGrid({
   const requestIdRef = useRef(0);
   const dataScopeRef = useRef("");
   const countRequestIdRef = useRef(0);
+  const columnStatsRequestIdRef = useRef(0);
   const structureRequestIdRef = useRef(0);
   const structurePromiseRef = useRef<Promise<ColumnDetail[]> | null>(null);
   const structureRetryAttemptRef = useRef(0);
@@ -1272,57 +1271,56 @@ export function DataGrid({
     handleOpenRowInspector,
   ]);
 
+  useEffect(() => {
+    columnStatsRequestIdRef.current += 1;
+    setColumnStats(null);
+    setColumnStatsError(null);
+    setIsLoadingColumnStats(false);
+  }, [connectionId, database, tableName]);
+
+  const handleCloseColumnStats = useCallback(() => {
+    columnStatsRequestIdRef.current += 1;
+    setColumnStats(null);
+    setColumnStatsError(null);
+    setIsLoadingColumnStats(false);
+  }, []);
+
   /** Header context-menu "Column stats": runs aggregate SELECTs through the
    *  regular read-only query path and shows the results in a popover. Only
    *  offered for table-backed grids (tableName present, no external result). */
   const handleColumnStats = useCallback(
     (colName: string) => {
       if (!tableName || externalResult) return;
-      const colIndex = resolvedColumns.findIndex((column) => column.name === colName);
-      const column = colIndex >= 0 ? resolvedColumns[colIndex] : undefined;
-      const statsDbType = connections.find((c: ConnectionConfig) => c.id === connectionId)?.db_type;
-      const quotedTable = quoteIdentifier(tableName, statsDbType);
-      const quotedColumn = quoteIdentifier(colName, statsDbType);
+      const columnIndex = resolvedColumns.findIndex((column) => column.name === colName);
+      const column = columnIndex >= 0 ? resolvedColumns[columnIndex] : undefined;
+      if (!column) return;
+      const requestId = columnStatsRequestIdRef.current + 1;
+      columnStatsRequestIdRef.current = requestId;
+      const isCurrent = () => columnStatsRequestIdRef.current === requestId;
       setColumnStats({ column: colName, stats: null });
       setColumnStatsError(null);
       setIsLoadingColumnStats(true);
-      void executeQuery(
+      void loadColumnStats({
         connectionId,
-        `SELECT COUNT(*) AS total, COUNT(DISTINCT ${quotedColumn}) AS distinct_count, SUM(CASE WHEN ${quotedColumn} IS NULL THEN 1 ELSE 0 END) AS null_count FROM ${quotedTable}`,
-      )
-        .then(async (result) => {
-          const row = result.rows[0];
-          const stats: ColumnStats = {
-            total: typeof row?.[0] === "number" ? row[0] : Number(row?.[0] ?? 0),
-            distinct: typeof row?.[1] === "number" ? row[1] : Number(row?.[1] ?? 0),
-            nulls: typeof row?.[2] === "number" ? row[2] : Number(row?.[2] ?? 0),
-          };
-          // MIN/MAX/AVG only for numeric columns — a separate query so a
-          // type-sniff miss or an unsupported aggregate never loses the counts.
-          const numeric =
-            (column && isNumericColumn(column)) ||
-            (colIndex >= 0 && hasNumericValues(data?.rows ?? [], colIndex));
-          if (numeric) {
-            try {
-              const aggregates = await executeQuery(
-                connectionId,
-                `SELECT MIN(${quotedColumn}) AS min_value, MAX(${quotedColumn}) AS max_value, AVG(${quotedColumn}) AS avg_value FROM ${quotedTable}`,
-              );
-              const aggregateRow = aggregates.rows[0];
-              stats.min = aggregateRow?.[0] ?? null;
-              stats.max = aggregateRow?.[1] ?? null;
-              stats.avg = aggregateRow?.[2] ?? null;
-            } catch {
-              // Aggregates unsupported for this type — counts still stand.
-            }
-          }
+        tableName,
+        column,
+        columnIndex,
+        dataRows: data?.rows ?? [],
+        databaseType: connections.find((c: ConnectionConfig) => c.id === connectionId)?.db_type,
+        executeQuery,
+        isCurrent,
+      })
+        .then((stats) => {
+          if (!isCurrent() || !stats) return;
           setColumnStats({ column: colName, stats });
         })
         .catch((error) => {
-          setColumnStatsError(String(error instanceof Error ? error.message : error));
+          if (isCurrent()) {
+            setColumnStatsError(String(error instanceof Error ? error.message : error));
+          }
         })
         .finally(() => {
-          setIsLoadingColumnStats(false);
+          if (isCurrent()) setIsLoadingColumnStats(false);
         });
     },
     [tableName, externalResult, resolvedColumns, connections, connectionId, executeQuery, data],
@@ -2207,7 +2205,7 @@ export function DataGrid({
           setSortDir={setSortDir}
           setColumnDisplayFormats={setColumnDisplayFormats}
           onCloseFkPreview={() => setFkPreview(null)}
-          onCloseColumnStats={() => setColumnStats(null)}
+          onCloseColumnStats={handleCloseColumnStats}
           onCloseSetRangeDialog={() =>
             setSetRangeDialog((previous) => ({ ...previous, open: false }))
           }

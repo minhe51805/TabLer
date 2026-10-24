@@ -95,6 +95,7 @@ import type { ColumnDisplayFormat } from "./editors";
 import { DataGridOverlays } from "./DataGridOverlays";
 import { DataGridTableView } from "./DataGridTableView";
 import { DataGridFooter } from "./DataGridFooter";
+import { buildRowInspectorPrimaryKeyValues } from "./row-inspector-utils";
 
 /** Minimum width that must remain for scrollable (unpinned) columns. Pinning
  *  that would leave less than this is refused so the grid never becomes a
@@ -1193,19 +1194,19 @@ export function DataGrid({
       if (!data || !data.rows[rowIndex]) return;
       const row = data.rows[rowIndex];
       const absoluteRowNumber = rowIndex + 1;
-      const pkEntries = buildRowPrimaryKeys(row, resolvedColumns, primaryKeyColumns);
-      const pkValues: Record<string, string | number | boolean | null> = {};
-      pkEntries.forEach((entry) => {
-        pkValues[entry.column] = entry.value;
-      });
       // Masked columns must not leak into the inspector — mask the row before
       // emitting so the panel shows exactly what the grid shows.
       void columnMasks.maskRows([row]).then(([maskedRow]) => {
+        const inspectorRow = maskedRow ?? row;
         EventCenter.emit("row-inspector-open", {
           rowIndex: absoluteRowNumber,
-          row: maskedRow ?? row,
+          row: inspectorRow,
           columns: resolvedColumns,
-          primaryKeyValues: pkValues,
+          primaryKeyValues: buildRowInspectorPrimaryKeyValues(
+            inspectorRow,
+            resolvedColumns,
+            primaryKeyColumns,
+          ),
           tableName,
           database,
         });

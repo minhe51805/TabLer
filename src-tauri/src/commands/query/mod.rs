@@ -39,7 +39,8 @@ pub use cancellation::QueryCancellationState;
 use errors::{format_query_connection_error, format_query_runtime_error};
 use sandbox::{
     cap_sandbox_result, log_sandbox_denial, reject_dangerous_capability,
-    rewrite_mongo_error_for_sandbox, timeout_for_statements, validate_sandbox_batch,
+    rewrite_mongo_error_for_sandbox, statement_fingerprint, timeout_for_statements,
+    validate_sandbox_batch,
 };
 pub use sandbox_gate::SandboxGateState;
 /// Per-connection read-only pin for SQL-executing commands: when the live
@@ -598,6 +599,7 @@ pub async fn execute_sandboxed_query(
         .await
         .map_err(AppError::SandboxThrottled)?;
     sandbox_gate.check_breaker(&connection_id).await?;
+    let stmt_fp = statement_fingerprint(&statements.join(";\n"));
 
     let result = async {
         assert_connection_writable_sql(db_manager.inner(), &connection_id, &statements.join(";\n"))
@@ -620,17 +622,19 @@ pub async fn execute_sandboxed_query(
             .await
             .map_err(|error| error.to_string())?;
         log::info!(
-            "operation_id={} operation=query.execute_sandboxed status=started connection_id={} statements_count={}",
+            "operation_id={} operation=query.execute_sandboxed status=started connection_id={} stmt_fp={} statements_count={}",
             operation_id,
             connection_id,
+            stmt_fp,
             statements.len()
         );
         if let Err(error) =
             validate_sandbox_batch(&statements, require_read_only.unwrap_or(false), db_type)
         {
             log::error!(
-                "operation_id={} operation=query.execute_sandboxed status=failed stage=validation error={}",
+                "operation_id={} operation=query.execute_sandboxed status=failed stage=validation stmt_fp={} error={}",
                 operation_id,
+                stmt_fp,
                 error
             );
             log_sandbox_denial(&connection_id, statements.len(), &error);
@@ -654,7 +658,7 @@ pub async fn execute_sandboxed_query(
     if result.is_ok() {
         sandbox_gate.record_success(&connection_id).await;
     } else {
-        sandbox_gate.record_failure(&connection_id).await;
+        sandbox_gate.record_failure(&connection_id, &stmt_fp).await;
     }
     drop(execution_permit);
     result
@@ -679,10 +683,12 @@ async fn run_sandboxed_statements(
         .connection_database_type(connection_id)
         .await
         .ok();
+    let combined_query = statements.join(";\n");
+    let stmt_fp = statement_fingerprint(&combined_query);
     let driver = db_manager.get_driver(connection_id).await.map_err(|e| {
         let formatted = format_query_connection_error(e);
         log::error!(
-            "operation_id={operation_id} operation={operation} status=failed stage=connection error={formatted}"
+            "operation_id={operation_id} operation={operation} status=failed stage=connection stmt_fp={stmt_fp} error={formatted}"
         );
         formatted
     })?;
@@ -690,7 +696,6 @@ async fn run_sandboxed_statements(
         db_manager.connection_query_timeout(connection_id).await,
         timeout_for_statements(statements.iter().map(String::as_str), db_type),
     );
-    let combined_query = statements.join(";\n");
     let request_id = request_id
         .as_deref()
         .map(str::trim)
@@ -718,7 +723,7 @@ async fn run_sandboxed_statements(
                     timeout_window.as_secs()
                 );
                 log::error!(
-                    "operation_id={operation_id} operation={operation} status=failed stage=timeout error={err_msg}"
+                    "operation_id={operation_id} operation={operation} status=failed stage=timeout stmt_fp={stmt_fp} error={err_msg}"
                 );
                 err_msg
             })
@@ -730,7 +735,7 @@ async fn run_sandboxed_statements(
                     formatted
                 };
                 log::error!(
-                    "operation_id={operation_id} operation={operation} status=failed stage=runtime error={formatted}"
+                    "operation_id={operation_id} operation={operation} status=failed stage=runtime stmt_fp={stmt_fp} error={formatted}"
                 );
                 formatted
             })),

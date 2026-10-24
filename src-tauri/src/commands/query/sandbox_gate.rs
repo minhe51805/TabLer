@@ -12,6 +12,8 @@ pub const SANDBOX_BREAKER_OPEN_DURATION: Duration = Duration::from_secs(30);
 #[derive(Debug, Default)]
 struct BreakerEntry {
     consecutive_failures: u32,
+    consecutive_identical_fingerprints: u32,
+    last_fingerprint: Option<String>,
     last_failure: Option<Instant>,
     opened_until: Option<Instant>,
     half_open_probe_in_flight: bool,
@@ -64,25 +66,34 @@ impl SandboxGateState {
         Ok(())
     }
 
-    pub async fn record_failure(&self, connection_id: &str) {
+    pub async fn record_failure(&self, connection_id: &str, fingerprint: &str) {
         let now = Instant::now();
         let mut breakers = self.breakers.lock().await;
         let entry = breakers.entry(connection_id.to_string()).or_default();
+        if entry
+            .last_failure
+            .is_some_and(|last| now.duration_since(last) >= SANDBOX_BREAKER_FAILURE_WINDOW)
+        {
+            entry.consecutive_failures = 0;
+            entry.consecutive_identical_fingerprints = 0;
+        }
+        if entry.last_fingerprint.as_deref() == Some(fingerprint) {
+            entry.consecutive_identical_fingerprints += 1;
+        } else {
+            entry.last_fingerprint = Some(fingerprint.to_string());
+            entry.consecutive_identical_fingerprints = 1;
+        }
         if entry.half_open_probe_in_flight {
             entry.half_open_probe_in_flight = false;
             entry.opened_until = Some(now + SANDBOX_BREAKER_OPEN_DURATION);
             entry.last_failure = Some(now);
             return;
         }
-        if entry
-            .last_failure
-            .is_some_and(|last| now.duration_since(last) >= SANDBOX_BREAKER_FAILURE_WINDOW)
-        {
-            entry.consecutive_failures = 0;
-        }
         entry.consecutive_failures += 1;
         entry.last_failure = Some(now);
-        if entry.consecutive_failures >= SANDBOX_BREAKER_FAILURE_THRESHOLD {
+        if entry.consecutive_failures >= SANDBOX_BREAKER_FAILURE_THRESHOLD
+            || entry.consecutive_identical_fingerprints >= SANDBOX_BREAKER_FAILURE_THRESHOLD
+        {
             entry.opened_until = Some(now + SANDBOX_BREAKER_OPEN_DURATION);
         }
     }
@@ -128,7 +139,7 @@ mod tests {
         for _ in 0..10 {
             state.check_breaker("connection-1").await.unwrap();
             driver_calls.fetch_add(1, Ordering::SeqCst);
-            state.record_failure("connection-1").await;
+            state.record_failure("connection-1", "fingerprint").await;
         }
         state.check_breaker("connection-1").await.unwrap_err();
         assert_eq!(driver_calls.load(Ordering::SeqCst), 10);
@@ -146,11 +157,11 @@ mod tests {
     async fn breaker_reopens_when_the_half_open_probe_fails() {
         let state = SandboxGateState::default();
         for _ in 0..10 {
-            state.record_failure("connection-1").await;
+            state.record_failure("connection-1", "fingerprint").await;
         }
         advance(Duration::from_secs(30)).await;
         state.check_breaker("connection-1").await.unwrap();
-        state.record_failure("connection-1").await;
+        state.record_failure("connection-1", "fingerprint").await;
         state.check_breaker("connection-1").await.unwrap_err();
     }
 
@@ -193,7 +204,7 @@ mod tests {
             };
             if admitted {
                 driver_calls += 1;
-                state.record_failure("connection-1").await;
+                state.record_failure("connection-1", "fingerprint").await;
             }
             drop(permit);
             advance(Duration::from_millis(300)).await;
@@ -202,5 +213,15 @@ mod tests {
             driver_calls <= 20,
             "flood reached the driver {driver_calls} times"
         );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn same_fingerprint_storm_opens_breaker() {
+        let state = SandboxGateState::default();
+        for _ in 0..10 {
+            state.record_failure("connection-1", "deadbeef").await;
+        }
+        let error = state.check_breaker("connection-1").await.unwrap_err();
+        assert!(error.to_string().contains("circuit breaker is open"));
     }
 }

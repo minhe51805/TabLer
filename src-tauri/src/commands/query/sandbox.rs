@@ -4,6 +4,7 @@ use crate::database::mongodb_sql::{
     MONGO_SELECT_SHELL_GUIDANCE, MONGO_UPDATE_SHELL_GUIDANCE,
 };
 use crate::utils::sql::{classify_sql_with_dialect, detect_dangerous_capability, SqlStatementKind};
+use sha2::{Digest, Sha256};
 use tokio::time::Duration;
 
 const MONGO_SELECT_SANDBOX_GUIDANCE: &str = "This sandbox accepts SQL only. HAVING is not supported — wrap the aggregation in an outer SELECT; use LIMIT/OFFSET for paging.";
@@ -28,6 +29,14 @@ pub(super) fn rewrite_mongo_error_for_sandbox(message: &str, require_read_only: 
         rewritten = rewritten.replace(suffix, &write_guidance);
     }
     rewritten
+}
+
+pub(super) fn statement_fingerprint(sql: &str) -> String {
+    let digest = Sha256::digest(sql.as_bytes());
+    digest[..4]
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 /// Cheap upper-bound estimate of a row's JSON footprint — avoids serializing the
@@ -183,7 +192,7 @@ pub(super) fn timeout_for_statements<'a>(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_sandbox_statement;
+    use super::{statement_fingerprint, validate_sandbox_statement};
     use crate::database::models::DatabaseType;
 
     #[test]
@@ -192,5 +201,29 @@ mod tests {
             .expect_err("Mongo shell syntax must stay outside the sandbox");
         assert!(error.contains("accepts SQL statements only"));
         assert!(error.contains("query editor outside the sandbox"));
+    }
+
+    #[test]
+    fn same_statement_same_fingerprint() {
+        let first = statement_fingerprint("SELECT * FROM users WHERE id = 1");
+        let second = statement_fingerprint("SELECT * FROM users WHERE id = 1");
+        let different = statement_fingerprint("SELECT * FROM users WHERE id = 2");
+        assert_eq!(first, second);
+        assert_ne!(first, different);
+        assert_eq!(first.len(), 8);
+        assert!(first.chars().all(|character| character.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn sandbox_log_line_contains_fp_but_not_statement_text() {
+        let sql = "SELECT secret_value FROM private_table";
+        let fingerprint = statement_fingerprint(sql);
+        let line = format!(
+            "operation=query.execute_sandboxed status=started stmt_fp={fingerprint} statements_count=1"
+        );
+        assert!(line.contains(&format!("stmt_fp={fingerprint}")));
+        assert!(!line.contains(sql));
+        assert!(!line.contains("secret_value"));
+        assert!(!line.contains("private_table"));
     }
 }

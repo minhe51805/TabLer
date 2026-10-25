@@ -32892,7 +32892,7 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   display: flex;
   align-items: center;
   gap: 8px;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   padding: 8px 12px;
   border: 0;
   border-bottom: 1px solid var(--mm-border);
@@ -32905,6 +32905,7 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
 .erd-topbar-heading {
   min-width: 0;
   display: flex;
+  flex: 0 0 auto;
   flex-direction: row;
   align-items: center;
   gap: 9px;

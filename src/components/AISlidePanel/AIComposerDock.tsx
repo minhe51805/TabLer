@@ -22,6 +22,7 @@ import {
   type RefObject,
 } from "react";
 import { formatTokensCompact } from "../../utils/ai-context-compact";
+import "./ai-composer.css";
 import type { AIProviderConfig } from "../../types";
 import { getAIFailoverConsent, setAIFailoverConsent } from "../../utils/ai-failover-consent";
 import { formatAIProviderTypeLabel } from "../../utils/ai-provider-registry";

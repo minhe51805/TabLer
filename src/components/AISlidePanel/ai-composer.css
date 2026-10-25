@@ -1,0 +1,3 @@
+.app-root .ai-workspace-composer-textarea::placeholder {
+  color: var(--text-secondary);
+}

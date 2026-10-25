@@ -25,7 +25,7 @@
     "build:release": "node scripts/prepare-release-config.mjs && tauri build --config src-tauri/tauri.release.conf.json --config src-tauri/tauri.runtime-release.conf.json",
     "build:release:full": "node scripts/prepare-release-config.mjs && tauri build --features duckdb-driver,cassandra-driver,redis-driver,libsql-driver --config src-tauri/tauri.release.conf.json --config src-tauri/tauri.runtime-release.conf.json",
     "tauri:full": "tauri dev --features duckdb-driver,cassandra-driver,redis-driver,libsql-driver",
-    "build:e2e": "tauri build --debug --no-bundle --features e2e --config src-tauri/tauri.e2e.conf.json",
+    "build:e2e": "tauri build --debug --no-bundle --features e2e --config src-tauri/tauri.e2e.conf.json && node scripts/prepare-e2e-binary.mjs",
     "test:e2e": "node e2e/run.mjs",
     "test:integration:drivers": "node scripts/run-driver-integration.mjs",
     "test:integration:heavy": "node scripts/run-driver-integration.mjs --heavy",

@@ -170,8 +170,3 @@ export function useEvent<N extends EventName>(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [name, ...deps]);
 }
-
-/** Hook: emit an event from a component. Returns the emit function. */
-export function useEmit<N extends EventName>(name: N) {
-  return (detail: EventDetail<N>) => EventCenter.emit(name, detail);
-}

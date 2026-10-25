@@ -29,8 +29,6 @@ export const MIN_SKILL_STEPS = 4;
 export const MAX_LEARNING_MEMORIES_PER_RUN = 2;
 export const MAX_LEARNING_RULES_PER_RUN = 1;
 
-export type LearningKind = "rule" | "memory" | "skill";
-
 /** What a memory proposal writes through `save_agent_memory`. */
 export interface LearningMemoryPayload {
   name: string;

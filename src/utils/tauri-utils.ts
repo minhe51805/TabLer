@@ -63,15 +63,6 @@ export async function openExternalUrl(url: string): Promise<void> {
   window.open(url, "_blank", "noopener,noreferrer");
 }
 
-/** Encodes text to UTF-8 base64 via the browser APIs available in the
- *  WebView (no Buffer in the renderer). */
-export function textToBase64(text: string): string {
-  const bytes = new TextEncoder().encode(text);
-  let binary = "";
-  for (const byte of bytes) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
 export function invokeWithTimeout<T>(
   command: string,
   args: Record<string, unknown>,

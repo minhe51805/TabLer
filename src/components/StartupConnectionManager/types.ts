@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import type { ConnectionConfig } from "../../types";
 export type { ConnectionConfig } from "../../types";
 export { type ConnectionGroup } from "../../stores/connection-group-store";
@@ -146,35 +145,11 @@ export interface HoverPopoverData {
 
 // ─── Component Props ───────────────────────────────────────────────────────────
 
-export interface StartupBrandingPanelProps {
-  windowControls?: ReactNode;
-}
-
-export interface ConnectionListViewProps {
-  connections: ConnectionConfig[];
-  filteredConnections: ConnectionConfig[];
-  selectedConnectionId: string | null;
-  layoutMode: ConnectionLayoutMode;
-  onSelectConnection: (id: string) => void;
-  onConnect: (connection: ConnectionConfig) => void;
-  onHover: (event: React.MouseEvent<HTMLDivElement>, id: string) => void;
-  onLeaveHover: () => void;
-  listRef: React.RefObject<HTMLDivElement | null>;
-}
-
 export interface ConnectionRowProps {
   data: ConnectionRowData;
   onClick: () => void;
   onMouseEnter: (e: React.MouseEvent<HTMLDivElement>) => void;
   onMouseLeave: () => void;
-}
-
-export interface ConnectionGroupHeaderProps {
-  name: string;
-  color: string;
-  count: number;
-  isCollapsed: boolean;
-  onToggle: () => void;
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────────

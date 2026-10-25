@@ -14,10 +14,7 @@ import type { FilterCondition } from "../../../types/filter-presets";
 // Script builders
 // ---------------------------------------------------------------------------
 
-export function buildOverviewScript(
-  table: Pick<TableInfo, "name" | "schema">,
-  dbType?: string,
-) {
+export function buildOverviewScript(table: Pick<TableInfo, "name" | "schema">, dbType?: string) {
   const qualified = getQuotedQualifiedTableName(table, dbType);
   return `-- Overview for ${getQualifiedTableName(table)}
 SELECT COUNT(*) AS total_rows FROM ${qualified};
@@ -89,10 +86,7 @@ export function buildDropScript(table: Pick<TableInfo, "name" | "schema">, dbTyp
 // ---------------------------------------------------------------------------
 
 /** Apply a single filter condition to a table name or schema name */
-export function applyCondition(
-  value: string,
-  condition: FilterCondition
-): boolean {
+export function applyCondition(value: string, condition: FilterCondition): boolean {
   if (!condition?.operator) return true;
   // Harden against legacy/persisted conditions missing `value`.
   const target = (value ?? "").toLowerCase();
@@ -136,11 +130,17 @@ export function applyCondition(
         return false;
       }
     case "in_list": {
-      const items = val.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+      const items = val
+        .split(",")
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
       return items.includes(target);
     }
     case "not_in_list": {
-      const items = val.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+      const items = val
+        .split(",")
+        .map((s) => s.trim().toLowerCase())
+        .filter(Boolean);
       return !items.includes(target);
     }
     case "greater_than":
@@ -166,7 +166,7 @@ export function applyCondition(
 export function applyConditionsWith(
   getValue: (condition: FilterCondition) => string,
   conditions: FilterCondition[],
-  logic: "AND" | "OR"
+  logic: "AND" | "OR",
 ): boolean {
   if (conditions.length === 0) return true;
   // Skip conditions with an empty value (e.g. an untouched date row): they
@@ -174,23 +174,10 @@ export function applyConditionsWith(
   // `is_empty`/`is_not_empty` are the exceptions — they operate on emptiness.
   const active = conditions.filter(
     (c) =>
-      (c.value ?? "").trim() !== "" ||
-      c.operator === "is_empty" ||
-      c.operator === "is_not_empty",
+      (c.value ?? "").trim() !== "" || c.operator === "is_empty" || c.operator === "is_not_empty",
   );
   if (active.length === 0) return true;
   const results = active.map((c) => applyCondition(getValue(c) ?? "", c));
-  return logic === "AND" ? results.every(Boolean) : results.some(Boolean);
-}
-
-/** Apply all conditions to a single value using AND/OR logic */
-export function applyConditions(
-  value: string,
-  conditions: FilterCondition[],
-  logic: "AND" | "OR"
-): boolean {
-  if (conditions.length === 0) return true;
-  const results = conditions.map((c) => applyCondition(value, c));
   return logic === "AND" ? results.every(Boolean) : results.some(Boolean);
 }
 

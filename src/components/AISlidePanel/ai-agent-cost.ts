@@ -320,12 +320,6 @@ export function subscribeSessionUsage(listener: () => void): () => void {
   };
 }
 
-/** Reset the session totals (panel remounts keep history; tests need this). */
-export function resetSessionUsage(): void {
-  sessionUsageEntries.clear();
-  notifySessionUsageListeners();
-}
-
 /** Compact USD label: "<$0.01" under a cent, else two decimals. */
 export function formatSessionCostUsd(costUsd: number): string {
   if (costUsd <= 0) return "$0.00";

@@ -390,13 +390,3 @@ export const useChangeTrackingStore = create<FullChangeTrackingStore>()((set, ge
     get().discardAll(scopeKey);
   },
 }));
-
-/** Hook to get change count for a specific table scope */
-export function useTableChangeCount(scopeKey: string): number {
-  return useChangeTrackingStore((s) => s.getChangeCount(scopeKey));
-}
-
-/** Hook to check if a row has pending changes */
-export function useHasRowChanges(scopeKey: string, rowKey: Record<string, unknown>): boolean {
-  return useChangeTrackingStore((s) => s.hasPendingChanges(scopeKey, rowKey));
-}

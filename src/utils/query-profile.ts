@@ -52,14 +52,13 @@ const COMMAND_PROFILES: Partial<Record<DatabaseType, QueryProfile>> = {
 };
 
 export function getQueryProfile(dbType?: DatabaseType): QueryProfile {
-  return dbType ? COMMAND_PROFILES[dbType] ?? DEFAULT_SQL_PROFILE : DEFAULT_SQL_PROFILE;
+  return dbType ? (COMMAND_PROFILES[dbType] ?? DEFAULT_SQL_PROFILE) : DEFAULT_SQL_PROFILE;
 }
 
-export function getNewQueryTabTitle(dbType: DatabaseType | undefined, tabCountForConnection: number) {
+export function getNewQueryTabTitle(
+  dbType: DatabaseType | undefined,
+  tabCountForConnection: number,
+) {
   const baseTitle = getQueryProfile(dbType).defaultTabTitle;
   return tabCountForConnection <= 1 ? baseTitle : `${baseTitle} ${tabCountForConnection}`;
-}
-
-export function isCommandQuerySurface(dbType?: DatabaseType) {
-  return getQueryProfile(dbType).surface === "command";
 }

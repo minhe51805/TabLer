@@ -83,13 +83,13 @@ impl MssqlDriver {
             .into_iter()
             .next()
             .ok_or_else(|| anyhow!("@@SPID lookup returned no rows"))?;
-        let spid: i32 = row
-            .get::<i32, _>(0)
+        let spid = row
+            .get::<i16, _>(0)
             .ok_or_else(|| anyhow!("@@SPID lookup returned NULL"))?;
         if let Ok(mut guard) = self.session_id.write() {
-            *guard = Some(spid);
+            *guard = Some(i32::from(spid));
         }
-        Ok(spid)
+        Ok(i32::from(spid))
     }
 
     pub(super) async fn query_rows(&self, sql: &str) -> Result<(Vec<Row>, bool)> {

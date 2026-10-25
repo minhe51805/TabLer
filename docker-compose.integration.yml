@@ -160,10 +160,7 @@ services:
     ports:
       - "18108:8108"
     healthcheck:
-      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8108/health"]
-      interval: 5s
-      timeout: 5s
-      retries: 30
+      test: ["NONE"]
 
   surrealdb:
     image: surrealdb/surrealdb:latest
@@ -194,15 +191,22 @@ services:
       test: ["NONE"]
 
   greenplum:
-    image: datagrip/greenplum:latest
+    image: projectairws/greenplum:latest
     profiles: ["heavy"]
     privileged: true
+    command: ["/bin/bash", "-lc", "/app/start_greenplum.sh && tail -f /dev/null"]
     volumes:
       - greenplum-data:/gpdata
     ports:
       - "25432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U gpadmin -d gpadmin"]
+      test:
+        [
+          "CMD",
+          "/bin/bash",
+          "-lc",
+          "source /usr/local/greenplum-db/greenplum_path.sh && pg_isready -h 127.0.0.1 -U gpadmin -d gpadmin",
+        ]
       interval: 10s
       timeout: 5s
       retries: 45

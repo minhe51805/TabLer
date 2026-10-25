@@ -1,6 +1,8 @@
 mod support;
 
-use support::{integration_enabled, probe_connection, sql_config, staged_bundle, EngineProbe};
+use support::{
+    envs_ready, integration_enabled, probe_connection, sql_config, staged_bundle, EngineProbe,
+};
 
 #[tokio::test]
 async fn duckdb_sidecar_connects_and_queries() {
@@ -52,6 +54,10 @@ async fn redis_sidecar_connects_and_lists_keys() {
 async fn cassandra_sidecar_connects_and_reads_system_local() {
     if !integration_enabled() {
         eprintln!("skipped: set TABLER_DRIVER_INTEGRATION=1 to enable");
+        return;
+    }
+    if !envs_ready(&["TABLER_IT_CASSANDRA"]) {
+        eprintln!("skipped: start the 'heavy' compose profile for Cassandra");
         return;
     }
     let mut config = sql_config(

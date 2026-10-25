@@ -416,23 +416,31 @@ pub async fn probe_connection(
     let manager = DatabaseManager::with_plugin_storage(storage);
     let mut last_connect_error = None;
     for attempt in 0..30 {
-        match manager.connect(&config).await {
-            Ok(()) => {
+        match tokio::time::timeout(std::time::Duration::from_secs(5), manager.connect(&config))
+            .await
+        {
+            Ok(Ok(())) => {
                 last_connect_error = None;
                 break;
             }
-            Err(error) => {
+            Ok(Err(error)) => {
                 last_connect_error = Some(error);
-                if attempt < 29 {
-                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
-                }
             }
+            Err(_) => {
+                last_connect_error = Some(anyhow!(
+                    "connection attempt {} timed out after 5 seconds",
+                    attempt + 1
+                ));
+            }
+        }
+        if last_connect_error.is_some() && attempt < 29 {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
         }
     }
     if let Some(error) = last_connect_error {
         return Err(error);
     }
-    let probe_result = async {
+    let probe_result = tokio::time::timeout(std::time::Duration::from_secs(45), async {
         let driver = manager.get_driver(&config.id).await?;
         driver.ping().await?;
         match probe {
@@ -454,9 +462,21 @@ pub async fn probe_connection(
             }
         }
         Ok::<(), anyhow::Error>(())
-    }
+    })
     .await;
-    let disconnect_result = manager.disconnect(&config.id).await;
+    let probe_result = match probe_result {
+        Ok(result) => result,
+        Err(_) => Err(anyhow!("integration probe timed out after 45 seconds")),
+    };
+    let disconnect_result = match tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        manager.disconnect(&config.id),
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(_) => Err(anyhow!("integration disconnect timed out after 10 seconds")),
+    };
     let cleanup_result = std::fs::remove_dir_all(&root);
     if let Err(error) = &probe_result {
         eprintln!("integration probe failed: {error:?}");

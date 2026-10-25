@@ -60,7 +60,7 @@ engine_case!(
 );
 engine_case!(
     greenplum_builtin_live,
-    &[],
+    &["TABLER_IT_GREENPLUM"],
     {
         let mut config = sql_config(DatabaseType::Greenplum, 25432, "gpadmin");
         config.username = Some("gpadmin".to_string());
@@ -101,7 +101,7 @@ engine_case!(sqlite_builtin_live, &[], {
 }, None, EngineProbe::Sql("CREATE TABLE IF NOT EXISTS matrix_probe (id INTEGER); INSERT INTO matrix_probe VALUES (1); SELECT * FROM matrix_probe"));
 engine_case!(
     mssql_builtin_live,
-    &[],
+    &["TABLER_IT_MSSQL"],
     {
         let mut config = sql_config(DatabaseType::MSSQL, 11433, "master");
         config.username = Some("sa".to_string());
@@ -125,7 +125,7 @@ engine_case!(
 );
 engine_case!(
     vertica_builtin_live,
-    &[],
+    &["TABLER_IT_VERTICA"],
     {
         let mut config = sql_config(DatabaseType::Vertica, 25433, "docker");
         config.username = Some("dbadmin".to_string());

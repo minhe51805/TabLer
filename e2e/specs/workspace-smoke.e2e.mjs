@@ -3,9 +3,15 @@ import path from "node:path";
 import AxeBuilder from "@axe-core/webdriverio";
 
 describe("TableR desktop workspace smoke", () => {
-  const engine = process.env.TABLER_E2E_ENGINE === "postgresql" ? "postgresql" : "sqlite";
+  const requestedEngine = process.env.TABLER_E2E_ENGINE;
+  const engine = ["postgresql", "mssql"].includes(requestedEngine) ? requestedEngine : "sqlite";
   const connectionId = `e2e-${engine}`;
-  const readyText = engine === "postgresql" ? "PostgreSQL ready" : "SQLite ready";
+  const readyText =
+    engine === "postgresql"
+      ? "PostgreSQL ready"
+      : engine === "mssql"
+        ? "MSSQL ready"
+        : "SQLite ready";
 
   function connectionConfig() {
     const common = {
@@ -38,6 +44,17 @@ describe("TableR desktop workspace smoke", () => {
         username: process.env.TABLER_E2E_POSTGRES_USER ?? "tabler",
         password: process.env.TABLER_E2E_POSTGRES_PASSWORD ?? "",
         database: process.env.TABLER_E2E_POSTGRES_DATABASE ?? "tabler_test",
+        ssl_mode: "disable",
+      };
+    }
+    if (engine === "mssql") {
+      return {
+        ...common,
+        host: process.env.TABLER_E2E_MSSQL_HOST ?? "127.0.0.1",
+        port: Number(process.env.TABLER_E2E_MSSQL_PORT ?? "11433"),
+        username: process.env.TABLER_E2E_MSSQL_USER ?? "sa",
+        password: process.env.TABLER_E2E_MSSQL_PASSWORD ?? "TablerIntegration!123",
+        database: process.env.TABLER_E2E_MSSQL_DATABASE ?? "master",
         ssl_mode: "disable",
       };
     }
@@ -113,8 +130,8 @@ describe("TableR desktop workspace smoke", () => {
       }
       throw error;
     }
-    const blocking = results.violations.filter((violation) =>
-      violation.impact === "serious" || violation.impact === "critical"
+    const blocking = results.violations.filter(
+      (violation) => violation.impact === "serious" || violation.impact === "critical",
     );
     if (blocking.length > 0) {
       throw new Error(`Blocking accessibility violations: ${JSON.stringify(blocking, null, 2)}`);

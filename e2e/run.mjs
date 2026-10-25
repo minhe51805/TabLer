@@ -12,7 +12,12 @@ const env = {
   TABLER_DATA_DIR: runtime,
   TABLER_E2E_DATA_DIR: runtime,
   WEBVIEW2_USER_DATA_FOLDER: path.join(runtime, "webview2"),
+  MSYS_NO_PATHCONV: "1",
 };
+const engine = process.env.TABLER_E2E_ENGINE ?? "sqlite";
+const composeFile = path.join(root, "docker-compose.integration.yml");
+const liveServices = engine === "postgresql" ? ["postgres"] : engine === "mssql" ? ["mssql"] : [];
+let liveServicesStarted = false;
 
 const managedProcessNames = new Set([
   "tauri-driver",
@@ -25,21 +30,27 @@ const managedProcessNames = new Set([
 ]);
 
 function processSnapshot() {
-  const result = process.platform === "win32"
-    ? spawnSync("powershell.exe", [
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "Get-CimInstance Win32_Process | ForEach-Object { '{0}|{1}' -f $_.ProcessId,$_.Name }",
-      ], { encoding: "utf8" })
-    : spawnSync("ps", ["-eo", "pid=,comm="], { encoding: "utf8" });
+  const result =
+    process.platform === "win32"
+      ? spawnSync(
+          "powershell.exe",
+          [
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            "Get-CimInstance Win32_Process | ForEach-Object { '{0}|{1}' -f $_.ProcessId,$_.Name }",
+          ],
+          { encoding: "utf8" },
+        )
+      : spawnSync("ps", ["-eo", "pid=,comm="], { encoding: "utf8" });
   if (result.status !== 0) return new Map();
 
   const processes = new Map();
   for (const line of (result.stdout ?? "").split(/\r?\n/)) {
-    const match = process.platform === "win32"
-      ? line.trim().match(/^(\d+)\|(.+)$/)
-      : line.trim().match(/^(\d+)\s+(.+)$/);
+    const match =
+      process.platform === "win32"
+        ? line.trim().match(/^(\d+)\|(.+)$/)
+        : line.trim().match(/^(\d+)\s+(.+)$/);
     if (!match) continue;
     const name = path.basename(match[2].trim());
     if (managedProcessNames.has(name)) processes.set(Number(match[1]), name);
@@ -53,9 +64,10 @@ function cleanupRunProcesses() {
   const created = [...processSnapshot()].filter(([pid]) => !processesBeforeRun.has(pid));
   for (const [pid, name] of created) {
     if (!processSnapshot().has(pid)) continue;
-    const result = process.platform === "win32"
-      ? spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { encoding: "utf8" })
-      : spawnSync("kill", ["-TERM", String(pid)], { encoding: "utf8" });
+    const result =
+      process.platform === "win32"
+        ? spawnSync("taskkill.exe", ["/PID", String(pid), "/T", "/F"], { encoding: "utf8" })
+        : spawnSync("kill", ["-TERM", String(pid)], { encoding: "utf8" });
     if (result.status !== 0 && processSnapshot().has(pid)) {
       process.stderr.write(`Could not stop E2E process ${name} (${pid}) gracefully.\n`);
     }
@@ -75,8 +87,8 @@ function cleanupRunProcesses() {
   }
 
   const remaining = processSnapshot();
-  const cleanupLines = created.map(([pid, name]) =>
-    `${remaining.has(pid) ? "failed" : "stopped"} pid=${pid} process=${name}`,
+  const cleanupLines = created.map(
+    ([pid, name]) => `${remaining.has(pid) ? "failed" : "stopped"} pid=${pid} process=${name}`,
   );
   fs.writeFileSync(
     path.join(root, ".artifacts", "e2e", "cleanup.log"),
@@ -97,15 +109,58 @@ function runAndCapture(command, args, logName) {
   return result;
 }
 
+function startLiveServices() {
+  if (process.env.TABLER_E2E_START_SERVICES !== "1" || liveServices.length === 0) return 0;
+  const profile = engine === "mssql" ? ["--profile", "heavy"] : [];
+  liveServicesStarted = true;
+  const result = runAndCapture(
+    "docker",
+    [
+      "compose",
+      "-f",
+      composeFile,
+      ...profile,
+      "up",
+      "-d",
+      "--wait",
+      "--wait-timeout",
+      "180",
+      ...liveServices,
+    ],
+    "live-up.log",
+  );
+  if (result.status !== 0) return result.status ?? 1;
+  return 0;
+}
+
+function stopLiveServices() {
+  if (!liveServicesStarted) return 0;
+  const profile = engine === "mssql" ? ["--profile", "heavy"] : [];
+  const result = runAndCapture(
+    "docker",
+    ["compose", "-f", composeFile, ...profile, "down", "-v"],
+    "live-cleanup.log",
+  );
+  return result.status ?? 0;
+}
+
 function finish(status) {
   cleanupRunProcesses();
+  const liveCleanupStatus = stopLiveServices();
   const appLog = path.join(runtime, "logs", "tabler.jsonl");
   if (fs.existsSync(appLog)) {
     fs.copyFileSync(appLog, path.join(root, ".artifacts", "e2e", "app.log.jsonl"));
   }
   fs.rmSync(runtime, { recursive: true, force: true });
-  process.exit(status ?? 1);
+  process.exit(
+    status === 0 && liveCleanupStatus !== 0
+      ? liveCleanupStatus
+      : (status ?? liveCleanupStatus ?? 1),
+  );
 }
+
+const liveStatus = startLiveServices();
+if (liveStatus !== 0) finish(liveStatus);
 
 const prepare = runAndCapture(
   "cargo",

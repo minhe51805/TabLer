@@ -113,7 +113,7 @@ export function WorkspaceShell(props: WorkspaceShellProps) {
   return (
     <div
       className={`app-root ${isWindowMaximized ? "window-maximized" : ""} ${props.showAISlidePanel ? "workspace-ai-open" : ""}`}
-      style={{ "--workspace-ai-sidebar-width": `${aiPanelWidth}px` } as CSSProperties}
+      style={{ "--workspace-ai-sidebar-preferred-width": `${aiPanelWidth}px` } as CSSProperties}
     >
       <AppTitleBar
         titlebarContextTitle={titlebarContextTitle}

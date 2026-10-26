@@ -163,14 +163,28 @@ describe("TableR UI layout contract", () => {
     const topbar = await $(".erd-topbar");
     await topbar.waitForDisplayed({ timeout: 10_000 });
     await browser.setWindowSize(1024, 900);
+    await browser.waitUntil(
+      async () =>
+        browser.execute(
+          () => getComputedStyle(document.querySelector(".main-container")).marginRight === "0px",
+        ),
+      { timeout: 5_000, interval: 100 },
+    );
 
     const layout = await browser.execute(() => {
       const bar = document.querySelector(".erd-topbar");
       const heading = bar?.querySelector(".erd-topbar-heading");
       const stats = bar?.querySelector(".erd-toolbar-stats");
+      const main = document.querySelector(".main-content");
+      const ai = document.querySelector(".ai-workspace-sidebar");
+      const resizeHandle = document.querySelector(".ai-workspace-resize-handle");
       return {
         viewportWidth: window.innerWidth,
         viewportHeight: window.innerHeight,
+        mainWidth: main?.getBoundingClientRect().width ?? 0,
+        mainMarginRight: getComputedStyle(document.querySelector(".main-container")).marginRight,
+        aiWidth: ai?.getBoundingClientRect().width ?? 0,
+        resizeHandleDisplay: resizeHandle ? getComputedStyle(resizeHandle).display : "",
         width: bar?.getBoundingClientRect().width ?? 0,
         scrollWidth: bar?.scrollWidth ?? 0,
         headingWidth: heading?.getBoundingClientRect().width ?? 0,
@@ -180,6 +194,15 @@ describe("TableR UI layout contract", () => {
     });
     if (layout.viewportWidth < 900 || layout.viewportWidth > 1024) {
       throw new Error(`Desktop viewport did not resize to 1024px: ${JSON.stringify(layout)}`);
+    }
+    if (
+      layout.mainWidth < 700 ||
+      layout.mainMarginRight !== "0px" ||
+      layout.aiWidth <= 0 ||
+      layout.aiWidth > 420 ||
+      layout.resizeHandleDisplay !== "none"
+    ) {
+      throw new Error(`AI drawer compresses the 1024px workspace: ${JSON.stringify(layout)}`);
     }
     if (layout.headingWidth <= 0) {
       throw new Error(`ER heading collapsed: ${JSON.stringify(layout)}`);
@@ -230,6 +253,8 @@ describe("TableR UI layout contract", () => {
         visibleH1Count: Array.from(document.querySelectorAll("h1")).filter(
           (heading) => heading.getClientRects().length > 0,
         ).length,
+        emptyTitleCount: document.querySelectorAll(".ai-workspace-chat-empty-title").length,
+        statusbarText: document.querySelector(".statusbar-info")?.textContent ?? "",
       };
     });
     if (
@@ -240,7 +265,10 @@ describe("TableR UI layout contract", () => {
       !semantics.sidebarLabel ||
       semantics.canvasTag !== "SECTION" ||
       semantics.canvasLabel !== "ER Diagram" ||
-      semantics.visibleH1Count !== 1
+      semantics.visibleH1Count !== 1 ||
+      semantics.emptyTitleCount !== 0 ||
+      !semantics.statusbarText.trim() ||
+      /[\\/]/.test(semantics.statusbarText)
     ) {
       throw new Error(`Workspace semantics are incomplete: ${JSON.stringify(semantics)}`);
     }
@@ -288,15 +316,45 @@ describe("TableR UI layout contract", () => {
         label: labelId ? document.getElementById(labelId)?.textContent?.trim() : "",
         selected:
           document.querySelector(".connection-picker-rail-item.selected")?.textContent ?? "",
+        duplicateFactCount: document.querySelectorAll(".connection-picker-inspector-fact").length,
+        miniStatCount: document.querySelectorAll(".connection-picker-mini-stat").length,
       };
     });
     if (
       semantics.role !== "dialog" ||
       semantics.modal !== "true" ||
       !semantics.label ||
-      !semantics.selected.includes("MySQL")
+      !semantics.selected.includes("MySQL") ||
+      semantics.duplicateFactCount !== 0 ||
+      semantics.miniStatCount !== 0
     ) {
       throw new Error(`Connection dialog semantics are incomplete: ${JSON.stringify(semantics)}`);
+    }
+  });
+
+  it("keeps connection picker primary actions visible outside the scroll area", async () => {
+    const layout = await browser.execute(() => {
+      const aside = document.querySelector(".connection-picker-aside");
+      const card = document.querySelector(".connection-picker-selection-card");
+      const footer = document.querySelector(".connection-picker-footer-actions");
+      const primary = footer?.querySelector(".btn-primary");
+      return {
+        asideBottom: aside?.getBoundingClientRect().bottom ?? 0,
+        footerTop: footer?.getBoundingClientRect().top ?? 0,
+        footerBottom: footer?.getBoundingClientRect().bottom ?? 0,
+        primaryBottom: primary?.getBoundingClientRect().bottom ?? 0,
+        footerInCard: Boolean(footer && card?.contains(footer)),
+        viewportHeight: window.innerHeight,
+      };
+    });
+    if (
+      layout.footerInCard ||
+      layout.footerTop <= 0 ||
+      layout.footerBottom > layout.asideBottom + 1 ||
+      layout.primaryBottom > layout.viewportHeight ||
+      layout.footerBottom > layout.viewportHeight
+    ) {
+      throw new Error(`Connection actions are not persistently visible: ${JSON.stringify(layout)}`);
     }
   });
 
@@ -306,6 +364,7 @@ describe("TableR UI layout contract", () => {
       [".connection-picker-footer-label", "Connection selection label"],
       [".connection-picker-footer-pill.supported", "Connection ready status"],
       [".connection-picker-selection-switch", "Connection selection switch"],
+      [".connection-picker-footer-actions .btn-primary", "Connection primary action"],
     ]) {
       assertAA(await readContrastTarget(selector), label);
     }
@@ -313,5 +372,92 @@ describe("TableR UI layout contract", () => {
 
   it("passes axe with the connection dialog open", async () => {
     await runAxe("Connection dialog");
+  });
+
+  it("restores side-by-side AI layout above the drawer breakpoint", async () => {
+    await $(".connection-picker-close").click();
+    await $(".connection-picker-modal").waitForDisplayed({ timeout: 5_000, reverse: true });
+    await browser.setWindowSize(1280, 900);
+    await browser.waitUntil(
+      async () =>
+        browser.execute(() => {
+          const margin = Number.parseFloat(
+            getComputedStyle(document.querySelector(".main-container")).marginRight,
+          );
+          const aiWidth =
+            document.querySelector(".ai-workspace-sidebar")?.getBoundingClientRect().width ?? 0;
+          return margin > 0 && Math.abs(margin - aiWidth) < 1;
+        }),
+      { timeout: 5_000, interval: 100 },
+    );
+
+    const layout = await browser.execute(() => {
+      const main = document.querySelector(".main-content");
+      const bar = document.querySelector(".erd-topbar");
+      const resizeHandle = document.querySelector(".ai-workspace-resize-handle");
+      return {
+        mainWidth: main?.getBoundingClientRect().width ?? 0,
+        resizeHandleDisplay: resizeHandle ? getComputedStyle(resizeHandle).display : "none",
+        toolbarWidth: bar?.getBoundingClientRect().width ?? 0,
+        toolbarScrollWidth: bar?.scrollWidth ?? 0,
+      };
+    });
+    if (
+      layout.mainWidth < 500 ||
+      layout.resizeHandleDisplay === "none" ||
+      layout.toolbarScrollWidth > layout.toolbarWidth + 1
+    ) {
+      throw new Error(`Wide AI layout did not recover: ${JSON.stringify(layout)}`);
+    }
+  });
+
+  it("keeps the drawer and connection actions usable at the minimum window width", async () => {
+    await browser.setWindowSize(800, 700);
+    await browser.waitUntil(
+      async () =>
+        browser.execute(
+          () => getComputedStyle(document.querySelector(".main-container")).marginRight === "0px",
+        ),
+      { timeout: 5_000, interval: 100 },
+    );
+    await $('.workspace-sidebar-rail-btn[title="New Connection"]').click();
+    await $(".connection-picker-modal").waitForDisplayed({ timeout: 10_000 });
+    const mysql = await $(
+      '//button[contains(concat(" ", normalize-space(@class), " "), " connection-picker-rail-item ")][.//span[normalize-space()="MySQL"]]',
+    );
+    await mysql.click();
+
+    const layout = await browser.execute(() => {
+      const modal = document.querySelector(".connection-picker-modal");
+      const head = document.querySelector(".connection-picker-head");
+      const footer = document.querySelector(".connection-picker-footer-actions");
+      const primary = footer?.querySelector(".btn-primary");
+      const modalRect = modal?.getBoundingClientRect();
+      return {
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        modalLeft: modalRect?.left ?? 0,
+        modalRight: modalRect?.right ?? 0,
+        modalScrollWidth: modal?.scrollWidth ?? 0,
+        modalClientWidth: modal?.clientWidth ?? 0,
+        headScrollWidth: head?.scrollWidth ?? 0,
+        headClientWidth: head?.clientWidth ?? 0,
+        footerBottom: footer?.getBoundingClientRect().bottom ?? 0,
+        primaryBottom: primary?.getBoundingClientRect().bottom ?? 0,
+      };
+    });
+    if (
+      layout.viewportWidth !== 800 ||
+      layout.modalLeft < 0 ||
+      layout.modalRight > layout.viewportWidth + 1 ||
+      layout.modalScrollWidth > layout.modalClientWidth + 1 ||
+      layout.headScrollWidth > layout.headClientWidth + 1 ||
+      layout.primaryBottom <= 0 ||
+      layout.primaryBottom > layout.viewportHeight ||
+      layout.footerBottom > layout.viewportHeight
+    ) {
+      throw new Error(`Minimum-width connection layout failed: ${JSON.stringify(layout)}`);
+    }
+    await runAxe("Minimum-width connection dialog");
   });
 });

@@ -19,6 +19,7 @@ import {
   AI_PANEL_DEFAULT_WIDTH,
   AI_PANEL_MAX_WIDTH,
   AI_PANEL_MIN_WIDTH,
+  useAIPanelDisplayWidth,
   useAIPanelResize,
 } from "../../hooks/useAIPanelResize";
 import { useAppLayoutStore } from "../../stores/appLayoutStore";
@@ -379,9 +380,10 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
   const handleUseSuggestion = useCallback((prompt: string) => m.setPromptDraft(prompt), [m]);
   const panelWidth = useAppLayoutStore((state) => state.aiPanelWidth);
   const setPanelWidth = useAppLayoutStore((state) => state.setAIPanelWidth);
+  const displayPanelWidth = useAIPanelDisplayWidth(panelWidth);
   const onResizeHandleMouseDown = useAIPanelResize({
     enabled: true,
-    width: panelWidth,
+    width: displayPanelWidth,
     setWidth: setPanelWidth,
   });
   return (
@@ -395,15 +397,12 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
         </div>
       )}
       <div className="ai-workspace-stage ai-workspace-stage--sidebar">
-        <aside
-          className={`ai-workspace-sidebar ${m.isLongformComposer ? "is-longform" : ""}`}
-          style={{ width: panelWidth }}
-        >
+        <aside className={`ai-workspace-sidebar ${m.isLongformComposer ? "is-longform" : ""}`}>
           <div
             className="ai-workspace-resize-handle"
             role="separator"
             aria-orientation="vertical"
-            aria-valuenow={panelWidth}
+            aria-valuenow={displayPanelWidth}
             aria-valuemin={AI_PANEL_MIN_WIDTH}
             aria-valuemax={AI_PANEL_MAX_WIDTH}
             aria-label={m.aiCopy.composer.resizeHandleTitle}

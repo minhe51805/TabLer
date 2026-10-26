@@ -33,6 +33,7 @@ import type { Tab } from "../types";
 import type { ConnectionConfig } from "../types/database";
 import type { QueryEditorSessionState } from "./SQLEditor";
 import { formatCountLabel, useI18n } from "../i18n";
+import "./workspace-statusbar.css";
 import { getQueryNotifyCopy } from "../utils/query-notify-copy";
 import { useEvent } from "../stores/event-center";
 import { useConnectionStore } from "../stores/connectionStore";
@@ -572,6 +573,11 @@ export function AppWorkspacePanel({
     />
   );
 
+  const statusbarDatabaseLabel =
+    activeConn?.file_path && currentDatabase
+      ? currentDatabase.split(/[\\/]/).filter(Boolean).pop() || currentDatabase
+      : currentDatabase;
+
   return (
     <>
       {showWorkspaceSync && activeConn ? (
@@ -925,9 +931,9 @@ export function AppWorkspacePanel({
             {isConnected ? "Connected" : "Disconnected"}
           </span>
           {isConnected && activeConn && (
-            <span className="statusbar-info">
+            <span className="statusbar-info" title={currentDatabase || undefined}>
               {activeConn.db_type.toUpperCase()}
-              {currentDatabase ? ` | ${currentDatabase}` : ""}
+              {statusbarDatabaseLabel ? ` | ${statusbarDatabaseLabel}` : ""}
               {activeWorkspaceActivity
                 ? ` | ${activeWorkspaceActivity.label} ${activeWorkspaceActivity.durationMs}ms`
                 : ""}

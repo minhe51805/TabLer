@@ -175,17 +175,6 @@ export function ConnectionForm({
   const isBootstrappingWorkspace = isCreatingDatabase || isConnecting;
   const sqliteDatabaseName =
     (formData.database || "").trim() || (formData.name || "").trim() || "local-database";
-  const supportedCount = availableDatabases.filter((db) => db.supported).length;
-  // Engines whose driver bundle is installed but not enabled yet — counted
-  // separately so they are not mixed into the roadmap total.
-  const installedDisabledCount = availableDatabases.filter(
-    (db) => !db.supported && db.pluginHttpState === "installed",
-  ).length;
-  const roadmapCount = availableDatabases.length - supportedCount - installedDisabledCount;
-  const localRoadmapCount = availableDatabases.filter(
-    (db) => !LOCAL_BOOTSTRAP_READY.has(db.key),
-  ).length;
-
   const suggestedUsernamePlaceholder = getSuggestedUsernamePlaceholder(
     selectedDb?.key || formData.db_type,
   );
@@ -1235,9 +1224,6 @@ export function ConnectionForm({
         pickerSearch={pickerSearch}
         pickerSections={pickerSections}
         filteredDbs={filteredDbs}
-        supportedCount={supportedCount}
-        roadmapCount={roadmapCount}
-        localRoadmapCount={localRoadmapCount}
         strings={pickerStrings}
         onSearchChange={setPickerSearch}
         onSelectDb={handleSelectDb}

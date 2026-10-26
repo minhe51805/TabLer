@@ -4003,7 +4003,10 @@ body {
   height: 100vh;
   width: 100vw;
   overflow: hidden;
-  --workspace-ai-sidebar-width: min(clamp(420px, 33vw, 560px), calc(100vw - 620px));
+  --workspace-ai-sidebar-width: min(
+    var(--workspace-ai-sidebar-preferred-width, 448px),
+    calc(100vw - 520px)
+  );
   background: var(--mm-surface-1);
 }
 
@@ -24914,33 +24917,36 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   background: var(--accent-hover);
 }
 
-@media (min-width: 961px) and (max-width: 1240px) {
+@media (min-width: 1101px) and (max-width: 1240px) {
   .app-root {
-    --workspace-ai-sidebar-width: min(clamp(380px, 42vw, 512px), calc(100vw - 520px));
+    --workspace-ai-sidebar-width: min(
+      var(--workspace-ai-sidebar-preferred-width, 448px),
+      calc(100vw - 520px)
+    );
   }
 }
 
-@media (max-width: 960px) {
+@media (max-width: 1100px) {
   /* Overlay mode: the panel floats above the workspace, so it keeps a usable
      width instead of following the side-by-side shrinking formula. */
   .app-root {
-    --workspace-ai-sidebar-width: min(420px, calc(100vw - 12px));
+    --workspace-ai-sidebar-width: min(
+      420px,
+      var(--workspace-ai-sidebar-preferred-width, 420px),
+      calc(100vw - 12px)
+    );
   }
-}
 
-@media (max-width: 960px) {
   .app-root.workspace-ai-open .titlebar,
   .app-root.workspace-ai-open .error-bar,
   .app-root.workspace-ai-open .main-container,
   .app-root.workspace-ai-open .statusbar {
     margin-right: 0;
   }
-}
 
-@media (max-width: 960px) {
   .ai-workspace-stage--sidebar .ai-workspace-sidebar,
   .ai-workspace-stage--sidebar .ai-workspace-sidebar.is-longform {
-    width: min(420px, calc(100vw - 12px));
+    width: min(420px, var(--workspace-ai-sidebar-preferred-width, 420px), calc(100vw - 12px));
   }
 }
 

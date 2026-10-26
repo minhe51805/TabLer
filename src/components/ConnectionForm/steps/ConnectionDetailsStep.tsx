@@ -399,7 +399,7 @@ export function ConnectionDetailsStep({
           )}
 
           <div className="connection-form-header-copy">
-            <h2 className="connection-form-title">
+            <h2 id="connection-form-title" className="connection-form-title">
               {connectionTitle}
               <span className="connection-form-title-dot" aria-hidden="true" />
             </h2>

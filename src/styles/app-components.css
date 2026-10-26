@@ -4114,7 +4114,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 }
 
 .titlebar-context-label {
-  color: #707071;
+  color: var(--text-primary);
   font-size: var(--mm-fs-micro);
   font-weight: 700;
   letter-spacing: 0.12em;
@@ -5911,6 +5911,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 }
 
 .workspace-toolbar-title {
+  margin: 0;
   color: var(--text-primary);
   font-size: var(--mm-fs-body);
   font-weight: 700;
@@ -12181,7 +12182,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   border-radius: 12px;
   border: 1px solid rgba(0, 122, 255, 0.16);
   background: rgba(0, 122, 255, 0.08);
-  color: var(--accent-hover);
+  color: var(--text-secondary);
   font-size: var(--mm-fs-micro);
   font-weight: 700;
   cursor: pointer;
@@ -12266,7 +12267,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 }
 
 .connection-picker-footer-label {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: var(--mm-fs-micro);
   font-weight: 800;
   letter-spacing: 0.08em;
@@ -12305,7 +12306,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 }
 
 .connection-picker-footer-pill.supported {
-  color: var(--success);
+  color: color-mix(in srgb, var(--success) 65%, var(--text-primary));
   border: 1px solid var(--mm-border);
   background: var(--mm-surface-2);
 }
@@ -13027,7 +13028,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   border-radius: 12px;
   border: 1px solid rgba(0, 122, 255, 0.16);
   background: rgba(0, 122, 255, 0.07);
-  color: var(--fintech-green);
+  color: var(--text-secondary);
 }
 
 .connection-picker-selection-switch:hover {
@@ -13063,12 +13064,12 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
 }
 
 .connection-picker-footer-label {
-  color: var(--fintech-cyan);
+  color: var(--text-secondary);
   letter-spacing: 0.1em;
 }
 
 .connection-picker-footer-pill.supported {
-  color: var(--fintech-green);
+  color: color-mix(in srgb, var(--success) 65%, var(--text-primary));
   border: 1px solid rgba(0, 122, 255, 0.18);
   background: rgba(0, 122, 255, 0.09);
 }
@@ -32905,7 +32906,7 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
 .erd-topbar-heading {
   min-width: 0;
   display: flex;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
   flex-direction: row;
   align-items: center;
   gap: 9px;
@@ -32937,6 +32938,7 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
 }
 
 .erd-topbar-title {
+  margin: 0;
   font-size: var(--mm-fs-body);
   line-height: 1.2;
   font-weight: 750;
@@ -33096,7 +33098,7 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   font-size: var(--mm-fs-micro);
   line-height: 1.2;
   font-weight: 500;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 .erd-sidepanel-collapse {
@@ -33138,7 +33140,7 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
 
 .erd-sidepanel-action.is-recommended {
   justify-content: flex-start;
-  color: var(--accent);
+  color: var(--text-secondary);
 }
 
 .erd-filter {
@@ -33341,7 +33343,7 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   padding: 3px 8px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--accent) 10%, var(--mm-surface-1));
-  color: var(--accent);
+  color: var(--text-secondary);
   font-size: 10px;
   line-height: 1;
   font-weight: 700;
@@ -33386,7 +33388,7 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   justify-content: center;
   border: 0;
   background: var(--mm-surface-1);
-  color: var(--accent);
+  color: var(--text-secondary);
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.12);
 }
 
@@ -36714,7 +36716,7 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
 
 .connection-picker-rail-item.selected {
   background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--accent);
+  color: var(--text-secondary);
 }
 
 .connection-picker-rail-icon {

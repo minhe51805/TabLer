@@ -473,7 +473,7 @@ export function ConnectionPickerStep({
           <span className="panel-kicker">{strings.pickerKicker}</span>
           <div className="connection-picker-hero">
             <div className="connection-picker-hero-copy">
-              <h2 className="connection-picker-title">
+              <h2 id="connection-picker-title" className="connection-picker-title">
                 {bootstrapMode ? strings.pickerLocalTitle : strings.pickerTitle}
               </h2>
               <p className="connection-picker-subtitle">
@@ -674,12 +674,20 @@ export function ConnectionPickerStep({
             </div>
           </div>
 
-          <aside className="connection-picker-aside">
+          <aside
+            className="connection-picker-aside"
+            aria-labelledby="connection-picker-selection-title"
+          >
             <div
               className={`connection-picker-selection-card ${selectedDb ? "has-selection" : ""}`}
               style={selectedBrandStyle}
             >
-              <span className="connection-picker-footer-label">{strings.selection}</span>
+              <span
+                id="connection-picker-selection-title"
+                className="connection-picker-footer-label"
+              >
+                {strings.selection}
+              </span>
 
               {selectedDb && selectedStatus ? (
                 <>

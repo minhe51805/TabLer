@@ -574,17 +574,6 @@ export function AppWorkspacePanel({
 
   return (
     <>
-      <input
-        ref={workspaceBundleInputRef}
-        type="file"
-        accept="application/json,.json,.tableworkspace"
-        className="sr-only"
-        onChange={(event) => {
-          const file = event.currentTarget.files?.[0];
-          event.currentTarget.value = "";
-          if (file) void importWorkspaceBundle(file);
-        }}
-      />
       {showWorkspaceSync && activeConn ? (
         <WorkspaceSyncModal
           connectionName={activeConn.name}
@@ -607,6 +596,7 @@ export function AppWorkspacePanel({
       <div className="main-container">
         <aside
           className={`sidebar ${isSidebarCollapsed ? "sidebar-collapsed" : ""} ${isERDiagramWorkspace ? "sidebar-er-focus" : ""}`}
+          aria-label={isERDiagramWorkspace ? "ER Diagram" : t("explorer.title")}
           style={{
             width: isSidebarCollapsed ? 50 : isERDiagramWorkspace ? 296 : sidebarWidth,
           }}
@@ -643,16 +633,28 @@ export function AppWorkspacePanel({
           </div>
         )}
 
-        <main className="main-content">
+        <main className="main-content" aria-labelledby="workspace-title">
+          <input
+            ref={workspaceBundleInputRef}
+            type="file"
+            accept="application/json,.json,.tableworkspace"
+            className="sr-only"
+            aria-label={t("workspace.bundle.import")}
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              event.currentTarget.value = "";
+              if (file) void importWorkspaceBundle(file);
+            }}
+          />
           {!isERDiagramWorkspace && (
             <div className="workspace-toolbar">
               <div className="workspace-toolbar-main">
-                <span className="workspace-toolbar-title" title={activeTab?.title || undefined}>
+                <h1 className="workspace-toolbar-title" title={activeTab?.title || undefined}>
                   {activeTab?.title ||
                     (isConnected
                       ? t("workspace.readyForQueries")
                       : t("titlebar.noActiveConnection"))}
-                </span>
+                </h1>
                 {activeQueryChrome?.executionTimeMs !== undefined && (
                   <div className="workspace-toolbar-status">
                     <span className="workspace-toolbar-status-pill success">

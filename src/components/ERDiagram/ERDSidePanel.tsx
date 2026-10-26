@@ -1,11 +1,22 @@
-import { memo, useCallback, useEffect, useRef, useState, type CSSProperties, type Dispatch, type SetStateAction, type UIEvent } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type Dispatch,
+  type SetStateAction,
+  type UIEvent,
+} from "react";
 import { CheckCheck, Search, Sparkles, Square } from "lucide-react";
 import type { TableSchema } from "../../types/database";
 import { TABLE_COLORS } from "./erd-graph";
 
 interface ERDSidePanelProps {
   isSidePanelCollapsed: boolean;
-  selectedTables: Set<string>;  filteredTables: TableSchema[];
+  selectedTables: Set<string>;
+  filteredTables: TableSchema[];
   tableColorMap: Map<string, string>;
   tableFilter: string;
   setTableFilter: Dispatch<SetStateAction<string>>;
@@ -34,8 +45,7 @@ const ERDTableRow = memo(function ERDTableRow({
   isCollapsed,
   onToggle,
 }: ERDTableRowProps) {
-  const showSchema =
-    !isCollapsed && Boolean(table.schema) && table.schema !== "public";
+  const showSchema = !isCollapsed && Boolean(table.schema) && table.schema !== "public";
 
   return (
     <button
@@ -51,12 +61,8 @@ const ERDTableRow = memo(function ERDTableRow({
       {!isCollapsed && (
         <>
           <span className="erd-table-toggle-name">{table.name}</span>
-          {showSchema && (
-            <span className="erd-table-toggle-schema">{table.schema}</span>
-          )}
-          <span className="erd-table-toggle-count">
-            {table.columns.length}
-          </span>
+          {showSchema && <span className="erd-table-toggle-schema">{table.schema}</span>}
+          <span className="erd-table-toggle-count">{table.columns.length}</span>
         </>
       )}
     </button>
@@ -105,9 +111,7 @@ export function ERDSidePanel({
   const handleListScroll = useCallback((event: UIEvent<HTMLDivElement>) => {
     const nextScrollTop = event.currentTarget.scrollTop;
     cancelAnimationFrame(scrollFrameRef.current);
-    scrollFrameRef.current = requestAnimationFrame(() =>
-      setScrollTop(nextScrollTop),
-    );
+    scrollFrameRef.current = requestAnimationFrame(() => setScrollTop(nextScrollTop));
   }, []);
 
   const totalRows = filteredTables.length;
@@ -116,21 +120,20 @@ export function ERDSidePanel({
       ? 0
       : Math.max(0, Math.floor(scrollTop / ROW_SLOT) - LIST_OVERSCAN_ROWS);
   const visibleRowCount =
-    viewportHeight <= 0
-      ? totalRows
-      : Math.ceil(viewportHeight / ROW_SLOT) + LIST_OVERSCAN_ROWS * 2;
+    viewportHeight <= 0 ? totalRows : Math.ceil(viewportHeight / ROW_SLOT) + LIST_OVERSCAN_ROWS * 2;
   const lastVisibleRow = Math.min(totalRows, firstVisibleRow + visibleRowCount);
   const visibleRows = filteredTables.slice(firstVisibleRow, lastVisibleRow);
 
   return (
     <aside
       className={`erd-sidepanel ${isSidePanelCollapsed ? "is-collapsed" : ""}`}
+      aria-labelledby="erd-sidepanel-title"
     >
       <div className="erd-sidepanel-header">
-        <strong className="erd-sidepanel-title">Tables</strong>
-        <span className="erd-sidepanel-meta">
-          {selectedTables.size} selected
-        </span>
+        <strong id="erd-sidepanel-title" className="erd-sidepanel-title">
+          Tables
+        </strong>
+        <span className="erd-sidepanel-meta">{selectedTables.size} selected</span>
       </div>
 
       <div className="erd-sidepanel-actions">
@@ -143,19 +146,11 @@ export function ERDSidePanel({
           <Sparkles className="erd-sidepanel-action-icon" />
           Overview
         </button>
-        <button
-          type="button"
-          onClick={handleSelectAll}
-          className="erd-sidepanel-action"
-        >
+        <button type="button" onClick={handleSelectAll} className="erd-sidepanel-action">
           <CheckCheck className="erd-sidepanel-action-icon" />
           All
         </button>
-        <button
-          type="button"
-          onClick={handleClearAll}
-          className="erd-sidepanel-action"
-        >
+        <button type="button" onClick={handleClearAll} className="erd-sidepanel-action">
           <Square className="erd-sidepanel-action-icon" />
           None
         </button>
@@ -172,11 +167,7 @@ export function ERDSidePanel({
         />
       </label>
 
-      <div
-        ref={listRef}
-        onScroll={handleListScroll}
-        className="erd-table-list custom-scrollbar"
-      >
+      <div ref={listRef} onScroll={handleListScroll} className="erd-table-list custom-scrollbar">
         {totalRows === 0 ? (
           <div className="erd-empty-list">
             <Search className="erd-empty-list-icon" />
@@ -188,10 +179,7 @@ export function ERDSidePanel({
             )}
           </div>
         ) : (
-          <div
-            className="erd-virtual-list"
-            style={{ height: totalRows * ROW_SLOT }}
-          >
+          <div className="erd-virtual-list" style={{ height: totalRows * ROW_SLOT }}>
             {visibleRows.map((table, offset) => (
               <div
                 key={table.name}

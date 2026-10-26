@@ -1261,7 +1261,14 @@ export function ConnectionForm({
     }
     return (
       <div className="connection-picker-overlay">
-        <div className="connection-picker-modal">{pickerContent}</div>
+        <div
+          className="connection-picker-modal"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="connection-picker-title"
+        >
+          {pickerContent}
+        </div>
       </div>
     );
   }
@@ -1342,7 +1349,14 @@ export function ConnectionForm({
   }
   return (
     <div className="connection-form-overlay">
-      <div className="connection-form-modal">{formContent}</div>
+      <div
+        className="connection-form-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="connection-form-title"
+      >
+        {formContent}
+      </div>
     </div>
   );
 }

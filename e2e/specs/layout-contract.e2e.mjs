@@ -555,8 +555,12 @@ describe("TableR UI layout contract", () => {
       const shell = document.querySelector(".datagrid-shell");
       const topbar = document.querySelector(".datagrid-topbar");
       const action = document.querySelector(".datagrid-footer-action");
+      const pinned = document.querySelector(".datagrid-pinned-boundary");
+      const index = document.querySelector(".datagrid-td-index");
       return {
         shellShadow: shell ? getComputedStyle(shell).boxShadow : "",
+        indexShadow: index ? getComputedStyle(index).boxShadow : "none",
+        pinnedShadow: pinned ? getComputedStyle(pinned).boxShadow : "none",
         topbarShadow: topbar ? getComputedStyle(topbar).boxShadow : "",
         actionShadow: action ? getComputedStyle(action).boxShadow : "none",
         topbarWidth: topbar?.clientWidth ?? 0,
@@ -565,6 +569,8 @@ describe("TableR UI layout contract", () => {
     });
     if (
       styles.shellShadow !== "none" ||
+      styles.indexShadow !== "none" ||
+      styles.pinnedShadow !== "none" ||
       styles.topbarShadow !== "none" ||
       styles.actionShadow !== "none" ||
       styles.topbarScrollWidth > styles.topbarWidth + 1

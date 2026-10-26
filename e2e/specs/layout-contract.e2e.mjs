@@ -156,6 +156,38 @@ describe("TableR UI layout contract", () => {
     }
   });
 
+  it("uses flat surfaces and inline metadata on the workspace overview", async () => {
+    await $(".workspace-ready-panel").waitForDisplayed({ timeout: 10_000 });
+    const styles = await browser.execute(() => {
+      const header = document.querySelector(".workspace-ready-header");
+      const title = document.querySelector(".workspace-ready-title");
+      const meta = document.querySelector(".workspace-ready-meta-chip");
+      const action = document.querySelector(".workspace-ready-action-card");
+      const main = document.querySelector(".main-content");
+      return {
+        headerShadow: header ? getComputedStyle(header).boxShadow : "",
+        headerImage: header ? getComputedStyle(header).backgroundImage : "",
+        headerRadius: header ? getComputedStyle(header).borderRadius : "",
+        titleImage: title ? getComputedStyle(title).backgroundImage : "",
+        metaBorderWidth: meta ? getComputedStyle(meta).borderTopWidth : "",
+        actionShadow: action ? getComputedStyle(action).boxShadow : "",
+        mainShadow: main ? getComputedStyle(main).boxShadow : "",
+      };
+    });
+    if (
+      styles.headerShadow !== "none" ||
+      styles.headerImage !== "none" ||
+      styles.headerRadius !== "12px" ||
+      styles.titleImage !== "none" ||
+      styles.metaBorderWidth !== "0px" ||
+      styles.actionShadow !== "none" ||
+      styles.mainShadow !== "none"
+    ) {
+      throw new Error(`Workspace visual system is not flat: ${JSON.stringify(styles)}`);
+    }
+    await runAxe("Workspace overview");
+  });
+
   it("keeps the ER toolbar inside its container when the AI sidebar is open", async () => {
     const trigger = await $('button[title="ER Diagram"]');
     await trigger.waitForDisplayed({ timeout: 10_000 });
@@ -184,6 +216,7 @@ describe("TableR UI layout contract", () => {
         mainWidth: main?.getBoundingClientRect().width ?? 0,
         mainMarginRight: getComputedStyle(document.querySelector(".main-container")).marginRight,
         aiWidth: ai?.getBoundingClientRect().width ?? 0,
+        aiBoxShadow: ai ? getComputedStyle(ai).boxShadow : "",
         resizeHandleDisplay: resizeHandle ? getComputedStyle(resizeHandle).display : "",
         width: bar?.getBoundingClientRect().width ?? 0,
         scrollWidth: bar?.scrollWidth ?? 0,
@@ -200,6 +233,7 @@ describe("TableR UI layout contract", () => {
       layout.mainMarginRight !== "0px" ||
       layout.aiWidth <= 0 ||
       layout.aiWidth > 420 ||
+      layout.aiBoxShadow !== "none" ||
       layout.resizeHandleDisplay !== "none"
     ) {
       throw new Error(`AI drawer compresses the 1024px workspace: ${JSON.stringify(layout)}`);
@@ -459,5 +493,84 @@ describe("TableR UI layout contract", () => {
       throw new Error(`Minimum-width connection layout failed: ${JSON.stringify(layout)}`);
     }
     await runAxe("Minimum-width connection dialog");
+  });
+
+  it("shows an actionable empty state on the metrics board", async () => {
+    await $(".connection-picker-close").click();
+    await $(".connection-picker-modal").waitForDisplayed({ timeout: 5_000, reverse: true });
+    await browser.setWindowSize(1280, 900);
+    const closeAI = await $(".ai-workspace-panel-header .is-close");
+    if (await closeAI.isDisplayed()) {
+      await closeAI.click();
+      await $(".ai-workspace-sidebar").waitForDisplayed({ timeout: 5_000, reverse: true });
+    }
+    await $('button[title="Metrics boards"]').click();
+    await $(".metrics-board-empty-canvas").waitForDisplayed({ timeout: 10_000 });
+    const state = await browser.execute(() => {
+      const empty = document.querySelector(".metrics-board-empty-canvas");
+      const topbar = document.querySelector(".metrics-board-topbar");
+      return {
+        emptyText: empty?.textContent ?? "",
+        actionText: empty?.querySelector("button")?.textContent ?? "",
+        workspaceTitle:
+          document.querySelector(".workspace-toolbar-title")?.textContent?.trim() ?? "",
+        topbarShadow: topbar ? getComputedStyle(topbar).boxShadow : "",
+      };
+    });
+    if (
+      !state.emptyText.includes("0") ||
+      !state.actionText.includes("Add widget") ||
+      state.workspaceTitle !== "Metrics" ||
+      state.topbarShadow !== "none"
+    ) {
+      throw new Error(`Metrics empty state is incomplete: ${JSON.stringify(state)}`);
+    }
+    await runAxe("Metrics empty board");
+  });
+
+  it("opens the existing widget library from the metrics empty state", async () => {
+    await $(".metrics-board-empty-canvas button").click();
+    const menu = await $(".metrics-board-widget-menu-list[role=menu]");
+    await menu.waitForDisplayed({ timeout: 5_000 });
+    const itemCount = await menu.$$('[role="menuitem"]').length;
+    if (itemCount === 0)
+      throw new Error("Metrics empty-state action did not open the widget library");
+  });
+
+  it("keeps the data grid dense but visually flat", async () => {
+    await $(".workspace-toolbar-title").click();
+    await $('button[title="Database explorer"]').click();
+    const folder = await $(
+      '//button[contains(concat(" ", normalize-space(@class), " "), " explorer-folder-row ")][contains(., "Tables")]',
+    );
+    if ((await folder.getAttribute("aria-expanded")) !== "true") {
+      await folder.click();
+    }
+    const table = await $('[data-testid="table-public-smoke_items"]');
+    await table.waitForDisplayed({ timeout: 10_000 });
+    await table.click();
+    await $(".datagrid-shell").waitForDisplayed({ timeout: 15_000 });
+
+    const styles = await browser.execute(() => {
+      const shell = document.querySelector(".datagrid-shell");
+      const topbar = document.querySelector(".datagrid-topbar");
+      const action = document.querySelector(".datagrid-footer-action");
+      return {
+        shellShadow: shell ? getComputedStyle(shell).boxShadow : "",
+        topbarShadow: topbar ? getComputedStyle(topbar).boxShadow : "",
+        actionShadow: action ? getComputedStyle(action).boxShadow : "none",
+        topbarWidth: topbar?.clientWidth ?? 0,
+        topbarScrollWidth: topbar?.scrollWidth ?? 0,
+      };
+    });
+    if (
+      styles.shellShadow !== "none" ||
+      styles.topbarShadow !== "none" ||
+      styles.actionShadow !== "none" ||
+      styles.topbarScrollWidth > styles.topbarWidth + 1
+    ) {
+      throw new Error(`Data grid visual contract failed: ${JSON.stringify(styles)}`);
+    }
+    await runAxe("Data grid workspace");
   });
 });

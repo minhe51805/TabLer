@@ -7,6 +7,7 @@ type GridColumn = Column<unknown[], unknown>;
 interface DataGridTableViewProps {
   table: Table<unknown[]>;
   tableMinWidth: number;
+  ariaLabel: string;
   renderedColumnCount: number;
   leftPinnedColumns: GridColumn[];
   virtualizableColumns: GridColumn[];
@@ -81,6 +82,7 @@ function pinnedColumnClasses(
 export function DataGridTableView({
   table,
   tableMinWidth,
+  ariaLabel,
   renderedColumnCount,
   leftPinnedColumns,
   virtualizableColumns,
@@ -110,7 +112,12 @@ export function DataGridTableView({
   const pinnedClasses = (column: GridColumn) =>
     pinnedColumnClasses(column, leftPinnedColumns, rightPinnedColumns);
   return (
-    <table className="datagrid-table" style={{ minWidth: tableMinWidth, tableLayout: "fixed" }}>
+    <table
+      className="datagrid-table"
+      style={{ minWidth: tableMinWidth, tableLayout: "fixed" }}
+      role="grid"
+      aria-label={ariaLabel}
+    >
       <thead
         className="datagrid-head"
         onContextMenu={(event) => {

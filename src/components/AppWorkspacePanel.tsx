@@ -656,10 +656,12 @@ export function AppWorkspacePanel({
             <div className="workspace-toolbar">
               <div className="workspace-toolbar-main">
                 <h1 className="workspace-toolbar-title" title={activeTab?.title || undefined}>
-                  {activeTab?.title ||
-                    (isConnected
-                      ? t("workspace.readyForQueries")
-                      : t("titlebar.noActiveConnection"))}
+                  {isMetricsWorkspace
+                    ? t("metrics.sidebarKicker")
+                    : activeTab?.title ||
+                      (isConnected
+                        ? t("workspace.readyForQueries")
+                        : t("titlebar.noActiveConnection"))}
                 </h1>
                 {activeQueryChrome?.executionTimeMs !== undefined && (
                   <div className="workspace-toolbar-status">

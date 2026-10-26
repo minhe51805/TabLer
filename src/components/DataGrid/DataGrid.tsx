@@ -2081,7 +2081,7 @@ export function DataGrid({
           className="datagrid-table-wrap"
           ref={tableWrapRef}
           tabIndex={0}
-          role="grid"
+          role="region"
           aria-label={
             tableName
               ? getDataGridCopy(language).grid.ariaLabelTable(tableName)
@@ -2120,6 +2120,11 @@ export function DataGrid({
             <DataGridTableView
               table={table}
               tableMinWidth={tableMinWidth}
+              ariaLabel={
+                tableName
+                  ? getDataGridCopy(language).grid.ariaLabelTable(tableName)
+                  : getDataGridCopy(language).grid.ariaLabelResult
+              }
               renderedColumnCount={renderedColumnCount}
               leftPinnedColumns={leftPinnedColumns}
               virtualizableColumns={virtualizableColumns}

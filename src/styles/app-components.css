@@ -2444,7 +2444,7 @@
   min-width: 0;
 }
 
-.startup-manager-browser-copy h3 {
+.startup-manager-browser-copy h1 {
   margin: 0;
   font-size: var(--mm-fs-caption);
   font-weight: 800;
@@ -34034,7 +34034,7 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   gap: 3px;
 }
 
-.startup-manager-browser-copy h3 {
+.startup-manager-browser-copy h1 {
   overflow: hidden;
   color: var(--text-primary);
   font-size: var(--mm-fs-subheading);
@@ -35858,7 +35858,7 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   gap: 2px;
 }
 
-.startup-manager-browser-copy h3 {
+.startup-manager-browser-copy h1 {
   font-size: 15px;
   font-weight: 750;
   letter-spacing: -0.01em;

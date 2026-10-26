@@ -36,7 +36,7 @@
 
 @media (max-width: 1100px) {
   .app-root .ai-workspace-stage--sidebar .ai-workspace-sidebar {
-    box-shadow: -16px 0 40px rgba(15, 23, 42, 0.16);
+    box-shadow: none;
   }
 
   .app-root .ai-workspace-resize-handle {

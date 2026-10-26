@@ -44,6 +44,7 @@ import { HoverPopover } from "./HoverPopover";
 import { AppUpdateButton } from "./AppUpdateButton";
 import { useStorageNotices } from "./use-storage-notices";
 import { STARTUP_COPY } from "./startup-copy";
+import "./startup-visual.css";
 
 interface Props {
   onNewConnection: () => void;
@@ -541,7 +542,7 @@ export function StartupConnectionManager({
   return (
     <div className="startup-manager-backdrop">
       <div className="startup-manager-modal">
-        <div
+        <header
           className="startup-manager-topbar"
           onMouseDown={(event) => {
             if (!isDesktopWindow) return;
@@ -579,9 +580,9 @@ export function StartupConnectionManager({
             <AppUpdateButton />
           </div>
           {windowControls ? <div className="startup-manager-controls">{windowControls}</div> : null}
-        </div>
+        </header>
 
-        <div className="startup-manager-body">
+        <main className="startup-manager-body">
           <StartupBrandingPanel />
           <ConnectionListView
             search={search}
@@ -627,7 +628,7 @@ export function StartupConnectionManager({
             }}
             pingAllCopy={(STARTUP_COPY[language] ?? STARTUP_COPY.en).pingAll}
           />
-        </div>
+        </main>
 
         <HoverPopover data={hoveredConnectionPanel} />
 

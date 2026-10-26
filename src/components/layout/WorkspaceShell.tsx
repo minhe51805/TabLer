@@ -14,6 +14,7 @@ import type { QueryChromeState } from "../../types/app-types";
 import type { QueryEditorSessionState } from "../SQLEditor";
 import type { ConnectionConfig, Tab } from "../../types/database";
 import type { WindowMenuSectionKey } from "../../types/app-types";
+import "./workspace-visual-system.css";
 
 // AppWorkspacePanel renders unconditionally on the first frame, so a lazy
 // boundary here only bought a second loading screen after the boot screen —

@@ -1607,11 +1607,15 @@
   background: var(--mm-surface-2);
 }
 
-.fav-save-form {
+.fav-save-form,
+.fav-form {
   padding: 12px;
   display: flex;
   flex-direction: column;
   gap: 12px;
+  overflow-y: auto;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .fav-form-field {

@@ -205,13 +205,13 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
         aria-label={t("schedules.title")}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="fav-header">
-          <h2 className="fav-title">
+        <div className="fav-panel-header">
+          <h2 className="fav-panel-title">
             <CalendarClock className="w-4 h-4" /> {t("schedules.title")}
           </h2>
           <button
             type="button"
-            className="fav-close"
+            className="fav-close-btn"
             aria-label={t("common.close")}
             onClick={onClose}
           >

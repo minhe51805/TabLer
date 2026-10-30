@@ -44,7 +44,7 @@ describe("TableR user testing fixes — T4/T5/T7 regression", () => {
     if (!scheduleTitle.toLowerCase().includes("schedule")) {
       throw new Error(`Expected schedule panel, got: ${scheduleTitle.slice(0, 80)}`);
     }
-    await $(".fav-close").click();
+    await $(".fav-close-btn").click();
     await browser.pause(500);
 
     // ── T4 fix: Query Schedules is reachable via command palette ──────────────
@@ -63,7 +63,7 @@ describe("TableR user testing fixes — T4/T5/T7 regression", () => {
     }
     await items[0].click();
     await $(".fav-panel").waitForDisplayed({ timeout: 10_000 });
-    await $(".fav-close").click();
+    await $(".fav-close-btn").click();
     await browser.pause(500);
 
     // ── T7 fix: Structure button is visible without hover ─────────────────────

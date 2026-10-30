@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { CalendarClock, Play, Sparkles, Trash2, X } from "lucide-react";
 import { useI18n, type TranslationKey } from "../../i18n";
 import { useQuerySchedulesStore } from "../../stores/query-schedules-store";
@@ -197,7 +198,7 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
 
   if (!isOpen) return null;
 
-  return (
+  return createPortal(
     <div className="fav-overlay" role="presentation" onClick={onClose}>
       <aside
         className="fav-panel"
@@ -584,6 +585,7 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
           </div>
         )}
       </aside>
-    </div>
+    </div>,
+    document.body,
   );
 }

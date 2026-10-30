@@ -1308,18 +1308,10 @@
   position: fixed;
   inset: 0;
   z-index: 5000;
+  isolation: isolate;
   display: flex;
   justify-content: flex-end;
   background: rgba(0, 0, 0, 0.42);
-  animation: fav-fade-in 150ms ease;
-}
-
-/* Override .app-root > * (position: relative; z-index: 1) which flattens
-   all direct children into the same stacking level and strips position:fixed,
-   letting workspace content bleed through the panel. */
-.app-root > .fav-overlay {
-  position: fixed;
-  z-index: 5000;
 }
 
 .fav-panel {
@@ -1328,9 +1320,9 @@
   display: flex;
   flex-direction: column;
   background: #fff;
+  opacity: 1;
   border-left: 1px solid var(--mm-border);
   box-shadow: -8px 0 24px rgba(0, 0, 0, 0.28);
-  animation: fav-slide-in 200ms ease;
 }
 
 .fav-panel-header {

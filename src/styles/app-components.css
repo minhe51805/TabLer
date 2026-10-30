@@ -7116,7 +7116,7 @@ body.is-ai-panel-resizing .app-root.workspace-ai-open .statusbar {
   cursor: pointer;
   transition: all var(--transition);
   flex-shrink: 0;
-  opacity: 0;
+  opacity: 1;
 }
 
 /* Reveal row actions on hover (keyboard users still get them via focus). */
@@ -32552,7 +32552,7 @@ details.ai-workspace-chat-reasoning[open] .ai-workspace-chat-reasoning-summary::
   border-radius: 6px;
   background: transparent;
   color: var(--text-muted);
-  opacity: 0;
+  opacity: 1;
 }
 
 .explorer-table-row:hover .explorer-structure-btn,
@@ -39881,7 +39881,7 @@ body.is-ai-panel-resizing .ai-workspace-resize-handle-line {
   background: transparent;
   box-shadow: none;
   color: var(--text-muted);
-  opacity: 0;
+  opacity: 1;
 }
 
 .app-root .explorer-table-row:hover .explorer-structure-btn,

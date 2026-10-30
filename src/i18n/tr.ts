@@ -84,6 +84,7 @@ export const tr: Record<keyof typeof en, string> = {
   "menu.item.externalIntegrations": "Harici entegrasyonlar",
   "menu.item.metrics": "Metrikler",
   "menu.item.queryHistory": "Sorgu Gecmisi",
+  "menu.item.querySchedules": "Sorgu Zamanlamalari",
   "menu.item.aboutTableR": "TableR Hakkinda",
   "menu.item.keyboardShortcuts": "Klavye Kisayollari",
   "help.about.kicker": "Hakkinda",

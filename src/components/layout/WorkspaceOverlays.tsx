@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { EventCenter } from "../../stores/event-center";
 import { AppKeyboardHandler } from "../AppKeyboardHandler";
@@ -166,6 +166,13 @@ export function WorkspaceOverlays(props: WorkspaceOverlaysProps) {
     handleRowInspectorClose,
     globalToastMarkup,
   } = props;
+
+  useEffect(() => {
+    const toggleSchedules = () => setShowQuerySchedules((current: boolean) => !current);
+    window.addEventListener("toggle-query-schedules-palette", toggleSchedules);
+    return () => window.removeEventListener("toggle-query-schedules-palette", toggleSchedules);
+  }, [setShowQuerySchedules]);
+
   return (
     <>
       <AppKeyboardHandler

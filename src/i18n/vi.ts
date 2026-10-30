@@ -84,6 +84,7 @@ export const vi: Record<keyof typeof en, string> = {
   "menu.item.externalIntegrations": "Tích hợp bên ngoài",
   "menu.item.metrics": "Metrics",
   "menu.item.queryHistory": "Lịch sử Query",
+  "menu.item.querySchedules": "Lập lịch Query",
   "menu.item.aboutTableR": "Giới thiệu TableR",
   "menu.item.keyboardShortcuts": "Phím tắt",
   "help.about.kicker": "Giới thiệu",

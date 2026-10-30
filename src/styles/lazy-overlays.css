@@ -1949,6 +1949,26 @@
   flex-shrink: 0;
 }
 
+.cex-close-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+
+.cex-close-btn:hover:not(:disabled) {
+  background: var(--mm-surface-2);
+  color: var(--text-primary);
+}
+
 .cex-btn-cancel {
   display: inline-flex;
   align-items: center;

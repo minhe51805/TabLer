@@ -83,6 +83,7 @@ export const en = {
   "menu.item.externalIntegrations": "External integrations",
   "menu.item.metrics": "Metrics",
   "menu.item.queryHistory": "Query History",
+  "menu.item.querySchedules": "Query Schedules",
   "menu.item.aboutTableR": "About TableR",
   "menu.item.keyboardShortcuts": "Keyboard Shortcuts",
   "help.about.kicker": "About",

@@ -84,6 +84,7 @@ export const ko: Record<keyof typeof en, string> = {
   "menu.item.externalIntegrations": "외부 통합",
   "menu.item.metrics": "메트릭",
   "menu.item.queryHistory": "쿼리 기록",
+  "menu.item.querySchedules": "쿼리 일정",
   "menu.item.aboutTableR": "TableR 정보",
   "menu.item.keyboardShortcuts": "키보드 단축키",
   "help.about.kicker": "정보",

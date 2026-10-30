@@ -81,6 +81,7 @@ export const zh: Partial<Record<keyof typeof en, string>> = {
   "menu.item.externalIntegrations": "外部集成",
   "menu.item.metrics": "指标",
   "menu.item.queryHistory": "查询历史",
+  "menu.item.querySchedules": "查询计划",
   "menu.item.aboutTableR": "关于 TableR",
   "menu.item.keyboardShortcuts": "键盘快捷键",
   "help.about.kicker": "关于",

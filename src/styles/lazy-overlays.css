@@ -1551,6 +1551,58 @@
   border-color: var(--mm-border);
 }
 
+.schedules-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 32px 24px;
+  text-align: center;
+}
+
+.schedules-empty-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 56px;
+  height: 56px;
+  border-radius: 16px;
+  background: var(--accent-dim);
+  color: var(--accent);
+  margin-bottom: 4px;
+}
+
+.schedules-empty-desc {
+  margin: 0;
+  max-width: 280px;
+  color: var(--text-secondary);
+  font-size: var(--mm-fs-caption);
+  line-height: 1.55;
+}
+
+.schedules-empty-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  min-height: 38px;
+  padding: 0 18px;
+  border: none;
+  border-radius: 10px;
+  background: var(--accent-active);
+  color: #fff;
+  font-size: var(--mm-fs-caption);
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 140ms ease;
+}
+
+.schedules-empty-cta:hover {
+  background: var(--accent-hover);
+}
+
 .fav-entry-desc {
   color: var(--text-muted);
   font-size: var(--mm-fs-micro);

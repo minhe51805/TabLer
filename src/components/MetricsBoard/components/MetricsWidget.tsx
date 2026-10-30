@@ -14,10 +14,13 @@ import {
   getSeries,
   getWidgetLibraryItem,
   METRICS_DRAG_HOLD_MS,
+  METRICS_REFRESH_PAUSE_AFTER_FAILURES,
+  resolveMetricsRefreshDelayMs,
   validateMetricsQuery,
 } from "../utils/query-builder";
 import { ChartBars, ChartLine, ChartPie, ChartRadial } from "../utils/chart-renderer";
 import type { CSSProperties, PointerEvent as ReactPointerEvent } from "react";
+import "./MetricsWidget.css";
 
 // ---------------------------------------------------------------------------
 // Types
@@ -117,6 +120,11 @@ export function MetricsWidgetCard({
   const rerunRequestedRef = useRef(false);
   const holdTimerRef = useRef<number | null>(null);
   const suppressClickRef = useRef(false);
+  const consecutiveFailuresRef = useRef(0);
+  const [paused, setPaused] = useState(false);
+  const [effectiveRefreshDelayMs, setEffectiveRefreshDelayMs] = useState(() =>
+    resolveMetricsRefreshDelayMs(widget.refresh_seconds, 0),
+  );
 
   const runWidgetQuery = useCallback(async () => {
     if (widget.type === "markdown") return;
@@ -147,6 +155,9 @@ export function MetricsWidgetCard({
       const result = await executeMetricsQuery(connectionId, validation.statement);
 
       if (requestIdRef.current !== requestId) return;
+      consecutiveFailuresRef.current = 0;
+      setPaused(false);
+      setEffectiveRefreshDelayMs(resolveMetricsRefreshDelayMs(widget.refresh_seconds, 0));
       setState({
         result,
         loading: false,
@@ -157,6 +168,12 @@ export function MetricsWidgetCard({
     } catch (error) {
       if (requestIdRef.current !== requestId) return;
       runError = formatExecutionError(error);
+      const failures = consecutiveFailuresRef.current + 1;
+      consecutiveFailuresRef.current = failures;
+      setEffectiveRefreshDelayMs(resolveMetricsRefreshDelayMs(widget.refresh_seconds, failures));
+      if (failures >= METRICS_REFRESH_PAUSE_AFTER_FAILURES) {
+        setPaused(true);
+      }
       setState({
         result: null,
         loading: false,
@@ -175,12 +192,25 @@ export function MetricsWidgetCard({
         }, 0);
       }
     }
-  }, [connectionId, widget.query, widget.type, onWidgetRefreshed, params]);
+  }, [connectionId, widget.query, widget.refresh_seconds, widget.type, onWidgetRefreshed, params]);
+
+  const runWidgetQueryManually = useCallback(async () => {
+    consecutiveFailuresRef.current = 0;
+    setPaused(false);
+    setEffectiveRefreshDelayMs(resolveMetricsRefreshDelayMs(widget.refresh_seconds, 0));
+    await runWidgetQuery();
+  }, [runWidgetQuery, widget.refresh_seconds]);
 
   const runWidgetQueryRef = useRef(runWidgetQuery);
   useEffect(() => {
     runWidgetQueryRef.current = runWidgetQuery;
   }, [runWidgetQuery]);
+
+  useEffect(() => {
+    setEffectiveRefreshDelayMs(
+      resolveMetricsRefreshDelayMs(widget.refresh_seconds, consecutiveFailuresRef.current),
+    );
+  }, [widget.refresh_seconds]);
 
   // Share run state with other mounted cards for the same widget (fullscreen
   // clone) and mirror it when this card is not the one issuing queries.
@@ -198,33 +228,33 @@ export function MetricsWidgetCard({
   }, [autoQuery, runWidgetQuery]);
 
   useEffect(() => {
-    if (!autoQuery || widget.refresh_seconds <= 0) return;
+    if (!autoQuery || widget.refresh_seconds <= 0 || paused) return;
 
     const timer = window.setInterval(() => {
       void runWidgetQuery();
-    }, widget.refresh_seconds * 1000);
+    }, effectiveRefreshDelayMs);
 
     return () => {
       window.clearInterval(timer);
     };
-  }, [autoQuery, runWidgetQuery, widget.refresh_seconds]);
+  }, [autoQuery, effectiveRefreshDelayMs, paused, runWidgetQuery, widget.refresh_seconds]);
 
   // Countdown to next auto-refresh.
   const [secondsUntilRefresh, setSecondsUntilRefresh] = useState<number | null>(null);
   useEffect(() => {
-    if (widget.refresh_seconds <= 0 || !state.lastRunAt) {
+    if (widget.refresh_seconds <= 0 || !state.lastRunAt || paused) {
       setSecondsUntilRefresh(null);
       return;
     }
     const tick = () => {
       const elapsed = Math.floor((Date.now() - state.lastRunAt!) / 1000);
-      const remaining = Math.max(0, widget.refresh_seconds - elapsed);
+      const remaining = Math.max(0, Math.ceil(effectiveRefreshDelayMs / 1000) - elapsed);
       setSecondsUntilRefresh(remaining);
     };
     tick();
     const timer = window.setInterval(tick, 1000);
     return () => window.clearInterval(timer);
-  }, [widget.refresh_seconds, state.lastRunAt]);
+  }, [effectiveRefreshDelayMs, paused, widget.refresh_seconds, state.lastRunAt]);
 
   // Board-level "refresh all" — re-run when the token bumps.
   const prevRefreshTokenRef = useRef(refreshToken);
@@ -250,8 +280,8 @@ export function MetricsWidgetCard({
   const widgetLibraryItem = getWidgetLibraryItem(widget.type);
   const isStale = useMemo(() => {
     if (!state.lastRunAt || widget.refresh_seconds <= 0) return false;
-    return Date.now() - state.lastRunAt > widget.refresh_seconds * 2000;
-  }, [state.lastRunAt, widget.refresh_seconds]);
+    return Date.now() - state.lastRunAt > effectiveRefreshDelayMs * 2;
+  }, [effectiveRefreshDelayMs, state.lastRunAt, widget.refresh_seconds]);
 
   const content = (() => {
     // Markdown widgets have no query — render before the validation gate,
@@ -279,6 +309,9 @@ export function MetricsWidgetCard({
       return (
         <div className="metrics-widget-empty error">
           <span>{state.error}</span>
+          {paused ? (
+            <span className="metrics-widget-paused-chip">{t("metrics.widget.pausedRunAgain")}</span>
+          ) : null}
           <details className="metrics-widget-error-details">
             <summary>{t("metrics.widget.errorDetails")}</summary>
             <pre className="metrics-widget-error-query">{widget.query}</pre>
@@ -288,7 +321,7 @@ export function MetricsWidgetCard({
             className="metrics-widget-retry-btn"
             onClick={(event) => {
               event.stopPropagation();
-              void runWidgetQuery();
+              void runWidgetQueryManually();
             }}
           >
             {t("metrics.widget.retry")}
@@ -505,7 +538,7 @@ export function MetricsWidgetCard({
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.stopPropagation();
-            void runWidgetQuery();
+            void runWidgetQueryManually();
           }}
           title={t("metrics.widget.refresh")}
           aria-label={t("metrics.widget.refresh")}

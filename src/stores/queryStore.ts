@@ -177,7 +177,7 @@ const PROGRESSIVE_FALLBACK_DENY =
 const PROGRESSIVE_FALLBACK_ALLOW =
   /unsupported|not supported|unknown command|not implemented|no such command|invalid command|ipc|transport|failed to fetch|channel|webview/i;
 
-function canFallbackToLegacyQuery(error: unknown): boolean {
+export function canFallbackToLegacyQuery(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
   if (PROGRESSIVE_FALLBACK_DENY.test(message)) return false;
   return PROGRESSIVE_FALLBACK_ALLOW.test(message);
@@ -238,13 +238,22 @@ export const useQueryStore = create<QueryState>((set, get) => ({
         // progress; the command still resolves with the complete result.
         // A listener-setup failure is a transport problem — always fall back.
         try {
-          unlisten = await listen<{ connectionId: string; rows: unknown[][]; totalRows: number }>(
-            "query-row-batch",
-            (event) => {
-              if (event.payload.connectionId !== connectionId) return;
-              set({ progressiveRowCount: event.payload.totalRows });
-            },
-          );
+          unlisten = await listen<{
+            connectionId: string;
+            requestId: string;
+            rows: unknown[][];
+            offset: number;
+            totalRows: number;
+          }>("query-row-batch", (event) => {
+            if (
+              event.payload.connectionId !== connectionId ||
+              event.payload.requestId !== requestId ||
+              get().activeQueryRequestId !== requestId
+            ) {
+              return;
+            }
+            set({ progressiveRowCount: event.payload.offset + event.payload.rows.length });
+          });
         } catch (listenError) {
           console.warn("[Query] Progressive listener unavailable, using legacy path:", listenError);
           unlisten = null;

@@ -227,8 +227,6 @@ export const BUILTIN_ENGINE_KEYS = [
   "mongodb",
 ] as const;
 
-export type BuiltinEngineKey = (typeof BUILTIN_ENGINE_KEYS)[number];
-
 /** Whether an engine ships by default and needs no plugin to be usable. */
 export function isBuiltinEngine(key: string): boolean {
   return (BUILTIN_ENGINE_KEYS as readonly string[]).includes(key);

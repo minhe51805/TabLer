@@ -20,7 +20,12 @@ export function SetCellEditor({
       return new Set<string>();
     }
     const str = String(value);
-    return new Set(str.split(",").map((v) => v.trim()).filter(Boolean));
+    return new Set(
+      str
+        .split(",")
+        .map((v) => v.trim())
+        .filter(Boolean),
+    );
   });
 
   const handleToggle = (val: string) => {
@@ -101,23 +106,4 @@ export function SetCellEditor({
       </div>
     </div>
   );
-}
-
-/** Parse SET values from MySQL column type string.
- * Example: "set('val1','val2','val3')" -> ["val1", "val2", "val3"]
- */
-// Parse helper (not a component) kept with the editor it belongs to.
-// eslint-disable-next-line react-refresh/only-export-components
-export function parseSetValues(columnType: string): string[] {
-  const match = columnType.match(/^set\((.+)\)$/i);
-  if (!match) return [];
-  // Parse quoted values: 'val1','val2',...
-  const inner = match[1];
-  const values: string[] = [];
-  const regex = /'([^'\\]*(?:\\.[^'\\]*)*)'/g;
-  let m;
-  while ((m = regex.exec(inner)) !== null) {
-    values.push(m[1].replace(/\\'/g, "'"));
-  }
-  return values;
 }

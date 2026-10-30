@@ -1,11 +1,17 @@
 import { browser, $ } from "@wdio/globals";
 import path from "node:path";
 
-export const engine = process.env.TABLER_E2E_ENGINE === "postgresql" ? "postgresql" : "sqlite";
+const requestedEngine = process.env.TABLER_E2E_ENGINE;
+export const engine = ["postgresql", "mssql"].includes(requestedEngine)
+  ? requestedEngine
+  : "sqlite";
 export const connectionId = `e2e-${engine}`;
-export const fixtureDatabase = engine === "postgresql"
-  ? (process.env.TABLER_E2E_POSTGRES_DATABASE ?? "tabler_test")
-  : null;
+export const fixtureDatabase =
+  engine === "postgresql"
+    ? (process.env.TABLER_E2E_POSTGRES_DATABASE ?? "tabler_test")
+    : engine === "mssql"
+      ? (process.env.TABLER_E2E_MSSQL_DATABASE ?? "master")
+      : null;
 
 export function connectionConfig(overrides = {}) {
   const common = {
@@ -38,6 +44,17 @@ export function connectionConfig(overrides = {}) {
       port: Number(process.env.TABLER_E2E_POSTGRES_PORT ?? "5432"),
       username: process.env.TABLER_E2E_POSTGRES_USER ?? "tabler",
       password: process.env.TABLER_E2E_POSTGRES_PASSWORD ?? "",
+      database: fixtureDatabase,
+      ssl_mode: overrides.ssl_mode ?? "disable",
+    };
+  }
+  if (engine === "mssql") {
+    return {
+      ...common,
+      host: process.env.TABLER_E2E_MSSQL_HOST ?? "127.0.0.1",
+      port: Number(process.env.TABLER_E2E_MSSQL_PORT ?? "11433"),
+      username: process.env.TABLER_E2E_MSSQL_USER ?? "sa",
+      password: process.env.TABLER_E2E_MSSQL_PASSWORD ?? "TablerIntegration!123",
       database: fixtureDatabase,
       ssl_mode: overrides.ssl_mode ?? "disable",
     };

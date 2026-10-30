@@ -9,6 +9,9 @@ import type { MetricsWidgetDefinition } from "../../../types";
 // ---------------------------------------------------------------------------
 
 export const METRICS_QUERY_TIMEOUT_MS = 30_000;
+export const METRICS_REFRESH_MAX_DELAY_MS = 60_000;
+export const METRICS_REFRESH_MAX_BACKOFF_EXPONENT = 4;
+export const METRICS_REFRESH_PAUSE_AFTER_FAILURES = 5;
 export const METRICS_GRID_COLUMNS = 14;
 export const METRICS_GRID_GAP = 8;
 export const METRICS_GRID_ROW_HEIGHT = 56;
@@ -25,6 +28,16 @@ export const METRICS_EDITOR_MIN_WIDTH = 228;
 export const METRICS_EDITOR_ESTIMATED_HEIGHT = 300;
 export const METRICS_EDITOR_GAP = 12;
 export const METRICS_DRAG_HOLD_MS = 180;
+
+export function resolveMetricsRefreshDelayMs(refreshSeconds: number, consecutiveFailures: number) {
+  if (refreshSeconds <= 0) return 0;
+  const exponent = Math.min(
+    Math.max(0, Math.floor(consecutiveFailures) - 1),
+    METRICS_REFRESH_MAX_BACKOFF_EXPONENT,
+  );
+  return Math.min(refreshSeconds * 1000 * 2 ** exponent, METRICS_REFRESH_MAX_DELAY_MS);
+}
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------

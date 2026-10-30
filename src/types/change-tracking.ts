@@ -71,5 +71,3 @@ export interface ChangeTrackingActions {
   /** Check if a row has pending changes */
   hasPendingChanges: (tableName: string, rowKey: Record<string, unknown>) => boolean;
 }
-
-export type ChangeTrackingStore = ChangeTrackingState & ChangeTrackingActions;

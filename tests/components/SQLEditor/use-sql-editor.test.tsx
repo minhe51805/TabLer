@@ -8,23 +8,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * under test.
  */
 
-const { connectionState, queryState, uiState, aiAutonomy, checkpointMock } = vi.hoisted(() => ({
-  connectionState: {
-    connections: [] as Array<Record<string, unknown>>,
-    currentDatabase: null as string | null,
-    tables: [] as unknown[],
-    switchDatabase: vi.fn<(connectionId: string, database: string) => Promise<void>>(),
-  },
-  queryState: {
-    executeQuery: vi.fn(),
-    executeParameterizedQuery: vi.fn(),
-    executeSandboxQuery: vi.fn(),
-    getTableStructure: vi.fn(),
-  },
-  uiState: { updateTab: vi.fn() },
-  aiAutonomy: { getAutonomy: vi.fn(() => "review") },
-  checkpointMock: vi.fn(async (_params: unknown) => ({ fileName: "cp.sql" })),
-}));
+const { connectionState, queryState, uiState, aiAutonomy, checkpointMock, saveEntryMock } =
+  vi.hoisted(() => ({
+    connectionState: {
+      connections: [] as Array<Record<string, unknown>>,
+      currentDatabase: null as string | null,
+      tables: [] as unknown[],
+      switchDatabase: vi.fn<(connectionId: string, database: string) => Promise<void>>(),
+    },
+    queryState: {
+      executeQuery: vi.fn(),
+      executeParameterizedQuery: vi.fn(),
+      executeSandboxQuery: vi.fn(),
+      getTableStructure: vi.fn(),
+    },
+    uiState: { updateTab: vi.fn() },
+    aiAutonomy: { getAutonomy: vi.fn(() => "review") },
+    checkpointMock: vi.fn(async (_params: unknown) => ({ fileName: "cp.sql" })),
+    saveEntryMock: vi.fn(async () => undefined),
+  }));
 
 vi.mock("@/utils/tauri-utils", () => ({
   invokeWithTimeout: vi.fn().mockResolvedValue(null),
@@ -58,14 +60,14 @@ vi.mock("@/stores/editorPreferencesStore", () => ({
   useEditorPreferencesStore: () => false,
 }));
 vi.mock("@/stores/queryHistoryStore", () => {
-  const saveEntry = vi.fn(async () => undefined);
+  const saveEntry = saveEntryMock;
   const state = { saveEntry };
   return {
     useQueryHistoryStore: Object.assign(
       (selector: (state: { saveEntry: typeof saveEntry }) => unknown) => selector(state),
       { getState: () => state },
     ),
-    __saveEntry: saveEntry,
+    saveEntryMock: saveEntry,
   };
 });
 vi.mock("@/hooks/useConnectionCapabilities", () => ({
@@ -160,6 +162,7 @@ beforeEach(() => {
   connectionState.connections = [PgConnection];
   connectionState.currentDatabase = "appdb";
   connectionState.tables = [];
+  saveEntryMock.mockClear();
   window.localStorage.clear();
 });
 
@@ -220,6 +223,9 @@ describe("handleExecute routing", () => {
   });
 
   it("leading `USE db;` switches the session database, then runs the remainder", async () => {
+    connectionState.switchDatabase.mockImplementation(async () => {
+      connectionState.currentDatabase = "analytics";
+    });
     const { result } = renderEditor();
     result.current.editorRef.current = createEditor("USE analytics; SELECT 1");
 
@@ -228,6 +234,7 @@ describe("handleExecute routing", () => {
     expect(connectionState.switchDatabase).toHaveBeenCalledWith("conn-1", "analytics");
     const [, statements] = queryState.executeSandboxQuery.mock.calls[0];
     expect(statements).toEqual(["SELECT 1"]);
+    expect(saveEntryMock).toHaveBeenCalledWith(" SELECT 1", "conn-1", 3, 1, undefined, "analytics");
   });
 
   it("`USE db` alone only switches — it reports the new database and runs nothing", async () => {
@@ -293,6 +300,90 @@ describe("handleExecute routing", () => {
 
     expect(queryState.executeQuery).toHaveBeenCalledWith("conn-1", "db.t.find()", undefined);
     expect(queryState.executeSandboxQuery).not.toHaveBeenCalled();
+  });
+});
+
+describe("query history execution scope", () => {
+  it("keeps the starting database when a sandbox query finishes after a scope switch", async () => {
+    let resolveQuery: (value: typeof RESULT) => void = () => {};
+    queryState.executeSandboxQuery.mockImplementation(
+      () => new Promise<typeof RESULT>((resolve) => (resolveQuery = resolve)),
+    );
+    const { result } = renderEditor();
+    result.current.editorRef.current = createEditor("SELECT 1");
+
+    let execution!: Promise<void>;
+    act(() => {
+      execution = result.current.handleExecute();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    connectionState.currentDatabase = "analytics";
+    await act(async () => {
+      resolveQuery(RESULT);
+      await execution;
+    });
+
+    expect(saveEntryMock).toHaveBeenCalledWith("SELECT 1", "conn-1", 3, 1, undefined, "appdb");
+  });
+
+  it("keeps the starting database for a parameterized query that changes scope mid-request", async () => {
+    let resolveQuery: (value: typeof RESULT) => void = () => {};
+    queryState.executeParameterizedQuery.mockImplementation(
+      () => new Promise<typeof RESULT>((resolve) => (resolveQuery = resolve)),
+    );
+    const { result } = renderEditor({
+      parameterDrafts: { uid: { dataType: "integer", value: "7" } },
+    });
+    result.current.editorRef.current = createEditor("SELECT * FROM t WHERE id = :uid");
+
+    let execution!: Promise<void>;
+    act(() => {
+      execution = result.current.handleExecute();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    connectionState.currentDatabase = "analytics";
+    await act(async () => {
+      resolveQuery(RESULT);
+      await execution;
+    });
+
+    expect(saveEntryMock).toHaveBeenCalledWith(
+      "SELECT * FROM t WHERE id = :uid",
+      "conn-1",
+      3,
+      1,
+      undefined,
+      "appdb",
+    );
+  });
+
+  it("keeps the starting database when a direct query fails after a scope switch", async () => {
+    connectionState.connections = [{ ...PgConnection, db_type: "mongodb" }];
+    let rejectQuery: (error: Error) => void = () => {};
+    queryState.executeQuery.mockImplementation(
+      () => new Promise<typeof RESULT>((_resolve, reject) => (rejectQuery = reject)),
+    );
+    const { result } = renderEditor();
+    result.current.editorRef.current = createEditor("SELECT 1");
+
+    let execution!: Promise<void>;
+    act(() => {
+      execution = result.current.handleExecute();
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    connectionState.currentDatabase = "analytics";
+    await act(async () => {
+      rejectQuery(new Error("boom"));
+      await execution;
+    });
+
+    expect(saveEntryMock).toHaveBeenCalledWith("SELECT 1", "conn-1", 0, undefined, "boom", "appdb");
   });
 });
 

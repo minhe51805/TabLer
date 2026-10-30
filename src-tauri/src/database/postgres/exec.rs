@@ -1,5 +1,6 @@
 use super::PostgresDriver;
 use crate::database::models::*;
+use crate::database::postgres_support::execute_compat_statement;
 use crate::database::query_common::statement_returns_rows;
 use crate::utils::sql::split_sql_statements;
 use anyhow::Result;
@@ -22,6 +23,7 @@ impl PostgresDriver {
     }
 
     pub(super) async fn execute_query_on_conn(
+        &self,
         conn: &mut PgConnection,
         sql: &str,
     ) -> Result<QueryResult> {
@@ -29,9 +31,16 @@ impl PostgresDriver {
         let statements = split_sql_statements(sql);
 
         if statements.len() <= 1 && Self::query_returns_rows(sql) {
-            let (rows, truncated) = Self::fetch_rows_limited(&mut *conn, sql).await?;
-            let mut result =
-                Self::build_result_from_rows(&rows, 0, sql.to_string(), 0, false, truncated);
+            let (rows, truncated) = Self::fetch_rows_limited(self.db_type, &mut *conn, sql).await?;
+            let mut result = Self::build_result_from_rows(
+                self.db_type,
+                &rows,
+                0,
+                sql.to_string(),
+                0,
+                false,
+                truncated,
+            )?;
             result.execution_time_ms = start.elapsed().as_millis();
             return Ok(result);
         }
@@ -46,18 +55,19 @@ impl PostgresDriver {
 
         for statement in iterable {
             if Self::query_returns_rows(statement) {
-                let (rows, truncated) = Self::fetch_rows_limited(&mut *conn, statement).await?;
+                let (rows, truncated) =
+                    Self::fetch_rows_limited(self.db_type, &mut *conn, statement).await?;
                 last_result = Some(Self::build_result_from_rows(
+                    self.db_type,
                     &rows,
                     0,
                     sql.to_string(),
                     total_affected,
                     false,
                     truncated,
-                ));
+                )?);
             } else {
-                let result = sqlx::query(statement).execute(&mut *conn).await?;
-                total_affected += result.rows_affected();
+                total_affected += execute_compat_statement(self.db_type, conn, statement).await?;
             }
         }
 

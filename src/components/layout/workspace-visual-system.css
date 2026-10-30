@@ -1,0 +1,268 @@
+.app-root .main-content,
+.app-root .sidebar {
+  border: 1px solid var(--mm-border);
+  background: var(--mm-surface-0);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.app-root .sidebar {
+  background: var(--mm-surface-1);
+}
+
+.app-root .workspace-sidebar-shell,
+.app-root .workspace-sidebar-panel,
+.app-root .workspace-toolbar,
+.app-root .tabbar-shell,
+.app-root .statusbar {
+  background: var(--mm-surface-0);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.app-root .workspace-sidebar-rail {
+  background: var(--mm-surface-1);
+  box-shadow: none;
+}
+
+.app-root .workspace-empty-panel {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.app-root .workspace-ready-header {
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 20px;
+  padding: 20px;
+  border: 1px solid var(--mm-border);
+  border-radius: 12px;
+  background: var(--mm-surface-0);
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.app-root .workspace-ready-header-right {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 16px;
+  max-width: 52%;
+}
+
+.app-root .workspace-ready-meta-chip {
+  display: flex;
+  gap: 4px;
+  max-width: 220px;
+  padding: 0;
+  overflow: visible;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  backdrop-filter: none;
+}
+
+.app-root .workspace-ready-meta-chip::before {
+  display: none;
+}
+
+.app-root .workspace-ready-meta-value {
+  max-width: 220px;
+  overflow: hidden;
+  color: var(--text-primary);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.app-root .workspace-ready-title {
+  background: none;
+  color: var(--text-primary);
+  font-size: 22px;
+  letter-spacing: -0.02em;
+  -webkit-text-fill-color: currentColor;
+}
+
+.app-root .workspace-ready-kicker,
+.app-root .workspace-ready-desc {
+  color: var(--text-secondary);
+  text-shadow: none;
+}
+
+.app-root .workspace-ready-icon,
+.app-root .workspace-ready-action-icon {
+  border: 0;
+  background: var(--accent-dim);
+  color: var(--accent);
+  box-shadow: none;
+}
+
+.app-root .workspace-ready-action-card,
+.app-root .workspace-ready-actions--compact .workspace-ready-action-card {
+  min-height: 68px;
+  padding: 14px 16px;
+  border: 1px solid var(--mm-border);
+  border-radius: 10px;
+  background: var(--mm-surface-0);
+  box-shadow: none;
+}
+
+.app-root .workspace-ready-action-card::before,
+.app-root .workspace-ready-action-card::after {
+  display: none;
+}
+
+.app-root .workspace-ready-action-card:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--mm-border));
+  background: var(--mm-surface-2);
+  box-shadow: none;
+  transform: none;
+}
+
+.app-root .workspace-empty-card {
+  border-color: var(--mm-border);
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-root .explorer-header {
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-root .explorer-header-title {
+  font-size: 16px;
+}
+
+.app-root .explorer-table-panel,
+.app-root .explorer-empty,
+.app-root .explorer-db-button.active {
+  border-color: var(--mm-border);
+  background: var(--mm-surface-1);
+  box-shadow: none;
+}
+
+.app-root .explorer-db-button.active {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--mm-border));
+  background: var(--accent-dim);
+}
+
+.app-root .explorer-db-button.active .explorer-db-meta {
+  color: var(--text-primary);
+}
+
+.app-root .datagrid-shell,
+.app-root .datagrid-topbar,
+.app-root .datagrid-footer-action {
+  background: var(--mm-surface-0);
+  box-shadow: none;
+}
+
+.app-root .datagrid-topbar {
+  border-color: var(--mm-border);
+}
+
+.app-root .datagrid-footer-action {
+  border-color: var(--mm-border);
+}
+
+.app-root .datagrid-stat-pill.active,
+.app-root .datagrid-footer-pill.info,
+.app-root .datagrid-footer-pill.success {
+  color: color-mix(in srgb, var(--success) 65%, var(--text-primary));
+}
+
+.app-root .erd-topbar,
+.app-root .erd-sidepanel,
+.app-root .erd-canvas-empty,
+.app-root .erd-flow .react-flow__controls,
+.app-root .erd-flow .react-flow__minimap,
+.app-root .erd-node {
+  background-image: none;
+  box-shadow: none;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-sidebar,
+.app-root .ai-workspace-stage--sidebar .ai-workspace-compose-box,
+.app-root .ai-workspace-stage--sidebar .ai-workspace-chat-empty {
+  background-image: none;
+  box-shadow: none;
+}
+
+.app-root .metrics-board-topbar {
+  padding: 16px;
+  border: 1px solid var(--mm-border);
+  border-radius: 12px;
+  background: var(--mm-surface-0);
+  box-shadow: none;
+}
+
+.app-root .metrics-board-topbar-title {
+  font-size: 16px;
+}
+
+.app-root .metrics-board-topbar-action {
+  border-color: var(--mm-border);
+  background: var(--mm-surface-0);
+  box-shadow: none;
+}
+
+.app-root .metrics-board-topbar-action:hover:not(:disabled) {
+  border-color: var(--mm-border-strong);
+  background: var(--mm-surface-2);
+  box-shadow: none;
+  transform: none;
+}
+
+.app-root .metrics-board-description-input {
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-root .metrics-board-sidebar-kicker,
+.app-root .metrics-board-list-copy small {
+  color: var(--text-secondary);
+  text-shadow: none;
+}
+
+.app-root .metrics-board-list-item.active,
+.app-root .metrics-board-list-child.active {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--mm-border));
+  background: var(--accent-dim);
+  color: var(--text-primary);
+  box-shadow: none;
+}
+
+.app-root .metrics-board-canvas {
+  background-color: var(--mm-surface-1);
+  background-image:
+    linear-gradient(rgba(15, 23, 42, 0.035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(15, 23, 42, 0.035) 1px, transparent 1px);
+  box-shadow: none;
+}
+
+.app-root .metrics-board-rail,
+.app-root .metrics-board-sidebar,
+.app-root .metrics-board-sidebar-standalone,
+.app-root .metrics-widget-card {
+  border-color: var(--mm-border);
+  background: var(--mm-surface-0);
+  box-shadow: none;
+}
+
+.app-root .connection-picker-modal,
+.app-root .connection-form-modal {
+  box-shadow: none;
+}
+
+@container workspace-ready (max-width: 720px) {
+  .app-root .workspace-ready-header {
+    grid-template-columns: 1fr;
+  }
+
+  .app-root .workspace-ready-header-right {
+    max-width: none;
+  }
+}

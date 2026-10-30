@@ -15,7 +15,6 @@ export const FRONTEND_TIMEOUTS = {
   metadata: 45_000,
 } as const;
 
-const MISSING_CONNECTION_ERROR_PATTERNS = [/please connect first/i];
 export const inFlightTableFetches = new Map<string, Promise<void>>();
 export const inFlightSchemaObjectFetches = new Map<string, Promise<void>>();
 
@@ -122,11 +121,6 @@ export function resolveConnectionConfig(config: ConnectionConfig): ConnectionCon
 
 export function metadataFetchKey(connectionId: string, database?: string): string {
   return `${connectionId}:${database ?? ""}`;
-}
-
-export function isMissingConnectionError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error ?? "");
-  return MISSING_CONNECTION_ERROR_PATTERNS.some((pattern) => pattern.test(message));
 }
 
 export async function executeStartupCommands(

@@ -1,0 +1,45 @@
+.app-root .ai-workspace-composer-textarea::placeholder {
+  color: var(--text-secondary);
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-chat-surface.is-empty {
+  align-items: flex-start;
+  justify-content: flex-start;
+  padding-top: 24px;
+  background: transparent;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-chat-empty {
+  width: min(100%, 380px);
+  gap: 12px;
+  padding: 16px 4px;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-chat-empty-illustration {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  background: var(--accent-dim);
+  box-shadow: none;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-chat-empty-copy {
+  gap: 10px;
+}
+
+.app-root .ai-workspace-stage--sidebar .ai-workspace-chat-empty-suggestions {
+  padding-top: 0;
+}
+
+@media (max-width: 1100px) {
+  .app-root .ai-workspace-stage--sidebar .ai-workspace-sidebar {
+    box-shadow: none;
+  }
+
+  .app-root .ai-workspace-resize-handle {
+    display: none;
+  }
+}

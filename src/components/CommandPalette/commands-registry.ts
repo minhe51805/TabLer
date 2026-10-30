@@ -564,6 +564,19 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
         ctx,
       ),
     },
+    {
+      id: "tools.query-schedules",
+      label: "Query Schedules",
+      shortcut: "Ctrl+Shift+Q",
+      category: "Tools",
+      action: makeAction(
+        "tools.query-schedules",
+        () => {
+          window.dispatchEvent(new CustomEvent("toggle-query-schedules-palette"));
+        },
+        ctx,
+      ),
+    },
 
     // ── Navigation ─────────────────────────────────────────────────────────────
     {

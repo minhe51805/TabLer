@@ -10,13 +10,6 @@ import {
 export type SafeModeLevel = 0 | 1 | 2 | 3 | 4 | 5;
 export type ConnectionEnvironment = "development" | "staging" | "production" | "unknown";
 
-export const CONNECTION_ENVIRONMENT_LABELS: Record<ConnectionEnvironment, string> = {
-  development: "Development",
-  staging: "Staging",
-  production: "Production",
-  unknown: "Unclassified",
-};
-
 /** Label and description for each safe mode level. */
 export const SAFE_MODE_LABELS: Record<SafeModeLevel, { label: string; description: string }> = {
   0: {

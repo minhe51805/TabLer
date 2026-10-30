@@ -27,7 +27,8 @@ export type ShortcutAction =
   | "undo"
   | "redo"
   | "duplicate-row"
-  | "open-review-center";
+  | "open-review-center"
+  | "open-query-schedules";
 
 export interface ShortcutBinding {
   action: ShortcutAction;
@@ -180,6 +181,13 @@ const DEFAULT_SHORTCUTS: ShortcutBinding[] = [
     defaultKey: "Ctrl+Shift+R",
     currentKey: "Ctrl+Shift+R",
     category: "general",
+  },
+  {
+    action: "open-query-schedules",
+    label: "Query Schedules",
+    defaultKey: "Ctrl+Shift+Q",
+    currentKey: "Ctrl+Shift+Q",
+    category: "query",
   },
 ];
 

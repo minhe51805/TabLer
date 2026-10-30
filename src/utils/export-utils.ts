@@ -7,29 +7,6 @@
 import { saveExportFile } from "./tauri-utils";
 
 /**
- * Triggers the native save dialog and writes the blob to the chosen path.
- * Kept for callers that already hold a Blob; text callers should prefer
- * `saveExportFile` directly.
- */
-export async function downloadBlob(blob: Blob, filename: string): Promise<void> {
-  const isText = blob.type.startsWith("text/") || blob.type.includes("json");
-  const content = isText ? await blob.text() : undefined;
-  if (content !== undefined) {
-    await saveExportFile({ fileName: filename, content });
-    return;
-  }
-  const base64 = await blobToBase64(blob);
-  await saveExportFile({ fileName: filename, contentBase64: base64 });
-}
-
-async function blobToBase64(blob: Blob): Promise<string> {
-  const buffer = new Uint8Array(await blob.arrayBuffer());
-  let binary = "";
-  for (const byte of buffer) binary += String.fromCharCode(byte);
-  return btoa(binary);
-}
-
-/**
  * Builds a timestamped filename for export files.
  * @param tableName - The table name or identifier
  * @param extension - File extension (csv or json)

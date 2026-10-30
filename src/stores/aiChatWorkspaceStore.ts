@@ -28,8 +28,10 @@ export interface AIChatWorkspace {
 export const AI_CHAT_WORKSPACE_STORAGE_KEY = "tabler.ai.chat-workspaces.v1";
 
 export function createAIChatWorkspaceId() {
-  return globalThis.crypto?.randomUUID?.()
-    ?? `ws-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+  return (
+    globalThis.crypto?.randomUUID?.() ??
+    `ws-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
+  );
 }
 
 interface AIChatWorkspaceState {
@@ -82,11 +84,11 @@ export const useAIChatWorkspaceStore = create<AIChatWorkspaceState>()(
         const trimmed = name.trim();
         if (!trimmed) return;
         set((state) => ({
-          workspaces: state.workspaces.map((workspace) => (
+          workspaces: state.workspaces.map((workspace) =>
             workspace.id === id
               ? { ...workspace, name: trimmed, updatedAt: Date.now() }
-              : workspace
-          )),
+              : workspace,
+          ),
         }));
       },
 
@@ -95,9 +97,8 @@ export const useAIChatWorkspaceStore = create<AIChatWorkspaceState>()(
           const remaining = state.workspaces.filter((workspace) => workspace.id !== id);
           return {
             workspaces: remaining,
-            activeWorkspaceId: state.activeWorkspaceId === id
-              ? (remaining[0]?.id ?? null)
-              : state.activeWorkspaceId,
+            activeWorkspaceId:
+              state.activeWorkspaceId === id ? (remaining[0]?.id ?? null) : state.activeWorkspaceId,
           };
         });
       },
@@ -137,11 +138,16 @@ export const useAIChatWorkspaceStore = create<AIChatWorkspaceState>()(
         const clean = digest.trim();
         if (!clean) return;
         set((state) => ({
-          workspaces: state.workspaces.map((workspace) => (
+          workspaces: state.workspaces.map((workspace) =>
             workspace.id === id
-              ? { ...workspace, contextDigest: clean, contextUpdatedAt: Date.now(), updatedAt: Date.now() }
-              : workspace
-          )),
+              ? {
+                  ...workspace,
+                  contextDigest: clean,
+                  contextUpdatedAt: Date.now(),
+                  updatedAt: Date.now(),
+                }
+              : workspace,
+          ),
         }));
       },
 
@@ -173,7 +179,9 @@ export const useAIChatWorkspaceStore = create<AIChatWorkspaceState>()(
 );
 
 /** Convenience selector: the active workspace object (or null in auto mode). */
-export function selectActiveAIChatWorkspace(state: Pick<AIChatWorkspaceState, "workspaces" | "activeWorkspaceId">): AIChatWorkspace | null {
+export function selectActiveAIChatWorkspace(
+  state: Pick<AIChatWorkspaceState, "workspaces" | "activeWorkspaceId">,
+): AIChatWorkspace | null {
   if (!state.activeWorkspaceId) return null;
   return state.workspaces.find((workspace) => workspace.id === state.activeWorkspaceId) ?? null;
 }
@@ -191,17 +199,10 @@ export function inferDatabaseFromWorkspaceName(
   const cleaned = name.trim().toLowerCase();
   if (!cleaned || availableDatabases.length === 0) return null;
   const stripped = cleaned.replace(/^db\s+/, "");
-  const exact = availableDatabases.find(
-    (database) => database.name.toLowerCase() === stripped,
-  );
+  const exact = availableDatabases.find((database) => database.name.toLowerCase() === stripped);
   if (exact) return exact.name;
-  const containing = availableDatabases.filter(
-    (database) => cleaned.includes(database.name.toLowerCase()),
+  const containing = availableDatabases.filter((database) =>
+    cleaned.includes(database.name.toLowerCase()),
   );
   return containing.length === 1 ? containing[0].name : null;
-}
-
-/** Test/export helper mirroring the store's default naming. */
-export function defaultWorkspaceName(existingCount: number) {
-  return `Workspace ${existingCount + 1}`;
 }

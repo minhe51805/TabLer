@@ -1,0 +1,23 @@
+.statusbar-left {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.statusbar-indicator,
+.statusbar-right {
+  flex: 0 0 auto;
+}
+
+.statusbar-info {
+  display: inline-block;
+  min-width: 0;
+  max-width: min(38vw, 420px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (max-width: 900px) {
+  .statusbar-info {
+    max-width: 220px;
+  }
+}

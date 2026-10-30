@@ -425,6 +425,32 @@ fn detect_dangerous_capability_normalized(normalized: &str) -> Option<String> {
     None
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DialectHint {
+    pub function_name: &'static str,
+    pub suggested_function: &'static str,
+}
+
+pub fn lint_engine_specific_functions(
+    sql: &str,
+    database_type: Option<DatabaseType>,
+) -> Option<DialectHint> {
+    let normalized = strip_sql_comments(sql, " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_ascii_uppercase();
+    match database_type {
+        Some(DatabaseType::MSSQL) if contains_function_call(&normalized, "NOW") => {
+            Some(DialectHint {
+                function_name: "NOW()",
+                suggested_function: "GETDATE()",
+            })
+        }
+        _ => None,
+    }
+}
+
 /// Dialect-aware classification. MySQL-family engines expose server commands
 /// (`SHOW FULL PROCESSLIST`, `DESCRIBE t`, …) that the generic parser cannot
 /// read; parsing them with the connection's real dialect (plus a read-only
@@ -899,8 +925,8 @@ pub fn split_sql_statements(sql: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{
-        classify_sql_with_dialect, detect_dangerous_capability, split_sql_statements,
-        SqlSafetyDecision, SqlStatementKind,
+        classify_sql_with_dialect, detect_dangerous_capability, lint_engine_specific_functions,
+        split_sql_statements, SqlSafetyDecision, SqlStatementKind,
     };
     use crate::database::models::DatabaseType;
     use serde::Deserialize;
@@ -1210,5 +1236,30 @@ mod tests {
             "DuckDB ATTACH should be Session"
         );
         assert!(!duckdb.read_only);
+    }
+
+    #[test]
+    fn dialect_lint_flags_now_for_mssql_suggests_getdate() {
+        let hint = lint_engine_specific_functions("SELECT NOW()", Some(DatabaseType::MSSQL))
+            .expect("MSSQL NOW() has a dialect hint");
+        assert_eq!(hint.function_name, "NOW()");
+        assert_eq!(hint.suggested_function, "GETDATE()");
+        assert!(
+            lint_engine_specific_functions("SELECT NOW()", Some(DatabaseType::MySQL)).is_none()
+        );
+    }
+
+    #[test]
+    fn dialect_lint_ignores_now_inside_string_literal() {
+        for sql in [
+            "SELECT 'NOW()' AS note",
+            "SELECT 1 /* NOW() */",
+            "SELECT 1 -- NOW()",
+        ] {
+            assert!(
+                lint_engine_specific_functions(sql, Some(DatabaseType::MSSQL)).is_none(),
+                "literal/comment must not trigger dialect lint: {sql}"
+            );
+        }
     }
 }

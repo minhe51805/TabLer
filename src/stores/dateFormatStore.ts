@@ -193,11 +193,6 @@ export function getDefaultFormat(dbType: string): string {
   return DEFAULT_DATE_FORMATS[key] ?? DEFAULT_DATE_FORMATS.default;
 }
 
-/** Preview: show an example formatted date for a format string */
-export function formatDatePreview(format: string): string {
-  return formatDate(new Date(2026, 3, 5, 14, 30, 45, 123), format);
-}
-
 // ---------------------------------------------------------------------------
 // Store
 // ---------------------------------------------------------------------------

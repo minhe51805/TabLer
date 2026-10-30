@@ -434,6 +434,15 @@ async fn mssql_round_trip_lifecycle() {
         3
     );
 
+    let request_result = tokio::time::timeout(
+        Duration::from_secs(5),
+        driver.execute_query_for_request("it-mssql-request", "SELECT 1"),
+    )
+    .await
+    .expect("MSSQL request execution timed out")
+    .expect("MSSQL request execution failed");
+    assert!(!request_result.rows.is_empty());
+
     let _ = driver.disconnect().await;
 }
 

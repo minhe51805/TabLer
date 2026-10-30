@@ -392,7 +392,9 @@ export function AppTitleBar({
         <div className="titlebar-divider" />
 
         <div className="titlebar-context">
-          <span className="titlebar-context-label">{t("common.workspace")}</span>
+          <span id="workspace-title" className="titlebar-context-label">
+            {t("common.workspace")}
+          </span>
           {isConnected && activeConn ? (
             <div
               className="titlebar-badge"

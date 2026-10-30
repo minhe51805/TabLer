@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { waitFor } from "@testing-library/react";
 
 type FiredPayload = Record<string, unknown>;
 type FiredHandler = (event: { payload: FiredPayload }) => void;
@@ -6,6 +7,7 @@ type FiredHandler = (event: { payload: FiredPayload }) => void;
 const listenMock = vi.fn(async (_eventName: string, _handler: FiredHandler) => () => {});
 const invokeMutationMock = vi.fn();
 const emitAppToastMock = vi.fn();
+let detachScheduleEvents: () => void = () => {};
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: (eventName: string, handler: FiredHandler) => listenMock(eventName, handler),
@@ -57,7 +59,11 @@ describe("query-schedules-store agent dispatch", () => {
     invokeMutationMock.mockReset();
     useAgentScheduleStore.setState({ runs: [] });
     useQuerySchedulesStore.setState({ schedules: [agentSchedule()], isLoading: false });
-    useQuerySchedulesStore.getState().attachScheduleEvents();
+    detachScheduleEvents = useQuerySchedulesStore.getState().attachScheduleEvents();
+  });
+
+  afterEach(() => {
+    detachScheduleEvents();
   });
 
   it("queues an agent dispatch instead of claiming a run", () => {
@@ -142,6 +148,89 @@ describe("query-schedules-store agent dispatch", () => {
     const [row] = useQuerySchedulesStore.getState().schedules;
     expect(row.lastStatus).toBe("ok");
     expect(row.lastRows).toBe(3);
+    expect(useAgentScheduleStore.getState().runs).toEqual([]);
+  });
+});
+
+describe("query-schedules-store dispatch replay", () => {
+  beforeEach(() => {
+    invokeMutationMock.mockReset();
+    emitAppToastMock.mockReset();
+    useAgentScheduleStore.setState({ runs: [] });
+    useQuerySchedulesStore.setState({ schedules: [], isLoading: false });
+  });
+
+  afterEach(() => {
+    detachScheduleEvents();
+  });
+
+  it("replays a dispatch that happened before the listener attached", async () => {
+    invokeMutationMock.mockResolvedValue([agentSchedule({ lastStatus: "dispatched" })]);
+    useQuerySchedulesStore.getState().attachScheduleEvents();
+
+    await waitFor(() => expect(useAgentScheduleStore.getState().runs).toHaveLength(1));
+    expect(useAgentScheduleStore.getState().runs[0]).toMatchObject({
+      scheduleId: "s1",
+      status: "waiting",
+      prompt: agentSchedule().prompt,
+    });
+  });
+
+  it("deduplicates replay and the live event without resetting dispatchedAt", async () => {
+    invokeMutationMock.mockResolvedValue([agentSchedule({ lastStatus: "dispatched" })]);
+    useQuerySchedulesStore.getState().attachScheduleEvents();
+    await waitFor(() => expect(useAgentScheduleStore.getState().runs).toHaveLength(1));
+    const dispatchedAt = useAgentScheduleStore.getState().runs[0].dispatchedAt;
+
+    scheduleFiredHandler()({
+      payload: {
+        scheduleId: "s1",
+        name: "Nightly order check",
+        kind: "agent",
+        status: "dispatched",
+        prompt: agentSchedule().prompt,
+      },
+    });
+
+    expect(useAgentScheduleStore.getState().runs).toHaveLength(1);
+    expect(useAgentScheduleStore.getState().runs[0].dispatchedAt).toBe(dispatchedAt);
+  });
+
+  it("deduplicates a dispatch that arrives while the outbox load is pending", async () => {
+    let resolveSchedules: (schedules: QuerySchedule[]) => void = () => {};
+    invokeMutationMock.mockImplementation(
+      () => new Promise<QuerySchedule[]>((resolve) => (resolveSchedules = resolve)),
+    );
+    useQuerySchedulesStore.getState().attachScheduleEvents();
+    scheduleFiredHandler()({
+      payload: {
+        scheduleId: "s1",
+        name: "Nightly order check",
+        kind: "agent",
+        status: "dispatched",
+        prompt: agentSchedule().prompt,
+      },
+    });
+    resolveSchedules([agentSchedule({ lastStatus: "dispatched" })]);
+
+    await waitFor(() => {
+      expect(useAgentScheduleStore.getState().runs).toHaveLength(1);
+      expect(useQuerySchedulesStore.getState().isLoading).toBe(false);
+    });
+  });
+
+  it("does not replay an empty prompt or a failed outbox load", async () => {
+    invokeMutationMock.mockResolvedValueOnce([
+      agentSchedule({ lastStatus: "dispatched", prompt: "   " }),
+    ]);
+    useQuerySchedulesStore.getState().attachScheduleEvents();
+    await waitFor(() => expect(useQuerySchedulesStore.getState().isLoading).toBe(false));
+    expect(useAgentScheduleStore.getState().runs).toEqual([]);
+
+    detachScheduleEvents();
+    invokeMutationMock.mockRejectedValueOnce(new Error("storage unavailable"));
+    useQuerySchedulesStore.getState().attachScheduleEvents();
+    await waitFor(() => expect(useQuerySchedulesStore.getState().isLoading).toBe(false));
     expect(useAgentScheduleStore.getState().runs).toEqual([]);
   });
 });

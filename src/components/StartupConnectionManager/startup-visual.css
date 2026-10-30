@@ -1,0 +1,35 @@
+.startup-manager-modal,
+.startup-manager-browser,
+.startup-manager-topbar {
+  box-shadow: none;
+}
+
+.startup-manager-sample-card,
+.startup-connection-row,
+.startup-manager-empty {
+  border-color: var(--mm-border);
+  background: var(--mm-surface-0);
+  box-shadow: none;
+}
+
+.startup-manager-sample-card:hover:not(:disabled),
+.startup-connection-row:hover {
+  border-color: var(--mm-border-strong);
+  background: var(--mm-surface-2);
+  box-shadow: none;
+  transform: none;
+}
+
+.startup-connection-row.active,
+.startup-connection-row.active:hover {
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--mm-border));
+  background: var(--accent-dim);
+  box-shadow: none;
+}
+
+.startup-manager-search-add.primary,
+.startup-manager-empty .btn-primary:not(:disabled) {
+  border-color: var(--accent-active);
+  background: var(--accent-active);
+  color: #fff;
+}

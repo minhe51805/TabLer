@@ -81,9 +81,21 @@ export type EventMap = {
     primaryKeyValues: Record<string, string | number | boolean | null>;
     tableName?: string;
     database?: string;
+    canEdit?: boolean;
+    maskedColumnNames?: string[];
+    gridInstanceId?: string;
+    connectionId?: string;
   };
   "row-inspector-close": void;
-  "row-inspector-edit-cell": { columnName: string; value: string | number | boolean | null };
+  "row-inspector-edit-cell": {
+    gridInstanceId?: string;
+    connectionId?: string;
+    tableName?: string;
+    database?: string;
+    rowIndex: number;
+    columnName: string;
+    value: string | number | boolean | null;
+  };
 
   // App lifecycle
   "app-ready": void;
@@ -157,9 +169,4 @@ export function useEvent<N extends EventName>(
     return off;
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [name, ...deps]);
-}
-
-/** Hook: emit an event from a component. Returns the emit function. */
-export function useEmit<N extends EventName>(name: N) {
-  return (detail: EventDetail<N>) => EventCenter.emit(name, detail);
 }

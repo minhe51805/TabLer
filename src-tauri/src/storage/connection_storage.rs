@@ -278,6 +278,45 @@ impl ConnectionStorage {
         Ok(())
     }
 
+    pub fn complete_connection_secrets(&self, config: &mut ConnectionConfig) -> Result<()> {
+        if !self
+            .load_connections()?
+            .iter()
+            .any(|connection| connection.id == config.id)
+        {
+            return Ok(());
+        }
+        let saved = self.load_connection_by_id(&config.id)?;
+        if config.password.is_none() {
+            config.password = saved.password.clone();
+        }
+        if let (Some(target_ssh), Some(saved_ssh)) =
+            (config.ssh_config.as_mut(), saved.ssh_config.as_ref())
+        {
+            if target_ssh.password.is_none() {
+                target_ssh.password = saved_ssh.password.clone();
+            }
+            if target_ssh.private_key.is_none() {
+                target_ssh.private_key = saved_ssh.private_key.clone();
+            }
+            if target_ssh.passphrase.is_none() {
+                target_ssh.passphrase = saved_ssh.passphrase.clone();
+            }
+        }
+        let has_session_token = config
+            .additional_fields
+            .keys()
+            .any(|key| key.eq_ignore_ascii_case(SESSION_TOKEN_FIELD));
+        if !has_session_token {
+            if let Some(token) = session_token_in(&saved) {
+                config
+                    .additional_fields
+                    .insert(SESSION_TOKEN_FIELD.to_string(), token);
+            }
+        }
+        Ok(())
+    }
+
     pub fn load_connections(&self) -> Result<Vec<ConnectionConfig>> {
         // Check cache first
         {
@@ -684,6 +723,133 @@ mod tests {
 
         let _ = keyring::Entry::new("TableR", &connection_id)
             .and_then(|entry| entry.delete_credential());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn credential_none_preserves_empty_clears_and_new_value_replaces() {
+        use_mock_keyring();
+        let root = std::env::temp_dir().join(format!("tabler-secret-semantics-{}", Uuid::new_v4()));
+        let storage = ConnectionStorage::from_data_dir(root.clone()).unwrap();
+        let mut config = ConnectionConfig {
+            id: format!("conn-{}", Uuid::new_v4()),
+            name: "Credential lifecycle".to_string(),
+            db_type: DatabaseType::PostgreSQL,
+            password: Some("old-secret".to_string()),
+            ..ConnectionConfig::default()
+        };
+        storage.save_connection(&config).unwrap();
+
+        config.password = None;
+        storage.save_connection(&config).unwrap();
+        assert_eq!(
+            storage
+                .load_connection_by_id(&config.id)
+                .unwrap()
+                .password
+                .as_deref(),
+            Some("old-secret")
+        );
+
+        config.password = Some(String::new());
+        storage.save_connection(&config).unwrap();
+        let reloaded = ConnectionStorage::from_data_dir(root.clone()).unwrap();
+        let cleared = reloaded.load_connection_by_id(&config.id).unwrap();
+        assert!(cleared.password.as_deref().unwrap_or("").is_empty());
+
+        config.password = Some("new-secret".to_string());
+        storage.save_connection(&config).unwrap();
+        assert_eq!(
+            storage
+                .load_connection_by_id(&config.id)
+                .unwrap()
+                .password
+                .as_deref(),
+            Some("new-secret")
+        );
+
+        let _ =
+            keyring::Entry::new("TableR", &config.id).and_then(|entry| entry.delete_credential());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn complete_connection_secrets_backfills_only_none_fields() {
+        use_mock_keyring();
+        let root = std::env::temp_dir().join(format!("tabler-secret-backfill-{}", Uuid::new_v4()));
+        let storage = ConnectionStorage::from_data_dir(root.clone()).unwrap();
+        let mut additional_fields = std::collections::HashMap::new();
+        additional_fields.insert("session_token".to_string(), "sts-old".to_string());
+        let saved = ConnectionConfig {
+            id: format!("conn-{}", Uuid::new_v4()),
+            name: "Backfill".to_string(),
+            db_type: DatabaseType::DynamoDB,
+            password: Some("db-old".to_string()),
+            ssh_config: Some(SshConfig {
+                enabled: true,
+                host: "bastion.example".to_string(),
+                port: 22,
+                user: "deploy".to_string(),
+                auth_type: SshAuthMethod::PrivateKeyWithPassphrase,
+                password: Some("ssh-old".to_string()),
+                private_key: Some("key-old".to_string()),
+                private_key_path: None,
+                passphrase: Some("pass-old".to_string()),
+            }),
+            additional_fields,
+            ..ConnectionConfig::default()
+        };
+        storage.save_connection(&saved).unwrap();
+
+        let mut missing = saved.clone();
+        missing.password = None;
+        missing.ssh_config.as_mut().unwrap().password = None;
+        missing.ssh_config.as_mut().unwrap().private_key = None;
+        missing.ssh_config.as_mut().unwrap().passphrase = None;
+        missing.additional_fields.clear();
+        storage.complete_connection_secrets(&mut missing).unwrap();
+        assert_eq!(missing.password.as_deref(), Some("db-old"));
+        let missing_ssh = missing.ssh_config.as_ref().unwrap();
+        assert_eq!(missing_ssh.password.as_deref(), Some("ssh-old"));
+        assert_eq!(missing_ssh.private_key.as_deref(), Some("key-old"));
+        assert_eq!(missing_ssh.passphrase.as_deref(), Some("pass-old"));
+        assert_eq!(
+            missing
+                .additional_fields
+                .get("session_token")
+                .map(String::as_str),
+            Some("sts-old")
+        );
+
+        let mut explicit = saved.clone();
+        explicit.password = Some(String::new());
+        explicit.ssh_config.as_mut().unwrap().password = Some("explicit".to_string());
+        explicit
+            .additional_fields
+            .insert("session_token".to_string(), String::new());
+        storage.complete_connection_secrets(&mut explicit).unwrap();
+        assert_eq!(explicit.password.as_deref(), Some(""));
+        assert_eq!(
+            explicit.ssh_config.as_ref().unwrap().password.as_deref(),
+            Some("explicit")
+        );
+        assert_eq!(
+            explicit
+                .additional_fields
+                .get("session_token")
+                .map(String::as_str),
+            Some("")
+        );
+
+        let mut ssh_removed = saved.clone();
+        ssh_removed.ssh_config = None;
+        storage
+            .complete_connection_secrets(&mut ssh_removed)
+            .unwrap();
+        assert!(ssh_removed.ssh_config.is_none());
+
+        let _ =
+            keyring::Entry::new("TableR", &saved.id).and_then(|entry| entry.delete_credential());
         let _ = fs::remove_dir_all(root);
     }
 }

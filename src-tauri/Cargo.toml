@@ -172,4 +172,4 @@ parquet = { version = "58", features = ["arrow"], optional = true }
 sysinfo = "0.30"
 # Integration tests (src-tauri/tests) build their own binary and need the
 # tokio macros directly; they must not rely on dependency features leaking.
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "test-util"] }

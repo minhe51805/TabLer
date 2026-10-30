@@ -2,7 +2,6 @@ import { create } from "zustand";
 import type { ConnectionEnvironment, SafeModeLevel, SafeModeSettings } from "../types/safe-mode";
 import { isBlockedAtLevel, requiresConfirmationAtLevel } from "../types/safe-mode";
 import { invokeMutation } from "../utils/tauri-utils";
-import { requestAppConfirmation } from "./confirmStore";
 
 const STORAGE_KEY = "tabler.safe-mode.v1";
 /**
@@ -318,25 +317,3 @@ export const useSafeModeStore = create<SafeModeState>((set, get) => {
     },
   };
 });
-
-/** Awaits user confirmation via the in-app ConfirmDialog for level 3, or returns false for level 4-5 (UI must handle modal). */
-export async function promptConfirmation(sql: string, connectionId?: string): Promise<boolean> {
-  const { needsConfirmation, getEffectiveLevel } = useSafeModeStore.getState();
-  const level = getEffectiveLevel(connectionId);
-
-  if (!needsConfirmation(sql, connectionId)) return true;
-
-  // Level 3: simple confirm dialog — the app's ConfirmDialog host, never the
-  // native window.confirm (a no-op on macOS WKWebView).
-  if (level === 3) {
-    const preview = sql.length > 200 ? sql.slice(0, 200) + "..." : sql;
-    return requestAppConfirmation({
-      title: "Execute write statement?",
-      message: preview,
-      confirmText: "Execute",
-    });
-  }
-
-  // Level 4-5: must be handled by a proper modal (returns false here)
-  return false;
-}

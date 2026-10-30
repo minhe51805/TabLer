@@ -21,6 +21,30 @@ fn result_with_rows(count: usize) -> QueryResult {
 }
 
 #[test]
+fn sandboxed_mongo_select_failure_has_no_shell_hint() {
+    let direct = format!(
+        "SQL SELECT could not be translated to MongoDB: HAVING is unsupported. {}",
+        crate::database::mongodb_sql::MONGO_SELECT_SHELL_GUIDANCE
+    );
+    let rewritten = super::sandbox::rewrite_mongo_error_for_sandbox(&direct, true);
+    assert!(!rewritten.contains("Use Mongo shell syntax"));
+    assert!(rewritten.contains("wrap the aggregation in an outer SELECT"));
+    assert!(rewritten.contains("LIMIT/OFFSET"));
+}
+
+#[test]
+fn sandboxed_mongo_write_failure_points_to_reviewed_write_paths() {
+    let direct = format!(
+        "SQL INSERT is not supported on MongoDB connections. {}",
+        crate::database::mongodb_sql::MONGO_INSERT_SHELL_GUIDANCE
+    );
+    let rewritten = super::sandbox::rewrite_mongo_error_for_sandbox(&direct, true);
+    assert!(!rewritten.contains("Use Mongo shell syntax"));
+    assert!(rewritten.contains("read-only SQL"));
+    assert!(rewritten.contains("write-preview"));
+}
+
+#[test]
 fn sandbox_gateway_blocks_filesystem_and_network_sql() {
     // These parse as reads but reach the local filesystem / network / OS —
     // the sandbox must reject them before the driver is ever touched.
@@ -146,6 +170,19 @@ fn agent_parameterized_boundary_blocks_mutations_and_keeps_placeholders() {
         None
     )
     .is_err());
+}
+
+#[test]
+fn query_row_batch_payload_scopes_request_and_delivered_rows() {
+    let rows = vec![vec![serde_json::json!(1)], vec![serde_json::json!(2)]];
+    let payload =
+        super::query_row_batch_payload("conn-1", Some("req-1"), &[], &rows, 500, 10_000, false);
+    assert_eq!(payload["requestId"], "req-1");
+    assert_eq!(payload["connectionId"], "conn-1");
+    assert_eq!(payload["offset"], 500);
+    assert_eq!(payload["totalRows"], 10_000);
+    assert_eq!(payload["rows"].as_array().unwrap().len(), 2);
+    assert!(!payload["done"].as_bool().unwrap());
 }
 
 #[test]

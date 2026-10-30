@@ -6,7 +6,6 @@ import type { ColumnDetail, ForeignKeyInfo, IndexInfo, TableStructure } from "..
 
 export const MAX_TABLE_NAMES_IN_CONTEXT = 40;
 export const MAX_SCHEMA_SUMMARIES = 8;
-export const MAX_COLUMNS_PER_SUMMARY = 12;
 export const MAX_AI_COLUMNS_PER_SUMMARY = 18;
 export const MAX_AI_INDEXES_PER_SUMMARY = 6;
 export const MAX_AI_FOREIGN_KEYS_PER_SUMMARY = 6;
@@ -21,21 +20,6 @@ export interface SqlRiskAnalysis {
   level: SqlRiskLevel;
   reason: string | null;
 }
-
-export const PROMPT_IDEAS = [
-  {
-    title: "Create table",
-    prompt: "Create a users table with id, name, email, role, and created_at.",
-  },
-  {
-    title: "Alter schema",
-    prompt: "Add a last_login_at column to the users table and backfill it with CURRENT_TIMESTAMP.",
-  },
-  {
-    title: "Write query",
-    prompt: "Write a query that shows the top 10 users by order count in the last 30 days.",
-  },
-];
 
 export function rankTableForPrompt(promptText: string, tableName: string): number {
   const normalizedPrompt = promptText.toLowerCase();
@@ -69,21 +53,6 @@ export function pickRelevantTables<T extends { name: string }>(
     .map((i) => i.table);
 
   return [...matched.map((i) => i.table), ...fallbacks];
-}
-
-export function summarizeStructure(
-  tableName: string,
-  columns: Array<{ name: string; data_type: string }>,
-): string {
-  if (columns.length === 0) return `Table ${tableName}`;
-  const preview = columns
-    .slice(0, MAX_COLUMNS_PER_SUMMARY)
-    .map((c) => `${c.name} ${c.data_type}`)
-    .join(", ");
-  const remaining = columns.length - MAX_COLUMNS_PER_SUMMARY;
-  return remaining > 0
-    ? `Table ${tableName} (${preview}, +${remaining} more columns)`
-    : `Table ${tableName} (${preview})`;
 }
 
 export function inferAISchemaCodecMode(promptText: string): AISchemaCodecMode {

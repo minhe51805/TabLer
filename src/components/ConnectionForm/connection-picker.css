@@ -1,0 +1,136 @@
+.connection-picker-v2 .connection-picker-head {
+  align-items: center;
+  gap: 16px;
+  padding: 16px 18px 14px;
+}
+
+.connection-picker-v2 .connection-picker-topbar {
+  align-items: center;
+  flex-wrap: nowrap;
+  gap: 8px;
+}
+
+.connection-picker-v2 .connection-picker-flow-card {
+  display: block;
+}
+
+.connection-picker-v2 .connection-picker-mode-switch {
+  width: 280px;
+  padding: 3px;
+  border-radius: 12px;
+}
+
+.connection-picker-v2 .connection-picker-mode-btn {
+  border-radius: 9px;
+}
+
+.connection-picker-v2 .connection-picker-install-plugin {
+  padding-inline: 10px;
+  white-space: nowrap;
+}
+
+.connection-picker-v2 .connection-picker-body {
+  padding: 0 16px 16px;
+}
+
+.connection-picker-v2 .connection-picker-layout {
+  grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
+  gap: 16px;
+}
+
+.connection-picker-rail {
+  gap: 10px;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.connection-picker-rail-group-label {
+  padding-inline: 4px;
+}
+
+.connection-picker-v2 .connection-picker-aside {
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.connection-picker-v2 .connection-picker-selection-card,
+.connection-picker-shell .connection-picker-selection-card {
+  flex: 1 1 auto;
+  width: 100%;
+  height: auto;
+  min-height: 0;
+  gap: 12px;
+  padding: 16px;
+  overflow-y: auto;
+  border: 1px solid var(--mm-border);
+  border-radius: 12px;
+  background: var(--mm-surface-1);
+}
+
+.connection-picker-v2 .connection-picker-selection-description {
+  display: block;
+  overflow: visible;
+  color: var(--text-secondary);
+  -webkit-line-clamp: unset;
+}
+
+.connection-picker-v2 .connection-picker-selection-list {
+  gap: 4px;
+  margin-top: 2px;
+  padding-top: 10px;
+  border-top: 1px solid var(--mm-border);
+}
+
+.connection-picker-v2 .connection-picker-selection-list-item {
+  padding: 4px 0;
+  border: 0;
+  background: transparent;
+}
+
+.connection-picker-v2 .connection-picker-selection-switch {
+  width: auto;
+  min-height: 32px;
+  margin-top: 0;
+  padding: 0 4px;
+  align-self: flex-start;
+  justify-content: flex-start;
+  border-color: transparent;
+  background: transparent;
+}
+
+.connection-picker-v2 .connection-picker-footer-actions {
+  flex: 0 0 auto;
+  width: 100%;
+  margin: 0;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 2px 0;
+  border-top: 1px solid var(--mm-border);
+  background: var(--mm-surface-0);
+}
+
+.connection-picker-v2 .connection-picker-footer-actions .btn {
+  flex: 0 0 auto;
+  min-width: 108px;
+  min-height: 38px;
+}
+
+.connection-picker-v2 .connection-picker-footer-actions .btn-primary:not(:disabled) {
+  border-color: var(--accent-active);
+  background: var(--accent-active);
+  color: #fff;
+}
+
+@media (max-width: 720px) {
+  .connection-picker-v2 .connection-picker-footer-actions {
+    flex-direction: row;
+  }
+
+  .connection-picker-v2 .connection-picker-footer-actions .btn {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+}

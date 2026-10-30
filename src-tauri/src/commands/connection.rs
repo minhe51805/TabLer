@@ -15,6 +15,55 @@ use tokio_util::sync::CancellationToken;
 pub(super) const CONNECTION_TIMEOUT: Duration = Duration::from_secs(45);
 pub(super) const DISCONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 pub(super) const USE_DATABASE_TIMEOUT: Duration = Duration::from_secs(15);
+
+fn coarse_connection_log_message(stage: &str) -> &'static str {
+    match stage {
+        "dns" => "host resolution failed",
+        "tcp" => "server connection failed",
+        "tunnel" => "SSH tunnel failed",
+        "tls" => "TLS negotiation failed",
+        "auth" => "authentication failed",
+        "database" => "database selection failed",
+        "timeout" => "connection attempt timed out",
+        "driver" => "database driver rejected the connection",
+        _ => "connection attempt failed",
+    }
+}
+
+fn log_connection_limiter_rejection(operation: &str) {
+    log::warn!(
+        "operation={} status=failed stage=rate_limited message=connection attempt rate limit reached",
+        operation
+    );
+}
+
+fn log_connection_outcome<T>(
+    operation: &str,
+    started_at: std::time::Instant,
+    result: &Result<T, ConnectionErrorInfo>,
+) {
+    match result {
+        Ok(_) => log::info!(
+            "operation={} status=succeeded stage=connected duration_ms={} message=connection established",
+            operation,
+            started_at.elapsed().as_millis()
+        ),
+        Err(error) => log::warn!(
+            "operation={} status=failed stage={} duration_ms={} message={}",
+            operation,
+            error.stage,
+            started_at.elapsed().as_millis(),
+            coarse_connection_log_message(&error.stage)
+        ),
+    }
+}
+
+fn connection_save_failure_message(save_error: &str, disconnect_message: &str) -> String {
+    format!(
+        "Failed to save the connection profile: {save_error}. The live connection was rolled back.{disconnect_message}"
+    )
+}
+
 /// Bootstrap (preset schema creation) budget. 60s covers local instances and
 /// short presets; slow remote instances can raise it via
 /// TABLER_BOOTSTRAP_TIMEOUT_SECS (clamped to 15..600 seconds).
@@ -96,10 +145,98 @@ pub fn get_native_driver_availability() -> HashMap<String, bool> {
 #[cfg(test)]
 mod connection_diagnostic_tests {
     use super::{
-        classify_connection_failure, ConnectionAttemptCancellationState, ConnectionFailureStage,
+        classify_connection_failure, connection_save_failure_message,
+        log_connection_limiter_rejection, log_connection_outcome,
+        ConnectionAttemptCancellationState, ConnectionErrorInfo, ConnectionFailureStage,
     };
     use crate::database::models::ConnectionConfig;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
     use tokio_util::sync::CancellationToken;
+
+    struct CapturingLogger;
+    static CAPTURED_LOGS: Mutex<Vec<String>> = Mutex::new(Vec::new());
+    static LOG_TEST_LOCK: Mutex<()> = Mutex::new(());
+    static LOGGER_INIT: OnceLock<()> = OnceLock::new();
+
+    impl log::Log for CapturingLogger {
+        fn enabled(&self, _metadata: &log::Metadata) -> bool {
+            true
+        }
+
+        fn log(&self, record: &log::Record) {
+            CAPTURED_LOGS
+                .lock()
+                .unwrap()
+                .push(format!("{} {}", record.level(), record.args()));
+        }
+
+        fn flush(&self) {}
+    }
+
+    fn begin_log_capture() -> MutexGuard<'static, ()> {
+        let guard = LOG_TEST_LOCK.lock().unwrap();
+        LOGGER_INIT.get_or_init(|| {
+            log::set_boxed_logger(Box::new(CapturingLogger)).expect("install test logger");
+            log::set_max_level(log::LevelFilter::Info);
+        });
+        CAPTURED_LOGS.lock().unwrap().clear();
+        guard
+    }
+
+    fn captured_logs() -> String {
+        CAPTURED_LOGS.lock().unwrap().join("\n")
+    }
+
+    #[test]
+    fn connect_failure_is_logged() {
+        let _guard = begin_log_capture();
+        let result: Result<(), ConnectionErrorInfo> = Err(ConnectionErrorInfo {
+            stage: "driver".to_string(),
+            message: "raw postgresql://user:secret@example.test/db must not be logged".to_string(),
+            hint: String::new(),
+        });
+        log_connection_outcome("connection.connect", std::time::Instant::now(), &result);
+        let logs = captured_logs();
+        assert!(logs.contains("WARN"));
+        assert!(logs.contains("stage=driver"));
+        assert!(logs.contains("duration_ms="));
+        assert!(logs.contains("database driver rejected the connection"));
+        assert!(!logs.contains("postgresql://"));
+        assert!(!logs.contains("secret"));
+    }
+
+    #[test]
+    fn save_failure_error_includes_root_cause() {
+        let message = connection_save_failure_message("connections.json is a directory", "");
+        assert!(message.contains("connections.json is a directory"));
+        assert!(message.contains("rolled back"));
+    }
+
+    #[tokio::test]
+    async fn limiter_rejection_logs_warn_without_credentials() {
+        let config = ConnectionConfig {
+            host: Some("postgresql://user:secret@example.test:5432/db".to_string()),
+            password: Some("do-not-log-this-password".to_string()),
+            ..ConnectionConfig::default()
+        };
+        let limiter = super::ConnectionAttemptLimiter::new(
+            tokio::time::Duration::from_secs(60),
+            0,
+            "connection limit reached",
+        );
+        let error = limiter
+            .check(&super::connection_rate_limit_key(&config))
+            .await
+            .expect_err("zero-capacity limiter rejects");
+        assert_eq!(error, "connection limit reached");
+        let _guard = begin_log_capture();
+        log_connection_limiter_rejection("connection.connect");
+        let logs = captured_logs();
+        assert!(logs.contains("WARN"));
+        assert!(logs.contains("stage=rate_limited"));
+        assert!(!logs.contains("do-not-log-this-password"));
+        assert!(!logs.contains("postgresql://"));
+    }
 
     #[test]
     fn diagnostics_distinguish_connection_failure_stages() {
@@ -147,16 +284,27 @@ pub async fn connect_database(
     connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
     cancellation_state: State<'_, ConnectionAttemptCancellationState>,
 ) -> Result<String, ConnectionErrorInfo> {
+    let started_at = std::time::Instant::now();
     config.resolve_env_vars();
     config.fill_generated_name();
+    conn_storage
+        .complete_connection_secrets(&mut config)
+        .map_err(|error| {
+            ConnectionErrorInfo::unclassified(format!(
+                "Failed to load saved connection secrets: {error}"
+            ))
+        })?;
     // Validate connection config before attempting to connect
     config.validate().map_err(|e| {
         ConnectionErrorInfo::unclassified(format!("Invalid connection config: {}", e))
     })?;
-    connection_rate_limiter
+    if let Err(error) = connection_rate_limiter
         .check(&connection_rate_limit_key(&config))
         .await
-        .map_err(ConnectionErrorInfo::unclassified)?;
+    {
+        log_connection_limiter_rejection("connection.connect");
+        return Err(ConnectionErrorInfo::unclassified(error));
+    }
 
     let request_id = request_id
         .as_deref()
@@ -180,18 +328,23 @@ pub async fn connect_database(
     if let Some(request_id) = request_id.as_deref() {
         cancellation_state.finish(request_id).await;
     }
+    log_connection_outcome("connection.connect", started_at, &connect_result);
     connect_result?;
 
     let storage = conn_storage.inner().clone();
     let config_to_save = config.clone();
 
-    if let Err(_error) = run_blocking_storage_task(move || {
+    if let Err(save_error) = run_blocking_storage_task(move || {
         storage
             .save_connection(&config_to_save)
             .map_err(|e| e.to_string())
     })
     .await
     {
+        log::error!(
+            "operation=connection.connect status=failed stage=storage error={}",
+            save_error
+        );
         let disconnect_message =
             match timeout(DISCONNECT_TIMEOUT, db_manager.disconnect(&config.id)).await {
                 Ok(Ok(())) => String::new(),
@@ -199,10 +352,9 @@ pub async fn connect_database(
                 Err(_) => " Cleanup timed out.".to_string(),
             };
 
-        return Err(ConnectionErrorInfo::unclassified(format!(
-            "Failed to save the connection profile. The live connection was rolled back.{}",
-            disconnect_message
-        )));
+        return Err(ConnectionErrorInfo::unclassified(
+            connection_save_failure_message(&save_error, &disconnect_message),
+        ));
     }
 
     Ok(config.id.clone())
@@ -223,19 +375,31 @@ pub async fn disconnect_database(
 pub async fn test_connection(
     mut config: ConnectionConfig,
     request_id: Option<String>,
+    conn_storage: State<'_, ConnectionStorage>,
     connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
     cancellation_state: State<'_, ConnectionAttemptCancellationState>,
 ) -> Result<String, ConnectionErrorInfo> {
+    let started_at = std::time::Instant::now();
     config.resolve_env_vars();
     config.fill_generated_name();
+    conn_storage
+        .complete_connection_secrets(&mut config)
+        .map_err(|error| {
+            ConnectionErrorInfo::unclassified(format!(
+                "Failed to load saved connection secrets: {error}"
+            ))
+        })?;
     // Validate connection config before testing
     config.validate().map_err(|e| {
         ConnectionErrorInfo::unclassified(format!("Invalid connection config: {}", e))
     })?;
-    connection_rate_limiter
+    if let Err(error) = connection_rate_limiter
         .check(&format!("test|{}", connection_rate_limit_key(&config)))
         .await
-        .map_err(ConnectionErrorInfo::unclassified)?;
+    {
+        log_connection_limiter_rejection("connection.test");
+        return Err(ConnectionErrorInfo::unclassified(error));
+    }
 
     let temp_manager = DatabaseManager::new();
     let request_id = request_id
@@ -260,6 +424,7 @@ pub async fn test_connection(
     if let Some(request_id) = request_id.as_deref() {
         cancellation_state.finish(request_id).await;
     }
+    log_connection_outcome("connection.test", started_at, &test_result);
     test_result?;
     timeout(DISCONNECT_TIMEOUT, temp_manager.disconnect(&config.id))
         .await

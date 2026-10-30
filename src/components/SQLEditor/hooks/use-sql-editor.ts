@@ -353,6 +353,7 @@ export function useSQLEditor({
       const parameterNames = supportsPreparedParams ? extractNamedSqlParameters(sql) : [];
       if (parameterNames.length > 0) {
         const commandText = sql.trim();
+        const executionDatabase = useConnectionStore.getState().currentDatabase;
         setNotice(null);
         setError(null);
         setIsExecutingCurrent(true);
@@ -374,7 +375,7 @@ export function useSQLEditor({
             Number(queryResult.execution_time_ms),
             queryResult.rows.length || undefined,
             undefined,
-            useConnectionStore.getState().currentDatabase || undefined,
+            executionDatabase || undefined,
           );
         } catch (error) {
           // A declined Safe Mode confirmation is a user choice, not a failure:
@@ -392,7 +393,7 @@ export function useSQLEditor({
               0,
               undefined,
               errorMessage,
-              useConnectionStore.getState().currentDatabase || undefined,
+              executionDatabase || undefined,
             );
           }
         } finally {
@@ -404,6 +405,7 @@ export function useSQLEditor({
 
       if (usesDirectExecution) {
         const commandText = sql.trim();
+        const executionDatabase = useConnectionStore.getState().currentDatabase;
         setNotice(null);
         setError(null);
         setIsExecutingCurrent(true);
@@ -427,7 +429,7 @@ export function useSQLEditor({
             Number(queryResult.execution_time_ms),
             queryResult.rows.length || undefined,
             undefined,
-            useConnectionStore.getState().currentDatabase || undefined,
+            executionDatabase || undefined,
           );
         } catch (e) {
           if (e instanceof SafeModeCancelledError) {
@@ -445,7 +447,7 @@ export function useSQLEditor({
               0,
               undefined,
               errorMessage,
-              useConnectionStore.getState().currentDatabase || undefined,
+              executionDatabase || undefined,
             );
           }
         } finally {
@@ -506,10 +508,11 @@ export function useSQLEditor({
       setError(null);
       setIsExecutingCurrent(true);
       setIsBatchExecuting(true);
+      let executionDatabase = useConnectionStore.getState().currentDatabase;
       try {
-        const activeDatabase = useConnectionStore.getState().currentDatabase;
-        if (targetDatabaseFromUse && activeDatabase !== targetDatabaseFromUse) {
+        if (targetDatabaseFromUse && executionDatabase !== targetDatabaseFromUse) {
           await switchDatabase(connectionId, targetDatabaseFromUse);
+          executionDatabase = targetDatabaseFromUse;
         }
 
         // The Run button is a human decision even on the sandbox gateway path:
@@ -534,7 +537,7 @@ export function useSQLEditor({
           Number(queryResult.execution_time_ms),
           queryResult.rows.length || undefined,
           undefined,
-          activeDatabase || undefined,
+          executionDatabase || undefined,
         );
 
         if (hasMutatingStatements) {
@@ -575,7 +578,7 @@ export function useSQLEditor({
             0,
             undefined,
             errorMessage,
-            useConnectionStore.getState().currentDatabase || undefined,
+            executionDatabase || undefined,
           );
         }
       } finally {

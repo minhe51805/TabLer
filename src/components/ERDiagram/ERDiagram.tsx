@@ -1222,7 +1222,9 @@ export function ERDiagram({ connectionId, database }: Props) {
             <GitBranch className="erd-topbar-mark-icon" />
           </span>
           <div className="erd-topbar-copy">
-            <strong className="erd-topbar-title">ER Diagram</strong>
+            <h1 id="erd-title" className="erd-topbar-title">
+              ER Diagram
+            </h1>
             <span className="erd-topbar-database">{activeDatabaseLabel}</span>
           </div>
         </div>
@@ -1382,7 +1384,7 @@ export function ERDiagram({ connectionId, database }: Props) {
               sidebarHost,
             )}
 
-          <main className="erd-canvas">
+          <section className="erd-canvas" aria-labelledby="erd-title">
             <ReactFlow
               nodes={nodes}
               edges={edges}
@@ -1450,7 +1452,7 @@ export function ERDiagram({ connectionId, database }: Props) {
                 </button>
               </div>
             )}
-          </main>
+          </section>
         </div>
       )}
 

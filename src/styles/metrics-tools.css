@@ -1,6 +1,50 @@
 /* Metrics board quick-action tools: widget context menu + undo toast.
    Per-feature stylesheet (repo convention — do not extend app-components.css). */
 
+.metrics-board-canvas {
+  position: relative;
+}
+
+.metrics-board-empty-canvas {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  pointer-events: none;
+  color: var(--text-secondary);
+}
+
+.metrics-board-empty-icon {
+  width: 28px;
+  height: 28px;
+  color: var(--accent);
+}
+
+.metrics-board-empty-canvas strong {
+  font-size: var(--mm-fs-body);
+  font-weight: 600;
+}
+
+.metrics-board-empty-canvas button {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 12px;
+  border: 1px solid var(--accent-active);
+  border-radius: 8px;
+  background: var(--accent-active);
+  color: #fff;
+  font-size: var(--mm-fs-caption);
+  font-weight: 600;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
 .metrics-widget-context-menu {
   position: absolute;
   z-index: 60;

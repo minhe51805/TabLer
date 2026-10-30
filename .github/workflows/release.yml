@@ -311,6 +311,21 @@ jobs:
           # the NSIS .exe installer (not the MSI) — per Tauri docs the NSIS
           # bundle is the one the updater can install in place.
 
+      - name: Package native sidecar bundles
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+          CXXFLAGS: ${{ matrix.cxxflags }}
+        run: node scripts/package-native-sidecars.mjs
+
+      - name: Upload native sidecar bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-plugin-bundles-${{ matrix.target }}
+          path: dist-plugins
+          if-no-files-found: error
+          retention-days: 30
+
       - name: Smoke check Linux bundles
         if: matrix.target == 'linux'
         env:
@@ -393,8 +408,39 @@ jobs:
         with:
           ref: ${{ env.RELEASE_TAG }}
 
-      - name: Build plugin registry
-        run: node scripts/build-plugin-registry.mjs
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies from lockfile
+        run: npm ci --legacy-peer-deps
+
+      - name: Download native sidecar bundles
+        uses: actions/download-artifact@v4
+        with:
+          pattern: native-plugin-bundles-*
+          path: dist-plugins
+          merge-multiple: true
+
+      - name: Build plugin registry and repository from staged bundles
+        env:
+          PLUGINS_ROOT: dist-plugins
+        run: |
+          node scripts/package-http-plugins.mjs
+          node scripts/build-plugin-registry.mjs
+          node scripts/build-plugin-repository.mjs
+
+      - name: Upload plugin registry and repository
+        uses: actions/upload-artifact@v4
+        with:
+          name: tabler-plugin-registry-and-repository
+          path: |
+            plugin-registry.json
+            website/public/plugins
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Generate source SBOM
         uses: anchore/sbom-action@v0

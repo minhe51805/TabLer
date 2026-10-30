@@ -13,7 +13,7 @@ pub struct PostgresDriver {
     /// Engine from the connection config. Several engines share this wire
     /// driver; Vertica needs it to cancel via INTERRUPT_STATEMENT instead of
     /// pg_cancel_backend (which Vertica does not honor).
-    db_type: DatabaseType,
+    pub(super) db_type: DatabaseType,
     /// Vertica cancel bookkeeping: request_id -> session id captured from
     /// `SELECT current_session()` when the request started.
     vertica_sessions: StdRwLock<VerticaSessionRegistry>,

@@ -14,6 +14,7 @@ import type { QueryChromeState } from "../../types/app-types";
 import type { QueryEditorSessionState } from "../SQLEditor";
 import type { ConnectionConfig, Tab } from "../../types/database";
 import type { WindowMenuSectionKey } from "../../types/app-types";
+import "./workspace-visual-system.css";
 
 // AppWorkspacePanel renders unconditionally on the first frame, so a lazy
 // boundary here only bought a second loading screen after the boot screen —
@@ -113,7 +114,7 @@ export function WorkspaceShell(props: WorkspaceShellProps) {
   return (
     <div
       className={`app-root ${isWindowMaximized ? "window-maximized" : ""} ${props.showAISlidePanel ? "workspace-ai-open" : ""}`}
-      style={{ "--workspace-ai-sidebar-width": `${aiPanelWidth}px` } as CSSProperties}
+      style={{ "--workspace-ai-sidebar-preferred-width": `${aiPanelWidth}px` } as CSSProperties}
     >
       <AppTitleBar
         titlebarContextTitle={titlebarContextTitle}

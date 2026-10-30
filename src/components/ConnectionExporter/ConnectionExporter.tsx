@@ -1,5 +1,5 @@
-import { useMemo, useState } from "react";
-import { Check, CheckCircle2, AlertCircle, Lock, Eye, EyeOff, Package } from "lucide-react";
+import { useMemo, useState, useEffect } from "react";
+import { Check, CheckCircle2, AlertCircle, Lock, Eye, EyeOff, Package, X } from "lucide-react";
 import { save } from "@tauri-apps/plugin-dialog";
 import type { ConnectionConfig } from "../../types/database";
 import { exportConnections } from "../../utils/connection-export";
@@ -105,6 +105,17 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
     if (result?.success) onClose();
   };
 
+  // Escape closes the modal unless an export is in flight.
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && !isExporting) {
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [isExporting, onClose]);
+
   // Backdrop dismiss mirrors the other modals; it stays inert while an
   // export is in flight so a stray click cannot abandon the write.
   const handleBackdropClick = () => {
@@ -129,6 +140,15 @@ export function ConnectionExporter({ connections, onClose }: ConnectionExporterP
             </p>
           </div>
           <div className="cex-header-actions">
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={isExporting}
+              className="cex-close-btn"
+              aria-label="Close"
+            >
+              <X className="w-4 h-4" />
+            </button>
             {result ? (
               <button type="button" onClick={handleClose} className="cex-btn-primary">
                 <Check className="w-4 h-4" />

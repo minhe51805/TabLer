@@ -33,6 +33,11 @@ pub struct SshConfig {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TunnelHandle(usize);
 
+#[cfg(test)]
+pub(crate) fn tunnel_handle_for_test(id: usize) -> TunnelHandle {
+    TunnelHandle(id)
+}
+
 pub struct SshTunnelManager {
     tunnels: Mutex<HashMap<TunnelHandle, Arc<SshSessionContext>>>,
     next_id: Mutex<usize>,

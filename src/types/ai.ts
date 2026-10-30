@@ -117,8 +117,3 @@ export interface AIRequest {
    *  default so only models that support reasoning actually emit it. */
   enable_thinking?: boolean;
 }
-
-export interface AIResponse {
-  text: string;
-  error?: string | null;
-}

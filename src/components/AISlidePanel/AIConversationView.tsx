@@ -587,7 +587,6 @@ export const AIConversationView = memo(function AIConversationView({
               <Sparkles className="w-4 h-4" />
             </div>
             <div className="ai-workspace-chat-empty-copy">
-              <strong className="ai-workspace-chat-empty-title">{copy.composer.title}</strong>
               <p className="ai-workspace-chat-empty-text">{copy.composer.note}</p>
               <div className="ai-workspace-chat-empty-suggestions">
                 {copy.composer.promptIdeas.slice(0, 3).map((idea) => (

@@ -54,6 +54,7 @@ env:
 jobs:
   build-plugins:
     name: Build and package plugins
+    needs: build-native-plugins
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -85,6 +86,18 @@ jobs:
       - name: Package HTTP driver plugins
         run: node scripts/package-http-plugins.mjs
 
+      - name: Download native sidecar bundles
+        uses: actions/download-artifact@v4
+        with:
+          pattern: native-plugin-bundles-*
+          path: dist-plugins
+          merge-multiple: true
+
+      - name: Build registry from staged native and HTTP bundles
+        env:
+          PLUGINS_ROOT: dist-plugins
+        run: node scripts/build-plugin-registry.mjs
+
       # The packager only stages folders; zip each one so the artifact also ships
       # the shareable `dist-plugins/<id>.zip` archives documented in IMPORT.md.
       - name: Zip importable HTTP bundle folders
@@ -102,6 +115,7 @@ jobs:
       - name: Build website plugin repository
         env:
           PLUGIN_REPO_BASE_URL: ${{ github.event.inputs.repo_base_url || 'https://tabler.app' }}
+          PLUGINS_ROOT: dist-plugins
         run: node scripts/build-plugin-repository.mjs
 
       - name: Upload importable HTTP bundles
@@ -125,5 +139,55 @@ jobs:
         with:
           name: tabler-plugin-registry
           path: plugin-registry.json
+          if-no-files-found: error
+          retention-days: 30
+
+  build-native-plugins:
+    name: Build native sidecars (${{ matrix.target }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            target: linux
+            cc: gcc
+            cxx: g++
+            cxxflags: ""
+          - platform: windows-2022
+            target: windows
+            cc: clang-cl
+            cxx: clang-cl
+            cxxflags: "/std:c++17 /EHsc /DDUCKDB_STATIC_BUILD"
+          - platform: macos-latest
+            target: macos
+            cc: clang
+            cxx: clang++
+            cxxflags: ""
+    runs-on: ${{ matrix.platform }}
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build native sidecar bundles
+        env:
+          CC: ${{ matrix.cc }}
+          CXX: ${{ matrix.cxx }}
+          CXXFLAGS: ${{ matrix.cxxflags }}
+        run: node scripts/package-native-sidecars.mjs
+
+      - name: Upload native sidecar bundles
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-plugin-bundles-${{ matrix.target }}
+          path: dist-plugins
           if-no-files-found: error
           retention-days: 30

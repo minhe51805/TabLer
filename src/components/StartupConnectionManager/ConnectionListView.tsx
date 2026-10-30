@@ -211,7 +211,7 @@ export function ConnectionListView({
     <section className="startup-manager-browser">
       <div className="startup-manager-browser-head">
         <div className="startup-manager-browser-copy">
-          <h3>{t("startup.manager.pickWorkspace")}</h3>
+          <h1>{t("startup.manager.pickWorkspace")}</h1>
           <span className="startup-manager-browser-meta">
             {filteredConnections.length} {t("common.connections").toLocaleLowerCase()}
           </span>

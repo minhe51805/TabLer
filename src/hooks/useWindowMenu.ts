@@ -584,6 +584,14 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
             },
             shortcut: "Ctrl+H",
           },
+          {
+            label: t("menu.item.querySchedules"),
+            action: () => {
+              window.dispatchEvent(new CustomEvent("toggle-query-schedules-palette"));
+              closeMenu();
+            },
+            shortcut: "Ctrl+Shift+Q",
+          },
         ],
       },
       {

@@ -51,6 +51,15 @@ describe("agent-schedule-store", () => {
     expect(runs[0].prompt).toBe("Second dispatch, newer prompt.");
   });
 
+  it("preserves dispatchedAt when replaying a waiting dispatch", () => {
+    enqueueTask();
+    const firstDispatchedAt = useAgentScheduleStore.getState().runs[0].dispatchedAt;
+    enqueueTask({ prompt: "Replay of the same waiting dispatch." });
+    const runs = useAgentScheduleStore.getState().runs;
+    expect(runs).toHaveLength(1);
+    expect(runs[0].dispatchedAt).toBe(firstDispatchedAt);
+  });
+
   it("refuses to re-dispatch a task that is already running", () => {
     enqueueTask();
     const claimed = useAgentScheduleStore.getState().claimRunnableTask(CONTEXT);

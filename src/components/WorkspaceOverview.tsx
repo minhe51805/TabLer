@@ -122,7 +122,9 @@ export function WorkspaceReadyState({
             </div>
             <div className="workspace-ready-meta-chip">
               <span className="workspace-ready-meta-label">{t("workspace.ready.database")}</span>
-              <strong className="workspace-ready-meta-value">{activeDatabaseTarget}</strong>
+              <strong className="workspace-ready-meta-value" title={activeDatabaseTarget}>
+                {activeDatabaseTarget}
+              </strong>
             </div>
             <div className="workspace-ready-meta-chip">
               <span className="workspace-ready-meta-label">{t("workspace.ready.engine")}</span>

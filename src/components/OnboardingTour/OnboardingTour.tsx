@@ -306,11 +306,16 @@ export function OnboardingTour() {
         </button>
         <div
           className="onboarding-step-count"
+          role="progressbar"
           aria-label={copy.stepOf(tourStepIndex + 1, steps.length)}
+          aria-valuemin={1}
+          aria-valuemax={steps.length}
+          aria-valuenow={tourStepIndex + 1}
         >
           {steps.map((s, i) => (
             <span
               key={s.id}
+              aria-hidden="true"
               className={`onboarding-dot ${
                 i < tourStepIndex ? "done" : i === tourStepIndex ? "active" : ""
               }`}

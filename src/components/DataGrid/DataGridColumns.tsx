@@ -64,7 +64,7 @@ interface DataGridColumnsProps {
   ) => void;
   handleToggleSelectAllRows: () => void;
   handleCopyValue: (value: GridCellValue, cellKey: string) => void;
-  startEditingCell: (rowIndex: number, colIndex: number) => Promise<void>;
+  startEditingCell: (rowIndex: number, colIndex: number) => Promise<boolean>;
   commitEditingCell: (committed?: GridCellValue) => Promise<void>;
   cancelEditingCell: () => void;
   structureStatus: "idle" | "loading" | "ready" | "failed";

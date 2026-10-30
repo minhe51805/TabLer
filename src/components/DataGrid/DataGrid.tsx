@@ -31,7 +31,6 @@ import {
 import type { ColumnDetail, ConnectionConfig, QueryResult, TableRowFocus } from "../../types";
 import { devLogError } from "../../utils/logger";
 import { invokeMutation } from "../../utils/tauri-utils";
-import { quoteIdentifier } from "../../utils/sql-generator";
 import { emitAppToast } from "../../utils/app-toast";
 import { isMutatingStatement } from "../SQLEditor/SQLEditorUtils";
 import { lazy, Suspense } from "react";
@@ -48,8 +47,6 @@ import {
   inlineStructureCacheRef,
   buildResolvedColumns,
   isBooleanColumn,
-  isNumericColumn,
-  buildRowPrimaryKeys,
   resolveTableFilter,
   type ResolvedColumn,
   type GridCellValue,
@@ -90,11 +87,16 @@ import { useDataGridColumnMasks } from "./hooks/useDataGridColumnMasks";
 import { buildRowFocusFilter } from "./row-focus";
 import { InsertRowDialog } from "./dialogs/InsertRowDialog";
 import { type ColumnStats } from "./dialogs/ColumnStatsPopover";
-import { hasNumericValues } from "./chart-utils";
 import type { ColumnDisplayFormat } from "./editors";
 import { DataGridOverlays } from "./DataGridOverlays";
 import { DataGridTableView } from "./DataGridTableView";
 import { DataGridFooter } from "./DataGridFooter";
+import {
+  buildRowInspectorPrimaryKeyValues,
+  matchesRowInspectorEditScope,
+} from "./row-inspector-utils";
+import { getRowInspectorCopy } from "../RowInspector/row-inspector-copy";
+import { loadColumnStats } from "./column-stats-runner";
 
 /** Minimum width that must remain for scrollable (unpinned) columns. Pinning
  *  that would leave less than this is refused so the grid never becomes a
@@ -320,6 +322,7 @@ export function DataGrid({
   const requestIdRef = useRef(0);
   const dataScopeRef = useRef("");
   const countRequestIdRef = useRef(0);
+  const columnStatsRequestIdRef = useRef(0);
   const structureRequestIdRef = useRef(0);
   const structurePromiseRef = useRef<Promise<ColumnDetail[]> | null>(null);
   const structureRetryAttemptRef = useRef(0);
@@ -329,6 +332,10 @@ export function DataGrid({
   const isActiveRef = useRef(isActive);
   const rowSelectionAnchorRef = useRef<string | null>(null);
   const dataGridInstanceIdRef = useRef(`datagrid-${Math.random().toString(36).slice(2)}`);
+  const inspectorTargetRef = useRef<{
+    rowIndex: number;
+    rowIdentity: string | null;
+  } | null>(null);
   const csvImportOperationIdRef = useRef<string | null>(null);
   const tableExportOperationIdRef = useRef<string | null>(null);
   // A table-data-updated event that arrived while this grid was in a
@@ -1188,30 +1195,56 @@ export function DataGrid({
     };
   }, [contextMenu]);
 
+  const isTableEditable = Boolean(
+    tableName &&
+    !externalResult &&
+    allowsInlineEdit &&
+    allowsAtomicEdits &&
+    structureStatus === "ready" &&
+    primaryKeyColumns.length > 0,
+  );
+
   const handleOpenRowInspector = useCallback(
     (rowIndex: number) => {
       if (!data || !data.rows[rowIndex]) return;
       const row = data.rows[rowIndex];
       const absoluteRowNumber = rowIndex + 1;
-      const pkEntries = buildRowPrimaryKeys(row, resolvedColumns, primaryKeyColumns);
-      const pkValues: Record<string, string | number | boolean | null> = {};
-      pkEntries.forEach((entry) => {
-        pkValues[entry.column] = entry.value;
-      });
+      inspectorTargetRef.current = {
+        rowIndex,
+        rowIdentity: buildStableRowIdentity(row, resolvedColumns),
+      };
       // Masked columns must not leak into the inspector — mask the row before
       // emitting so the panel shows exactly what the grid shows.
       void columnMasks.maskRows([row]).then(([maskedRow]) => {
+        const inspectorRow = maskedRow ?? row;
         EventCenter.emit("row-inspector-open", {
           rowIndex: absoluteRowNumber,
-          row: maskedRow ?? row,
+          row: inspectorRow,
           columns: resolvedColumns,
-          primaryKeyValues: pkValues,
+          primaryKeyValues: buildRowInspectorPrimaryKeyValues(
+            inspectorRow,
+            resolvedColumns,
+            primaryKeyColumns,
+          ),
           tableName,
           database,
+          canEdit: isTableEditable,
+          maskedColumnNames: [...columnMasks.activeMaskedNames],
+          gridInstanceId: dataGridInstanceIdRef.current,
+          connectionId,
         });
       });
     },
-    [data, resolvedColumns, primaryKeyColumns, tableName, database, columnMasks],
+    [
+      data,
+      resolvedColumns,
+      primaryKeyColumns,
+      tableName,
+      database,
+      columnMasks,
+      isTableEditable,
+      connectionId,
+    ],
   );
 
   const rowInspectorOpen = useAppLayoutStore((state) => state.showRowInspector);
@@ -1238,57 +1271,56 @@ export function DataGrid({
     handleOpenRowInspector,
   ]);
 
+  useEffect(() => {
+    columnStatsRequestIdRef.current += 1;
+    setColumnStats(null);
+    setColumnStatsError(null);
+    setIsLoadingColumnStats(false);
+  }, [connectionId, database, tableName]);
+
+  const handleCloseColumnStats = useCallback(() => {
+    columnStatsRequestIdRef.current += 1;
+    setColumnStats(null);
+    setColumnStatsError(null);
+    setIsLoadingColumnStats(false);
+  }, []);
+
   /** Header context-menu "Column stats": runs aggregate SELECTs through the
    *  regular read-only query path and shows the results in a popover. Only
    *  offered for table-backed grids (tableName present, no external result). */
   const handleColumnStats = useCallback(
     (colName: string) => {
       if (!tableName || externalResult) return;
-      const colIndex = resolvedColumns.findIndex((column) => column.name === colName);
-      const column = colIndex >= 0 ? resolvedColumns[colIndex] : undefined;
-      const statsDbType = connections.find((c: ConnectionConfig) => c.id === connectionId)?.db_type;
-      const quotedTable = quoteIdentifier(tableName, statsDbType);
-      const quotedColumn = quoteIdentifier(colName, statsDbType);
+      const columnIndex = resolvedColumns.findIndex((column) => column.name === colName);
+      const column = columnIndex >= 0 ? resolvedColumns[columnIndex] : undefined;
+      if (!column) return;
+      const requestId = columnStatsRequestIdRef.current + 1;
+      columnStatsRequestIdRef.current = requestId;
+      const isCurrent = () => columnStatsRequestIdRef.current === requestId;
       setColumnStats({ column: colName, stats: null });
       setColumnStatsError(null);
       setIsLoadingColumnStats(true);
-      void executeQuery(
+      void loadColumnStats({
         connectionId,
-        `SELECT COUNT(*) AS total, COUNT(DISTINCT ${quotedColumn}) AS distinct_count, SUM(CASE WHEN ${quotedColumn} IS NULL THEN 1 ELSE 0 END) AS null_count FROM ${quotedTable}`,
-      )
-        .then(async (result) => {
-          const row = result.rows[0];
-          const stats: ColumnStats = {
-            total: typeof row?.[0] === "number" ? row[0] : Number(row?.[0] ?? 0),
-            distinct: typeof row?.[1] === "number" ? row[1] : Number(row?.[1] ?? 0),
-            nulls: typeof row?.[2] === "number" ? row[2] : Number(row?.[2] ?? 0),
-          };
-          // MIN/MAX/AVG only for numeric columns — a separate query so a
-          // type-sniff miss or an unsupported aggregate never loses the counts.
-          const numeric =
-            (column && isNumericColumn(column)) ||
-            (colIndex >= 0 && hasNumericValues(data?.rows ?? [], colIndex));
-          if (numeric) {
-            try {
-              const aggregates = await executeQuery(
-                connectionId,
-                `SELECT MIN(${quotedColumn}) AS min_value, MAX(${quotedColumn}) AS max_value, AVG(${quotedColumn}) AS avg_value FROM ${quotedTable}`,
-              );
-              const aggregateRow = aggregates.rows[0];
-              stats.min = aggregateRow?.[0] ?? null;
-              stats.max = aggregateRow?.[1] ?? null;
-              stats.avg = aggregateRow?.[2] ?? null;
-            } catch {
-              // Aggregates unsupported for this type — counts still stand.
-            }
-          }
+        tableName,
+        column,
+        columnIndex,
+        dataRows: data?.rows ?? [],
+        databaseType: connections.find((c: ConnectionConfig) => c.id === connectionId)?.db_type,
+        executeQuery,
+        isCurrent,
+      })
+        .then((stats) => {
+          if (!isCurrent() || !stats) return;
           setColumnStats({ column: colName, stats });
         })
         .catch((error) => {
-          setColumnStatsError(String(error instanceof Error ? error.message : error));
+          if (isCurrent()) {
+            setColumnStatsError(String(error instanceof Error ? error.message : error));
+          }
         })
         .finally(() => {
-          setIsLoadingColumnStats(false);
+          if (isCurrent()) setIsLoadingColumnStats(false);
         });
     },
     [tableName, externalResult, resolvedColumns, connections, connectionId, executeQuery, data],
@@ -1298,14 +1330,6 @@ export function DataGrid({
     tableName && !externalResult && allowsInlineEdit && allowsAtomicEdits,
   );
   const canSelectRows = Boolean(tableName && !externalResult && primaryKeyColumns.length > 0);
-  const isTableEditable = Boolean(
-    tableName &&
-    !externalResult &&
-    allowsInlineEdit &&
-    allowsAtomicEdits &&
-    structureStatus === "ready" &&
-    primaryKeyColumns.length > 0,
-  );
   const selectedRowCount = selectedRows.size;
   const allVisibleRowsSelected = Boolean(
     canSelectRows &&
@@ -1313,30 +1337,76 @@ export function DataGrid({
     filteredTableRowIndices.every((rowIndex) => selectedRows.has(rowIndex)),
   );
 
-  const { startEditingCell, cancelEditingCell, commitEditingCell } = useDataGridInlineEditing({
-    canAttemptInlineEdit,
+  const { startEditingCell, cancelEditingCell, commitEditingCell, editCellFromInspector } =
+    useDataGridInlineEditing({
+      canAttemptInlineEdit,
+      connectionId,
+      data,
+      tableName,
+      database: database || undefined,
+      resolvedColumns,
+      primaryKeyColumns,
+      structureStatus,
+      editingCell,
+      setEditingCell,
+      setEditingSeedValue,
+      setSavingCell,
+      setStagedRowIndices,
+      setData,
+      setSelectedCell,
+      setError,
+      stageChange,
+      patchLoadedTableCell,
+      ensureStructureLoaded,
+      maskedColumnNames: columnMasks.activeMaskedNames,
+      editingDraftRef,
+      editingTouchedRef,
+    });
+
+  useEffect(() => {
+    const offEdit = EventCenter.on("row-inspector-edit-cell", (event) => {
+      const detail = event.detail;
+      if (
+        !matchesRowInspectorEditScope(detail, {
+          gridInstanceId: dataGridInstanceIdRef.current,
+          connectionId,
+          tableName,
+          database,
+        }) ||
+        externalResult ||
+        !isTableEditable
+      ) {
+        return;
+      }
+      const target = inspectorTargetRef.current;
+      const sourceRowIndex = detail.rowIndex - 1;
+      const row = target?.rowIndex === sourceRowIndex ? data?.rows[sourceRowIndex] : undefined;
+      if (!target || !row || buildStableRowIdentity(row, resolvedColumns) !== target.rowIdentity) {
+        setError(getRowInspectorCopy(getCurrentAppLanguage()).staleRow);
+        return;
+      }
+      const colIndex = resolvedColumns.findIndex((column) => column.name === detail.columnName);
+      if (colIndex < 0) return;
+      void editCellFromInspector(sourceRowIndex, colIndex, detail.value);
+    });
+    const offClose = EventCenter.on("row-inspector-close", () => {
+      inspectorTargetRef.current = null;
+    });
+    return () => {
+      offEdit();
+      offClose();
+    };
+  }, [
     connectionId,
-    data,
     tableName,
-    database: database || undefined,
+    database,
+    externalResult,
+    isTableEditable,
+    data,
     resolvedColumns,
-    primaryKeyColumns,
-    structureStatus,
-    editingCell,
-    setEditingCell,
-    setEditingSeedValue,
-    setSavingCell,
-    setStagedRowIndices,
-    setData,
-    setSelectedCell,
+    editCellFromInspector,
     setError,
-    stageChange,
-    patchLoadedTableCell,
-    ensureStructureLoaded,
-    maskedColumnNames: columnMasks.activeMaskedNames,
-    editingDraftRef,
-    editingTouchedRef,
-  });
+  ]);
 
   const {
     handleRangeCopy,
@@ -2011,7 +2081,7 @@ export function DataGrid({
           className="datagrid-table-wrap"
           ref={tableWrapRef}
           tabIndex={0}
-          role="grid"
+          role="region"
           aria-label={
             tableName
               ? getDataGridCopy(language).grid.ariaLabelTable(tableName)
@@ -2050,6 +2120,11 @@ export function DataGrid({
             <DataGridTableView
               table={table}
               tableMinWidth={tableMinWidth}
+              ariaLabel={
+                tableName
+                  ? getDataGridCopy(language).grid.ariaLabelTable(tableName)
+                  : getDataGridCopy(language).grid.ariaLabelResult
+              }
               renderedColumnCount={renderedColumnCount}
               leftPinnedColumns={leftPinnedColumns}
               virtualizableColumns={virtualizableColumns}
@@ -2135,7 +2210,7 @@ export function DataGrid({
           setSortDir={setSortDir}
           setColumnDisplayFormats={setColumnDisplayFormats}
           onCloseFkPreview={() => setFkPreview(null)}
-          onCloseColumnStats={() => setColumnStats(null)}
+          onCloseColumnStats={handleCloseColumnStats}
           onCloseSetRangeDialog={() =>
             setSetRangeDialog((previous) => ({ ...previous, open: false }))
           }

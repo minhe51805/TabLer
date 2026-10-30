@@ -220,32 +220,3 @@ export function buildPastePreview(
     firstRowWasHeader: parsed.firstRowWasHeader,
   };
 }
-
-/** Convert parsed clipboard data to a displayable preview string. */
-export function clipboardToPreviewString(parsed: ParsedClipboardData): string {
-  if (parsed.dataRows.length === 0) return "No data rows (header only)";
-
-  const maxRows = 5;
-  const displayRows = parsed.dataRows.slice(0, maxRows);
-  const maxCols = Math.min(parsed.columnCount, 8);
-
-  let lines: string[] = [];
-  if (parsed.firstRowWasHeader) {
-    lines.push(`Headers: ${parsed.headers.slice(0, maxCols).join(", ")}${parsed.headers.length > maxCols ? "..." : ""}`);
-    lines.push("");
-  }
-  lines.push(`Format: ${parsed.format.toUpperCase()} | Rows: ${parsed.rowCount} | Columns: ${parsed.columnCount}`);
-  lines.push("");
-
-  for (let i = 0; i < displayRows.length; i++) {
-    const cells = displayRows[i].slice(0, maxCols);
-    const line = cells.map((c) => (c.length > 20 ? c.slice(0, 18) + "..." : c)).join(" | ");
-    lines.push(`Row ${i + 1}: ${line}${displayRows[i].length > maxCols ? " ..." : ""}`);
-  }
-
-  if (parsed.rowCount > maxRows) {
-    lines.push(`... and ${parsed.rowCount - maxRows} more rows`);
-  }
-
-  return lines.join("\n");
-}

@@ -4,6 +4,7 @@ import { DatabaseBrandIcon } from "../DatabaseBrandIcon";
 import type { AppLanguage } from "../../../i18n";
 import { isPluginHttpProtocol, isPluginNativeProtocol } from "../../../utils/plugin-driver-runtime";
 import { LOCAL_BOOTSTRAP_PLANNED, LOCAL_BOOTSTRAP_READY, type DbEntry } from "../engine-registry";
+import "../connection-picker.css";
 
 interface PickerSection {
   key: string;
@@ -67,9 +68,6 @@ export interface ConnectionPickerStepProps {
   pickerSearch: string;
   pickerSections: PickerSection[];
   filteredDbs: DbEntry[];
-  supportedCount: number;
-  roadmapCount: number;
-  localRoadmapCount: number;
   strings: PickerStrings;
   onSearchChange: (value: string) => void;
   onSelectDb: (db: DbEntry) => void;
@@ -153,60 +151,6 @@ function getPickerDescription(db: DbEntry, bootstrapMode: boolean, language: App
   return language === "vi"
     ? "Chưa khả dụng trong bản build này."
     : "Not available in this build yet.";
-}
-
-function getPickerCapabilities(db: DbEntry, bootstrapMode: boolean, language: AppLanguage) {
-  const capabilities: string[] = [];
-
-  if (bootstrapMode) {
-    if (LOCAL_BOOTSTRAP_READY.has(db.key)) {
-      capabilities.push(language === "vi" ? "Bootstrap local" : "Local bootstrap");
-    } else {
-      capabilities.push(language === "vi" ? "Lộ trình" : "Roadmap");
-    }
-
-    if (db.supported && !LOCAL_BOOTSTRAP_READY.has(db.key)) {
-      capabilities.push(language === "vi" ? "Lộ trình local" : "Local roadmap");
-    }
-  } else {
-    capabilities.push(
-      db.supported
-        ? language === "vi"
-          ? "Sẵn sàng"
-          : "Ready now"
-        : db.pluginHttpState === "installed"
-          ? language === "vi"
-            ? "Đã cài · cần bật"
-            : "Installed · off"
-          : db.pluginHttpState === "incomplete"
-            ? language === "vi"
-              ? "Thiếu binary"
-              : "Missing binary"
-            : isPluginNativeProtocol(db.key)
-              ? language === "vi"
-                ? "Không có trong build"
-                : "Not in build"
-              : isPluginHttpProtocol(db.key)
-                ? language === "vi"
-                  ? "Cần plugin"
-                  : "Needs plugin"
-                : language === "vi"
-                  ? "Lộ trình"
-                  : "Roadmap",
-    );
-  }
-
-  if (db.isFile) {
-    capabilities.push(language === "vi" ? "Theo tệp" : "File based");
-  } else if (db.defaultPort) {
-    capabilities.push(language === "vi" ? `Cổng ${db.defaultPort}` : `Port ${db.defaultPort}`);
-  }
-
-  if (db.supported) {
-    capabilities.push(language === "vi" ? "Workspace đã lưu" : "Saved workspace");
-  }
-
-  return capabilities.slice(0, 3);
 }
 
 function getPickerHighlights(db: DbEntry, bootstrapMode: boolean, language: AppLanguage) {
@@ -434,9 +378,6 @@ export function ConnectionPickerStep({
   pickerSearch,
   pickerSections,
   filteredDbs,
-  supportedCount,
-  roadmapCount,
-  localRoadmapCount,
   strings,
   showCloseButton = true,
   onSearchChange,
@@ -449,16 +390,11 @@ export function ConnectionPickerStep({
   isInstallingPlugin,
   onConnectionUrl,
 }: ConnectionPickerStepProps) {
-  const readyCount = bootstrapMode ? Array.from(LOCAL_BOOTSTRAP_READY).length : supportedCount;
-  const roadmapTotal = bootstrapMode ? localRoadmapCount : roadmapCount;
   const selectedStatus = selectedDb ? getPickerStatus(selectedDb, bootstrapMode, language) : null;
   const selectedMeta = selectedDb ? getPickerMetaLabel(selectedDb, language) : "";
   const selectedDescription = selectedDb
     ? getPickerDescription(selectedDb, bootstrapMode, language)
     : "";
-  const selectedCapabilities = selectedDb
-    ? getPickerCapabilities(selectedDb, bootstrapMode, language).slice(0, 2)
-    : [];
   const selectedHighlights = selectedDb
     ? getPickerHighlights(selectedDb, bootstrapMode, language).slice(0, 2)
     : [];
@@ -473,7 +409,7 @@ export function ConnectionPickerStep({
           <span className="panel-kicker">{strings.pickerKicker}</span>
           <div className="connection-picker-hero">
             <div className="connection-picker-hero-copy">
-              <h2 className="connection-picker-title">
+              <h2 id="connection-picker-title" className="connection-picker-title">
                 {bootstrapMode ? strings.pickerLocalTitle : strings.pickerTitle}
               </h2>
               <p className="connection-picker-subtitle">
@@ -517,21 +453,6 @@ export function ConnectionPickerStep({
                 </span>
               </div>
             )}
-
-            <div className="connection-picker-mini-stats">
-              <span className="connection-picker-mini-stat accent">
-                <strong>{readyCount}</strong>
-                <span>{bootstrapMode ? strings.localReady : strings.ready}</span>
-              </span>
-              <span className="connection-picker-mini-stat">
-                <strong>{roadmapTotal}</strong>
-                <span>{bootstrapMode ? strings.localRoadmap : strings.roadmap}</span>
-              </span>
-              <span className="connection-picker-mini-stat">
-                <strong>{filteredDbs.length}</strong>
-                <span>{strings.shown}</span>
-              </span>
-            </div>
           </div>
 
           {onInstallPlugin && !bootstrapMode ? (
@@ -674,12 +595,20 @@ export function ConnectionPickerStep({
             </div>
           </div>
 
-          <aside className="connection-picker-aside">
+          <aside
+            className="connection-picker-aside"
+            aria-labelledby="connection-picker-selection-title"
+          >
             <div
               className={`connection-picker-selection-card ${selectedDb ? "has-selection" : ""}`}
               style={selectedBrandStyle}
             >
-              <span className="connection-picker-footer-label">{strings.selection}</span>
+              <span
+                id="connection-picker-selection-title"
+                className="connection-picker-footer-label"
+              >
+                {strings.selection}
+              </span>
 
               {selectedDb && selectedStatus ? (
                 <>
@@ -707,33 +636,6 @@ export function ConnectionPickerStep({
                   </div>
 
                   <p className="connection-picker-selection-description">{selectedDescription}</p>
-
-                  <div className="connection-picker-inspector-facts">
-                    <div className="connection-picker-inspector-fact">
-                      <span>{strings.workflow}</span>
-                      <strong>{selectedMeta}</strong>
-                    </div>
-                    <div className="connection-picker-inspector-fact">
-                      <span>{strings.mode}</span>
-                      <strong>
-                        {bootstrapMode ? strings.localBootstrap : strings.connectionSetup}
-                      </strong>
-                    </div>
-                    <div className="connection-picker-inspector-fact">
-                      <span>{strings.engineType}</span>
-                      <strong>
-                        {selectedDb.isFile ? strings.fileDatabase : strings.serverDatabase}
-                      </strong>
-                    </div>
-                  </div>
-
-                  <div className="connection-picker-selection-tags">
-                    {selectedCapabilities.map((capability) => (
-                      <span key={capability} className="connection-picker-selection-tag">
-                        {capability}
-                      </span>
-                    ))}
-                  </div>
 
                   <div className="connection-picker-selection-list">
                     {selectedHighlights.map((highlight) => (
@@ -766,19 +668,19 @@ export function ConnectionPickerStep({
                   <span>{strings.selectionHint}</span>
                 </div>
               )}
+            </div>
 
-              <div className="connection-picker-footer-actions">
-                <button onClick={onClose} className="btn btn-secondary">
-                  {strings.cancel}
-                </button>
-                <button
-                  onClick={onContinue}
-                  disabled={!selectedDb || !selectedStatus?.canContinue}
-                  className="btn btn-primary"
-                >
-                  {strings.continue}
-                </button>
-              </div>
+            <div className="connection-picker-footer-actions">
+              <button onClick={onClose} className="btn btn-secondary">
+                {strings.cancel}
+              </button>
+              <button
+                onClick={onContinue}
+                disabled={!selectedDb || !selectedStatus?.canContinue}
+                className="btn btn-primary"
+              >
+                {strings.continue}
+              </button>
             </div>
           </aside>
         </div>
@@ -791,11 +693,5 @@ export { LOCAL_BOOTSTRAP_PLANNED, LOCAL_BOOTSTRAP_READY };
 // Shared picker helpers live beside the component so one wizard file stays
 // self-contained; splitting them out would be churn for fast-refresh only.
 /* eslint-disable react-refresh/only-export-components */
-export {
-  getPickerStatus,
-  getPickerMetaLabel,
-  getPickerDescription,
-  getPickerCapabilities,
-  getPickerHighlights,
-};
+export { getPickerStatus, getPickerMetaLabel, getPickerDescription, getPickerHighlights };
 /* eslint-enable react-refresh/only-export-components */

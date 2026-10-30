@@ -4,7 +4,7 @@
 .app-update-btn.is-retry {
   border-color: color-mix(in srgb, var(--warning) 38%, transparent);
   background: color-mix(in srgb, var(--warning) 12%, transparent);
-  color: var(--warning);
+  color: color-mix(in srgb, var(--warning) 65%, var(--text-primary));
 }
 
 .app-update-btn.is-retry:hover:not(:disabled) {

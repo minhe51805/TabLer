@@ -110,16 +110,6 @@ export function assignConnectionToGroup(connectionId: string, groupId: string | 
   );
 }
 
-export function assignConnectionToTag(connectionId: string, tagId: string | null): void {
-  const tags = loadTagAssignments();
-  if (tagId) tags[connectionId] = tagId;
-  else delete tags[connectionId];
-  saveTagAssignments(tags);
-  patchLiveConnections((connection) =>
-    connection.id === connectionId ? { ...connection, tagId: tagId ?? undefined } : connection,
-  );
-}
-
 export function applyConnectionAssignments(connections: ConnectionConfig[]): ConnectionConfig[] {
   migrateLegacyConnectionAssignments();
   const groups = loadGroupAssignments();
@@ -147,16 +137,6 @@ export function toggleGroupCollapse(id: string): boolean {
   }
   saveCollapsed(collapsed);
   return !isCollapsed;
-}
-
-export function setGroupCollapsed(id: string, collapsed: boolean): void {
-  const ids = loadCollapsed();
-  if (collapsed) {
-    ids.add(id);
-  } else {
-    ids.delete(id);
-  }
-  saveCollapsed(ids);
 }
 
 // ─── Connection assignment storage ────────────────────────────────────────────

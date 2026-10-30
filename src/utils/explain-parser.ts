@@ -33,24 +33,6 @@ export interface ExplainNode {
   extras: Record<string, string | number | boolean | null>;
 }
 
-/** Complete parsed explain plan */
-export interface ExplainPlan {
-  /** Whether this plan used ANALYZE (includes actual vs estimated) */
-  analyzed: boolean;
-  /** Total estimated cost */
-  totalCost?: number;
-  /** Root node(s) of the plan tree */
-  roots: ExplainNode[];
-  /** All nodes indexed by id */
-  nodes: Map<string, ExplainNode>;
-  /** Raw text output (for unsupported formats) */
-  rawText: string;
-  /** Database type that produced this plan */
-  dbType: DatabaseType;
-  /** Any warnings or notes */
-  warnings: string[];
-}
-
 /** Parsed plan used by the ExplainVisualizer component */
 export interface ParsedExplainPlan {
   dbType: DatabaseType;

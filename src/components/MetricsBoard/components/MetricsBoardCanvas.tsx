@@ -1,4 +1,4 @@
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, LayoutGrid, Plus } from "lucide-react";
 import { useEffect, type CSSProperties } from "react";
 import type {
   MetricsBoardDefinition,
@@ -93,6 +93,7 @@ interface Props {
     type: MetricsWidgetType,
     preferredPosition?: { grid_x: number; grid_y: number },
   ) => void;
+  onOpenWidgetLibrary: () => void;
   updateSelectedWidget: (updates: Partial<MetricsWidgetDefinition>) => void;
   clearWidgetSelection: () => void;
   deleteSelectedWidget: () => void;
@@ -157,6 +158,7 @@ export function MetricsBoardCanvas({
   handleWidgetResizeStart,
   openCanvasContextMenu,
   addWidget,
+  onOpenWidgetLibrary,
   updateSelectedWidget,
   clearWidgetSelection,
   deleteSelectedWidget,
@@ -174,7 +176,7 @@ export function MetricsBoardCanvas({
   setEditingWidgetId,
   setActiveWidgetId,
 }: Props) {
-  const { t } = useI18n();
+  const { t, language } = useI18n();
   const zoom = boardZoom ?? 1;
 
   // Ctrl/Cmd+wheel zooms the board. React attaches wheel listeners passively,
@@ -194,6 +196,16 @@ export function MetricsBoardCanvas({
 
   return (
     <div className="metrics-board-canvas" ref={canvasRef}>
+      {activeBoard && activeBoard.widgets.length === 0 ? (
+        <div className="metrics-board-empty-canvas">
+          <LayoutGrid className="metrics-board-empty-icon" aria-hidden="true" />
+          <strong>{`0 ${t("metrics.widgets")}`}</strong>
+          <button type="button" onClick={onOpenWidgetLibrary}>
+            <Plus className="w-4 h-4" />
+            <span>{language === "vi" ? "Them widget" : "Add widget"}</span>
+          </button>
+        </div>
+      ) : null}
       {/* transform: scale() does not grow the layout box, so size the scroll
           surface explicitly by the scaled dimensions. */}
       <div

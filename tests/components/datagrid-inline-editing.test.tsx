@@ -251,3 +251,39 @@ describe("commitEditingCell — staging", () => {
     expect(spies.setError).toHaveBeenCalledWith(expect.stringContaining("column map missing"));
   });
 });
+
+describe("editCellFromInspector", () => {
+  it("uses the existing guards and stages exactly one update", async () => {
+    const { hook, spies } = makeHarness();
+    await act(async () => {
+      await hook.result.current.api.editCellFromInspector(0, 1, "alicia");
+    });
+    expect(spies.stageChange).toHaveBeenCalledTimes(1);
+    expect(spies.stageChange).toHaveBeenCalledWith(
+      expect.objectContaining({
+        rowIndex: 0,
+        rowKey: { id: 1 },
+        columns: { 1: { old: "alice", new: "alicia" } },
+      }),
+    );
+    expect(hook.result.current.data?.rows[0][1]).toBe("alicia");
+  });
+
+  it("refuses a masked inspector cell without staging", async () => {
+    const { hook, spies } = makeHarness({ maskedColumnNames: new Set(["secret"]) });
+    await act(async () => {
+      await hook.result.current.api.editCellFromInspector(0, 2, "replacement");
+    });
+    expect(spies.stageChange).not.toHaveBeenCalled();
+    expect(spies.setError).toHaveBeenCalledWith(expect.stringContaining("masked"));
+  });
+
+  it("refuses an incomplete primary key without staging", async () => {
+    const { hook, spies } = makeHarness();
+    await act(async () => {
+      await hook.result.current.api.editCellFromInspector(2, 1, "replacement");
+    });
+    expect(spies.stageChange).not.toHaveBeenCalled();
+    expect(spies.setError).toHaveBeenCalledWith(expect.stringContaining("incomplete primary key"));
+  });
+});

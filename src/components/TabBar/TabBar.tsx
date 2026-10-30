@@ -63,6 +63,7 @@ interface TabBarItemProps {
   id: string;
   type: string;
   title: string;
+  closeLabel: string;
   isPreview: boolean;
   isActive: boolean;
   isDragOver: boolean;
@@ -86,6 +87,7 @@ const TabBarItem = memo(function TabBarItem({
   id,
   type,
   title,
+  closeLabel,
   isPreview,
   isActive,
   isDragOver,
@@ -133,7 +135,10 @@ const TabBarItem = memo(function TabBarItem({
       ) : null}
 
       <button
+        type="button"
         className={["tabbar-close-btn", isActive ? "visible" : ""].join(" ")}
+        aria-label={`${closeLabel}: ${title}`}
+        title={`${closeLabel}: ${title}`}
         onClick={(event) => {
           event.stopPropagation();
           onClose(id);
@@ -336,6 +341,7 @@ export function TabBar({
             id={tab.id}
             type={tab.type}
             title={tab.title}
+            closeLabel={copy.closeTab}
             isPreview={Boolean(tab.isPreview)}
             isActive={paneActiveTabId === tab.id}
             isDragOver={dragOverTabId === tab.id}

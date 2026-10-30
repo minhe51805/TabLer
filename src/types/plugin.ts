@@ -91,37 +91,3 @@ export interface PluginUpdateCandidate {
   availableVersion: string;
   package: PluginRegistryPackage;
 }
-
-/** Plugin kind categories */
-export type PluginKind =
-  | "tooling"       // Developer tools, linters, formatters
-  | "adapter"       // Database adapters
-  | "visualization" // Chart/graph builders
-  | "ai"            // AI integrations
-  | "export"        // Export formats
-  | "import"        // Import formats
-  | "theme"         // Color themes
-  | "extension";    // General extensions
-
-/** Capability strings a plugin can declare */
-export type PluginCapability =
-  | "commands"           // Registers custom commands
-  | "database"          // Adds database driver support
-  | "export"            // Adds export format
-  | "import"            // Adds import format
-  | "sidebar"           // Adds sidebar panel
-  | "ai"                // AI provider
-  | "theme"             // UI theme
-  | "autocomplete"      // SQL/code autocomplete
-  | "file";             // File handler
-
-export type PluginPermission =
-  | "workspace.read"
-  | "connection.metadata"
-  | "query.read"
-  | "query.execute"
-  | "network.fetch"
-  | "file.read"
-  | "file.write"
-  | "clipboard.write"
-  | "notifications";

@@ -44,6 +44,17 @@ pub fn statement_returns_rows(sql: &str, prefixes: &[&str]) -> bool {
     prefixes.iter().any(|prefix| trimmed.starts_with(prefix)) || trimmed.contains(" RETURNING ")
 }
 
+pub fn statement_has_affected_row_count(sql: &str) -> bool {
+    let trimmed = strip_leading_sql_noise(sql).trim_start();
+    let verb = trimmed
+        .split(|character: char| character.is_whitespace())
+        .next()
+        .unwrap_or_default();
+    ["INSERT", "UPDATE", "DELETE", "MERGE", "COPY"]
+        .iter()
+        .any(|candidate| verb.eq_ignore_ascii_case(candidate))
+}
+
 #[cfg(test)]
 mod tests {
     use super::statement_returns_rows;
@@ -134,6 +145,30 @@ mod tests {
             "-- a\n-- b",
         ] {
             assert!(!statement_returns_rows(sql, READ_PREFIXES), "{sql:?}");
+        }
+    }
+
+    #[test]
+    fn affected_row_read_back_is_limited_to_dml() {
+        for sql in [
+            "INSERT INTO t VALUES (1)",
+            " /* note */ UPDATE t SET a = 1",
+            "DELETE FROM t",
+            "MERGE INTO t USING s ON TRUE WHEN MATCHED THEN DELETE",
+            "COPY t FROM 'input.csv'",
+        ] {
+            assert!(super::statement_has_affected_row_count(sql), "{sql:?}");
+        }
+        for sql in [
+            "SELECT 1",
+            "CREATE TABLE t (id INT)",
+            "DROP TABLE t",
+            "TRUNCATE t",
+            "COMMIT",
+            "UPDATEABLE_VIEW",
+            "",
+        ] {
+            assert!(!super::statement_has_affected_row_count(sql), "{sql:?}");
         }
     }
 }

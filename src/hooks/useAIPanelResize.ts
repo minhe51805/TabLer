@@ -1,12 +1,17 @@
-import { useCallback, useEffect, useRef, type MouseEvent as ReactMouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useSyncExternalStore,
+  type MouseEvent as ReactMouseEvent,
+} from "react";
 
 export const AI_PANEL_MIN_WIDTH = 360;
 export const AI_PANEL_MAX_WIDTH = 800;
 export const AI_PANEL_DEFAULT_WIDTH = 448;
 export const AI_PANEL_WIDTH_STORAGE_KEY = "tabler.ai.panelWidth.v1";
 
-const DESKTOP_RESERVED_WIDTH = 280;
-const OVERLAY_BREAKPOINT = 960;
+const OVERLAY_BREAKPOINT = 1100;
 const OVERLAY_RESERVED_WIDTH = 12;
 
 function viewportWidth(): number {
@@ -15,11 +20,30 @@ function viewportWidth(): number {
 
 export function clampAIPanelWidth(width: number, viewWidth = viewportWidth()): number {
   if (!Number.isFinite(width)) return AI_PANEL_DEFAULT_WIDTH;
-  const reserved =
-    viewWidth <= OVERLAY_BREAKPOINT ? OVERLAY_RESERVED_WIDTH : DESKTOP_RESERVED_WIDTH;
-  const maxForViewport = Math.max(AI_PANEL_MIN_WIDTH, viewWidth - reserved);
+  const maxForViewport =
+    viewWidth <= OVERLAY_BREAKPOINT
+      ? Math.max(AI_PANEL_MIN_WIDTH, viewWidth - OVERLAY_RESERVED_WIDTH)
+      : AI_PANEL_MAX_WIDTH;
   const maxWidth = Math.min(AI_PANEL_MAX_WIDTH, maxForViewport);
   return Math.max(AI_PANEL_MIN_WIDTH, Math.min(maxWidth, Math.round(width)));
+}
+
+export function getAIPanelDisplayWidth(width: number, viewWidth = viewportWidth()): number {
+  const preferred = clampAIPanelWidth(width, viewWidth);
+  if (viewWidth <= OVERLAY_BREAKPOINT) {
+    return Math.min(420, preferred, Math.max(0, viewWidth - OVERLAY_RESERVED_WIDTH));
+  }
+  return Math.min(preferred, Math.max(AI_PANEL_MIN_WIDTH, viewWidth - 520));
+}
+
+function subscribeToViewportWidth(onChange: () => void): () => void {
+  window.addEventListener("resize", onChange);
+  return () => window.removeEventListener("resize", onChange);
+}
+
+export function useAIPanelDisplayWidth(width: number): number {
+  const viewWidth = useSyncExternalStore(subscribeToViewportWidth, viewportWidth, () => 1440);
+  return getAIPanelDisplayWidth(width, viewWidth);
 }
 
 export function readStoredAIPanelWidth(): number {

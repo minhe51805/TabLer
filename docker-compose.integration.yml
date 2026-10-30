@@ -83,6 +83,145 @@ services:
       timeout: 3s
       retries: 45
 
+  cockroachdb:
+    image: cockroachdb/cockroach:latest-v24.1
+    command: start-single-node --insecure
+    environment:
+      COCKROACH_DATABASE: defaultdb
+    ports:
+      - "26257:26257"
+    healthcheck:
+      test: ["CMD-SHELL", "cockroach sql --insecure --execute 'SELECT 1'"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  cassandra:
+    image: cassandra:5.0
+    profiles: ["heavy"]
+    environment:
+      CASSANDRA_CLUSTER_NAME: tabler
+      CASSANDRA_DC: datacenter1
+      CASSANDRA_RACK: rack1
+    ports:
+      - "19042:9042"
+    healthcheck:
+      test: ["CMD-SHELL", "cqlsh -e 'SELECT cluster_name FROM system.local'"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+
+  opensearch:
+    image: opensearchproject/opensearch:latest
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      DISABLE_INSTALL_DEMO_CONFIG: "true"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "19200:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9200/_cluster/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 45
+
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.15.0
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: "-Xms512m -Xmx512m"
+    ports:
+      - "19201:9200"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:9200/_cluster/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 45
+
+  trino:
+    image: trinodb/trino:latest
+    ports:
+      - "18081:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/v1/info"]
+      interval: 5s
+      timeout: 5s
+      retries: 45
+
+  typesense:
+    image: typesense/typesense:27.1
+    environment:
+      TYPESENSE_API_KEY: tabler
+      TYPESENSE_DATA_DIR: /data
+    volumes:
+      - typesense-data:/data
+    ports:
+      - "18108:8108"
+    healthcheck:
+      test: ["NONE"]
+
+  surrealdb:
+    image: surrealdb/surrealdb:latest
+    command: start --user root --pass root
+    ports:
+      - "18000:8000"
+    healthcheck:
+      test: ["NONE"]
+
+  weaviate:
+    image: semitechnologies/weaviate:latest
+    environment:
+      AUTHENTICATION_ANONYMOUS_ACCESS_ENABLED: "true"
+      PERSISTENCE_DATA_PATH: /var/lib/weaviate
+    ports:
+      - "18083:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:8080/v1/meta"]
+      interval: 10s
+      timeout: 5s
+      retries: 45
+
+  libsql:
+    image: ghcr.io/tursodatabase/libsql-server:latest
+    ports:
+      - "18080:8080"
+    healthcheck:
+      test: ["NONE"]
+
+  greenplum:
+    image: projectairws/greenplum:latest
+    profiles: ["heavy"]
+    privileged: true
+    command: ["/bin/bash", "-lc", "/app/start_greenplum.sh && tail -f /dev/null"]
+    volumes:
+      - greenplum-data:/gpdata
+    ports:
+      - "25432:5432"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/bin/bash",
+          "-lc",
+          "source /usr/local/greenplum-db/greenplum_path.sh && pg_isready -h 127.0.0.1 -U gpadmin -d gpadmin",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 45
+
+  vertica:
+    image: jbfavre/vertica:latest
+    profiles: ["heavy"]
+    ports:
+      - "25433:5433"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/vertica/bin/vsql -U dbadmin -c 'SELECT 1'"]
+      interval: 10s
+      timeout: 5s
+      retries: 45
+
   mssql:
     image: mcr.microsoft.com/mssql/server:2022-latest
     profiles: ["heavy"]
@@ -92,19 +231,15 @@ services:
     ports:
       - "11433:1433"
     healthcheck:
-      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'TablerIntegration!123' -C -Q 'SELECT 1' -b -o /dev/null"]
+      test:
+        [
+          "CMD-SHELL",
+          "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P 'TablerIntegration!123' -C -Q 'SELECT 1' -b -o /dev/null",
+        ]
       interval: 5s
       timeout: 5s
       retries: 40
 
-  scylla:
-    image: scylladb/scylla:5.2
-    profiles: ["heavy"]
-    command: --memory 512M --overprovisioned 1 --smp 1
-    ports:
-      - "19042:9042"
-    healthcheck:
-      test: ["CMD-SHELL", "nodetool status | grep -q '^UN'"]
-      interval: 5s
-      timeout: 5s
-      retries: 60
+volumes:
+  greenplum-data:
+  typesense-data:

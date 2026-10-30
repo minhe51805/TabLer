@@ -72,20 +72,20 @@ describe("TableR reliability contract", () => {
         sql: "SELECT COUNT(*) AS smoke_count FROM smoke_items;",
       });
       if (!flattenResultText(stillThere).includes("2")) {
-        throw new Error(`Safe Mode 1 must not mutate fixture rows: ${flattenResultText(stillThere)}`);
+        throw new Error(
+          `Safe Mode 1 must not mutate fixture rows: ${flattenResultText(stillThere)}`,
+        );
       }
     });
 
     it("blocks mutating CTEs that prefix-based frontend regex used to allow", async () => {
       await setSafeMode(1);
-      const sql = engine === "postgresql"
-        ? "WITH changed AS (DELETE FROM smoke_items RETURNING id) SELECT * FROM changed;"
-        : "WITH changed AS (SELECT id FROM smoke_items) DELETE FROM smoke_items WHERE id IN (SELECT id FROM changed);";
+      const sql =
+        engine === "postgresql"
+          ? "WITH changed AS (DELETE FROM smoke_items RETURNING id) SELECT * FROM changed;"
+          : "WITH changed AS (SELECT id FROM smoke_items) DELETE FROM smoke_items WHERE id IN (SELECT id FROM changed);";
 
-      await expectRejected(
-        invoke("execute_query", { connectionId, sql }),
-        "Safe Mode",
-      );
+      await expectRejected(invoke("execute_query", { connectionId, sql }), "Safe Mode");
     });
 
     it("allows SELECT at level 1 and writes only after policy is lowered", async () => {
@@ -149,44 +149,60 @@ describe("TableR reliability contract", () => {
     it("cancels an in-flight sandbox query via requestId", async () => {
       await setSafeMode(1);
       const requestId = `e2e-cancel-${Date.now()}`;
-      const slowSql = engine === "postgresql"
-        ? "SELECT pg_sleep(20);"
-        : "WITH RECURSIVE t(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM t WHERE x < 50000000) SELECT COUNT(*) FROM t;";
+      const slowSql =
+        engine === "postgresql"
+          ? "SELECT pg_sleep(20);"
+          : engine === "mssql"
+            ? "SELECT COUNT(*) FROM master.dbo.spt_values a CROSS JOIN master.dbo.spt_values b CROSS JOIN master.dbo.spt_values c;"
+            : "WITH RECURSIVE t(x) AS (SELECT 1 UNION ALL SELECT x + 1 FROM t WHERE x < 50000000) SELECT COUNT(*) FROM t;";
 
       // WDIO IPC is serialized; cancel must run inside the webview alongside the query.
-      const outcome = await browser.execute(async (invokeConnectionId, invokeRequestId, sql) => {
-        const tauri = window.__TAURI__;
-        if (!tauri?.core?.invoke) {
-          return { error: "window.__TAURI__.core.invoke is unavailable" };
-        }
-        const pending = tauri.core.invoke("execute_sandboxed_query", {
-          connectionId: invokeConnectionId,
-          statements: [sql],
-          requestId: invokeRequestId,
-        });
-        await new Promise((resolve) => setTimeout(resolve, 250));
-        let cancelled = false;
-        for (let attempt = 0; attempt < 40; attempt += 1) {
-          cancelled = Boolean(await tauri.core.invoke("cancel_query", { requestId: invokeRequestId }));
-          if (cancelled) break;
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-        let queryError = null;
-        try {
-          await pending;
-        } catch (error) {
-          queryError = String(error?.message ?? error);
-        }
-        return { cancelled, queryError };
-      }, connectionId, requestId, slowSql);
+      const outcome = await browser.execute(
+        async (invokeConnectionId, invokeRequestId, sql) => {
+          const tauri = window.__TAURI__;
+          if (!tauri?.core?.invoke) {
+            return { error: "window.__TAURI__.core.invoke is unavailable" };
+          }
+          const pending = tauri.core.invoke("execute_sandboxed_query", {
+            connectionId: invokeConnectionId,
+            statements: [sql],
+            requestId: invokeRequestId,
+          });
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          let cancelled = false;
+          for (let attempt = 0; attempt < 40; attempt += 1) {
+            cancelled = Boolean(
+              await tauri.core.invoke("cancel_query", { requestId: invokeRequestId }),
+            );
+            if (cancelled) break;
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+          let queryError = null;
+          try {
+            await pending;
+          } catch (error) {
+            queryError = String(error?.message ?? error);
+          }
+          return { cancelled, queryError };
+        },
+        connectionId,
+        requestId,
+        slowSql,
+      );
 
       if (outcome?.error) {
         throw new Error(outcome.error);
       }
       if (!outcome?.cancelled) {
-        throw new Error(`cancel_query never reported an active sandbox request: ${JSON.stringify(outcome)}`);
+        throw new Error(
+          `cancel_query never reported an active sandbox request: ${JSON.stringify(outcome)}`,
+        );
       }
-      if (!String(outcome.queryError ?? "").toLowerCase().includes("cancel")) {
+      if (
+        !String(outcome.queryError ?? "")
+          .toLowerCase()
+          .includes("cancel")
+      ) {
         throw new Error(`Expected cancelled query error, got: ${JSON.stringify(outcome)}`);
       }
     });
@@ -195,9 +211,12 @@ describe("TableR reliability contract", () => {
   describe("get_table_data paging", () => {
     it("returns more than 500 rows when the caller asks for a larger page", async () => {
       await setSafeMode(0);
-      const padSql = engine === "postgresql"
-        ? "INSERT INTO smoke_items (id, label) SELECT gs, 'pad-' || gs FROM generate_series(3, 620) AS gs;"
-        : "WITH RECURSIVE seq(x) AS (SELECT 3 UNION ALL SELECT x + 1 FROM seq WHERE x < 620) INSERT INTO smoke_items (id, label) SELECT x, 'pad-' || x FROM seq;";
+      const padSql =
+        engine === "postgresql"
+          ? "INSERT INTO smoke_items (id, label) SELECT gs, 'pad-' || gs FROM generate_series(3, 620) AS gs;"
+          : engine === "mssql"
+            ? "WITH seq(x) AS (SELECT 3 UNION ALL SELECT x + 1 FROM seq WHERE x < 620) INSERT INTO smoke_items (id, label) SELECT x, 'pad-' + CAST(x AS NVARCHAR) FROM seq OPTION (MAXRECURSION 0);"
+            : "WITH RECURSIVE seq(x) AS (SELECT 3 UNION ALL SELECT x + 1 FROM seq WHERE x < 620) INSERT INTO smoke_items (id, label) SELECT x, 'pad-' || x FROM seq;";
       await invoke("execute_query", { connectionId, sql: padSql });
 
       const page = await invoke("get_table_data", {
@@ -236,9 +255,7 @@ describe("TableR reliability contract", () => {
       await invoke("connect_database", { config, requestId: `e2e-serde-${Date.now()}` });
 
       const saved = await invoke("get_saved_connections");
-      const profile = Array.isArray(saved)
-        ? saved.find((item) => item.id === connectionId)
-        : null;
+      const profile = Array.isArray(saved) ? saved.find((item) => item.id === connectionId) : null;
       if (!profile) {
         throw new Error(`Saved profile ${connectionId} was missing: ${JSON.stringify(saved)}`);
       }
@@ -285,8 +302,13 @@ describe("TableR reliability contract", () => {
         connectionId,
         database: otherDatabase,
       });
-      if (Array.isArray(foreignTables) && foreignTables.some((table) => table.name === "smoke_items")) {
-        throw new Error(`smoke_items leaked into ${otherDatabase}: ${JSON.stringify(foreignTables)}`);
+      if (
+        Array.isArray(foreignTables) &&
+        foreignTables.some((table) => table.name === "smoke_items")
+      ) {
+        throw new Error(
+          `smoke_items leaked into ${otherDatabase}: ${JSON.stringify(foreignTables)}`,
+        );
       }
 
       await expectRejected(
@@ -303,14 +325,54 @@ describe("TableR reliability contract", () => {
         sql: "SELECT COUNT(*) AS smoke_count FROM smoke_items;",
       });
       if (!flattenResultText(restored).includes("2")) {
-        throw new Error(`Catalog switch did not restore ${fixtureDatabase}: ${flattenResultText(restored)}`);
+        throw new Error(
+          `Catalog switch did not restore ${fixtureDatabase}: ${flattenResultText(restored)}`,
+        );
       }
     });
   });
 
-  describe("out of fixture scope", () => {
-    it.skip("MSSQL inline edits bind @P1 instead of interpolating N'…' (no SQL Server E2E fixture)", () => {
-      // Covered by the MssqlDriver execute_bound path; requires a live TDS server.
+  describe("MSSQL inline edits", () => {
+    const mssqlOnly = engine === "mssql" ? it : it.skip;
+
+    mssqlOnly("binds @P1 instead of interpolating quoted values", async () => {
+      await setSafeMode(0);
+      const injected = "N'…'); DROP TABLE smoke_items;--";
+      const affected = await invoke("update_table_cell", {
+        connectionId,
+        request: {
+          table: "smoke_items",
+          database: fixtureDatabase,
+          target_column: "label",
+          value: injected,
+          primary_keys: [{ column: "id", value: 1 }],
+        },
+      });
+      if (affected !== 1) {
+        throw new Error(`Expected one updated row, got ${affected}`);
+      }
+
+      const result = await invoke("execute_query", {
+        connectionId,
+        sql: "SELECT label FROM smoke_items WHERE id = 1;",
+      });
+      const text = flattenResultText(result);
+      if (!text.includes(injected)) {
+        throw new Error(`Quoted value did not round-trip as a bind parameter: ${text}`);
+      }
+      const count = await invoke("execute_query", {
+        connectionId,
+        sql: "SELECT COUNT(*) AS smoke_count FROM smoke_items;",
+      });
+      if (!flattenResultText(count).includes("2")) {
+        throw new Error(`Inline edit affected other rows: ${flattenResultText(count)}`);
+      }
+
+      await invoke("execute_query", {
+        connectionId,
+        sql: "UPDATE smoke_items SET label = 'MSSQL ready' WHERE id = 1;",
+      });
+      await setSafeMode(1);
     });
   });
 });

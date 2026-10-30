@@ -33,6 +33,7 @@ import type { Tab } from "../types";
 import type { ConnectionConfig } from "../types/database";
 import type { QueryEditorSessionState } from "./SQLEditor";
 import { formatCountLabel, useI18n } from "../i18n";
+import "./workspace-statusbar.css";
 import { getQueryNotifyCopy } from "../utils/query-notify-copy";
 import { useEvent } from "../stores/event-center";
 import { useConnectionStore } from "../stores/connectionStore";
@@ -572,19 +573,13 @@ export function AppWorkspacePanel({
     />
   );
 
+  const statusbarDatabaseLabel =
+    activeConn?.file_path && currentDatabase
+      ? currentDatabase.split(/[\\/]/).filter(Boolean).pop() || currentDatabase
+      : currentDatabase;
+
   return (
     <>
-      <input
-        ref={workspaceBundleInputRef}
-        type="file"
-        accept="application/json,.json,.tableworkspace"
-        className="sr-only"
-        onChange={(event) => {
-          const file = event.currentTarget.files?.[0];
-          event.currentTarget.value = "";
-          if (file) void importWorkspaceBundle(file);
-        }}
-      />
       {showWorkspaceSync && activeConn ? (
         <WorkspaceSyncModal
           connectionName={activeConn.name}
@@ -607,6 +602,7 @@ export function AppWorkspacePanel({
       <div className="main-container">
         <aside
           className={`sidebar ${isSidebarCollapsed ? "sidebar-collapsed" : ""} ${isERDiagramWorkspace ? "sidebar-er-focus" : ""}`}
+          aria-label={isERDiagramWorkspace ? "ER Diagram" : t("explorer.title")}
           style={{
             width: isSidebarCollapsed ? 50 : isERDiagramWorkspace ? 296 : sidebarWidth,
           }}
@@ -643,16 +639,30 @@ export function AppWorkspacePanel({
           </div>
         )}
 
-        <main className="main-content">
+        <main className="main-content" aria-labelledby="workspace-title">
+          <input
+            ref={workspaceBundleInputRef}
+            type="file"
+            accept="application/json,.json,.tableworkspace"
+            className="sr-only"
+            aria-label={t("workspace.bundle.import")}
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              event.currentTarget.value = "";
+              if (file) void importWorkspaceBundle(file);
+            }}
+          />
           {!isERDiagramWorkspace && (
             <div className="workspace-toolbar">
               <div className="workspace-toolbar-main">
-                <span className="workspace-toolbar-title" title={activeTab?.title || undefined}>
-                  {activeTab?.title ||
-                    (isConnected
-                      ? t("workspace.readyForQueries")
-                      : t("titlebar.noActiveConnection"))}
-                </span>
+                <h1 className="workspace-toolbar-title" title={activeTab?.title || undefined}>
+                  {isMetricsWorkspace
+                    ? t("metrics.sidebarKicker")
+                    : activeTab?.title ||
+                      (isConnected
+                        ? t("workspace.readyForQueries")
+                        : t("titlebar.noActiveConnection"))}
+                </h1>
                 {activeQueryChrome?.executionTimeMs !== undefined && (
                   <div className="workspace-toolbar-status">
                     <span className="workspace-toolbar-status-pill success">
@@ -923,9 +933,9 @@ export function AppWorkspacePanel({
             {isConnected ? "Connected" : "Disconnected"}
           </span>
           {isConnected && activeConn && (
-            <span className="statusbar-info">
+            <span className="statusbar-info" title={currentDatabase || undefined}>
               {activeConn.db_type.toUpperCase()}
-              {currentDatabase ? ` | ${currentDatabase}` : ""}
+              {statusbarDatabaseLabel ? ` | ${statusbarDatabaseLabel}` : ""}
               {activeWorkspaceActivity
                 ? ` | ${activeWorkspaceActivity.label} ${activeWorkspaceActivity.durationMs}ms`
                 : ""}

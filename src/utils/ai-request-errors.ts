@@ -1,9 +1,5 @@
 export type AIRequestErrorCode =
-  | "cancelled"
-  | "timeout"
-  | "provider"
-  | "invalid-response"
-  | "unknown";
+  "cancelled" | "timeout" | "provider" | "invalid-response" | "unknown";
 
 export class AIRequestError extends Error {
   readonly code: AIRequestErrorCode;
@@ -100,30 +96,26 @@ export function normalizeAIRequestError(errorValue: unknown) {
     return new AIRequestError("timeout", message, true, providerRetryAfterMs);
   }
   if (
-    normalized.includes("malformed json")
-    || normalized.includes("non-json")
-    || normalized.includes("invalid response")
-    || normalized.includes("valid json")
+    normalized.includes("malformed json") ||
+    normalized.includes("non-json") ||
+    normalized.includes("invalid response") ||
+    normalized.includes("valid json")
   ) {
     return new AIRequestError("invalid-response", message, true, providerRetryAfterMs);
   }
   if (
-    normalized.includes("provider")
-    || normalized.includes("ai api")
-    || normalized.includes("api key")
-    || normalized.includes("rate limit")
-    || normalized.includes("too many ai requests")
-    || normalized.includes("network")
-    || normalized.includes("connection")
-    || normalized.includes("http ")
-    || normalized.includes("status ")
+    normalized.includes("provider") ||
+    normalized.includes("ai api") ||
+    normalized.includes("api key") ||
+    normalized.includes("rate limit") ||
+    normalized.includes("too many ai requests") ||
+    normalized.includes("network") ||
+    normalized.includes("connection") ||
+    normalized.includes("http ") ||
+    normalized.includes("status ")
   ) {
     return new AIRequestError("provider", message, true, providerRetryAfterMs);
   }
 
   return new AIRequestError("unknown", message, false, providerRetryAfterMs);
-}
-
-export function isAIRequestErrorCode(errorValue: unknown, code: AIRequestErrorCode) {
-  return normalizeAIRequestError(errorValue).code === code;
 }

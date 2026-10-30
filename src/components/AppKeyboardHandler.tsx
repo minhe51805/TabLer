@@ -153,6 +153,12 @@ export function AppKeyboardHandler({
         return;
       }
 
+      if (metaPressed && e.shiftKey && key === "q") {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("toggle-query-schedules-palette"));
+        return;
+      }
+
       if (metaPressed && e.code === "Backquote" && !e.shiftKey) {
         e.preventDefault();
         e.stopPropagation();

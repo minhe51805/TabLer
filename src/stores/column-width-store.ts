@@ -79,8 +79,3 @@ export function clearColumnWidths(
   cachedWidths = all;
   saveWidths(all);
 }
-
-export function resetAllColumnWidths(): void {
-  cachedWidths = {};
-  saveWidths({});
-}

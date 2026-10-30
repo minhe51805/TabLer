@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { CalendarClock, Play, Sparkles, Trash2, X } from "lucide-react";
 import { useI18n, type TranslationKey } from "../../i18n";
 import { useQuerySchedulesStore } from "../../stores/query-schedules-store";
@@ -197,7 +198,7 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
 
   if (!isOpen) return null;
 
-  return (
+  return createPortal(
     <div className="fav-overlay" role="presentation" onClick={onClose}>
       <aside
         className="fav-panel"
@@ -205,13 +206,13 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
         aria-label={t("schedules.title")}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="fav-header">
-          <h2 className="fav-title">
+        <div className="fav-panel-header">
+          <h2 className="fav-panel-title">
             <CalendarClock className="w-4 h-4" /> {t("schedules.title")}
           </h2>
           <button
             type="button"
-            className="fav-close"
+            className="fav-close-btn"
             aria-label={t("common.close")}
             onClick={onClose}
           >
@@ -409,126 +410,156 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
         ) : isLoading ? (
           <div className="fav-empty">{copy.loading}</div>
         ) : schedules.length === 0 ? (
-          <div className="fav-empty">{t("schedules.empty")}</div>
+          <div className="schedules-empty">
+            <div className="schedules-empty-icon">
+              <CalendarClock className="w-8 h-8" />
+            </div>
+            <p className="schedules-empty-desc">{t("schedules.empty")}</p>
+            <button
+              type="button"
+              className="schedules-empty-cta"
+              onClick={() =>
+                setEditor({
+                  open: true,
+                  kind: "sql",
+                  name: "",
+                  sql: "",
+                  prompt: "",
+                  connectionId: activeConnectionId ?? "",
+                  database: currentDatabase ?? "",
+                  intervalMinutes: 60,
+                  enabled: true,
+                  catchUpPolicy: "skip",
+                  allowDataRead: false,
+                })
+              }
+            >
+              + {t("schedules.new")}
+            </button>
+          </div>
         ) : (
-          schedules.map((schedule) => {
-            const isAgent = schedule.kind === "agent";
-            const queuedRun = agentRuns.find((run) => run.scheduleId === schedule.id);
-            // Why a dispatched task has not started. Shown from the app's real
-            // state, so a task that cannot run is never mistaken for a task that
-            // ran.
-            const waitReason =
-              queuedRun?.status === "waiting"
-                ? describeTaskWait(queuedRun, {
-                    connectionId: activeConnectionId,
-                    database: currentDatabase,
-                    isBusy: isAiBusy,
-                  })
-                : null;
-            const statusGlyph =
-              schedule.lastStatus === "error"
-                ? "⚠"
-                : schedule.lastStatus === "needs_human"
-                  ? "?"
-                  : schedule.lastStatus === "dispatched"
-                    ? "…"
-                    : schedule.lastStatus === "missed"
-                      ? copy.statusMissed
-                      : schedule.lastStatus
-                        ? "✓"
-                        : copy.statusNew;
-            return (
-              <div
-                key={schedule.id}
-                className="fav-entry"
-                title={isAgent ? (schedule.prompt ?? "") : schedule.sql}
-              >
-                <div className="fav-entry-header">
-                  {isAgent ? (
-                    <Sparkles
-                      className={`w-3.5 h-3.5 ${schedule.enabled ? "text-[var(--accent)]" : "text-[var(--text-dim)]"}`}
-                    />
-                  ) : (
-                    <CalendarClock
-                      className={`w-3.5 h-3.5 ${schedule.enabled ? "text-[var(--accent)]" : "text-[var(--text-dim)]"}`}
-                    />
-                  )}
-                  <span className="fav-entry-name">{schedule.name}</span>
-                  <span className="fav-tag">
-                    {t(isAgent ? "schedules.tagAgent" : "schedules.tagSql")}
-                  </span>
-                  <span className="fav-tag">{formatInterval(schedule.intervalSeconds, copy)}</span>
-                  <span
-                    className="fav-tag"
-                    title={
-                      schedule.lastError ??
-                      (schedule.lastStatus === "dispatched"
-                        ? t("schedules.agentDispatchedStatus")
-                        : undefined)
-                    }
-                  >
-                    {statusGlyph}
-                  </span>
-                </div>
-                <p className="fav-entry-desc">
-                  {t("schedules.lastRan")}: {relativeTime(schedule.lastRanAt, copy)}
-                  {schedule.lastRows != null ? ` · ${copy.rowsCount(schedule.lastRows)}` : ""}
-                </p>
-                {queuedRun && (
+          <div className="fav-list">
+            {schedules.map((schedule) => {
+              const isAgent = schedule.kind === "agent";
+              const queuedRun = agentRuns.find((run) => run.scheduleId === schedule.id);
+              // Why a dispatched task has not started. Shown from the app's real
+              // state, so a task that cannot run is never mistaken for a task that
+              // ran.
+              const waitReason =
+                queuedRun?.status === "waiting"
+                  ? describeTaskWait(queuedRun, {
+                      connectionId: activeConnectionId,
+                      database: currentDatabase,
+                      isBusy: isAiBusy,
+                    })
+                  : null;
+              const statusGlyph =
+                schedule.lastStatus === "error"
+                  ? "⚠"
+                  : schedule.lastStatus === "needs_human"
+                    ? "?"
+                    : schedule.lastStatus === "dispatched"
+                      ? "…"
+                      : schedule.lastStatus === "missed"
+                        ? copy.statusMissed
+                        : schedule.lastStatus
+                          ? "✓"
+                          : copy.statusNew;
+              return (
+                <div
+                  key={schedule.id}
+                  className="fav-entry"
+                  title={isAgent ? (schedule.prompt ?? "") : schedule.sql}
+                >
+                  <div className="fav-entry-header">
+                    {isAgent ? (
+                      <Sparkles
+                        className={`w-3.5 h-3.5 ${schedule.enabled ? "text-[var(--accent)]" : "text-[var(--text-dim)]"}`}
+                      />
+                    ) : (
+                      <CalendarClock
+                        className={`w-3.5 h-3.5 ${schedule.enabled ? "text-[var(--accent)]" : "text-[var(--text-dim)]"}`}
+                      />
+                    )}
+                    <span className="fav-entry-name">{schedule.name}</span>
+                    <span className="fav-tag">
+                      {t(isAgent ? "schedules.tagAgent" : "schedules.tagSql")}
+                    </span>
+                    <span className="fav-tag">
+                      {formatInterval(schedule.intervalSeconds, copy)}
+                    </span>
+                    <span
+                      className="fav-tag"
+                      title={
+                        schedule.lastError ??
+                        (schedule.lastStatus === "dispatched"
+                          ? t("schedules.agentDispatchedStatus")
+                          : undefined)
+                      }
+                    >
+                      {statusGlyph}
+                    </span>
+                  </div>
                   <p className="fav-entry-desc">
-                    {queuedRun.status === "running"
-                      ? t("schedules.agentRunning")
-                      : t("schedules.agentWaiting")}
-                    {waitReason ? ` — ${t(waitReasonLabelKey(waitReason))}` : ""}
+                    {t("schedules.lastRan")}: {relativeTime(schedule.lastRanAt, copy)}
+                    {schedule.lastRows != null ? ` · ${copy.rowsCount(schedule.lastRows)}` : ""}
                   </p>
-                )}
-                {!queuedRun && isAgent && schedule.lastStatus === "dispatched" && (
-                  <p className="fav-entry-desc">{t("schedules.agentDispatchedStatus")}</p>
-                )}
-                {schedule.lastStatus === "needs_human" && (
-                  <p className="fav-entry-desc">{t("schedules.agentNeedsHuman")}</p>
-                )}
-                {schedule.lastSummary && <p className="fav-entry-desc">{schedule.lastSummary}</p>}
-                {schedule.lastError && <p className="fav-entry-desc">{schedule.lastError}</p>}
-                <div className="fav-entry-actions">
-                  <button
-                    type="button"
-                    className="fav-action-btn primary"
-                    title={t("schedules.edit")}
-                    onClick={() =>
-                      setEditor({
-                        open: true,
-                        id: schedule.id,
-                        kind: schedule.kind,
-                        name: schedule.name,
-                        sql: schedule.sql,
-                        prompt: schedule.prompt ?? "",
-                        connectionId: schedule.connectionId ?? "",
-                        database: schedule.database ?? "",
-                        intervalMinutes: Math.max(1, Math.round(schedule.intervalSeconds / 60)),
-                        enabled: schedule.enabled,
-                        catchUpPolicy: schedule.catchUpPolicy ?? "skip",
-                        allowDataRead: schedule.allowDataRead ?? false,
-                      })
-                    }
-                  >
-                    <Play className="w-3 h-3.5" />
-                  </button>
-                  <button
-                    type="button"
-                    className="fav-action-btn danger"
-                    title={t("schedules.delete")}
-                    onClick={() => void handleDelete(schedule.id)}
-                  >
-                    <Trash2 className="w-3 h-3.5" />
-                  </button>
+                  {queuedRun && (
+                    <p className="fav-entry-desc">
+                      {queuedRun.status === "running"
+                        ? t("schedules.agentRunning")
+                        : t("schedules.agentWaiting")}
+                      {waitReason ? ` — ${t(waitReasonLabelKey(waitReason))}` : ""}
+                    </p>
+                  )}
+                  {!queuedRun && isAgent && schedule.lastStatus === "dispatched" && (
+                    <p className="fav-entry-desc">{t("schedules.agentDispatchedStatus")}</p>
+                  )}
+                  {schedule.lastStatus === "needs_human" && (
+                    <p className="fav-entry-desc">{t("schedules.agentNeedsHuman")}</p>
+                  )}
+                  {schedule.lastSummary && <p className="fav-entry-desc">{schedule.lastSummary}</p>}
+                  {schedule.lastError && <p className="fav-entry-desc">{schedule.lastError}</p>}
+                  <div className="fav-entry-actions">
+                    <button
+                      type="button"
+                      className="fav-action-btn primary"
+                      title={t("schedules.edit")}
+                      onClick={() =>
+                        setEditor({
+                          open: true,
+                          id: schedule.id,
+                          kind: schedule.kind,
+                          name: schedule.name,
+                          sql: schedule.sql,
+                          prompt: schedule.prompt ?? "",
+                          connectionId: schedule.connectionId ?? "",
+                          database: schedule.database ?? "",
+                          intervalMinutes: Math.max(1, Math.round(schedule.intervalSeconds / 60)),
+                          enabled: schedule.enabled,
+                          catchUpPolicy: schedule.catchUpPolicy ?? "skip",
+                          allowDataRead: schedule.allowDataRead ?? false,
+                        })
+                      }
+                    >
+                      <Play className="w-3 h-3.5" />
+                    </button>
+                    <button
+                      type="button"
+                      className="fav-action-btn danger"
+                      title={t("schedules.delete")}
+                      onClick={() => void handleDelete(schedule.id)}
+                    >
+                      <Trash2 className="w-3 h-3.5" />
+                    </button>
+                  </div>
                 </div>
-              </div>
-            );
-          })
+              );
+            })}
+          </div>
         )}
 
-        {!editor.open && (
+        {!editor.open && schedules.length > 0 && (
           <div className="fav-form-actions">
             <button
               type="button"
@@ -554,6 +585,7 @@ export function QuerySchedulesPanel({ isOpen, onClose }: { isOpen: boolean; onCl
           </div>
         )}
       </aside>
-    </div>
+    </div>,
+    document.body,
   );
 }

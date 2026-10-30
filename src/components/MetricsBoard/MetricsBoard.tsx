@@ -1610,6 +1610,7 @@ export function MetricsBoard({
           handleWidgetResizeStart={handleWidgetResizeStart}
           openCanvasContextMenu={openCanvasContextMenu}
           addWidget={addWidget}
+          onOpenWidgetLibrary={() => setIsWidgetMenuOpen(true)}
           updateSelectedWidget={updateSelectedWidget}
           clearWidgetSelection={clearWidgetSelection}
           deleteSelectedWidget={deleteSelectedWidget}

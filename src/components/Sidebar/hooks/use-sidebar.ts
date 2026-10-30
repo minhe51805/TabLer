@@ -75,28 +75,6 @@ export function getItemFilterState(
   return "indeterminate";
 }
 
-/** Check if a table passes the mixed-state filter */
-export function passesMixedStateFilter(
-  tableName: string,
-  schemaName: string,
-  filter: MixedStateFilter,
-): boolean {
-  if (!filter.isActive) return true;
-  const isChecked = filter.checkedItems[schemaName]?.has(tableName);
-  const isExcluded = filter.uncheckedItems[schemaName]?.has(tableName);
-  // If nothing in schema is filtered, pass
-  const schemaHasFilter =
-    (filter.checkedItems[schemaName]?.size ?? 0) > 0 ||
-    (filter.uncheckedItems[schemaName]?.size ?? 0) > 0;
-  if (!schemaHasFilter) return true;
-  // If checked items exist, only checked items pass (include mode)
-  if (isChecked) return true;
-  // If excluded, block
-  if (isExcluded) return false;
-  // Neither checked nor unchecked: indeterminate -> pass
-  return true;
-}
-
 // ---------------------------------------------------------------------------
 // Hook
 // ---------------------------------------------------------------------------

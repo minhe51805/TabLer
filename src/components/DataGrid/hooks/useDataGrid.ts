@@ -163,31 +163,6 @@ export { tablePageCache, tableCountCache };
 
 export const inlineStructureCacheRef = { inlineStructureCache: new Map<string, ColumnDetail[]>() };
 
-export function buildColumnSignature(
-  columns: Array<{
-    name: string;
-    data_type?: string;
-    column_type?: string;
-    is_nullable?: boolean;
-    is_primary_key?: boolean;
-    default_value?: string;
-    extra?: string;
-  }>,
-) {
-  return columns
-    .map((column) =>
-      [
-        column.name,
-        column.column_type || column.data_type || "",
-        column.is_nullable ? "nullable" : "required",
-        column.is_primary_key ? "pk" : "col",
-        column.default_value || "",
-        column.extra || "",
-      ].join(":"),
-    )
-    .join("|");
-}
-
 export function buildResolvedColumns(
   dataColumns: import("../../../types").ColumnInfo[],
   structureColumns: ColumnDetail[],

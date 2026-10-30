@@ -122,7 +122,7 @@ use storage::plugin_storage::PluginStorage;
 use storage::semantic_storage::{delete_semantic_entry, get_semantic_entries, save_semantic_entry};
 use storage::sql_favorites::{delete_sql_favorite, get_sql_favorites, save_sql_favorite};
 use storage::tab_persistence::TabPersistence;
-use utils::rate_limiter::{AIRequestLimiter, ConnectionAttemptLimiter};
+use utils::rate_limiter::{AIRequestLimiter, ConnectionAttemptLimiter, SandboxExecutionLimiter};
 
 /// Show a blocking native error dialog for a startup failure that happens
 /// before the main window exists, then exit. Without this the process used to
@@ -237,6 +237,8 @@ pub fn run() {
         "Too many AI requests in a short time. Please wait a moment and try again.",
     );
     let ai_request_cancellation_state = AIRequestCancellationState::default();
+    let sandbox_execution_limiter = SandboxExecutionLimiter::new();
+    let sandbox_gate_state = SandboxGateState::default();
     let csv_import_cancellation_state = CsvImportCancellationState::default();
     let table_export_cancellation_state = TableExportCancellationState::default();
     let query_cancellation_state = QueryCancellationState::default();
@@ -274,6 +276,8 @@ pub fn run() {
         .manage(connection_rate_limiter)
         .manage(ai_rate_limiter)
         .manage(ai_request_cancellation_state)
+        .manage(sandbox_execution_limiter)
+        .manage(sandbox_gate_state)
         .manage(csv_import_cancellation_state)
         .manage(table_export_cancellation_state)
         .manage(query_cancellation_state)

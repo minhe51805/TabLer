@@ -1,1 +1,0 @@
-export { TableStructure } from "./TableStructure";

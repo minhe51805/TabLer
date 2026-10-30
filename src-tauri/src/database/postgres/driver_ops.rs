@@ -1,6 +1,12 @@
 use super::PostgresDriver;
 use crate::database::driver::DatabaseDriver;
 use crate::database::models::*;
+use crate::database::postgres_support::{
+    compat_integer_parameter, compat_text_parameter, execute_compat_builder,
+    execute_compat_positional_parameters, execute_compat_statement, fetch_compat_builder,
+    fetch_compat_positional_parameters, inline_vertica_parameterized_query, CompatQuery,
+    CompatTransaction,
+};
 use crate::database::query_cancel::{cancel_flag, request_cancel, CancelLookup, CancelScopeGuard};
 use crate::database::query_common::MAX_TABLE_PAGE_ROWS;
 use crate::database::safety::{
@@ -11,8 +17,8 @@ use crate::utils::sql::split_sql_statements;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use futures_util::TryStreamExt;
-use sqlx::postgres::{PgConnection, PgRow};
-use sqlx::{Postgres, QueryBuilder, Row};
+use sqlx::postgres::PgConnection;
+use sqlx::{Executor, Postgres, QueryBuilder, Row};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Instant;
@@ -20,8 +26,8 @@ use std::time::Instant;
 #[async_trait]
 impl DatabaseDriver for PostgresDriver {
     async fn ping(&self) -> Result<()> {
-        sqlx::query("SELECT 1")
-            .execute(&self.pool())
+        self.pool()
+            .execute(CompatQuery::new(self.db_type, "SELECT 1"))
             .await
             .context("PostgreSQL ping failed")?;
         Ok(())
@@ -33,11 +39,15 @@ impl DatabaseDriver for PostgresDriver {
     }
 
     async fn list_databases(&self) -> Result<Vec<DatabaseInfo>> {
-        let rows: Vec<PgRow> = sqlx::query(
-            "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname",
-        )
-        .fetch_all(&self.pool())
-        .await?;
+        let sql = if self.is_vertica() {
+            "SELECT current_database()"
+        } else {
+            "SELECT datname FROM pg_database WHERE datistemplate = false ORDER BY datname"
+        };
+        let rows = self
+            .pool()
+            .fetch_all(CompatQuery::new(self.db_type, sql))
+            .await?;
 
         Ok(rows
             .iter()
@@ -49,14 +59,23 @@ impl DatabaseDriver for PostgresDriver {
     }
 
     async fn list_tables(&self, _database: Option<&str>) -> Result<Vec<TableInfo>> {
-        let rows: Vec<PgRow> = sqlx::query(
+        let sql = if self.is_vertica() {
+            "SELECT table_name, 'BASE TABLE' AS table_type, table_schema \
+             FROM v_catalog.tables WHERE NOT is_system_table \
+             UNION ALL \
+             SELECT table_name, 'VIEW' AS table_type, table_schema \
+             FROM v_catalog.views WHERE NOT is_system_view \
+             ORDER BY table_schema, table_name"
+        } else {
             "SELECT table_name, table_type, table_schema \
              FROM information_schema.tables \
              WHERE table_schema NOT IN ('pg_catalog', 'information_schema') \
-             ORDER BY table_schema, table_name",
-        )
-        .fetch_all(&self.pool())
-        .await?;
+             ORDER BY table_schema, table_name"
+        };
+        let rows = self
+            .pool()
+            .fetch_all(CompatQuery::new(self.db_type, sql))
+            .await?;
 
         Ok(rows
             .iter()
@@ -102,7 +121,7 @@ impl DatabaseDriver for PostgresDriver {
         let guard = CancelScopeGuard::begin(&self.cancel_registry, request_id);
         if self.is_vertica() {
             self.begin_vertica_request(&mut conn, request_id).await?;
-            let result = Self::execute_query_on_conn(&mut conn, sql).await;
+            let result = self.execute_query_on_conn(&mut conn, sql).await;
             self.finish_vertica_request(request_id);
             drop(guard);
             return result;
@@ -114,7 +133,7 @@ impl DatabaseDriver for PostgresDriver {
         if guard.register_backend(i64::from(pid)) {
             return Err(anyhow!("Query cancelled."));
         }
-        let result = Self::execute_query_on_conn(&mut conn, sql).await;
+        let result = self.execute_query_on_conn(&mut conn, sql).await;
         drop(guard);
         result
     }
@@ -142,48 +161,41 @@ impl DatabaseDriver for PostgresDriver {
         let statements = split_sql_statements(sql);
 
         if statements.len() <= 1 && Self::query_returns_rows(sql) {
-            let (rows, truncated) = Self::fetch_rows_limited(&self.pool(), sql).await?;
-            let mut result =
-                Self::build_result_from_rows(&rows, 0, sql.to_string(), 0, false, truncated);
+            let (rows, truncated) =
+                Self::fetch_rows_limited(self.db_type, &self.pool(), sql).await?;
+            let mut result = Self::build_result_from_rows(
+                self.db_type,
+                &rows,
+                0,
+                sql.to_string(),
+                0,
+                false,
+                truncated,
+            )?;
             result.execution_time_ms = start.elapsed().as_millis();
             Ok(result)
         } else {
+            let pool = self.pool();
+            let mut conn = pool.acquire().await.context("PostgreSQL acquire failed")?;
             let mut total_affected: u64 = 0;
             let mut last_result: Option<QueryResult> = None;
 
-            if statements.len() > 1 {
-                for statement in &statements {
-                    if Self::query_returns_rows(statement) {
-                        let (rows, truncated) =
-                            Self::fetch_rows_limited(&self.pool(), statement).await?;
-                        last_result = Some(Self::build_result_from_rows(
-                            &rows,
-                            0,
-                            sql.to_string(),
-                            total_affected,
-                            false,
-                            truncated,
-                        ));
-                    } else {
-                        let result = sqlx::query(statement).execute(&self.pool()).await?;
-                        total_affected += result.rows_affected();
-                    }
-                }
-            } else if let Some(statement) = statements.first() {
+            for statement in &statements {
                 if Self::query_returns_rows(statement) {
                     let (rows, truncated) =
-                        Self::fetch_rows_limited(&self.pool(), statement).await?;
+                        Self::fetch_rows_limited(self.db_type, &mut *conn, statement).await?;
                     last_result = Some(Self::build_result_from_rows(
+                        self.db_type,
                         &rows,
                         0,
                         sql.to_string(),
                         total_affected,
                         false,
                         truncated,
-                    ));
+                    )?);
                 } else {
-                    let result = sqlx::query(statement).execute(&self.pool()).await?;
-                    total_affected += result.rows_affected();
+                    total_affected +=
+                        execute_compat_statement(self.db_type, &mut conn, statement).await?;
                 }
             }
 
@@ -207,7 +219,7 @@ impl DatabaseDriver for PostgresDriver {
     }
 
     async fn preview_write_transaction(&self, statements: &[String]) -> Result<Vec<QueryResult>> {
-        let mut tx = self.pool().begin().await?;
+        let mut tx = CompatTransaction::begin(&self.pool(), self.db_type).await?;
         let mut results = Vec::new();
 
         // Every statement runs inside one transaction; any failure stops the
@@ -216,23 +228,26 @@ impl DatabaseDriver for PostgresDriver {
             for statement in statements {
                 let start = Instant::now();
                 if Self::query_returns_rows(statement) {
-                    let (rows, truncated) = Self::fetch_rows_limited(&mut *tx, statement).await?;
+                    let (rows, truncated) =
+                        Self::fetch_rows_limited(self.db_type, tx.conn(), statement).await?;
                     let mut result = Self::build_result_from_rows(
+                        self.db_type,
                         &rows,
                         0,
                         statement.clone(),
                         0,
                         false,
                         truncated,
-                    );
+                    )?;
                     result.execution_time_ms = start.elapsed().as_millis();
                     results.push(result);
                 } else {
-                    let executed = sqlx::query(statement).execute(&mut *tx).await?;
+                    let executed =
+                        execute_compat_statement(self.db_type, tx.conn(), statement).await?;
                     results.push(QueryResult {
                         columns: Vec::new(),
                         rows: Vec::new(),
-                        affected_rows: executed.rows_affected(),
+                        affected_rows: executed,
                         execution_time_ms: start.elapsed().as_millis(),
                         query: statement.clone(),
                         sandboxed: true,
@@ -256,26 +271,10 @@ impl DatabaseDriver for PostgresDriver {
         sql: &str,
         parameters: &[QueryParameter],
     ) -> Result<QueryResult> {
-        let start = Instant::now();
-        if Self::query_returns_rows(sql) {
-            let (rows, truncated) = self.fetch_parameterized_rows(sql, parameters).await?;
-            let mut result =
-                Self::build_result_from_rows(&rows, 0, sql.to_string(), 0, false, truncated);
-            result.execution_time_ms = start.elapsed().as_millis();
-            return Ok(result);
-        }
-        let outcome = Self::bind_parameterized_query(sqlx::query(sql), parameters)?
-            .execute(&self.pool())
-            .await?;
-        Ok(QueryResult {
-            columns: Vec::new(),
-            rows: Vec::new(),
-            affected_rows: outcome.rows_affected(),
-            execution_time_ms: start.elapsed().as_millis(),
-            query: sql.to_string(),
-            sandboxed: false,
-            truncated: false,
-        })
+        let pool = self.pool();
+        let mut conn = pool.acquire().await.context("PostgreSQL acquire failed")?;
+        self.execute_parameterized_on_conn(&mut conn, sql, parameters)
+            .await
     }
 
     async fn execute_parameterized_query_for_request(
@@ -292,7 +291,9 @@ impl DatabaseDriver for PostgresDriver {
         let guard = CancelScopeGuard::begin(&self.cancel_registry, request_id);
         if self.is_vertica() {
             self.begin_vertica_request(&mut conn, request_id).await?;
-            let result = Self::execute_parameterized_on_conn(&mut conn, sql, parameters).await;
+            let result = self
+                .execute_parameterized_on_conn(&mut conn, sql, parameters)
+                .await;
             self.finish_vertica_request(request_id);
             drop(guard);
             return result;
@@ -304,7 +305,9 @@ impl DatabaseDriver for PostgresDriver {
         if guard.register_backend(i64::from(pid)) {
             return Err(anyhow!("Query cancelled."));
         }
-        let result = Self::execute_parameterized_on_conn(&mut conn, sql, parameters).await;
+        let result = self
+            .execute_parameterized_on_conn(&mut conn, sql, parameters)
+            .await;
         drop(guard);
         result
     }
@@ -340,15 +343,16 @@ impl DatabaseDriver for PostgresDriver {
 
         let start = Instant::now();
         let (rows, truncated) =
-            Self::fetch_rows_capped(&self.pool(), &sql, fetch_limit as usize).await?;
+            Self::fetch_rows_capped(self.db_type, &self.pool(), &sql, fetch_limit as usize).await?;
         let mut result = Self::build_result_from_rows(
+            self.db_type,
             &rows,
             start.elapsed().as_millis(),
             sql,
             0,
             false,
             truncated || limit > fetch_limit,
-        );
+        )?;
         result.execution_time_ms = start.elapsed().as_millis();
         Ok(result)
     }
@@ -358,8 +362,11 @@ impl DatabaseDriver for PostgresDriver {
             "SELECT COUNT(*) FROM {}",
             qualify_postgres_table_name(table, "public")?
         );
-        let row: PgRow = sqlx::query(&sql).fetch_one(&self.pool()).await?;
-        Ok(row.get(0))
+        let row = self
+            .pool()
+            .fetch_one(CompatQuery::new(self.db_type, &sql))
+            .await?;
+        PostgresDriver::decode_compat_i64(self.db_type, &row, 0)
     }
 
     async fn count_null_values(
@@ -373,8 +380,11 @@ impl DatabaseDriver for PostgresDriver {
             qualify_postgres_table_name(table, "public")?,
             quote_postgres_order_by(column)?,
         );
-        let row: PgRow = sqlx::query(&sql).fetch_one(&self.pool()).await?;
-        Ok(row.get(0))
+        let row = self
+            .pool()
+            .fetch_one(CompatQuery::new(self.db_type, &sql))
+            .await?;
+        PostgresDriver::decode_compat_i64(self.db_type, &row, 0)
     }
 
     async fn update_table_cell(&self, request: &TableCellUpdateRequest) -> Result<u64> {
@@ -389,7 +399,7 @@ impl DatabaseDriver for PostgresDriver {
         builder.push(" SET ");
         builder.push(quote_postgres_order_by(&request.target_column)?);
         builder.push(" = ");
-        Self::push_bound_value(&mut builder, &request.value)?;
+        Self::push_bound_value(self.db_type, &mut builder, &request.value)?;
         builder.push(" WHERE ");
 
         for (index, primary_key) in request.primary_keys.iter().enumerate() {
@@ -402,22 +412,22 @@ impl DatabaseDriver for PostgresDriver {
                 builder.push(" IS NULL");
             } else {
                 builder.push(" = ");
-                Self::push_bound_value(&mut builder, &primary_key.value)?;
+                Self::push_bound_value(self.db_type, &mut builder, &primary_key.value)?;
             }
         }
 
-        let result = builder.build().execute(&self.pool()).await?;
-        Ok(result.rows_affected())
+        let pool = self.pool();
+        let mut conn = pool.acquire().await.context("PostgreSQL acquire failed")?;
+        let result = execute_compat_builder(self.db_type, &mut conn, builder).await?;
+        Ok(result)
     }
 
     async fn execute_restore_statements(&self, statements: &[String]) -> Result<u64> {
-        let mut transaction = self.pool().begin().await?;
+        let mut transaction = CompatTransaction::begin(&self.pool(), self.db_type).await?;
         let mut total_affected = 0;
         for statement in statements {
-            total_affected += sqlx::query(statement)
-                .execute(&mut *transaction)
-                .await?
-                .rows_affected();
+            total_affected +=
+                execute_compat_statement(self.db_type, transaction.conn(), statement).await?;
         }
         transaction.commit().await?;
         Ok(total_affected)
@@ -427,7 +437,7 @@ impl DatabaseDriver for PostgresDriver {
         &self,
         updates: &[TableCellUpdateRequest],
     ) -> Result<u64> {
-        let mut transaction = self.pool().begin().await?;
+        let mut transaction = CompatTransaction::begin(&self.pool(), self.db_type).await?;
         let mut affected_rows = 0;
         for request in updates {
             if request.primary_keys.is_empty() {
@@ -440,7 +450,7 @@ impl DatabaseDriver for PostgresDriver {
             builder.push(" SET ");
             builder.push(quote_postgres_order_by(&request.target_column)?);
             builder.push(" = ");
-            Self::push_bound_value(&mut builder, &request.value)?;
+            Self::push_bound_value(self.db_type, &mut builder, &request.value)?;
             builder.push(" WHERE ");
             for (index, primary_key) in request.primary_keys.iter().enumerate() {
                 if index > 0 {
@@ -451,16 +461,16 @@ impl DatabaseDriver for PostgresDriver {
                     builder.push(" IS NULL");
                 } else {
                     builder.push(" = ");
-                    Self::push_bound_value(&mut builder, &primary_key.value)?;
+                    Self::push_bound_value(self.db_type, &mut builder, &primary_key.value)?;
                 }
             }
-            let result = builder.build().execute(&mut *transaction).await?;
-            if result.rows_affected() == 0 {
+            let result = execute_compat_builder(self.db_type, transaction.conn(), builder).await?;
+            if result == 0 {
                 return Err(anyhow::anyhow!(
                     "An edit queue row no longer matches its primary-key selector"
                 ));
             }
-            affected_rows += result.rows_affected();
+            affected_rows += result;
         }
         transaction.commit().await?;
         Ok(affected_rows)
@@ -473,7 +483,7 @@ impl DatabaseDriver for PostgresDriver {
             ));
         }
 
-        let mut tx = self.pool().begin().await?;
+        let mut tx = CompatTransaction::begin(&self.pool(), self.db_type).await?;
         let mut total_affected = 0u64;
 
         for row_keys in &request.rows {
@@ -497,12 +507,12 @@ impl DatabaseDriver for PostgresDriver {
                     builder.push(" IS NULL");
                 } else {
                     builder.push(" = ");
-                    Self::push_bound_value(&mut builder, &primary_key.value)?;
+                    Self::push_bound_value(self.db_type, &mut builder, &primary_key.value)?;
                 }
             }
 
-            let result = builder.build().execute(&mut *tx).await?;
-            total_affected += result.rows_affected();
+            let result = execute_compat_builder(self.db_type, tx.conn(), builder).await?;
+            total_affected += result;
         }
 
         tx.commit().await?;
@@ -533,22 +543,21 @@ impl DatabaseDriver for PostgresDriver {
                     builder.push(" IS NULL");
                 } else {
                     builder.push(" = ");
-                    Self::push_bound_value(&mut builder, &key.value)?;
+                    Self::push_bound_value(self.db_type, &mut builder, &key.value)?;
                 }
             }
-            let mut query_rows = Vec::new();
-            let mut stream = builder.build().fetch(&self.pool());
-            while let Some(row) = stream.try_next().await? {
-                query_rows.push(row);
-            }
+            let pool = self.pool();
+            let mut conn = pool.acquire().await.context("PostgreSQL acquire failed")?;
+            let query_rows = fetch_compat_builder(self.db_type, &mut conn, builder).await?;
             results.push(Self::build_result_from_rows(
+                self.db_type,
                 &query_rows,
                 0,
                 String::new(),
                 0,
                 false,
                 false,
-            ));
+            )?);
         }
         Ok(results)
     }
@@ -563,7 +572,7 @@ impl DatabaseDriver for PostgresDriver {
         }
 
         let options = self.connect_options.clone().database(database);
-        let new_pool = Self::open_pool(options, self.pool_max_connections).await?;
+        let new_pool = Self::open_pool(options, self.pool_max_connections, self.db_type).await?;
         let old_pool = {
             let mut guard = self
                 .pool
@@ -589,8 +598,9 @@ impl DatabaseDriver for PostgresDriver {
                 "INSERT INTO {} DEFAULT VALUES",
                 qualify_postgres_table_name(&request.table, "public")?
             );
-            let result = sqlx::query(&sql).execute(&self.pool()).await?;
-            return Ok(result.rows_affected());
+            let pool = self.pool();
+            let mut conn = pool.acquire().await.context("PostgreSQL acquire failed")?;
+            return execute_compat_statement(self.db_type, &mut conn, &sql).await;
         }
 
         let mut builder = QueryBuilder::<Postgres>::new("INSERT INTO ");
@@ -614,13 +624,15 @@ impl DatabaseDriver for PostgresDriver {
                 builder.push(", ");
             }
             first = false;
-            Self::push_bound_value(&mut builder, value)?;
+            Self::push_bound_value(self.db_type, &mut builder, value)?;
         }
 
         builder.push(")");
 
-        let result = builder.build().execute(&self.pool()).await?;
-        Ok(result.rows_affected())
+        let pool = self.pool();
+        let mut conn = pool.acquire().await.context("PostgreSQL acquire failed")?;
+        let result = execute_compat_builder(self.db_type, &mut conn, builder).await?;
+        Ok(result)
     }
 
     async fn insert_table_rows_atomically(
@@ -632,7 +644,7 @@ impl DatabaseDriver for PostgresDriver {
             return Err(anyhow::anyhow!("CSV import requires at least one row"));
         }
 
-        let mut transaction = self.pool().begin().await?;
+        let mut transaction = CompatTransaction::begin(&self.pool(), self.db_type).await?;
         let mut affected_rows = 0;
         for request in requests {
             if cancelled.load(Ordering::Relaxed) {
@@ -660,14 +672,11 @@ impl DatabaseDriver for PostgresDriver {
                 if index > 0 {
                     builder.push(", ");
                 }
-                Self::push_bound_value(&mut builder, value)?;
+                Self::push_bound_value(self.db_type, &mut builder, value)?;
             }
             builder.push(")");
-            affected_rows += builder
-                .build()
-                .execute(&mut *transaction)
-                .await?
-                .rows_affected();
+            affected_rows +=
+                execute_compat_builder(self.db_type, transaction.conn(), builder).await?;
         }
 
         transaction.commit().await?;
@@ -679,7 +688,7 @@ impl DatabaseDriver for PostgresDriver {
         mut rows: tokio::sync::mpsc::Receiver<crate::database::models::CsvImportRow>,
         cancelled: Arc<AtomicBool>,
     ) -> Result<u64> {
-        let mut transaction = self.pool().begin().await?;
+        let mut transaction = CompatTransaction::begin(&self.pool(), self.db_type).await?;
         let mut affected_rows = 0;
         while let Some(request) = rows.recv().await {
             if cancelled.load(Ordering::Relaxed) {
@@ -707,14 +716,11 @@ impl DatabaseDriver for PostgresDriver {
                 if index > 0 {
                     builder.push(", ");
                 }
-                Self::push_bound_value(&mut builder, value)?;
+                Self::push_bound_value(self.db_type, &mut builder, value)?;
             }
             builder.push(")");
-            affected_rows += builder
-                .build()
-                .execute(&mut *transaction)
-                .await?
-                .rows_affected();
+            affected_rows +=
+                execute_compat_builder(self.db_type, transaction.conn(), builder).await?;
         }
         if affected_rows == 0 {
             return Err(anyhow::anyhow!("CSV import did not contain any data rows"));
@@ -758,10 +764,11 @@ impl PostgresDriver {
     /// `cancel_query_request` can interrupt the statement. Returns an error
     /// when a cancel already won the race before registration.
     async fn begin_vertica_request(&self, conn: &mut PgConnection, request_id: &str) -> Result<()> {
-        let raw: String = sqlx::query_scalar("SELECT current_session()")
-            .fetch_one(&mut *conn)
+        let row = conn
+            .fetch_one(CompatQuery::new(self.db_type, "SELECT current_session()"))
             .await
             .context("Vertica session id lookup failed")?;
+        let raw: String = row.try_get(0)?;
         let session_id = parse_vertica_session_id(&raw)?;
         self.vertica_sessions
             .write()
@@ -809,15 +816,21 @@ impl PostgresDriver {
         // start still finds it.
         let mut statement_id: Option<i64> = None;
         for attempt in 0..10 {
-            statement_id = sqlx::query_scalar(
+            let rows = fetch_compat_positional_parameters(
+                &self.pool(),
+                self.db_type,
                 "SELECT statement_id FROM v_monitor.query_requests \
                  WHERE session_id = $1 AND is_executing \
                  ORDER BY start_timestamp DESC LIMIT 1",
+                &[compat_text_parameter(&session_id)],
             )
-            .bind(&session_id)
-            .fetch_optional(&self.pool())
             .await
             .context("Vertica running-statement lookup failed")?;
+            statement_id = rows
+                .into_iter()
+                .next()
+                .map(|row| PostgresDriver::decode_compat_i64(self.db_type, &row, 0))
+                .transpose()?;
             if statement_id.is_some() || attempt == 9 {
                 break;
             }
@@ -826,12 +839,17 @@ impl PostgresDriver {
 
         match statement_id {
             Some(statement_id) => {
-                sqlx::query("SELECT INTERRUPT_STATEMENT($1, $2)")
-                    .bind(&session_id)
-                    .bind(statement_id)
-                    .execute(&self.pool())
-                    .await
-                    .context("Vertica INTERRUPT_STATEMENT failed")?;
+                execute_compat_positional_parameters(
+                    &self.pool(),
+                    self.db_type,
+                    "SELECT INTERRUPT_STATEMENT($1, $2)",
+                    &[
+                        compat_text_parameter(&session_id),
+                        compat_integer_parameter(statement_id),
+                    ],
+                )
+                .await
+                .context("Vertica INTERRUPT_STATEMENT failed")?;
                 Ok(true)
             }
             // Session registered but nothing executing yet — same outcome as
@@ -843,11 +861,46 @@ impl PostgresDriver {
     /// Shared body of `execute_parameterized_query_for_request` so the
     /// PostgreSQL and Vertica request paths run identical SQL handling.
     async fn execute_parameterized_on_conn(
+        &self,
         conn: &mut PgConnection,
         sql: &str,
         parameters: &[QueryParameter],
     ) -> Result<QueryResult> {
         let start = Instant::now();
+        if self.is_vertica() {
+            let inline_sql = inline_vertica_parameterized_query(sql, parameters)?;
+            if Self::query_returns_rows(sql) {
+                let (rows, truncated) = Self::fetch_rows_capped(
+                    self.db_type,
+                    &mut *conn,
+                    &inline_sql,
+                    crate::database::query_common::MAX_QUERY_RESULT_ROWS,
+                )
+                .await?;
+                let mut result = Self::build_result_from_rows(
+                    self.db_type,
+                    &rows,
+                    0,
+                    sql.to_string(),
+                    0,
+                    false,
+                    truncated,
+                )?;
+                result.execution_time_ms = start.elapsed().as_millis();
+                return Ok(result);
+            }
+            let affected_rows = execute_compat_statement(self.db_type, conn, &inline_sql).await?;
+            return Ok(QueryResult {
+                columns: Vec::new(),
+                rows: Vec::new(),
+                affected_rows,
+                execution_time_ms: start.elapsed().as_millis(),
+                query: sql.to_string(),
+                sandboxed: false,
+                truncated: false,
+            });
+        }
+
         if Self::query_returns_rows(sql) {
             let mut stream =
                 Self::bind_parameterized_query(sqlx::query(sql), parameters)?.fetch(&mut *conn);
@@ -860,8 +913,15 @@ impl PostgresDriver {
                 }
                 rows.push(row);
             }
-            let mut result =
-                Self::build_result_from_rows(&rows, 0, sql.to_string(), 0, false, truncated);
+            let mut result = Self::build_result_from_rows(
+                self.db_type,
+                &rows,
+                0,
+                sql.to_string(),
+                0,
+                false,
+                truncated,
+            )?;
             result.execution_time_ms = start.elapsed().as_millis();
             return Ok(result);
         }

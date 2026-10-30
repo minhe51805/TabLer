@@ -134,7 +134,7 @@ export const useAgentScheduleStore = create<AgentScheduleState>()((set, get) => 
         database: database ?? null,
         allowDataRead: allowDataRead === true,
         status: "waiting",
-        dispatchedAt: Date.now(),
+        dispatchedAt: existing?.dispatchedAt ?? Date.now(),
       };
       return {
         runs: existing

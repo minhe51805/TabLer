@@ -29,11 +29,6 @@ export const useReviewCenterStore = create<ReviewCenterState>((set) => ({
   setActiveTab: (activeTab) => set({ activeTab }),
 }));
 
-/** Open the Review Center from anywhere (menu, palette, shortcut). */
-export function openReviewCenter(tab?: ReviewCenterTab): void {
-  useReviewCenterStore.getState().open(tab);
-}
-
 /** Current binding for the review-center shortcut (menu label, tooltips). */
 export function getReviewCenterShortcutLabel(): string {
   return (

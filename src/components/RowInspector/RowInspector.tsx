@@ -1,13 +1,4 @@
-import {
-  Copy,
-  Edit3,
-  Eye,
-  EyeOff,
-  Hash,
-  Info,
-  Search,
-  X,
-} from "lucide-react";
+import { Copy, Edit3, Eye, EyeOff, Hash, Info, Search, X } from "lucide-react";
 import { useCallback, useMemo, useState } from "react";
 import { useI18n } from "../../i18n";
 import { copyToClipboard } from "../../utils/sql-generator";
@@ -29,6 +20,10 @@ export interface RowInspectorData {
   primaryKeyValues: Record<string, GridCellValue>;
   tableName?: string;
   database?: string;
+  canEdit?: boolean;
+  maskedColumnNames?: string[];
+  gridInstanceId?: string;
+  connectionId?: string;
 }
 
 interface Props {
@@ -41,10 +36,7 @@ interface Props {
 
 // ─── Value formatting ────────────────────────────────────────────────────────
 
-function formatCellValue(
-  value: string | number | boolean | null,
-  _column: ResolvedColumn,
-): string {
+function formatCellValue(value: string | number | boolean | null, _column: ResolvedColumn): string {
   if (value === null || value === undefined) {
     return "NULL";
   }
@@ -69,7 +61,8 @@ function getTypeBadge(column: ResolvedColumn): string {
   if (isNumericColumn(column)) return "NUM";
   if (isDateTimeColumn(column)) return "DATE";
   if (t.includes("text") || t.includes("char") || t.includes("varchar")) return "TEXT";
-  if (t.includes("int") || t.includes("float") || t.includes("double") || t.includes("decimal")) return "NUM";
+  if (t.includes("int") || t.includes("float") || t.includes("double") || t.includes("decimal"))
+    return "NUM";
   if (t.includes("date") || t.includes("time")) return "DATE";
   return "VAL";
 }
@@ -93,21 +86,22 @@ function JsonViewer({ value }: { value: string }) {
     }
   }
 
-  const preview = isValid && !expanded
-    ? JSON.stringify(parsed).slice(0, 120) + (JSON.stringify(parsed).length > 120 ? "..." : "")
-    : formatted;
+  const preview =
+    isValid && !expanded
+      ? JSON.stringify(parsed).slice(0, 120) + (JSON.stringify(parsed).length > 120 ? "..." : "")
+      : formatted;
 
   if (!isValid || !value) {
-    return <span className="ri-field-value-text">{formatCellValue(value as GridCellValue, {} as ResolvedColumn)}</span>;
+    return (
+      <span className="ri-field-value-text">
+        {formatCellValue(value as GridCellValue, {} as ResolvedColumn)}
+      </span>
+    );
   }
 
   return (
     <div className="ri-json-viewer">
-      <button
-        type="button"
-        className="ri-json-toggle"
-        onClick={() => setExpanded((v) => !v)}
-      >
+      <button type="button" className="ri-json-toggle" onClick={() => setExpanded((v) => !v)}>
         {expanded ? <EyeOff className="w-3 h-3" /> : <Eye className="w-3 h-3" />}
         <span>{expanded ? "Collapse" : "Expand"}</span>
       </button>
@@ -132,6 +126,7 @@ interface FieldRowProps {
   onCommitEdit: () => void;
   onCancelEdit: () => void;
   onCopy: (v: string) => void;
+  canEdit: boolean;
 }
 
 function FieldRow({
@@ -144,6 +139,7 @@ function FieldRow({
   onCommitEdit,
   onCancelEdit,
   onCopy,
+  canEdit,
 }: FieldRowProps) {
   const isNull = isNullish(value);
   const isJson = isJSONColumn(column);
@@ -177,10 +173,20 @@ function FieldRow({
               }}
               autoFocus
             />
-            <button type="button" className="ri-edit-btn confirm" onClick={onCommitEdit} title="Commit">
+            <button
+              type="button"
+              className="ri-edit-btn confirm"
+              onClick={onCommitEdit}
+              title="Commit"
+            >
               <span>OK</span>
             </button>
-            <button type="button" className="ri-edit-btn cancel" onClick={onCancelEdit} title="Cancel">
+            <button
+              type="button"
+              className="ri-edit-btn cancel"
+              onClick={onCancelEdit}
+              title="Cancel"
+            >
               <X className="w-3 h-3" />
             </button>
           </div>
@@ -203,14 +209,16 @@ function FieldRow({
                 >
                   <Copy className="w-3 h-3" />
                 </button>
-                <button
-                  type="button"
-                  className="ri-field-action-btn"
-                  onClick={onStartEdit}
-                  title="Edit value"
-                >
-                  <Edit3 className="w-3 h-3" />
-                </button>
+                {canEdit ? (
+                  <button
+                    type="button"
+                    className="ri-field-action-btn"
+                    onClick={onStartEdit}
+                    title="Edit value"
+                  >
+                    <Edit3 className="w-3 h-3" />
+                  </button>
+                ) : null}
               </div>
             )}
           </div>
@@ -232,18 +240,22 @@ export function RowInspector({ isOpen, data, onClose, onEditCell }: Props) {
   const closeLabel = language === "vi" ? "Đóng" : language === "zh" ? "关闭" : "Close";
   const fieldsLabel = language === "vi" ? "Trường" : language === "zh" ? "字段" : "Fields";
   const jsonLabel = language === "zh" ? "JSON" : "JSON";
-  const searchPlaceholder = language === "vi" ? "Tìm trường..." : language === "zh" ? "搜索字段..." : "Search fields...";
-  const copyAllLabel = language === "vi" ? "Sao chép JSON" : language === "zh" ? "复制 JSON" : "Copy JSON";
-  const panelTitle = language === "vi" ? "Kiểm tra dòng" : language === "zh" ? "检查行" : "Inspect Row";
+  const searchPlaceholder =
+    language === "vi" ? "Tìm trường..." : language === "zh" ? "搜索字段..." : "Search fields...";
+  const copyAllLabel =
+    language === "vi" ? "Sao chép JSON" : language === "zh" ? "复制 JSON" : "Copy JSON";
+  const panelTitle =
+    language === "vi" ? "Kiểm tra dòng" : language === "zh" ? "检查行" : "Inspect Row";
 
   const filteredColumns = useMemo(() => {
     if (!data) return [];
-    if (!searchQuery.trim()) return data.columns;
+    const indexedColumns = data.columns.map((column, rowIndex) => ({ column, rowIndex }));
+    if (!searchQuery.trim()) return indexedColumns;
     const q = searchQuery.toLowerCase();
-    return data.columns.filter(
-      (col) =>
-        col.name.toLowerCase().includes(q) ||
-        (col.column_type || col.data_type || "").toLowerCase().includes(q),
+    return indexedColumns.filter(
+      ({ column }) =>
+        column.name.toLowerCase().includes(q) ||
+        (column.column_type || column.data_type || "").toLowerCase().includes(q),
     );
   }, [data, searchQuery]);
 
@@ -306,9 +318,7 @@ export function RowInspector({ isOpen, data, onClose, onEditCell }: Props) {
             <Info className="w-4 h-4" />
             <span>{panelTitle}</span>
             <span className="ri-row-badge">#{data.rowIndex}</span>
-            {data.tableName && (
-              <span className="ri-table-chip">{data.tableName}</span>
-            )}
+            {data.tableName && <span className="ri-table-chip">{data.tableName}</span>}
           </div>
           <div className="ri-panel-actions">
             <button
@@ -359,7 +369,11 @@ export function RowInspector({ isOpen, data, onClose, onEditCell }: Props) {
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
                 {searchQuery && (
-                  <button type="button" className="ri-search-clear" onClick={() => setSearchQuery("")}>
+                  <button
+                    type="button"
+                    className="ri-search-clear"
+                    onClick={() => setSearchQuery("")}
+                  >
                     <X className="w-3 h-3" />
                   </button>
                 )}
@@ -370,16 +384,24 @@ export function RowInspector({ isOpen, data, onClose, onEditCell }: Props) {
                 {filteredColumns.length === 0 ? (
                   <div className="ri-empty">
                     {searchQuery
-                      ? (language === "vi" ? "Không tìm thấy trường nào." : language === "zh" ? "未找到字段。" : "No fields found.")
-                      : (language === "vi" ? "Không có trường nào." : language === "zh" ? "无字段。" : "No fields.")}
+                      ? language === "vi"
+                        ? "Không tìm thấy trường nào."
+                        : language === "zh"
+                          ? "未找到字段。"
+                          : "No fields found."
+                      : language === "vi"
+                        ? "Không có trường nào."
+                        : language === "zh"
+                          ? "无字段。"
+                          : "No fields."}
                   </div>
                 ) : (
-                  filteredColumns.map((column, colIndex) => {
-                    const value = data.row[colIndex];
+                  filteredColumns.map(({ column, rowIndex }) => {
+                    const value = data.row[rowIndex];
                     const isColEditing = editingColumn === column.name;
                     return (
                       <FieldRow
-                        key={column.name}
+                        key={`${column.name}:${rowIndex}`}
                         column={column}
                         value={value}
                         isEditing={isColEditing}
@@ -389,6 +411,11 @@ export function RowInspector({ isOpen, data, onClose, onEditCell }: Props) {
                         onCommitEdit={handleCommitEdit}
                         onCancelEdit={handleCancelEdit}
                         onCopy={handleCopyValue}
+                        canEdit={
+                          Boolean(data.canEdit) &&
+                          !column.is_primary_key &&
+                          !(data.maskedColumnNames ?? []).includes(column.name)
+                        }
                       />
                     );
                   })

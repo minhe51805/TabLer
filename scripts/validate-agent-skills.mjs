@@ -499,6 +499,69 @@ for (const skillFile of claudeSkillFiles) {
 }
 
 // ---------------------------------------------------------------------------------------
+// ZCode-discoverable mirrors (`.zcode/skills/<name>/SKILL.md`).
+//
+// ZCode's discovery roots include workspace `.zcode/skills` but NOT `.claude/skills` —
+// so a dev-layer skill that only exists in the Claude Code shape never loads there. The
+// convention: `.claude/skills/<name>.md` is the tracked canonical copy, and a mirror at
+// `.zcode/skills/<name>/SKILL.md` makes it discoverable to ZCode sessions in this repo.
+// This walk checks the mirror's frontmatter and, when both copies exist, fails on body
+// drift between them (the mirror carries the same sync note).
+// ---------------------------------------------------------------------------------------
+
+const zcodeSkillsDir = join(".zcode", "skills");
+const zcodeSkillDirs = existsSync(zcodeSkillsDir)
+  ? readdirSync(zcodeSkillsDir).filter((entry) =>
+      statSync(join(zcodeSkillsDir, entry)).isDirectory(),
+    )
+  : [];
+
+for (const dirName of zcodeSkillDirs) {
+  const relativePath = `.zcode/skills/${dirName}/SKILL.md`;
+  if (!existsSync(relativePath)) {
+    report(relativePath, "mirror directory has no SKILL.md (ZCode requires that exact name)");
+    continue;
+  }
+  const asset = readAsset(relativePath);
+  if (!asset) continue;
+  const { fields, body } = asset;
+
+  // ZCode's contract: frontmatter `name` matches the DIRECTORY name (the file is
+  // always SKILL.md here, so the flat-file basename check does not apply).
+  const declared = typeof fields.name === "string" ? fields.name : "";
+  if (!declared) {
+    report(relativePath, "mirror skill frontmatter is missing `name:`");
+  } else if (declared !== dirName) {
+    report(relativePath, `\`name: ${declared}\` does not match the directory name \`${dirName}\``);
+  }
+
+  if (typeof fields.description !== "string" || !fields.description.trim()) {
+    report(relativePath, "mirror skill frontmatter is missing `description:`");
+  }
+  if (body.trim().length === 0) {
+    report(relativePath, "mirror skill has an empty body");
+  }
+
+  const canonicalRelative = `${CLAUDE_ROOT}/skills/${dirName}.md`;
+  if (existsSync(canonicalRelative)) {
+    const canonicalAsset = readAsset(canonicalRelative);
+    if (canonicalAsset) {
+      // HTML comments are annotations (the mirror carries a sync note the
+      // canonical copy does not), so compare bodies with them stripped.
+      const stripComments = (text) => text.replace(/<!--[\s\S]*?-->/g, "").trim();
+      if (stripComments(canonicalAsset.body) !== stripComments(body)) {
+        report(
+          relativePath,
+          `mirror body drifted from the canonical ${canonicalRelative} — keep the two in sync`,
+        );
+      }
+    }
+  }
+
+  notes.push(`zcode-skill ${dirName}`);
+}
+
+// ---------------------------------------------------------------------------------------
 // In-app slash-command pack (`src-tauri/commands/*.md`).
 //
 // These ARE loaded by the app: `agent_commands.rs` embeds each file with `include_str!`

@@ -1,21 +1,36 @@
 ---
 name: duckdb-dialect-mastery
 description: This skill should be used when the user asks to "write DuckDB SQL", "query a CSV or Parquet file", "analyze a file with SQL", or when the target engine is DuckDB.
-version: 1.0.0
+version: 1.0.1
 license: MIT
 ---
 
 # DuckDB Dialect Mastery
 
 Load this when the bound engine is DuckDB. DuckDB is an in-process, column-oriented
-analytical engine: the whole database lives in one file, SQL runs through the same
-read-only/write tools as every other engine here, and the dialect overlaps PostgreSQL
-more than SQLite — but the analytics-first defaults change what "slow" and "correct"
-mean.
+analytical engine: the whole database lives in one file, and the dialect overlaps
+PostgreSQL more than SQLite — but the analytics-first defaults change what "slow" and
+"correct" mean.
 
-## Files are first-class tables
+## What the agent's sandbox accepts (verified against the bundled engine)
 
-You can query files without importing them:
+The read-only sandbox parses every statement with its own SQL grammar before DuckDB sees
+it. Verified through `run_readonly_sql` on 2026-10-31:
+
+- **Runs:** plain analytical SQL — `SELECT`/joins/aggregates, `GROUP BY ALL`,
+  `SELECT * EXCLUDE (…)`, `QUALIFY`, window functions, `EXPLAIN` and `EXPLAIN ANALYZE`,
+  and the `/` vs `//` division semantics below.
+- **Refused (`SANDBOX_DENIED`):** `read_csv_auto` / `read_parquet` table functions,
+  `COPY … TO`, `USING SAMPLE`, and `ATTACH` (session-control statements are blocked on
+  purpose). The gateway's grammar, not DuckDB, is the wall.
+
+So: write plain SQL against **imported tables** through the agent, and hand the user an
+editor query when a task needs file functions, export, sampling, or attach — the same
+statement runs fine in the desktop SQL editor, which does not pass through the sandbox.
+
+## Files are first-class tables (desktop editor path)
+
+In the SQL editor — not through the agent's sandbox — you can query files directly:
 
 ```sql
 SELECT * FROM read_csv_auto('sales_2024.csv') LIMIT 10;
@@ -32,6 +47,8 @@ SELECT * FROM read_parquet('events/*.parquet') WHERE ts >= '2024-01-01';
   "export this query result as Parquet/CSV" requests.
 - These are table functions: they can be joined, aggregated, and inserted from like any
   table — `INSERT INTO orders SELECT * FROM read_parquet('new_orders.parquet');`
+- When the user asks the agent for such an import/export, produce the statement and say
+  it must run in the SQL editor; do not retry it through the sandbox.
 
 ## Types: real dates, decimals, and nested values
 
@@ -76,18 +93,20 @@ INSERT OR REPLACE INTO customer (id, email) VALUES (1, 'a@b.c');
   is the proposed row. `INSERT OR REPLACE` deletes-then-inserts (fires any `ON DELETE`
   behavior, changes `rowid`) — the same trap as SQLite, so prefer `DO UPDATE`.
 
-## Reading other databases
+## Reading other databases (desktop editor path)
 
 ```sql
 ATTACH 'archive.db' AS arch (TYPE sqlite);   -- SQLite file
 SELECT * FROM arch.users;                    -- two-part name: catalog.table
 ```
 
-- Attaching SQLite files works when the `sqlite` extension is available (bundled or
-  autoloaded in recent builds; `SHOW TABLES FROM arch;` lists what it found). Other
-  engines (PostgreSQL, MySQL) need their scanner extension loaded, which a sandboxed
-  build may not have — check before promising a cross-engine query, and fall back to
-  "run it there" if the attach fails.
+- The sandbox gateway blocks `ATTACH` outright (`SANDBOX_DENIED`), so cross-database
+  queries are an editor-only capability: write the statement for the user to run, or ask
+  for the data to be imported into the current database first.
+- In the editor, attaching SQLite files works when the `sqlite` extension is available
+  (bundled or autoloaded in recent builds; `SHOW TABLES FROM arch;` lists what it
+  found). Other engines (PostgreSQL, MySQL) need their scanner extension loaded, which a
+  sandboxed build may not have — check before promising a cross-engine query.
 
 ## Plans and sizing
 
@@ -100,8 +119,9 @@ SELECT * FROM arch.users;                    -- two-part name: catalog.table
   `query-performance-tuning` skill's evidence workflow and the `run_preset`
   `table-stats` preset apply here as anywhere.
 - Sampling for profiling: `USING SAMPLE 1%` (or `USING SAMPLE 10000 ROWS`) keeps
-  exploratory queries fast on big tables; `data-profiling`'s queries can be sampled
-  this way without changing their conclusions' direction.
+  exploratory queries fast on big tables — **editor path only**; the sandbox gateway
+  cannot parse it. Through the agent, bound exploration with `LIMIT` on an ordered
+  subquery instead.
 
 ## Process model caveats
 
@@ -111,11 +131,12 @@ SELECT * FROM arch.users;                    -- two-part name: catalog.table
   or a smaller scan rather than retrying blind.
 - No stored procedures, no server-side users, no `GRANT`. There is no `LIMIT`-less
   default result cap — an unbounded `SELECT *` on a wide Parquet set is a real memory
-  risk, so always pair exploration with `LIMIT` or `USING SAMPLE`.
+  risk, so always pair exploration with `LIMIT`.
 
 ## See also
 
 - `query-performance-tuning` — the evidence-first workflow; `references/engine-evidence.md`
   has the DuckDB `EXPLAIN` specifics.
-- `data-profiling` — the read-only profiling queries, now samplable with `USING SAMPLE`.
+- `data-profiling` — the read-only profiling queries; sample them with `LIMIT` through
+  the agent, `USING SAMPLE` in the editor.
 - `postgres-dialect-mastery` — the closest dialect; check it when a PostgreSQL-ism fails.

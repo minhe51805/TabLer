@@ -275,7 +275,7 @@ const BUILTIN_SKILLS: &[BuiltinSkill] = &[
     },
     BuiltinSkill {
         name: "duckdb-dialect-mastery",
-        version: "1.0.0",
+        version: "1.0.1",
         files: &[BuiltinSkillFile {
             rel_path: "SKILL.md",
             content: include_str!("../skills/duckdb-dialect-mastery/SKILL.md"),

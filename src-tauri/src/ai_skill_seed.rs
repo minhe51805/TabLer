@@ -167,19 +167,41 @@ const BUILTIN_SKILLS: &[BuiltinSkill] = &[
     },
     BuiltinSkill {
         name: "tsql-safety-guardrails",
-        version: "1.0.0",
-        files: &[BuiltinSkillFile {
-            rel_path: "SKILL.md",
-            content: include_str!("../skills/tsql-safety-guardrails/SKILL.md"),
-        }],
+        version: "1.1.0",
+        files: &[
+            BuiltinSkillFile {
+                rel_path: "SKILL.md",
+                content: include_str!("../skills/tsql-safety-guardrails/SKILL.md"),
+            },
+            BuiltinSkillFile {
+                rel_path: "references/engine-matrix.md",
+                content: include_str!(
+                    "../skills/tsql-safety-guardrails/references/engine-matrix.md"
+                ),
+            },
+        ],
     },
     BuiltinSkill {
         name: "query-performance-tuning",
-        version: "1.0.0",
-        files: &[BuiltinSkillFile {
-            rel_path: "SKILL.md",
-            content: include_str!("../skills/query-performance-tuning/SKILL.md"),
-        }],
+        version: "1.1.0",
+        files: &[
+            BuiltinSkillFile {
+                rel_path: "SKILL.md",
+                content: include_str!("../skills/query-performance-tuning/SKILL.md"),
+            },
+            BuiltinSkillFile {
+                rel_path: "references/plan-operators.md",
+                content: include_str!(
+                    "../skills/query-performance-tuning/references/plan-operators.md"
+                ),
+            },
+            BuiltinSkillFile {
+                rel_path: "references/engine-evidence.md",
+                content: include_str!(
+                    "../skills/query-performance-tuning/references/engine-evidence.md"
+                ),
+            },
+        ],
     },
     BuiltinSkill {
         name: "data-profiling",
@@ -213,11 +235,19 @@ const BUILTIN_SKILLS: &[BuiltinSkill] = &[
     },
     BuiltinSkill {
         name: "postgres-dialect-mastery",
-        version: "1.0.0",
-        files: &[BuiltinSkillFile {
-            rel_path: "SKILL.md",
-            content: include_str!("../skills/postgres-dialect-mastery/SKILL.md"),
-        }],
+        version: "1.1.0",
+        files: &[
+            BuiltinSkillFile {
+                rel_path: "SKILL.md",
+                content: include_str!("../skills/postgres-dialect-mastery/SKILL.md"),
+            },
+            BuiltinSkillFile {
+                rel_path: "references/index-flavors.md",
+                content: include_str!(
+                    "../skills/postgres-dialect-mastery/references/index-flavors.md"
+                ),
+            },
+        ],
     },
     BuiltinSkill {
         name: "mysql-dialect-mastery",
@@ -229,10 +259,26 @@ const BUILTIN_SKILLS: &[BuiltinSkill] = &[
     },
     BuiltinSkill {
         name: "sqlite-dialect-mastery",
+        version: "1.1.0",
+        files: &[
+            BuiltinSkillFile {
+                rel_path: "SKILL.md",
+                content: include_str!("../skills/sqlite-dialect-mastery/SKILL.md"),
+            },
+            BuiltinSkillFile {
+                rel_path: "references/pragma-guide.md",
+                content: include_str!(
+                    "../skills/sqlite-dialect-mastery/references/pragma-guide.md"
+                ),
+            },
+        ],
+    },
+    BuiltinSkill {
+        name: "duckdb-dialect-mastery",
         version: "1.0.0",
         files: &[BuiltinSkillFile {
             rel_path: "SKILL.md",
-            content: include_str!("../skills/sqlite-dialect-mastery/SKILL.md"),
+            content: include_str!("../skills/duckdb-dialect-mastery/SKILL.md"),
         }],
     },
     BuiltinSkill {

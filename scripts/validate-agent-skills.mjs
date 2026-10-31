@@ -20,12 +20,69 @@
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
-// Mirrors the constants in src-tauri/src/ai_skills.rs. Keep in sync by hand: these are
-// the contract values, and a divergence is exactly the bug this script exists to catch.
+// Mirrors the constants in src-tauri/src/ai_skills.rs. The mirror below is CHECKED, not
+// hand-synced: `crossCheckRustConstants` extracts the Rust declarations and fails this
+// script when either side drifts, so "keep in sync" stopped being a hope.
 const MAX_SKILL_DESCRIPTION_CHARS = 200;
 const MAX_SKILL_BODY_CHARS = 8000;
 const MAX_SKILL_RESOURCE_CHARS = 12000;
 const MAX_SKILL_ALLOWED_TOOLS = 32;
+const MAX_SKILLS_PER_CATALOG = 32;
+
+/**
+ * Extract the contract constants from the authoritative Rust source and fail loudly on
+ * any mismatch — including the regex itself failing to match, which is a loud failure
+ * (the Rust file was reformatted away from the expected shape), never a silent pass.
+ */
+function crossCheckRustConstants(reported) {
+  const source = readFileSync("src-tauri/src/ai_skills/types.rs", "utf8");
+  const rust = {};
+  // MAX_SKILLS_PER_CATALOG shares the MAX_SKILL prefix family; [A-Z_]* (not _[A-Z_]+)
+  // keeps it in the same match.
+  const pattern = /MAX_SKILL[A-Z_]*:\s*usize\s*=\s*([\d_]+);/g;
+  for (const match of source.matchAll(pattern)) {
+    rust[match[0].split(":")[0].trim()] = Number(match[1].replace(/_/g, ""));
+  }
+  const pairs = [
+    ["MAX_SKILL_DESCRIPTION_CHARS", MAX_SKILL_DESCRIPTION_CHARS],
+    ["MAX_SKILL_BODY_CHARS", MAX_SKILL_BODY_CHARS],
+    ["MAX_SKILL_RESOURCE_CHARS", MAX_SKILL_RESOURCE_CHARS],
+    ["MAX_SKILL_ALLOWED_TOOLS", MAX_SKILL_ALLOWED_TOOLS],
+    ["MAX_SKILLS_PER_CATALOG", MAX_SKILLS_PER_CATALOG],
+  ];
+  for (const [name, jsValue] of pairs) {
+    const rustValue = rust[name];
+    if (rustValue === undefined) {
+      report(
+        `contract cross-check`,
+        `could not find \`${name}\` in src-tauri/src/ai_skills/types.rs — the Rust file no longer matches the expected declaration shape`,
+      );
+    } else if (rustValue !== jsValue) {
+      report(
+        `contract cross-check`,
+        `${name}: JS mirror ${jsValue} != Rust ${rustValue} — update the mirror together with the Rust constant`,
+      );
+    }
+  }
+
+  const agentTypes = readFileSync("src-tauri/src/agent_commands/types.rs", "utf8");
+  const keysMatch = agentTypes.match(/INJECTABLE_CONTEXT_KEYS:\s*&\[&str\]\s*=\s*&\[([\s\S]*?)\]/);
+  if (!keysMatch) {
+    report(
+      `contract cross-check`,
+      "could not find `INJECTABLE_CONTEXT_KEYS` in src-tauri/src/agent_commands/types.rs",
+    );
+  } else {
+    const rustKeys = [...keysMatch[1].matchAll(/"([a-z_]+)"/g)].map((m) => m[1]).sort();
+    const jsKeys = [...INJECTABLE_CONTEXT_KEYS].sort();
+    if (JSON.stringify(rustKeys) !== JSON.stringify(jsKeys)) {
+      report(
+        `contract cross-check`,
+        `INJECTABLE_CONTEXT_KEYS: JS [${jsKeys.join(", ")}] != Rust [${rustKeys.join(", ")}]`,
+      );
+    }
+  }
+}
 
 const SKILLS_ROOT = "src-tauri/skills";
 const SKILL_MD = "SKILL.md";
@@ -578,8 +635,8 @@ const COMMAND_PACK_ROOT = "src-tauri/commands";
 const MAX_COMMAND_BODY_CHARS = 8000;
 const MAX_COMMAND_ALLOWED_TOOLS = 32;
 const COMMAND_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
-// Mirrors `agent_commands::INJECTABLE_CONTEXT_KEYS`. Adding a key here without adding it
-// there makes the app reject the command, so the two lists must stay identical.
+// Mirrors `agent_commands::INJECTABLE_CONTEXT_KEYS`. The cross-check below extracts the
+// Rust list and fails on divergence, so this copy is checked, not hand-synced.
 const INJECTABLE_CONTEXT_KEYS = new Set([
   "current_database",
   "bound_connection",
@@ -588,6 +645,10 @@ const INJECTABLE_CONTEXT_KEYS = new Set([
   "schema_summary",
   "checkpoint_list",
 ]);
+
+// Declared after both mirrored constants so the cross-check sees real values; any
+// divergence from the Rust declarations is reported like any other contract violation.
+crossCheckRustConstants(report);
 
 const commandPackFiles = listDir(COMMAND_PACK_ROOT)
   .filter((entry) => entry.endsWith(".md"))

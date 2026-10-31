@@ -506,6 +506,35 @@ mod tests {
         }
     }
 
+    /// The struct's `version` is the single source the seeder's manifest is keyed
+    /// on, while the frontmatter `version` is what discovery surfaces in the
+    /// manager. A forgotten bump on either side shows users two different
+    /// versions, so the real parser (not a string-contains check) must prove the
+    /// two agree for every entry.
+    #[test]
+    fn every_builtin_frontmatter_version_matches_the_struct() {
+        for skill in BUILTIN_SKILLS {
+            let skill_md = skill
+                .files
+                .iter()
+                .find(|file| file.rel_path == "SKILL.md")
+                .unwrap_or_else(|| panic!("{}: must ship SKILL.md", skill.name));
+            let (meta, _) = crate::ai_skills::parse::parse_skill_md(skill_md.content);
+            assert_eq!(
+                meta.name.as_deref(),
+                Some(skill.name),
+                "{}: frontmatter name drifts from the seed struct",
+                skill.name
+            );
+            assert_eq!(
+                meta.version.as_deref(),
+                Some(skill.version),
+                "{}: frontmatter version drifts from the seed struct — bump both sides together",
+                skill.name
+            );
+        }
+    }
+
     /// Runtime caps live in `ai_skills.rs`; past them the skill is truncated and
     /// stops firing on its trigger phrases.
     #[test]

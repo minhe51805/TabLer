@@ -35,6 +35,9 @@ pub(crate) fn skill_roots(workspace_dir: Option<&str>) -> Vec<(PathBuf, String)>
 pub fn discover_ai_skills_in_roots(roots: &[(PathBuf, String)]) -> AISkillListReport {
     let mut summaries: Vec<AISkillSummary> = Vec::new();
     let mut errors: Vec<AISkillLoadError> = Vec::new();
+    // Names paired with their SKILL.md paths so truncation can name exactly
+    // which entries were hidden instead of reporting an anonymous overflow.
+    let mut catalog_paths: Vec<(String, String)> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for (root, source) in roots {
         let entries = match std::fs::read_dir(root) {
@@ -142,6 +145,7 @@ pub fn discover_ai_skills_in_roots(roots: &[(PathBuf, String)]) -> AISkillListRe
                 }
             }
             seen.insert(parsed_name.clone());
+            catalog_paths.push((parsed_name.clone(), file_path.display().to_string()));
             summaries.push(AISkillSummary {
                 name: parsed_name,
                 description: meta.description.clone().unwrap_or_default(),
@@ -157,7 +161,23 @@ pub fn discover_ai_skills_in_roots(roots: &[(PathBuf, String)]) -> AISkillListRe
             summaries.len(),
             MAX_SKILLS_PER_CATALOG
         );
-        summaries.truncate(MAX_SKILLS_PER_CATALOG);
+        // Silent truncation is how a skill disappears without anyone noticing:
+        // every hidden entry surfaces as a load error so the manager lists
+        // exactly which skills beyond the cap were dropped.
+        for hidden in summaries.split_off(MAX_SKILLS_PER_CATALOG) {
+            let path = catalog_paths
+                .iter()
+                .find(|(name, _)| *name == hidden.name)
+                .map(|(_, path)| path.clone())
+                .unwrap_or_else(|| hidden.name.clone());
+            errors.push(AISkillLoadError {
+                path,
+                reason: format!(
+                    "Hidden by the catalog cap of {} skills — prune or disable unused skills so every skill stays visible.",
+                    MAX_SKILLS_PER_CATALOG
+                ),
+            });
+        }
     }
     AISkillListReport {
         skills: summaries,

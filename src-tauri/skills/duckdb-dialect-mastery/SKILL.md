@@ -79,13 +79,15 @@ INSERT OR REPLACE INTO customer (id, email) VALUES (1, 'a@b.c');
 ## Reading other databases
 
 ```sql
-ATTACH 'archive.db' AS arch;        -- SQLite file
-SELECT * FROM arch.main.users;
+ATTACH 'archive.db' AS arch (TYPE sqlite);   -- SQLite file
+SELECT * FROM arch.users;                    -- two-part name: catalog.table
 ```
 
-- Attaching SQLite files works out of the box; other engines (PostgreSQL, MySQL) need
-  their scanner extension loaded, which a sandboxed build may not have — check before
-  promising a cross-engine query, and fall back to "run it there" if the attach fails.
+- Attaching SQLite files works when the `sqlite` extension is available (bundled or
+  autoloaded in recent builds; `SHOW TABLES FROM arch;` lists what it found). Other
+  engines (PostgreSQL, MySQL) need their scanner extension loaded, which a sandboxed
+  build may not have — check before promising a cross-engine query, and fall back to
+  "run it there" if the attach fails.
 
 ## Plans and sizing
 

@@ -40,8 +40,11 @@ in the answer.
   add-column/rename needs the twelve-step rebuild (see `migration-authoring`).
 - **DuckDB.** In-process and column-oriented, aimed at analytics; treat bulk `DELETE`
   plus re-insert as the shape for rewrites, and check `table-stats` sizing before and
-  after — DuckDB files do not shrink without a `CHECKPOINT`/rebuild, so a "successful"
-  delete that reports rows-affected may leave the file the same size on disk.
+  after. Space does not come back on its own: run `CHECKPOINT` after large deletes (it
+  compacts only fully-emptied row groups), and know that DuckDB's `VACUUM` does **not**
+  reclaim disk space — the vacuum-after-delete habit ported from SQLite/PostgreSQL is a
+  no-op for file size. When churn leaves the file bloated, the reliable reset is
+  export-and-reload into a fresh database.
 
 ## Row counts you cannot verify — refuse, don't guess
 

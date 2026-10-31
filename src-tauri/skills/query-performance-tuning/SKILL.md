@@ -32,7 +32,7 @@ must be backed by a query that ran: a plan, a statistics reading, or a row count
 1. Get the SQL text under discussion (the active tab, or the user's message).
 2. Establish the table's size first (`sys.dm_db_partition_stats`) — an index does not
    matter on 200 rows, and a scan is fatal on 200M. The `run_preset` `table-stats`
-   preset is the sanctioned way to get this per engine.
+   preset is the sanctioned per-engine route.
 3. Inspect the existing index inventory — the `run_preset` `index-usage` preset when
    available, otherwise `scripts/` in the `tsql-dialect-mastery` skill (queries 5–6).
    Never propose an index that already exists.
@@ -40,8 +40,7 @@ must be backed by a query that ran: a plan, a statistics reading, or a row count
 5. Propose the smallest change that addresses the evidence, with the expected effect and
    the cost. Then give the verification query the user can run to confirm.
 
-Evidence paths are engine-specific: `references/engine-evidence.md` maps the workflow to
-`run_preset` presets and each engine's `EXPLAIN`.
+Per-engine evidence paths: `references/engine-evidence.md` (`run_preset` + `EXPLAIN`).
 
 ## Anti-pattern checklist (check these before anything else)
 
@@ -71,8 +70,9 @@ Evidence paths are engine-specific: `references/engine-evidence.md` maps the wor
   predicate order against the index definition before proposing a new one.
 - **Low-cardinality columns** (a status with 4 values) are poor leading keys; put them
   after the selective column, or filter them out with a filtered index.
-- Check `sys.dm_db_missing_index_details` for the server's own suggestions, and
-  `sys.dm_db_index_usage_stats` for indexes with zero seeks — a drop candidate.
+- The `sys.dm_db_*` catalog views hold missing-index suggestions and zero-seek drop
+  candidates — desktop SQL editor path; via the agent use the `run_preset`
+  `index-usage` preset.
 
 ## Reading an execution plan
 
@@ -114,8 +114,8 @@ lower belongs in a "worth testing" list, not in the recommendation.
 ## See also
 
 - `references/plan-operators.md` — how to read each operator in a plan.
-- `references/engine-evidence.md` — the per-engine evidence map: `run_preset` presets
-  and each engine's `EXPLAIN` syntax.
+- `references/engine-evidence.md` — per-engine evidence map: `run_preset` presets and
+  `EXPLAIN` syntax.
 - The `tsql-dialect-mastery` skill for the conversion and `TOP`/`OFFSET` traps.
-- The `tsql-dialect-mastery` skill's `scripts/catalog-queries.sql` (queries 5, 6, 7) for
-  index inventory and missing-index suggestions.
+- `tsql-dialect-mastery`'s `scripts/catalog-queries.sql` (queries 5–7) — desktop editor
+  path for index inventory; the agent route is the `index-usage` preset.

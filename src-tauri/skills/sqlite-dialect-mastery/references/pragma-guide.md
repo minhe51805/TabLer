@@ -24,7 +24,10 @@ CREATE TABLE events (
   columns keep the old permissive behavior.
 - Requires SQLite 3.37.0 (2021-11). On older builds the keyword is a syntax error —
   check `sqlite_version()` before generating a `STRICT` DDL.
-- One subtlety: in `STRICT` tables, `NaN` is rejected, and `REAL` columns reject text.
+- One subtlety: `REAL` columns reject text outright (an error, not an affinity
+  conversion). `NaN` is a different trap: SQLite has no NaN value anywhere — a bound
+  `NaN` is stored as `NULL`, even in `STRICT` tables, so it reads back as missing data
+  rather than failing validation.
 
 ## VACUUM and file bloat
 

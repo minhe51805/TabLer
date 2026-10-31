@@ -43,6 +43,14 @@ struct BuiltinSkill {
     files: &'static [BuiltinSkillFile],
 }
 
+/// The names of the compiled-in pack. The user-skill safety lint
+/// (`ai_skills::lint`) exempts these by name: their text is reviewed here and
+/// deliberately discusses hostile SQL constructs without asking the agent to
+/// run them, which is exactly what the lint exists to catch in third parties.
+pub fn builtin_skill_names() -> std::collections::HashSet<&'static str> {
+    BUILTIN_SKILLS.iter().map(|skill| skill.name).collect()
+}
+
 /// Per-skill outcome of a seed pass. Serialized to the frontend so the skills
 /// manager can show which built-ins are installed, customised or outdated.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]

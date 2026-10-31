@@ -1,7 +1,9 @@
 use std::path::PathBuf;
 
+use crate::ai_skill_seed::builtin_skill_names;
 use crate::utils::paths::resolve_data_dir;
 
+use super::lint::lint_skill_text;
 use super::parse::{
     dir_display_name, list_skill_resource_files, parse_skill_md, skill_md_path,
     skill_md_updated_at, validate_resource_rel,
@@ -114,6 +116,30 @@ pub fn discover_ai_skills_in_roots(roots: &[(PathBuf, String)]) -> AISkillListRe
             }
             if seen.contains(&parsed_name) {
                 continue;
+            }
+            // Safety lint: the body is injected into the agent context verbatim,
+            // so user-provided text is screened for instruction overrides, shell
+            // requests and secret exfiltration before it can reach the catalog.
+            // Built-ins are exempt — their text ships in the binary and is
+            // reviewed; see `lint::lint_skill_text`.
+            if !builtin_skill_names().contains(parsed_name.as_str()) {
+                let findings = lint_skill_text(&raw);
+                if !findings.is_empty() {
+                    log::warn!(
+                        "ai_skills: '{}' ({}) blocked by the safety lint: {} finding(s)",
+                        parsed_name,
+                        source,
+                        findings.len()
+                    );
+                    errors.push(AISkillLoadError {
+                        path: file_path.display().to_string(),
+                        reason: format!(
+                            "Blocked by the skill safety lint: {}",
+                            findings.join("; ")
+                        ),
+                    });
+                    continue;
+                }
             }
             seen.insert(parsed_name.clone());
             summaries.push(AISkillSummary {

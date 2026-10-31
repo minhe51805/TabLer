@@ -39,7 +39,7 @@ const MAX_AGENT_MEMORY_INDEX_ENTRIES = 24;
  * example — instead of the weaker, drifting phrasings they used before.
  */
 const AGENT_MEMORY_SAVE_HINT =
-  'Proactively persist durable facts with save_memory the moment you learn them — a schema fact, a user preference (naming, formatting, SQL dialect), or a correction the user makes (e.g. "is_deleted marks a soft-delete", "amounts are stored in cents", a status column\'s enum values). Save without being asked so future runs start smarter; never store credentials — they are rejected.';
+  'Proactively persist durable facts with save_memory the moment you learn them — a schema fact, a user preference (naming, formatting, SQL dialect), or a correction the user makes (e.g. "is_deleted marks a soft-delete", "amounts are stored in cents", a status column\'s enum values). Tag which kind it is when the name allows it: a correction, a knowledge gap you just closed, or a better approach discovered. Before writing, recall what is already stored so you update an entry instead of duplicating one; skip one-off trivia (a row value, a session-specific filter) — memory is for what a future run on this connection will need. Save without being asked so future runs start smarter; never store credentials — they are rejected.';
 
 export function buildAgentPlanPrompt(params: {
   userPrompt: string;

@@ -2,7 +2,7 @@
  * Agent-asset contract validator.
  *
  * Guards the built-in Agent Skill pack in `src-tauri/skills/` against the limits the
- * Rust loader in `src-tauri/src/ai_skills.rs` enforces at runtime. A skill that breaks
+ * Rust loader in `src-tauri/src/ai_skills/` enforces at runtime. A skill that breaks
  * one of these limits does not fail loudly in the app — it is silently truncated or
  * becomes undiscoverable — so it must fail here instead.
  *
@@ -20,56 +20,198 @@
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
 import { join } from "node:path";
 
-// Mirrors the constants in src-tauri/src/ai_skills.rs. The mirror below is CHECKED, not
-// hand-synced: `crossCheckRustConstants` extracts the Rust declarations and fails this
-// script when either side drifts, so "keep in sync" stopped being a hope.
+// Contract mirrors. CHECKED, not hand-synced: `crossCheckRustConstants` walks the
+// RUST_CONTRACTS table below, extracts each Rust declaration, and fails on drift —
+// so "keep in sync" stopped being a hope.
 const MAX_SKILL_DESCRIPTION_CHARS = 200;
 const MAX_SKILL_BODY_CHARS = 8000;
 const MAX_SKILL_RESOURCE_CHARS = 12000;
 const MAX_SKILL_ALLOWED_TOOLS = 32;
 const MAX_SKILLS_PER_CATALOG = 32;
+31;
+const MAX_COMMAND_BODY_CHARS = 8000;
+const MAX_COMMAND_ALLOWED_TOOLS = 32;
 
 /**
- * Extract the contract constants from the authoritative Rust source and fail loudly on
- * any mismatch — including the regex itself failing to match, which is a loud failure
- * (the Rust file was reformatted away from the expected shape), never a silent pass.
+ * The contract registry: every cross-side constant agreement in one table.
+ *
+ * Per row: `file` (Rust authority), `pattern` (matches the constant declarations),
+ * and a JS side that is one of:
+ *   - `js`: checked pairs against this script's own working constants — value must
+ *     EQUAL the Rust number (or `rel: "<="` for budget-vs-storage pairs);
+ *   - `jsFile` + `jsPattern`: the JS authority lives in a frontend file — extract it
+ *     there, so the validator never becomes a second copy of the number;
+ * plus `captureOnly` (names the regex must find, values recorded but with no JS
+ * twin yet — growth becomes copy-paste instead of archaeology).
+ *
+ * Bidirectional by construction: a Rust match that is in neither `js`/`jsFile` nor
+ * `captureOnly` fails with the offender named, and an entry the regex cannot find
+ * in Rust fails too. A pattern that matches nothing at all is a loud failure (the
+ * file drifted from the expected shape), never a silent pass.
+ */
+const RUST_CONTRACTS = [
+  {
+    file: "src-tauri/src/ai_skills/types.rs",
+    // MAX_SKILLS_PER_CATALOG shares the MAX_SKILL prefix family; [A-Z_]* (not
+    // _[A-Z_]+) keeps it in the same match.
+    pattern: /MAX_SKILL[A-Z_]*:\s*usize\s*=\s*([\d_]+);/g,
+    js: {
+      MAX_SKILL_DESCRIPTION_CHARS,
+      MAX_SKILL_BODY_CHARS,
+      MAX_SKILL_RESOURCE_CHARS,
+      MAX_SKILL_ALLOWED_TOOLS,
+      MAX_SKILLS_PER_CATALOG,
+    },
+    captureOnly: ["MAX_SKILL_RESOURCES"],
+  },
+  {
+    file: "src-tauri/src/agent_commands/types.rs",
+    pattern: /MAX_COMMAND[A-Z_]*:\s*usize\s*=\s*([\d_]+);/g,
+    js: {
+      MAX_COMMAND_BODY_CHARS,
+      MAX_COMMAND_ALLOWED_TOOLS,
+    },
+    captureOnly: ["MAX_COMMANDS_PER_ROOT"],
+  },
+  {
+    file: "src-tauri/src/agent_memory.rs",
+    pattern: /MAX_MEMORY_ENTRIES:\s*usize\s*=\s*([\d_]+);/g,
+    // The JS side is the frontend file, not a copy here: the prompt budget is
+    // owned by `ai-agent-controller-prompt.ts`. Storage cap vs prompt budget:
+    // the FE shows the top 24 of ≤32 after its relevance sort, so equality is
+    // wrong by design — see the paired comments on both constants. The two
+    // constants have different names on purpose (storage vs budget).
+    rustName: "MAX_MEMORY_ENTRIES",
+    jsFile: "src/components/AISlidePanel/ai-agent-controller-prompt.ts",
+    jsPattern: /MAX_AGENT_MEMORY_INDEX_ENTRIES = (\d+);/,
+    jsName: "MAX_AGENT_MEMORY_INDEX_ENTRIES",
+    rel: "<=",
+  },
+  {
+    file: "src-tauri/src/agent_rules/types.rs",
+    pattern: /MAX_[A-Z_]+:\s*usize\s*=\s*([\d_ *]+);/g,
+    js: {},
+    captureOnly: ["MAX_RULES_PER_ROOT", "MAX_STATEMENT_LEN", "MAX_PATTERN_LEN"],
+  },
+];
+
+/**
+ * Evaluate a restricted Rust integer literal: `8_000`, or a pure product of
+ * integers (`2 * 1024 * 1024`). The character class is deliberately limited to
+ * digits, underscores, spaces and `*` — anything else fails loudly instead of
+ * being eval'd.
+ */
+function parseRustInt(expr) {
+  const cleaned = expr.replace(/[\s_]/g, "");
+  if (!/^\d+(\*\d+)*$/.test(cleaned)) {
+    throw new Error(`unsupported Rust integer expression: \`${expr.trim()}\``);
+  }
+  return cleaned.split("*").reduce((product, part) => product * Number(part), 1);
+}
+
+/**
+ * Walk the registry and report every divergence from the Rust authority.
  */
 function crossCheckRustConstants(reported) {
-  const source = readFileSync("src-tauri/src/ai_skills/types.rs", "utf8");
-  const rust = {};
-  // MAX_SKILLS_PER_CATALOG shares the MAX_SKILL prefix family; [A-Z_]* (not _[A-Z_]+)
-  // keeps it in the same match.
-  const pattern = /MAX_SKILL[A-Z_]*:\s*usize\s*=\s*([\d_]+);/g;
-  for (const match of source.matchAll(pattern)) {
-    rust[match[0].split(":")[0].trim()] = Number(match[1].replace(/_/g, ""));
-  }
-  const pairs = [
-    ["MAX_SKILL_DESCRIPTION_CHARS", MAX_SKILL_DESCRIPTION_CHARS],
-    ["MAX_SKILL_BODY_CHARS", MAX_SKILL_BODY_CHARS],
-    ["MAX_SKILL_RESOURCE_CHARS", MAX_SKILL_RESOURCE_CHARS],
-    ["MAX_SKILL_ALLOWED_TOOLS", MAX_SKILL_ALLOWED_TOOLS],
-    ["MAX_SKILLS_PER_CATALOG", MAX_SKILLS_PER_CATALOG],
-  ];
-  for (const [name, jsValue] of pairs) {
-    const rustValue = rust[name];
-    if (rustValue === undefined) {
-      report(
-        `contract cross-check`,
-        `could not find \`${name}\` in src-tauri/src/ai_skills/types.rs — the Rust file no longer matches the expected declaration shape`,
+  for (const contract of RUST_CONTRACTS) {
+    const source = readFileSync(contract.file, "utf8");
+    const rust = {};
+    let matches = 0;
+    for (const match of source.matchAll(contract.pattern)) {
+      matches += 1;
+      let value;
+      try {
+        value = parseRustInt(match[1]);
+      } catch (error) {
+        reported(contract.file, `contract cross-check: ${error.message}`);
+        continue;
+      }
+      rust[match[0].split(":")[0].trim()] = value;
+    }
+    if (matches === 0) {
+      reported(
+        contract.file,
+        "contract cross-check: the extraction pattern matched nothing — the Rust file no longer matches the expected declaration shape",
       );
-    } else if (rustValue !== jsValue) {
-      report(
-        `contract cross-check`,
-        `${name}: JS mirror ${jsValue} != Rust ${rustValue} — update the mirror together with the Rust constant`,
-      );
+      continue;
+    }
+
+    const relation = contract.rel === "<=" ? (js, rust) => js <= rust : (js, rust) => js === rust;
+
+    if (contract.jsFile) {
+      const rustName = contract.rustName ?? contract.jsName;
+      const jsMatch = readFileSync(contract.jsFile, "utf8").match(contract.jsPattern);
+      if (!jsMatch) {
+        reported(
+          contract.jsFile,
+          `contract cross-check: could not extract \`${contract.jsName}\` — the frontend declaration no longer matches the expected shape`,
+        );
+      } else {
+        const jsValue = Number(jsMatch[1]);
+        const rustValue = rust[rustName];
+        if (rustValue === undefined) {
+          reported(
+            contract.file,
+            `contract cross-check: could not find \`${rustName}\` — the Rust declaration no longer matches the expected shape`,
+          );
+        } else if (!relation(jsValue, rustValue)) {
+          reported(
+            contract.file,
+            `contract cross-check: ${contract.jsName} FE ${jsValue} vs Rust ${rustValue}${
+              contract.rel === "<="
+                ? " — the prompt budget must stay ≤ the storage cap"
+                : " — update the FE mirror together with the Rust constant"
+            }`,
+          );
+        }
+      }
+    }
+    for (const [name, jsValue] of Object.entries(contract.js ?? {})) {
+      const rustValue = rust[name];
+      if (rustValue === undefined) {
+        reported(
+          contract.file,
+          `contract cross-check: could not find \`${name}\` — the Rust declaration no longer matches the expected shape`,
+        );
+      } else if (!relation(jsValue, rustValue)) {
+        reported(
+          contract.file,
+          `contract cross-check: ${name} JS ${jsValue} vs Rust ${rustValue}${
+            contract.rel === "<="
+              ? " — the prompt budget must stay ≤ the storage cap"
+              : " — update the mirror together with the Rust constant"
+          }`,
+        );
+      }
+    }
+    for (const name of contract.captureOnly ?? []) {
+      if (rust[name] === undefined) {
+        reported(
+          contract.file,
+          `contract cross-check: capture-only \`${name}\` no longer matches in Rust — update this registry row`,
+        );
+      }
+    }
+    for (const rustName of Object.keys(rust)) {
+      const inJs =
+        (contract.js && contract.js[rustName] !== undefined) ||
+        rustName === (contract.rustName ?? contract.jsName);
+      if (!inJs && !(contract.captureOnly ?? []).includes(rustName)) {
+        reported(
+          contract.file,
+          `contract cross-check: Rust declares \`${rustName} = ${rust[rustName]}\` but this registry has no row for it — add it to \`js\` or \`captureOnly\``,
+        );
+      }
     }
   }
 
+  // List agreement (not a numeric constant, so not a registry row): the injectable
+  // context keys must be the same set on both sides.
   const agentTypes = readFileSync("src-tauri/src/agent_commands/types.rs", "utf8");
   const keysMatch = agentTypes.match(/INJECTABLE_CONTEXT_KEYS:\s*&\[&str\]\s*=\s*&\[([\s\S]*?)\]/);
   if (!keysMatch) {
     report(
-      `contract cross-check`,
+      "contract cross-check",
       "could not find `INJECTABLE_CONTEXT_KEYS` in src-tauri/src/agent_commands/types.rs",
     );
   } else {
@@ -77,7 +219,7 @@ function crossCheckRustConstants(reported) {
     const jsKeys = [...INJECTABLE_CONTEXT_KEYS].sort();
     if (JSON.stringify(rustKeys) !== JSON.stringify(jsKeys)) {
       report(
-        `contract cross-check`,
+        "contract cross-check",
         `INJECTABLE_CONTEXT_KEYS: JS [${jsKeys.join(", ")}] != Rust [${rustKeys.join(", ")}]`,
       );
     }
@@ -126,7 +268,7 @@ const KNOWN_FRONTMATTER_KEYS = new Set([
  * Claude Code agent format puts the triggering `<example>` blocks inside the
  * description value itself, on their own lines.
  *
- * The in-app runtime parser (`parse_skill_md` in `src-tauri/src/ai_skills.rs`) reads
+ * The in-app runtime parser (`parse_skill_md` in `src-tauri/src/ai_skills/`) reads
  * just the first line of `description`, so multi-line descriptions are only valid for
  * `.claude/` assets, never for shipped skills — the skill loop below enforces that.
  */
@@ -167,7 +309,7 @@ function cleanScalar(value) {
  * them must not be mistaken for new frontmatter keys.
  *
  * Keys that spanned lines are returned in `multilineKeys` so the skill loop can
- * reject them: the runtime parser (`parse_skill_md` in `ai_skills.rs`) reads only the
+ * reject them: the runtime parser (`parse_skill_md` in `ai_skills/parse.rs`) reads only the
  * first line of a value, so a multi-line `description` silently loses its triggers.
  */
 function parseFrontmatter(raw) {
@@ -632,8 +774,6 @@ for (const dirName of zcodeSkillDirs) {
 // ---------------------------------------------------------------------------------------
 
 const COMMAND_PACK_ROOT = "src-tauri/commands";
-const MAX_COMMAND_BODY_CHARS = 8000;
-const MAX_COMMAND_ALLOWED_TOOLS = 32;
 const COMMAND_NAME_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
 // Mirrors `agent_commands::INJECTABLE_CONTEXT_KEYS`. The cross-check below extracts the
 // Rust list and fails on divergence, so this copy is checked, not hand-synced.

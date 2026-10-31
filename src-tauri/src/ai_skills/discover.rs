@@ -33,6 +33,7 @@ pub(crate) fn skill_roots(workspace_dir: Option<&str>) -> Vec<(PathBuf, String)>
 /// shadow global ones sharing the same name (first hit wins, and workspace
 /// roots are scanned first).
 pub fn discover_ai_skills_in_roots(roots: &[(PathBuf, String)]) -> AISkillListReport {
+    let builtin_names = builtin_skill_names();
     let mut summaries: Vec<AISkillSummary> = Vec::new();
     let mut errors: Vec<AISkillLoadError> = Vec::new();
     // Names paired with their SKILL.md paths so truncation can name exactly
@@ -125,7 +126,7 @@ pub fn discover_ai_skills_in_roots(roots: &[(PathBuf, String)]) -> AISkillListRe
             // requests and secret exfiltration before it can reach the catalog.
             // Built-ins are exempt — their text ships in the binary and is
             // reviewed; see `lint::lint_skill_text`.
-            if !builtin_skill_names().contains(parsed_name.as_str()) {
+            if !builtin_names.contains(parsed_name.as_str()) {
                 let findings = lint_skill_text(&raw);
                 if !findings.is_empty() {
                     log::warn!(

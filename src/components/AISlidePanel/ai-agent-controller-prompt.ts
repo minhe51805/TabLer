@@ -30,6 +30,12 @@ const OLDER_OBSERVATION_PEEK_CHARS = 400;
  * unbounded list would silently inflate cost as a connection accrues memories.
  * Relevant matches are sorted first before the cap, so a relevant memory is
  * never hidden by it (bodies still load on demand via read_memory).
+ *
+ * PROMPT budget, deliberately smaller than the storage cap: Rust holds at most
+ * `MAX_MEMORY_ENTRIES = 32` per connection (`agent_memory.rs`) and this index
+ * shows the top 24 of them after the relevance sort below — storage 32 vs
+ * prompt 24 is a designed pair, not drift; the validator's memory contract row
+ * checks it as `js <= rust`.
  */
 const MAX_AGENT_MEMORY_INDEX_ENTRIES = 24;
 /**

@@ -32,6 +32,11 @@ pub struct MemoryEntryContent {
 }
 
 const MAX_MEMORY_DESCRIPTION_CHARS: usize = 200;
+/// Storage cap per connection. The FE prompt index deliberately shows a smaller
+/// slice of these — `MAX_AGENT_MEMORY_INDEX_ENTRIES = 24` after its relevance
+/// sort (`ai-agent-controller-prompt.ts`) — so storage 32 vs prompt 24 is a
+/// designed pair, not drift; the validator's memory contract row checks it as
+/// `js <= rust`.
 const MAX_MEMORY_ENTRIES: usize = 32;
 const MAX_MEMORY_BODY_CHARS: usize = 8_000;
 const MAX_MEMORY_NAME_CHARS: usize = 64;

@@ -30,11 +30,16 @@ describe("user testing T9 — skills manager shows the aggregated pack", () => {
     await $(".ai-workspace-composer-textarea").waitForDisplayed({ timeout: 10_000 });
   });
 
-  it("lists 11 built-in skills and serves the new one with its version", async function () {
+  it("lists the built-in pack and serves the new one with its version", async function () {
     this.timeout(120_000);
-    // The toolbar button's title is localized ("Agent Skills" / "Quản lý Agent
-    // Skills") — match on the stable substring, not the full string.
-    const skillsBtn = await $('button.toolbar-btn.icon-only[title*="Agent Skills"]');
+    // The backend catalog is the roster's source of truth — derive the expected
+    // name set from it instead of pinning a count that breaks on pack growth.
+    // Premise: this e2e links no workspace folder, so the manager's catalog
+    // (it resolves workspaceDir itself) equals the global catalog here.
+    const backend = await invoke("list_ai_skills", {});
+    const expectedNames = backend.skills.map((s) => s.name).sort();
+
+    const skillsBtn = await $('[data-testid="agent-skills-toggle"]');
     await skillsBtn.waitForDisplayed({ timeout: 10_000 });
     await skillsBtn.click();
 
@@ -47,13 +52,16 @@ describe("user testing T9 — skills manager shows the aggregated pack", () => {
       throw new Error(`skills manager shows load errors: ${await loadErrors[0].getText()}`);
     }
 
-    // The full aggregated roster is there, including the new skill.
+    // The UI roster must mirror the backend catalog exactly — a leak, a
+    // missing entry, or a blocked skill all fail this set equality.
     const rows = await $$(".ai-skills-manager-row");
-    if (rows.length !== 11) {
-      throw new Error(`roster shows ${rows.length} skills, expected 11`);
-    }
     const rowNames = [];
     for (const row of rows) rowNames.push(await row.$(".ai-settings-sidebar-item-name").getText());
+    if (JSON.stringify(rowNames.sort()) !== JSON.stringify(expectedNames)) {
+      throw new Error(
+        `roster ${JSON.stringify(rowNames)} != backend ${JSON.stringify(expectedNames)}`,
+      );
+    }
     if (!rowNames.includes("duckdb-dialect-mastery")) {
       throw new Error(`duckdb-dialect-mastery missing from roster: ${rowNames.join(", ")}`);
     }
@@ -88,12 +96,7 @@ describe("user testing T9 — skills manager shows the aggregated pack", () => {
     }
 
     await search.clearValue();
-    // The close button's aria-label is localized too ("Close" / "Đóng").
-    let close = await $('.ai-skills-manager-modal button[aria-label="Close"]');
-    if (!(await close.isExisting())) {
-      close = await $('.ai-skills-manager-modal button[aria-label="Đóng"]');
-    }
-    await close.click();
+    await $('[data-testid="ai-skills-modal-close"]').click();
     await $(".ai-skills-manager-modal").waitForDisplayed({ timeout: 5_000, reverse: true });
   });
 });

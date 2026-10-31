@@ -442,6 +442,7 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
                   <button
                     type="button"
                     className="toolbar-btn icon-only"
+                    data-testid="agent-skills-toggle"
                     onClick={() => setSkillsModalOpen(true)}
                     title={m.language === "vi" ? "Quản lý Agent Skills" : "Agent Skills"}
                   >

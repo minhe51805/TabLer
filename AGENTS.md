@@ -153,7 +153,9 @@ plugins/                    database driver plugins
   `ai-agent-tool-executor.ts`. A tool is not "added" until both know about it.
 - **Docs**: normative design docs go to `docs/architecture/*.md` (tracked).
 - **Plans**: `plans/<YYMMDD-HHMM>-<slug>/PLAN.md` (local only) — gap analysis, code
-  path tables, acceptance criteria.
+  path tables, acceptance criteria. Every plan ends with a short **Handoff** section:
+  what was verified (with the gate outputs), what was explicitly not done or could not
+  be verified, and the commit list — so the next session inherits state, not archaeology.
 - **Commits**: Conventional Commits (`fix(scope): …`, `feat(scope): …`,
   `refactor(scope): …`, `docs: …`, `test: …`, `chore: …`).
 - **Never** delete or rewrite a released tag; never `git push --force` to

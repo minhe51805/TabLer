@@ -469,6 +469,36 @@ for (const commandFile of commandFiles) {
 }
 
 // ---------------------------------------------------------------------------------------
+// Developer-layer skills (`.claude/skills/*.md`).
+//
+// These are Claude Code skills used by the coding agents that build this repo — a
+// different system from the shipped pack above (AGENTS.md §8). Nothing at runtime parses
+// them, so a broken one fails silently: a missing `name:` breaks the discovery contract,
+// and a missing `description:` means the skill never auto-triggers. Same shape of check
+// as the `.claude` commands above, kept deliberately light.
+// ---------------------------------------------------------------------------------------
+
+const claudeSkillFiles = claudeFiles("skills");
+
+for (const skillFile of claudeSkillFiles) {
+  const relativePath = `${CLAUDE_ROOT}/skills/${skillFile}`;
+  const asset = readAsset(relativePath);
+  if (!asset) continue;
+  const { fields, body } = asset;
+
+  checkNameMatchesFile(relativePath, fields, "skill");
+
+  if (typeof fields.description !== "string" || !fields.description.trim()) {
+    report(relativePath, "skill frontmatter is missing `description:` (it never auto-triggers)");
+  }
+  if (body.trim().length === 0) {
+    report(relativePath, "skill has an empty body — it does nothing when loaded");
+  }
+
+  notes.push(`claude-skill ${skillFile.replace(/\.md$/, "")}`);
+}
+
+// ---------------------------------------------------------------------------------------
 // In-app slash-command pack (`src-tauri/commands/*.md`).
 //
 // These ARE loaded by the app: `agent_commands.rs` embeds each file with `include_str!`

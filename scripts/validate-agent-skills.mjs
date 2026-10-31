@@ -28,7 +28,7 @@ const MAX_SKILL_BODY_CHARS = 8000;
 const MAX_SKILL_RESOURCE_CHARS = 12000;
 const MAX_SKILL_ALLOWED_TOOLS = 32;
 const MAX_SKILLS_PER_CATALOG = 32;
-31;
+const MAX_SKILL_RESOURCES = 64;
 const MAX_COMMAND_BODY_CHARS = 8000;
 const MAX_COMMAND_ALLOWED_TOOLS = 32;
 
@@ -61,8 +61,8 @@ const RUST_CONTRACTS = [
       MAX_SKILL_RESOURCE_CHARS,
       MAX_SKILL_ALLOWED_TOOLS,
       MAX_SKILLS_PER_CATALOG,
+      MAX_SKILL_RESOURCES,
     },
-    captureOnly: ["MAX_SKILL_RESOURCES"],
   },
   {
     file: "src-tauri/src/agent_commands/types.rs",
@@ -223,6 +223,58 @@ function crossCheckRustConstants(reported) {
         `INJECTABLE_CONTEXT_KEYS: JS [${jsKeys.join(", ")}] != Rust [${rustKeys.join(", ")}]`,
       );
     }
+  }
+}
+
+/**
+ * Truncation-surfacing gate: every `truncate(`/`split_off(` that sits within a
+ * few lines of a named `MAX_*` cap must either surface (an `errors.push` /
+ * `report`-style call in the same function) or carry an explicit `// benign-cap:`
+ * marker with the reason. Anything else is the silent-death class the audit
+ * kept finding — a user with one more row than the author guessed, and no
+ * explanation anywhere. Scanned paths are the agent-contract crates; new crates
+ * with caps belong here too.
+ */
+const TRUNCATION_SCAN_ROOTS = [
+  "src-tauri/src/ai_skills",
+  "src-tauri/src/agent_commands",
+  "src-tauri/src/agent_rules",
+  "src-tauri/src/agent_memory.rs",
+  "src-tauri/src/storage",
+];
+
+function checkTruncationSurfacing(reported) {
+  const rustFiles = [];
+  for (const scanRoot of TRUNCATION_SCAN_ROOTS) {
+    if (!existsSync(scanRoot)) continue;
+    if (statSync(scanRoot).isFile()) {
+      rustFiles.push(scanRoot);
+      continue;
+    }
+    for (const entry of readdirSync(scanRoot)) {
+      const candidate = join(scanRoot, entry);
+      if (statSync(candidate).isFile() && entry.endsWith(".rs")) rustFiles.push(candidate);
+    }
+  }
+  for (const rustFile of rustFiles) {
+    const lines = readFileSync(rustFile, "utf8").split(/\r?\n/);
+    lines.forEach((line, index) => {
+      if (!/\.truncate\(|\.split_off\(/.test(line)) return;
+      const context = lines.slice(Math.max(0, index - 12), index + 6);
+      const nearCap = context.some((contextLine) => /MAX_[A-Z_]+/.test(contextLine));
+      if (!nearCap) return;
+      const surfaces = context.some((contextLine) =>
+        /(errors\.push|report\(|benign-cap|is_some\(\)|Ignoring the rest|ignoring the rest)/.test(
+          contextLine,
+        ),
+      );
+      if (!surfaces) {
+        reported(
+          rustFile,
+          `line ${index + 1}: truncates near a MAX_* cap without surfacing or a \`// benign-cap:\` marker — either push a load error/notification or declare the cap benign`,
+        );
+      }
+    });
   }
 }
 
@@ -495,6 +547,19 @@ for (const dir of skillDirs.sort()) {
         );
       }
     }
+  }
+  // The Rust loader silently stops enumerating a skill's resources at
+  // MAX_SKILL_RESOURCES (benign-cap in ai_skills/parse.rs) — hold the shipped
+  // pack to the same number so a built-in never relies on that trim.
+  const resourceCount = RESOURCE_DIRS.reduce(
+    (total, resourceDir) => total + listDir(join(skillDir, resourceDir)).length,
+    0,
+  );
+  if (resourceCount > MAX_SKILL_RESOURCES) {
+    report(
+      dir,
+      `${resourceCount} resource files, over the ${MAX_SKILL_RESOURCES}-resource cap the runtime enforces`,
+    );
   }
 
   notes.push(

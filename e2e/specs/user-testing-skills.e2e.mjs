@@ -66,7 +66,9 @@ describe("user testing T9 — skills manager shows the aggregated pack", () => {
       throw new Error(`duckdb-dialect-mastery missing from roster: ${rowNames.join(", ")}`);
     }
 
-    // Search narrows to the new skill and its record shows the version.
+    // Search narrows to the new skill; its record's version must equal the
+    // backend catalog's version for the same entry — derived, so a version
+    // bump cannot redden the journey.
     const search = await $(".ai-skills-manager-search input");
     await search.setValue("duckdb");
     await browser.pause(400);
@@ -79,20 +81,26 @@ describe("user testing T9 — skills manager shows the aggregated pack", () => {
     if (detailName !== "duckdb-dialect-mastery") {
       throw new Error(`detail shows ${detailName}, expected duckdb-dialect-mastery`);
     }
+    const duckBackend = backend.skills.find((s) => s.name === "duckdb-dialect-mastery");
     const version = await $(".ai-skills-manager-row-version").getText();
-    if (version !== "v1.0.1") {
-      throw new Error(`detail shows ${version}, expected v1.0.1`);
+    if (version !== `v${duckBackend.version}`) {
+      throw new Error(
+        `detail shows ${version}, backend catalog says v${duckBackend.version} — the manager and the catalog disagree`,
+      );
     }
 
-    // One of the edited skills reports its bump too.
+    // One of the edited skills reports its catalog version too.
     await search.setValue("query-performance");
     await browser.pause(400);
     const perfRow = (await $$(".ai-skills-manager-row"))[0];
     if (!perfRow) throw new Error("query-performance-tuning not found via search");
     await perfRow.click();
     const perfVersion = await $(".ai-skills-manager-row-version").getText();
-    if (perfVersion !== "v1.1.0") {
-      throw new Error(`perf skill shows ${perfVersion}, expected v1.1.0`);
+    const perfBackend = backend.skills.find((s) => s.name === "query-performance-tuning");
+    if (perfVersion !== `v${perfBackend.version}`) {
+      throw new Error(
+        `detail shows ${perfVersion}, backend catalog says v${perfBackend.version} — the manager and the catalog disagree`,
+      );
     }
 
     await search.clearValue();

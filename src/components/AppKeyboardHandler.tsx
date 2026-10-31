@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { APP_EVENTS } from "../utils/app-events";
 import type { Tab } from "../types";
 import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "../utils/ui-scale";
 
@@ -155,7 +156,7 @@ export function AppKeyboardHandler({
 
       if (metaPressed && e.shiftKey && key === "q") {
         e.preventDefault();
-        window.dispatchEvent(new CustomEvent("toggle-query-schedules-palette"));
+        window.dispatchEvent(new CustomEvent(APP_EVENTS.toggleQuerySchedulesPalette));
         return;
       }
 

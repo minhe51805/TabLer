@@ -291,6 +291,12 @@ pub fn discover_memories_in_root(root: &Path) -> Vec<MemoryEntrySummary> {
             summaries.len(),
             MAX_MEMORY_ENTRIES
         );
+        // benign-cap: agent-driven saves refuse at MAX_MEMORY_ENTRIES with an
+        // explicit "index is full" error (save_memory_entry), so this branch is
+        // only reachable through out-of-band files — MEMORY.md folders are
+        // human-editable by design. Caveat declared: entries past the cap are
+        // hidden from both the agent index and the memory manager until pruned
+        // at the folder level, which is why the cap also guards the save path.
         summaries.truncate(MAX_MEMORY_ENTRIES);
     }
     summaries

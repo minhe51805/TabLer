@@ -64,11 +64,21 @@ function renderMarkdown(src: string): string {
 }
 
 function inline(text: string): string {
-  return escapeHtml(text)
-    .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*(.+?)\*/g, "<em>$1</em>")
-    .replace(/`(.+?)`/g, "<code>$1</code>")
-    .replace(/\[(.+?)\]\((.+?)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
+  return (
+    escapeHtml(text)
+      .replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>")
+      .replace(/\*(.+?)\*/g, "<em>$1</em>")
+      .replace(/`(.+?)`/g, "<code>$1</code>")
+      // Scheme allowlist (security review 2026-11-01): only http/https targets
+      // become links — a `javascript:`/`data:` URL falls back to plain text.
+      // Escape order note: `&` and quotes are already escaped by escapeHtml, so
+      // `$2` cannot break out of the href attribute.
+      .replace(/\[(.+?)\]\((.+?)\)/g, (_match, label: string, href: string) =>
+        /^https?:\/\//i.test(href)
+          ? `<a href="${href}" target="_blank" rel="noopener">${label}</a>`
+          : `${label} (${href})`,
+      )
+  );
 }
 
 function escapeHtml(text: string): string {

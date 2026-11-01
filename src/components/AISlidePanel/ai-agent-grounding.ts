@@ -10,7 +10,8 @@ const MAX_AGENT_QUERY_PREVIEW_COLUMNS = 8;
 const MAX_AGENT_TRACE_OBSERVATION_CHARS = 1400;
 const MAX_AGENT_OBSERVATION_VALUE_CHARS = 120;
 
-const SENSITIVE_COLUMN_PATTERN = /(?:^|[_-])(?:password|passwd|pwd|secret|token|api[_-]?key|credential|private[_-]?key|access[_-]?key|refresh[_-]?token)(?:$|[_-])/i;
+const SENSITIVE_COLUMN_PATTERN =
+  /(?:^|[_-])(?:password|passwd|pwd|secret|token|api[_-]?key|credential|private[_-]?key|access[_-]?key|refresh[_-]?token)(?:$|[_-])/i;
 
 const MAX_AGENT_MEMORY_OBSERVATION_CHARS = 8000;
 
@@ -18,7 +19,7 @@ export function truncateAgentObservation(text: string) {
   // Memory reads are the payload the agent explicitly asked for — cutting
   // them at 1400 chars made round-trip verification impossible (memory
   // bodies run up to the backend 8k cap).
-  const cap = text.startsWith("Memory \"")
+  const cap = text.startsWith('Memory "')
     ? MAX_AGENT_MEMORY_OBSERVATION_CHARS
     : MAX_AGENT_TRACE_OBSERVATION_CHARS;
   if (text.length <= cap) {
@@ -29,16 +30,28 @@ export function truncateAgentObservation(text: string) {
 
 export function sanitizeAgentObservationValue(
   value: string | number | boolean | null,
-  columnName?: string
+  columnName?: string,
 ) {
   if (columnName && SENSITIVE_COLUMN_PATTERN.test(columnName)) {
     return "[REDACTED]";
   }
   if (typeof value !== "string") return value;
-  return value.length > MAX_AGENT_OBSERVATION_VALUE_CHARS
-    ? `${value.slice(0, MAX_AGENT_OBSERVATION_VALUE_CHARS - 3)}...`
-    : value;
+  const trimmed =
+    value.length > MAX_AGENT_OBSERVATION_VALUE_CHARS
+      ? `${value.slice(0, MAX_AGENT_OBSERVATION_VALUE_CHARS - 3)}...`
+      : value;
+  // Indirect-prompt-injection defense (security review 2026-11-01): a value
+  // must not be able to close the <row_data> fence it will be wrapped in, or
+  // it could masquerade as the agent's own context. Case-insensitive so
+  // `</ROW_DATA>` variants are covered too.
+  return trimmed.replace(/<\/row_data/gi, "<\\/row_data");
 }
+
+/** Neutralize a value against fence-forgery: a value must not be able to close
+ *  the <row_data> fence it may later be wrapped in, or it could masquerade as
+ *  the agent's own context. Case-insensitive so `</ROW_DATA>` variants are
+ *  covered too. Exported for the memory-observation path, which reads
+ *  out-of-band-authored files and gets the same treatment. */
 
 export function redactAgentSqlLiterals(sql: string) {
   return sql.replace(/'(?:''|[^'])*'/g, "'[REDACTED]'");
@@ -56,10 +69,16 @@ export function stringifyAgentObservation(data: unknown) {
 
 export function findMatchingTableName(tableName: string, availableTableNames: string[]) {
   const normalizedTarget = normalizeIntentText(tableName);
-  return availableTableNames.find((candidate) => normalizeIntentText(candidate) === normalizedTarget)
-    || availableTableNames.find((candidate) => normalizeIntentText(candidate).includes(normalizedTarget))
-    || availableTableNames.find((candidate) => normalizedTarget.includes(normalizeIntentText(candidate)))
-    || null;
+  return (
+    availableTableNames.find((candidate) => normalizeIntentText(candidate) === normalizedTarget) ||
+    availableTableNames.find((candidate) =>
+      normalizeIntentText(candidate).includes(normalizedTarget),
+    ) ||
+    availableTableNames.find((candidate) =>
+      normalizedTarget.includes(normalizeIntentText(candidate)),
+    ) ||
+    null
+  );
 }
 
 const MAX_EXPLAIN_PLAN_CHARS = 800;
@@ -89,7 +108,10 @@ export function summarizeAgentExplainPlanStructured(
   const rawText = summarizeAgentExplainPlan(result);
   if (!rawText) return "";
   try {
-    const plan = parseExplainOutput(dbType ?? "postgresql", rawText.replace("\n[plan truncated]", ""));
+    const plan = parseExplainOutput(
+      dbType ?? "postgresql",
+      rawText.replace("\n[plan truncated]", ""),
+    );
     if (plan.nodes.length === 0 && plan.warnings.length === 0) return rawText;
     const hotspots = getExplainHotspots(plan, 3);
     const summary = {
@@ -123,23 +145,27 @@ export function summarizeAgentQueryObservation(result: QueryResult) {
   const previewColumns = result.columns
     .map((column, index) => ({ column, index }))
     .sort((left, right) => {
-      const leftStable = left.column.is_primary_key
-        || left.column.name.toLowerCase() === "id"
-        || left.column.name.toLowerCase().endsWith("_id");
-      const rightStable = right.column.is_primary_key
-        || right.column.name.toLowerCase() === "id"
-        || right.column.name.toLowerCase().endsWith("_id");
+      const leftStable =
+        left.column.is_primary_key ||
+        left.column.name.toLowerCase() === "id" ||
+        left.column.name.toLowerCase().endsWith("_id");
+      const rightStable =
+        right.column.is_primary_key ||
+        right.column.name.toLowerCase() === "id" ||
+        right.column.name.toLowerCase().endsWith("_id");
       return Number(rightStable) - Number(leftStable) || left.index - right.index;
     })
     .slice(0, MAX_AGENT_QUERY_PREVIEW_COLUMNS);
   const sampleRows = result.rows
     .slice(0, MAX_AGENT_QUERY_PREVIEW_ROWS)
-    .map((row) => Object.fromEntries(
-      previewColumns.map(({ column, index }) => [
-        column.name,
-        sanitizeAgentObservationValue(row[index] ?? null, column.name),
-      ])
-    ));
+    .map((row) =>
+      Object.fromEntries(
+        previewColumns.map(({ column, index }) => [
+          column.name,
+          sanitizeAgentObservationValue(row[index] ?? null, column.name),
+        ]),
+      ),
+    );
 
   return stringifyAgentObservation({
     query: redactAgentSqlLiterals(result.query),
@@ -150,29 +176,34 @@ export function summarizeAgentQueryObservation(result: QueryResult) {
     sandboxed: result.sandboxed,
     columns: previewColumns.map(({ column }) => `${column.name}:${column.data_type}`),
     identityColumns,
-    navigation: identityColumns.length > 0
-      ? "stable-primary-key"
-      : "non-navigable: query metadata did not verify a primary key",
+    navigation:
+      identityColumns.length > 0
+        ? "stable-primary-key"
+        : "non-navigable: query metadata did not verify a primary key",
+    // Values are neutralized against fence-forgery (see
+    // sanitizeAgentObservationValue); the WHOLE observation is a tool result,
+    // which the controller prompt's standing rule marks as untrusted database
+    // content — read as data, never obeyed. Sample rows stay structured JSON
+    // so the model reads them without double-encoding.
     sampleRows,
   });
 }
 
 export function summarizeAgentStructureObservation(
   tableName: string,
-  structure: Pick<TableStructure, "columns" | "indexes" | "foreign_keys">
+  structure: Pick<TableStructure, "columns" | "indexes" | "foreign_keys">,
 ) {
-  return truncateAgentObservation([
-    `TABLE=${tableName}`,
-    `SCHEMA=${encodeStructureForAI(tableName, structure, { mode: "relational" })}`,
-    `COUNTS=cols:${structure.columns.length},idx:${structure.indexes.length},fk:${structure.foreign_keys.length}`,
-  ].join("\n"));
+  return truncateAgentObservation(
+    [
+      `TABLE=${tableName}`,
+      `SCHEMA=${encodeStructureForAI(tableName, structure, { mode: "relational" })}`,
+      `COUNTS=cols:${structure.columns.length},idx:${structure.indexes.length},fk:${structure.foreign_keys.length}`,
+    ].join("\n"),
+  );
 }
 
 export function summarizeAgentSchemaSummaryObservation(tableName: string, summary: string) {
-  return truncateAgentObservation([
-    `TABLE=${tableName}`,
-    `SCHEMA=${summary}`,
-  ].join("\n"));
+  return truncateAgentObservation([`TABLE=${tableName}`, `SCHEMA=${summary}`].join("\n"));
 }
 
 export function extractReferencedTableNamesFromSql(sql: string) {
@@ -327,10 +358,11 @@ export function buildSqlRegroundingPrompt(
   databaseName: string | null,
   availableTableNames: string[],
   originalPrompt: string,
-  interactionMode: AIWorkspaceInteractionMode
+  interactionMode: AIWorkspaceInteractionMode,
 ) {
   const databaseLabel = databaseName || "current database";
-  const modeLabel = interactionMode === "agent" ? "agent" : interactionMode === "edit" ? "edit" : "prompt-only";
+  const modeLabel =
+    interactionMode === "agent" ? "agent" : interactionMode === "edit" ? "edit" : "prompt-only";
 
   return [
     `Return SQL again from scratch for the CURRENT database "${databaseLabel}".`,
@@ -350,8 +382,21 @@ export function mentionsUnknownSchemaNames(response: string, availableTableNames
   const normalizedResponse = normalizeIntentText(response);
   const knownNames = buildKnownTableNameSet(availableTableNames);
   const reserved = new Set([
-    "table", "tables", "bang", "database", "schema", "context", "column", "columns",
-    "relationship", "relationships", "overview", "current", "assistant", "sql", "ai",
+    "table",
+    "tables",
+    "bang",
+    "database",
+    "schema",
+    "context",
+    "column",
+    "columns",
+    "relationship",
+    "relationships",
+    "overview",
+    "current",
+    "assistant",
+    "sql",
+    "ai",
   ]);
 
   const candidates = new Set<string>();
@@ -374,25 +419,61 @@ export function mentionsUnknownSchemaNames(response: string, availableTableNames
 export function isOverviewContextMissingResponse(response: string) {
   const normalizedResponse = normalizeIntentText(response);
   const weakSignals = [
-    "khong co thong tin", "khong co du lieu", "khong co ngu canh", "chua co thong tin",
-    "vui long cung cap", "hay chia se", "khong duoc cung cap", "khong co database",
-    "khong co co so du lieu", "no information", "not enough context", "not enough information",
-    "database was not provided", "schema was not provided", "please provide", "share details",
-    "share the tables", "share the columns", "no database context", "no schema context",
-    "没有提供", "没有数据库", "没有上下文", "请提供", "提供更多信息", "分享表", "分享字段",
+    "khong co thong tin",
+    "khong co du lieu",
+    "khong co ngu canh",
+    "chua co thong tin",
+    "vui long cung cap",
+    "hay chia se",
+    "khong duoc cung cap",
+    "khong co database",
+    "khong co co so du lieu",
+    "no information",
+    "not enough context",
+    "not enough information",
+    "database was not provided",
+    "schema was not provided",
+    "please provide",
+    "share details",
+    "share the tables",
+    "share the columns",
+    "no database context",
+    "no schema context",
+    "没有提供",
+    "没有数据库",
+    "没有上下文",
+    "请提供",
+    "提供更多信息",
+    "分享表",
+    "分享字段",
     // Korean weak signals (audit fix: ko/tr previously fell through silently).
-    "정보가 없", "데이터가 없", "컨텍스트가 없", "제공해 주세요", "제공해주세요",
-    "제공되지 않았", "데이터베이스가 제공", "스키마가 제공", "테이블을 알려",
+    "정보가 없",
+    "데이터가 없",
+    "컨텍스트가 없",
+    "제공해 주세요",
+    "제공해주세요",
+    "제공되지 않았",
+    "데이터베이스가 제공",
+    "스키마가 제공",
+    "테이블을 알려",
     // Turkish weak signals, written post-NFD (ğ→g, ü→u; dotless ı avoided).
-    "bilgi yok", "veri yok", "baglam yok", "saglay", "veritaban verildi", "sema saglandi",
-    "tablo veya sutun", "alan veya tablo",
+    "bilgi yok",
+    "veri yok",
+    "baglam yok",
+    "saglay",
+    "veritaban verildi",
+    "sema saglandi",
+    "tablo veya sutun",
+    "alan veya tablo",
   ];
 
   return weakSignals.some((signal) => normalizedResponse.includes(signal));
 }
 
 export function responseConflictsWithSchema(response: string, availableTableNames: string[]) {
-  return availableTableNames.length > 0 && mentionsUnknownSchemaNames(response, availableTableNames);
+  return (
+    availableTableNames.length > 0 && mentionsUnknownSchemaNames(response, availableTableNames)
+  );
 }
 
 export function buildSchemaRegroundingPrompt(
@@ -400,7 +481,7 @@ export function buildSchemaRegroundingPrompt(
   databaseName: string | null,
   availableTableNames: string[],
   assistIntent: AssistIntent,
-  originalPrompt: string
+  originalPrompt: string,
 ) {
   const databaseLabel = databaseName || "current database";
   const tableList = availableTableNames.join(", ");
@@ -414,7 +495,8 @@ export function buildSchemaRegroundingPrompt(
         ? "Đây là yêu cầu đọc lại DB. Hãy tóm tắt overview, các bảng chính, quan hệ hoặc join path có thể suy ra, và ghi chú ngắn. Không được nói là thiếu schema nếu schema đã được cung cấp."
         : "Hãy trả lời câu hỏi của user chỉ dựa trên schema hiện tại. Nếu schema chưa đủ để khẳng định chi tiết, hãy nói rõ giới hạn đó nhưng vẫn phải bám đúng các bảng hiện có.",
       "Không được bịa domain, bảng, cột, hoặc quan hệ không có trong schema hiện tại.",
-      "", originalPrompt,
+      "",
+      originalPrompt,
     ].join("\n");
   }
 
@@ -427,7 +509,8 @@ export function buildSchemaRegroundingPrompt(
         ? "这是一次重新阅读当前数据库的请求。请给出 overview、主要表、可推断的关系或 join path，以及简短备注。既然 schema 已提供，就不要再说缺少 schema。"
         : "请只依据当前 schema 回答用户问题。如果 schema 不足以确认细节，可以说明限制，但仍然必须严格基于当前可见表。",
       "不要编造 schema 中不存在的业务域、表、字段或关系。",
-      "", originalPrompt,
+      "",
+      originalPrompt,
     ].join("\n");
   }
 
@@ -440,7 +523,8 @@ export function buildSchemaRegroundingPrompt(
         ? "현재 데이터베이스를 다시 읽는 요청입니다. 개요, 주요 테이블, 추론 가능한 관계나 조인 경로, 그리고 짧은 메모를 제공해 주세요. 스키마가 이미 제공되었으므로 스키마가 없다고 말하지 마세요."
         : "사용자의 질문에 현재 스키마만 근거로 답변해 주세요. 스키마만으로 세부 사항을 확인할 수 없다면 그 한계를 명확히 말하되, 보이는 테이블 범위 안에서 답변해야 합니다.",
       "현재 스키마에 없는 도메인, 테이블, 컬럼, 관계를 지어내지 마세요.",
-      "", originalPrompt,
+      "",
+      originalPrompt,
     ].join("\n");
   }
 
@@ -453,7 +537,8 @@ export function buildSchemaRegroundingPrompt(
         ? "Bu, mevcut veritabanını yeniden okuma isteğidir. Genel bakış, ana tablolar, çıkarılabilecek ilişkiler veya join yolları ve kısa notlar sunun. Şema zaten eklendiği için şemanın eksik olduğunu söylemeyin."
         : "Kullanıcının sorusunu yalnızca mevcut şemayı temel alarak yanıtlayın. Şema bir ayrıntıyı doğrulamaya yetmiyorsa bu sınırı açıkça belirtin ama görünür tablolara bağlı kalın.",
       "Geçerli şemada olmayan hiçbir alan, tablo, sütun veya ilişki uydurmayın.",
-      "", originalPrompt,
+      "",
+      originalPrompt,
     ].join("\n");
   }
 
@@ -465,7 +550,8 @@ export function buildSchemaRegroundingPrompt(
       ? "This is a database review request. Provide an overview, the main tables, likely relationships or join paths, and short notes. Do not say the schema is missing because it is already attached."
       : "Answer the user's question using only the current schema. If the schema is not enough to confirm a detail, state that limit clearly while staying grounded in the visible tables.",
     "Do not invent any domain, table, column, or relationship that is not present in the current schema.",
-    "", originalPrompt,
+    "",
+    originalPrompt,
   ].join("\n");
 }
 
@@ -474,14 +560,23 @@ export function buildSchemaContextRequiredMessage(
   databaseName: string | null,
   providerName: string,
   interactionMode: AIWorkspaceInteractionMode,
-  providerAllowsSchemaContext: boolean
+  providerAllowsSchemaContext: boolean,
 ) {
   const databaseLabel = databaseName || "current database";
-  const modeLabel = interactionMode === "agent"
-    ? "Agent"
-    : interactionMode === "edit"
-      ? language === "vi" ? "Chỉnh sửa" : language === "zh" ? "编辑" : "Edit"
-      : language === "vi" ? "Chỉ prompt" : language === "zh" ? "仅提示词" : "Prompt only";
+  const modeLabel =
+    interactionMode === "agent"
+      ? "Agent"
+      : interactionMode === "edit"
+        ? language === "vi"
+          ? "Chỉnh sửa"
+          : language === "zh"
+            ? "编辑"
+            : "Edit"
+        : language === "vi"
+          ? "Chỉ prompt"
+          : language === "zh"
+            ? "仅提示词"
+            : "Prompt only";
 
   if (language === "vi") {
     if (!providerAllowsSchemaContext) {

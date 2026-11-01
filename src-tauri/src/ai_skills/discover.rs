@@ -1,6 +1,5 @@
 use std::path::PathBuf;
 
-use crate::ai_skill_seed::builtin_skill_names;
 use crate::utils::paths::resolve_data_dir;
 
 use super::lint::lint_skill_text;
@@ -33,7 +32,6 @@ pub(crate) fn skill_roots(workspace_dir: Option<&str>) -> Vec<(PathBuf, String)>
 /// shadow global ones sharing the same name (first hit wins, and workspace
 /// roots are scanned first).
 pub fn discover_ai_skills_in_roots(roots: &[(PathBuf, String)]) -> AISkillListReport {
-    let builtin_names = builtin_skill_names();
     let mut summaries: Vec<AISkillSummary> = Vec::new();
     let mut errors: Vec<AISkillLoadError> = Vec::new();
     // Names paired with their SKILL.md paths so truncation can name exactly
@@ -122,28 +120,27 @@ pub fn discover_ai_skills_in_roots(roots: &[(PathBuf, String)]) -> AISkillListRe
                 continue;
             }
             // Safety lint: the body is injected into the agent context verbatim,
-            // so user-provided text is screened for instruction overrides, shell
-            // requests and secret exfiltration before it can reach the catalog.
-            // Built-ins are exempt — their text ships in the binary and is
-            // reviewed; see `lint::lint_skill_text`.
-            if !builtin_names.contains(parsed_name.as_str()) {
-                let findings = lint_skill_text(&raw);
-                if !findings.is_empty() {
-                    log::warn!(
-                        "ai_skills: '{}' ({}) blocked by the safety lint: {} finding(s)",
-                        parsed_name,
-                        source,
-                        findings.len()
-                    );
-                    errors.push(AISkillLoadError {
-                        path: file_path.display().to_string(),
-                        reason: format!(
-                            "Blocked by the skill safety lint: {}",
-                            findings.join("; ")
-                        ),
-                    });
-                    continue;
-                }
+            // so EVERY discovered skill — built-in, workspace shadow, or user
+            // authored — is screened for instruction overrides, shell requests
+            // and secret exfiltration before it can reach the catalog. The
+            // former name-based exemption for built-ins was a bypass: a
+            // workspace skill shadowing a built-in name skipped the lint
+            // entirely. The shipped pack stays clean by construction via the
+            // `every_builtin_body_passes_the_safety_lint` seed test; see
+            // `lint::lint_skill_text` for the declared limitations.
+            let findings = lint_skill_text(&raw);
+            if !findings.is_empty() {
+                log::warn!(
+                    "ai_skills: '{}' ({}) blocked by the safety lint: {} finding(s)",
+                    parsed_name,
+                    source,
+                    findings.len()
+                );
+                errors.push(AISkillLoadError {
+                    path: file_path.display().to_string(),
+                    reason: format!("Blocked by the skill safety lint: {}", findings.join("; ")),
+                });
+                continue;
             }
             seen.insert(parsed_name.clone());
             catalog_paths.push((parsed_name.clone(), file_path.display().to_string()));

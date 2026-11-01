@@ -1,4 +1,10 @@
-//! Static safety lint over user-provided SKILL.md text.
+//! Static safety lint over EVERY discovered SKILL.md — built-in, workspace
+//! shadow, or user authored. There is no name-based exemption: the 2026-11-01
+//! security review showed an exemption is a bypass (a workspace skill shadowing
+//! a built-in name would skip the lint entirely), and the shipped pack passes
+//! the lint clean by construction (seed test
+//! `every_builtin_body_passes_the_safety_lint`), so exempting anything buys
+//! nothing.
 //!
 //! Port of the SkillScan gate idea (hub.cocoloop.cn) that can actually run here: the
 //! python original cannot, but the risk it guards against is real — a skill's body is
@@ -8,9 +14,11 @@
 //! Scope, deliberately narrow to stay high-precision (a false positive here blocks a
 //! legitimate skill): three finding classes only — instruction-override phrasings,
 //! requests to spawn processes or read the host environment, and secret-exfiltration
-//! phrasing. Built-in skills are exempt by name: their text is compiled into the binary
-//! (`ai_skill_seed`) and already reviewed; discussing hostile SQL constructs in a safety
-//! skill must not trip the lint that guards against *asking for* them.
+//! phrasing. Declared limitations, honestly: lowercase English phrase matching only —
+//! Unicode case tricks, zero-width or homoglyph characters, encoded payloads and
+//! non-English phrasing all pass. This lint is a triage net for lazy injection, not a
+//! parser; the real backstop for anything it misses is the human gate on every write
+//! (`preview_write`) and the fence treatment of untrusted data.
 
 /// Findings that justify refusing to inject a skill into the agent context.
 /// Empty means the text passed.

@@ -1,5 +1,5 @@
 mod discover;
-mod lint;
+pub(crate) mod lint;
 pub(crate) mod parse;
 pub(crate) mod types;
 mod write;
@@ -241,9 +241,13 @@ mod tests {
     }
 
     #[test]
-    fn discovery_lint_exempt_builtin_names() {
-        // Built-in text deliberately discusses hostile SQL constructs; the lint
-        // skips them by name so a safety skill's own warnings never block it.
+    fn discovery_lints_builtin_names_too() {
+        // The 2026-11-01 security review: a workspace skill shadowing a
+        // built-in name used to skip the lint entirely (name-based exemption),
+        // so a hostile body could replace a trusted skill. The lint now runs on
+        // every discovered skill regardless of name — shadowing a built-in is
+        // still allowed (user customization), but it is guarded like anything
+        // else.
         let base =
             std::env::temp_dir().join(format!("tabler-skills-lint-builtin-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
@@ -257,11 +261,16 @@ mod tests {
 
         let report = discover_ai_skills_in_roots(&[(base.clone(), "test".to_string())]);
         assert!(
-            report.errors.is_empty(),
-            "built-in names must be lint-exempt: {:?}",
-            report.errors
+            report.skills.is_empty(),
+            "a hostile body under a built-in name must not reach the catalog: {:?}",
+            report.skills
         );
-        assert_eq!(report.skills.len(), 1);
+        assert_eq!(report.errors.len(), 1, "{:?}", report.errors);
+        assert!(
+            report.errors[0].reason.contains("safety lint"),
+            "the block must name the lint: {:?}",
+            report.errors[0].reason
+        );
         let _ = std::fs::remove_dir_all(&base);
     }
 

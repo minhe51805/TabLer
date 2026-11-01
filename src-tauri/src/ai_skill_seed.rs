@@ -43,14 +43,6 @@ struct BuiltinSkill {
     files: &'static [BuiltinSkillFile],
 }
 
-/// The names of the compiled-in pack. The user-skill safety lint
-/// (`ai_skills::lint`) exempts these by name: their text is reviewed here and
-/// deliberately discusses hostile SQL constructs without asking the agent to
-/// run them, which is exactly what the lint exists to catch in third parties.
-pub fn builtin_skill_names() -> std::collections::HashSet<&'static str> {
-    BUILTIN_SKILLS.iter().map(|skill| skill.name).collect()
-}
-
 /// Per-skill outcome of a seed pass. Serialized to the frontend so the skills
 /// manager can show which built-ins are installed, customised or outdated.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -531,6 +523,30 @@ mod tests {
                 Some(skill.version),
                 "{}: frontmatter version drifts from the seed struct — bump both sides together",
                 skill.name
+            );
+        }
+    }
+
+    /// The discovery lint runs on EVERY skill since the 2026-11-01 security
+    /// review — built-ins included, so a workspace shadow of a built-in name
+    /// cannot skip it. That only works if the shipped pack itself never trips
+    /// the phrases: this test is the guardrail that keeps the lint-all design
+    /// possible. If a future pack edit trips a phrase, rephrase the skill (its
+    /// own text teaches the same thing without injection-shaped wording).
+    #[test]
+    fn every_builtin_body_passes_the_safety_lint() {
+        for skill in BUILTIN_SKILLS {
+            let skill_md = skill
+                .files
+                .iter()
+                .find(|file| file.rel_path == "SKILL.md")
+                .unwrap_or_else(|| panic!("{}: must ship SKILL.md", skill.name));
+            let findings = crate::ai_skills::lint::lint_skill_text(skill_md.content);
+            assert!(
+                findings.is_empty(),
+                "{}: SKILL.md trips the safety lint — {:?}. Rephrase the skill so it teaches without injection-shaped wording.",
+                skill.name,
+                findings
             );
         }
     }

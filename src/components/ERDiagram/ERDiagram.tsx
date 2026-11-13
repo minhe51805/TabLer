@@ -39,7 +39,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "../../utils/tauri-invoke";
 import { createPortal } from "react-dom";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUIStore } from "../../stores/uiStore";

@@ -282,10 +282,12 @@ fn shared_storage() -> Result<QueryHistoryStorage, String> {
 }
 
 #[tauri::command]
-pub async fn save_query_history(entry: QueryHistoryEntry) -> Result<i64, String> {
+pub async fn save_query_history(entry: QueryHistoryEntry) -> Result<i64, crate::error::AppError> {
     let storage = shared_storage()?;
     let mut entry = entry;
-    storage.save_entry(&mut entry)
+    storage
+        .save_entry(&mut entry)
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -293,31 +295,43 @@ pub async fn get_query_history(
     connection_id: Option<String>,
     search: Option<String>,
     limit: Option<u32>,
-) -> Result<Vec<QueryHistoryEntry>, String> {
+) -> Result<Vec<QueryHistoryEntry>, crate::error::AppError> {
     let storage = shared_storage()?;
-    storage.get_entries(
-        connection_id.as_deref(),
-        search.as_deref(),
-        limit.unwrap_or(500),
-    )
+    storage
+        .get_entries(
+            connection_id.as_deref(),
+            search.as_deref(),
+            limit.unwrap_or(500),
+        )
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
-pub async fn delete_query_history_entry(entry_id: i64) -> Result<bool, String> {
+pub async fn delete_query_history_entry(entry_id: i64) -> Result<bool, crate::error::AppError> {
     let storage = shared_storage()?;
-    storage.delete_entry(entry_id)
+    storage
+        .delete_entry(entry_id)
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
-pub async fn delete_query_history_entries(entry_ids: Vec<i64>) -> Result<usize, String> {
+pub async fn delete_query_history_entries(
+    entry_ids: Vec<i64>,
+) -> Result<usize, crate::error::AppError> {
     let storage = shared_storage()?;
-    storage.delete_entries(&entry_ids)
+    storage
+        .delete_entries(&entry_ids)
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
-pub async fn clear_query_history(connection_id: Option<String>) -> Result<usize, String> {
+pub async fn clear_query_history(
+    connection_id: Option<String>,
+) -> Result<usize, crate::error::AppError> {
     let storage = shared_storage()?;
-    storage.clear_entries(connection_id.as_deref())
+    storage
+        .clear_entries(connection_id.as_deref())
+        .map_err(crate::error::AppError::from)
 }
 
 #[cfg(test)]

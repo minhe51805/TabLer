@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "../../utils/tauri-invoke";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useCallback, useSyncExternalStore } from "react";
 

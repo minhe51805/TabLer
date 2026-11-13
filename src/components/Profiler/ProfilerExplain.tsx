@@ -15,7 +15,7 @@
  */
 
 import { useCallback, useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "../../utils/tauri-invoke";
 import { X } from "lucide-react";
 import type { DatabaseType, QueryResult } from "../../types";
 import {
@@ -107,7 +107,10 @@ export function ProfilerExplain({ connectionId, engine, sql, onClose }: Props) {
         <div className="profiler-explain-head">
           <strong className="profiler-explain-title">Explain plan</strong>
           {placeholders && (
-            <span className="profiler-explain-tag" title="Statement-store digests use $1 / ? placeholders">
+            <span
+              className="profiler-explain-tag"
+              title="Statement-store digests use $1 / ? placeholders"
+            >
               normalized statement
             </span>
           )}

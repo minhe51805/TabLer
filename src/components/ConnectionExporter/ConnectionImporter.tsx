@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { Check, CheckCircle2, AlertCircle, Lock, Eye, EyeOff, FileUp, Package } from "lucide-react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "../../utils/tauri-invoke";
 import { open } from "@tauri-apps/plugin-dialog";
 import type { ExportableConnection, SkippedConnection } from "../../utils/connection-export";
 import {

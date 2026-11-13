@@ -114,6 +114,13 @@ impl From<String> for ConnectionErrorInfo {
     }
 }
 
+impl From<ConnectionErrorInfo> for crate::error::AppError {
+    fn from(info: ConnectionErrorInfo) -> Self {
+        let retryable = matches!(info.stage.as_str(), "timeout" | "tcp" | "dns" | "tunnel");
+        crate::error::AppError::connection_failure(info.stage, info.message, info.hint, retryable)
+    }
+}
+
 pub(super) fn classify_connection_failure(
     config: &ConnectionConfig,
     normalized: &str,

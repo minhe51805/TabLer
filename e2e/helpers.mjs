@@ -69,7 +69,16 @@ export function connectionConfig(overrides = {}) {
 
 export async function invoke(command, args = {}) {
   return browser.tauri.execute(
-    (tauri, invokeCommand, invokeArgs) => tauri.core.invoke(invokeCommand, invokeArgs),
+    async (tauri, invokeCommand, invokeArgs) => {
+      try {
+        return await tauri.core.invoke(invokeCommand, invokeArgs);
+      } catch (error) {
+        if (error && typeof error === "object" && "message" in error && !(error instanceof Error)) {
+          throw Object.assign(new Error(String(error.message)), error);
+        }
+        throw error;
+      }
+    },
     command,
     args,
   );

@@ -176,8 +176,8 @@ impl DeepLinkRequest {
 }
 
 #[tauri::command]
-pub fn parse_deep_link(url: String) -> Result<DeepLinkRequest, String> {
-    DeepLinkRequest::parse(&url)
+pub fn parse_deep_link(url: String) -> Result<DeepLinkRequest, crate::error::AppError> {
+    DeepLinkRequest::parse(&url).map_err(crate::error::AppError::from)
 }
 
 #[cfg(test)]

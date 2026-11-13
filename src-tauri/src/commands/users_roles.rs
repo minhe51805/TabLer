@@ -73,7 +73,7 @@ const APPLY_CONFIRMATION: &str = "APPLY USER ROLE CHANGE";
 pub async fn get_user_role_snapshot(
     connection_id: String,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<UserRoleSnapshot, String> {
+) -> Result<UserRoleSnapshot, crate::error::AppError> {
     // The engine key comes from the capability profile, not `driver_name()`:
     // driver_name is a display label ("PostgreSQL", "Snowflake") and shared
     // wire drivers (PostgresDriver serving Redshift/Vertica/CockroachDB) all
@@ -339,7 +339,7 @@ pub async fn get_user_role_snapshot(
         }
         _ => Err(
             "Users & Roles is currently available for PostgreSQL, CockroachDB, Redshift, Vertica, MySQL, MariaDB, SQL Server, Oracle, Snowflake, ClickHouse, Cassandra, MongoDB, Redis, and OpenSearch."
-                .to_string(),
+                .to_string().into(),
         ),
     }
 }
@@ -349,13 +349,15 @@ pub async fn review_user_role_change(
     connection_id: String,
     request: UserRoleChangeRequest,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<UserRoleChangeReview, String> {
+) -> Result<UserRoleChangeReview, crate::error::AppError> {
     let profile = db_manager
         .get_connection_capabilities(&connection_id)
         .await
         .map_err(|e| e.to_string())?;
     profile.require(DriverCapability::Administration)?;
-    build_review(profile.key, &request).map_err(|error| error.to_string())
+    build_review(profile.key, &request)
+        .map_err(|error| error.to_string())
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -365,10 +367,12 @@ pub async fn apply_user_role_change(
     confirmation_phrase: String,
     db_manager: State<'_, DatabaseManager>,
     safe_mode: State<'_, SafeModeState>,
-) -> Result<UserRoleSnapshot, String> {
+) -> Result<UserRoleSnapshot, crate::error::AppError> {
     db_manager.assert_write_allowed(&connection_id).await?;
     if confirmation_phrase.trim() != APPLY_CONFIRMATION {
-        return Err("Explicit confirmation phrase did not match.".to_string());
+        return Err("Explicit confirmation phrase did not match."
+            .to_string()
+            .into());
     }
     let profile = db_manager
         .get_connection_capabilities(&connection_id)

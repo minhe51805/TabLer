@@ -9,7 +9,7 @@ use crate::database::models::{ColumnInfo, DatabaseType};
 use crate::database::parameterized_query::{
     compile_parameterized_query, placeholder_style_for_database,
 };
-use crate::error::AppError;
+use crate::error::{AppError, ErrorCode};
 use crate::utils::rate_limiter::SandboxExecutionLimiter;
 use crate::utils::sql::{classify_sql_with_dialect, split_sql_statements, SqlSafetyDecision};
 use tauri::{Emitter, State};
@@ -39,16 +39,53 @@ pub use cancellation::QueryCancellationState;
 use errors::{format_query_connection_error, format_query_runtime_error};
 use sandbox::{
     cap_sandbox_result, log_sandbox_denial, reject_dangerous_capability,
-    rewrite_mongo_error_for_sandbox, statement_fingerprint, timeout_for_statements,
-    validate_sandbox_batch,
+    rewrite_mongo_error_for_sandbox, timeout_for_statements, validate_sandbox_batch,
+    validate_sandbox_batch_with_decision, AnalyzedSqlBatch,
 };
-pub use sandbox_gate::SandboxGateState;
+#[cfg(test)]
+pub(crate) use sandbox_gate::SANDBOX_MAX_CONCURRENCY;
+pub use sandbox_gate::{SandboxCallerScope, SandboxGateState};
+
+async fn assert_connection_writable_decision(
+    db_manager: &DatabaseManager,
+    connection_id: &str,
+    decision: &SqlSafetyDecision,
+) -> Result<(), AppError> {
+    if !db_manager.is_read_only(connection_id).await {
+        return Ok(());
+    }
+    if decision.read_only {
+        return Ok(());
+    }
+    db_manager
+        .assert_write_allowed(connection_id)
+        .await
+        .map_err(AppError::from)
+}
+
 /// Per-connection read-only pin for SQL-executing commands: when the live
 /// session was opened with `ConnectionConfig::read_only`, any batch that does
 /// not classify as fully read-only is rejected before the driver is touched.
 /// Unparseable SQL fails closed (the classifier reports `read_only = false`
 /// on parse errors), so a read-only connection can never smuggle a statement
 /// past the guard by being unclassifiable.
+async fn resolve_optional_database_type(
+    db_manager: &DatabaseManager,
+    connection_id: &str,
+) -> Option<DatabaseType> {
+    match db_manager.connection_database_type(connection_id).await {
+        Ok(db_type) => Some(db_type),
+        Err(err) => {
+            log::warn!(
+                "Failed to resolve database type for connection_id={}; falling back to generic SQL dialect: {}",
+                connection_id,
+                err
+            );
+            None
+        }
+    }
+}
+
 async fn assert_connection_writable_sql(
     db_manager: &DatabaseManager,
     connection_id: &str,
@@ -57,17 +94,9 @@ async fn assert_connection_writable_sql(
     if !db_manager.is_read_only(connection_id).await {
         return Ok(());
     }
-    let db_type = db_manager
-        .connection_database_type(connection_id)
-        .await
-        .ok();
-    if classify_sql_with_dialect(sql, db_type).read_only {
-        return Ok(());
-    }
-    db_manager
-        .assert_write_allowed(connection_id)
-        .await
-        .map_err(AppError::from)
+    let db_type = resolve_optional_database_type(db_manager, connection_id).await;
+    let decision = classify_sql_with_dialect(sql, db_type);
+    assert_connection_writable_decision(db_manager, connection_id, &decision).await
 }
 
 #[tauri::command]
@@ -95,18 +124,17 @@ pub async fn execute_query(
     cancellation_state: State<'_, QueryCancellationState>,
     safe_mode: State<'_, SafeModeState>,
 ) -> Result<QueryResult, AppError> {
-    assert_connection_writable_sql(db_manager.inner(), &connection_id, &sql).await?;
-    // The connection's real dialect drives both Safe Mode classification and
-    // the capability gate — a MySQL `SHOW` must not read as unparseable.
-    let db_type = db_manager
-        .connection_database_type(&connection_id)
-        .await
-        .ok();
+    // Resolve the connection's real dialect and classify/split the SQL batch
+    // once so read-only guard, Safe Mode, logging, and timeout selection share
+    // a single parse pass.
+    let db_type = resolve_optional_database_type(db_manager.inner(), &connection_id).await;
+    let batch = AnalyzedSqlBatch::from_raw_sql(&sql, db_type);
+    assert_connection_writable_decision(db_manager.inner(), &connection_id, &batch.decision)
+        .await?;
     safe_mode
-        .assert_sql_allowed_with_approval(
+        .assert_decision_allowed_with_approval(
             &connection_id,
-            &sql,
-            db_type,
+            &batch.decision,
             safe_mode_approved_by_user.unwrap_or(false),
         )
         .await?;
@@ -122,7 +150,7 @@ pub async fn execute_query(
         "operation_id={} operation=query.execute status=started connection_id={} statement_count={}",
         operation_id,
         connection_id,
-        split_sql_statements(&sql).len()
+        batch.statement_count
     );
     let driver = db_manager.get_driver(&connection_id).await.map_err(|e| {
         let formatted = format_query_connection_error(e);
@@ -133,7 +161,6 @@ pub async fn execute_query(
         );
         formatted
     })?;
-    let statements = split_sql_statements(&sql);
     // Per-connection `query_timeout_seconds` replaces the classified default
     // window; an explicit per-query `timeout_ms` still wins over both.
     let connection_timeout = db_manager.connection_query_timeout(&connection_id).await;
@@ -141,7 +168,7 @@ pub async fn execute_query(
         timeout_ms,
         crate::config::resolve_connection_query_timeout(
             connection_timeout,
-            timeout_for_statements(statements.iter().map(String::as_str), db_type),
+            batch.default_timeout(),
         ),
     );
     let request_id = request_id
@@ -163,29 +190,30 @@ pub async fn execute_query(
         }
     };
     let result = tokio::select! {
-        _ = cancellation_token.cancelled() => Err("Query cancelled.".to_string()),
-        result = timeout(timeout_window, exec) => result
-            .map_err(|_| {
-            let err_msg = format!(
-                "Query timed out after {} seconds.",
-                timeout_window.as_secs()
-            );
-            log::error!(
-                "operation_id={} operation=query.execute status=failed stage=timeout error={}",
-                operation_id,
-                err_msg
-            );
-            err_msg
-        })
-        .and_then(|result| result.map_err(|e| {
-            let formatted = format_query_runtime_error(e);
-            log::error!(
-                "operation_id={} operation=query.execute status=failed stage=runtime error={}",
-                operation_id,
-                formatted
-            );
-            formatted
-        })),
+        _ = cancellation_token.cancelled() => Err(AppError::query_cancelled("Query cancelled.")),
+        result = timeout(timeout_window, exec) => match result {
+            Err(_) => {
+                let err_msg = format!(
+                    "Query timed out after {} seconds.",
+                    timeout_window.as_secs()
+                );
+                log::error!(
+                    "operation_id={} operation=query.execute status=failed stage=timeout error={}",
+                    operation_id,
+                    err_msg
+                );
+                Err(AppError::query_timeout(err_msg))
+            }
+            Ok(inner) => inner.map_err(|e| {
+                let formatted = format_query_runtime_error(e);
+                log::error!(
+                    "operation_id={} operation=query.execute status=failed stage=runtime error={}",
+                    operation_id,
+                    formatted
+                );
+                AppError::from(formatted)
+            }),
+        },
     };
     if let Some(request_id) = request_id.as_deref() {
         cancellation_state.finish(request_id).await;
@@ -351,7 +379,7 @@ pub async fn execute_query_progressive(
             result.truncated = true;
             break;
         }
-        let _ = app_handle.emit(
+        if let Err(err) = app_handle.emit(
             "query-row-batch",
             query_row_batch_payload(
                 &connection_id,
@@ -366,7 +394,14 @@ pub async fn execute_query_progressive(
                 total_rows,
                 chunk.1 >= total_rows,
             ),
-        );
+        ) {
+            log::warn!(
+                "Failed to emit query-row-batch for connection_id={} batch={}: {}",
+                connection_id,
+                batch_index,
+                err
+            );
+        }
     }
     if let Some(ref id) = request_id {
         cancellation_state.finish(id).await;
@@ -618,72 +653,128 @@ pub async fn execute_sandboxed_query(
     sandbox_limiter: State<'_, SandboxExecutionLimiter>,
     sandbox_gate: State<'_, SandboxGateState>,
 ) -> Result<QueryResult, AppError> {
-    let execution_permit = sandbox_gate.acquire_execution_slot().await?;
-    sandbox_limiter
-        .check(&connection_id)
-        .await
-        .map_err(AppError::SandboxThrottled)?;
-    sandbox_gate.check_breaker(&connection_id).await?;
-    let stmt_fp = statement_fingerprint(&statements.join(";\n"));
+    let scope = if max_rows.is_some() {
+        SandboxCallerScope::Agent
+    } else {
+        SandboxCallerScope::Workspace
+    };
+    execute_sandboxed_query_with_scope(
+        &connection_id,
+        &statements,
+        require_read_only.unwrap_or(false),
+        request_id,
+        safe_mode_approved_by_user.unwrap_or(false),
+        max_rows,
+        scope,
+        false,
+        db_manager.inner(),
+        cancellation_state.inner(),
+        safe_mode.inner(),
+        sandbox_limiter.inner(),
+        sandbox_gate.inner(),
+    )
+    .await
+}
 
-    let result = async {
-        assert_connection_writable_sql(db_manager.inner(), &connection_id, &statements.join(";\n"))
-            .await?;
-        let db_type = db_manager
-            .connection_database_type(&connection_id)
-            .await
-            .ok();
-        safe_mode
-            .assert_sql_allowed_with_approval(
-                &connection_id,
-                &statements.join(";\n"),
-                db_type,
-                safe_mode_approved_by_user.unwrap_or(false),
-            )
-            .await?;
-        let operation_id = Uuid::new_v4();
-        db_manager
-            .require_capability(&connection_id, DriverCapability::Query)
-            .await
-            .map_err(|error| error.to_string())?;
-        log::info!(
-            "operation_id={} operation=query.execute_sandboxed status=started connection_id={} stmt_fp={} statements_count={}",
-            operation_id,
+#[allow(clippy::too_many_arguments)]
+async fn execute_sandboxed_query_with_scope(
+    connection_id: &str,
+    statements: &[String],
+    require_read_only: bool,
+    request_id: Option<String>,
+    safe_mode_approved_by_user: bool,
+    max_rows: Option<usize>,
+    caller_scope: SandboxCallerScope,
+    prevalidated: bool,
+    db_manager: &DatabaseManager,
+    cancellation_state: &QueryCancellationState,
+    safe_mode: &SafeModeState,
+    sandbox_limiter: &SandboxExecutionLimiter,
+    sandbox_gate: &SandboxGateState,
+) -> Result<QueryResult, AppError> {
+    // Parse and validate statically BEFORE touching rate-limit quota or the
+    // driver circuit breaker: policy denials and syntax checks never reach the
+    // database and must not poison connection health.
+    let db_type = resolve_optional_database_type(db_manager, connection_id).await;
+    let batch = AnalyzedSqlBatch::from_statements(statements, db_type);
+    assert_connection_writable_decision(db_manager, connection_id, &batch.decision).await?;
+    safe_mode
+        .assert_decision_allowed_with_approval(
             connection_id,
-            stmt_fp,
-            statements.len()
-        );
-        if let Err(error) =
-            validate_sandbox_batch(&statements, require_read_only.unwrap_or(false), db_type)
-        {
+            &batch.decision,
+            safe_mode_approved_by_user,
+        )
+        .await?;
+    let operation_id = Uuid::new_v4();
+    db_manager
+        .require_capability(connection_id, DriverCapability::Query)
+        .await
+        .map_err(|error| error.to_string())?;
+    log::info!(
+        "operation_id={} operation=query.execute_sandboxed status=started connection_id={} scope={:?} stmt_fp={} statements_count={}",
+        operation_id,
+        connection_id,
+        caller_scope,
+        batch.fingerprint,
+        batch.statement_count
+    );
+    if !prevalidated {
+        if let Err(error) = validate_sandbox_batch_with_decision(
+            statements,
+            &batch.decision,
+            require_read_only,
+            db_type,
+        ) {
+            let reason = error.to_string();
             log::error!(
                 "operation_id={} operation=query.execute_sandboxed status=failed stage=validation stmt_fp={} error={}",
                 operation_id,
-                stmt_fp,
-                error
+                batch.fingerprint,
+                reason
             );
-            log_sandbox_denial(&connection_id, statements.len(), &error);
-            return Err(AppError::from(error));
+            log_sandbox_denial(connection_id, statements.len(), &reason);
+            return Err(error);
         }
-
-        run_sandboxed_statements(
-            &connection_id,
-            &statements,
-            request_id,
-            require_read_only.unwrap_or(false),
-            max_rows,
-            db_manager.inner(),
-            cancellation_state.inner(),
-            "query.execute_sandboxed",
-        )
-        .await
     }
+
+    let gate_key = caller_scope.scoped_key(connection_id);
+    let execution_permit = sandbox_gate
+        .acquire_execution_slot_for_scope(caller_scope)
+        .await?;
+    sandbox_limiter
+        .check(&gate_key)
+        .await
+        .map_err(AppError::SandboxThrottled)?;
+    let probe_guard = sandbox_gate.enter_breaker(&gate_key).await?;
+
+    let result = run_sandboxed_batch(
+        connection_id,
+        &batch,
+        db_type,
+        request_id,
+        require_read_only,
+        max_rows,
+        db_manager,
+        cancellation_state,
+        "query.execute_sandboxed",
+    )
     .await;
 
-    if result.is_ok() {
-        sandbox_gate.record_success(&connection_id).await;
-    } else {
-        sandbox_gate.record_failure(&connection_id, &stmt_fp).await;
+    match &result {
+        Ok(_) => {
+            probe_guard.disarm();
+            sandbox_gate.record_success(&gate_key).await;
+        }
+        Err(error) if error.code() == ErrorCode::QueryCancelled => {
+            probe_guard.disarm();
+            sandbox_gate.release_half_open_probe(&gate_key).await;
+        }
+        Err(_) => {
+            probe_guard.disarm();
+            sandbox_gate
+                .record_failure(&gate_key, &batch.fingerprint)
+                .await;
+        }
     }
     drop(execution_permit);
     result
@@ -694,9 +785,10 @@ pub async fn execute_sandboxed_query(
 /// apply the agent result cap. Callers own their own validation and Safe Mode
 /// policy — this helper only executes what it is given.
 #[allow(clippy::too_many_arguments)]
-async fn run_sandboxed_statements(
+async fn run_sandboxed_batch(
     connection_id: &str,
-    statements: &[String],
+    batch: &AnalyzedSqlBatch,
+    db_type: Option<DatabaseType>,
     request_id: Option<String>,
     require_read_only: bool,
     max_rows: Option<usize>,
@@ -705,12 +797,7 @@ async fn run_sandboxed_statements(
     operation: &str,
 ) -> Result<QueryResult, AppError> {
     let operation_id = Uuid::new_v4();
-    let db_type = db_manager
-        .connection_database_type(connection_id)
-        .await
-        .ok();
-    let combined_query = statements.join(";\n");
-    let stmt_fp = statement_fingerprint(&combined_query);
+    let stmt_fp = &batch.fingerprint;
     let driver = db_manager.get_driver(connection_id).await.map_err(|e| {
         let formatted = format_query_connection_error(e);
         log::error!(
@@ -720,7 +807,7 @@ async fn run_sandboxed_statements(
     })?;
     let timeout_window = crate::config::resolve_connection_query_timeout(
         db_manager.connection_query_timeout(connection_id).await,
-        timeout_for_statements(statements.iter().map(String::as_str), db_type),
+        batch.default_timeout(),
     );
     let request_id = request_id
         .as_deref()
@@ -735,15 +822,17 @@ async fn run_sandboxed_statements(
     }
     let exec = async {
         if let Some(id) = request_id.as_deref() {
-            driver.execute_query_for_request(id, &combined_query).await
+            driver
+                .execute_query_for_request(id, &batch.combined_sql)
+                .await
         } else {
-            driver.execute_query(&combined_query).await
+            driver.execute_query(&batch.combined_sql).await
         }
     };
     let result = tokio::select! {
-        _ = cancellation_token.cancelled() => Err("Query cancelled.".to_string()),
-        result = timeout(timeout_window, exec) => result
-            .map_err(|_| {
+        _ = cancellation_token.cancelled() => Err(AppError::query_cancelled("Query cancelled.")),
+        result = timeout(timeout_window, exec) => match result {
+            Err(_) => {
                 let err_msg = format!(
                     "Sandbox query timed out after {} seconds.",
                     timeout_window.as_secs()
@@ -751,9 +840,9 @@ async fn run_sandboxed_statements(
                 log::error!(
                     "operation_id={operation_id} operation={operation} status=failed stage=timeout stmt_fp={stmt_fp} error={err_msg}"
                 );
-                err_msg
-            })
-            .and_then(|result| result.map_err(|e| {
+                Err(AppError::query_timeout(err_msg))
+            }
+            Ok(inner) => inner.map_err(|e| {
                 let formatted = format_query_runtime_error(e);
                 let formatted = if db_type == Some(DatabaseType::MongoDB) {
                     rewrite_mongo_error_for_sandbox(&formatted, require_read_only)
@@ -763,8 +852,9 @@ async fn run_sandboxed_statements(
                 log::error!(
                     "operation_id={operation_id} operation={operation} status=failed stage=runtime stmt_fp={stmt_fp} error={formatted}"
                 );
-                formatted
-            })),
+                AppError::from(formatted)
+            }),
+        },
     };
     if let Some(request_id) = request_id.as_deref() {
         cancellation_state.finish(request_id).await;
@@ -813,8 +903,8 @@ pub async fn explain_agent_statement(
     // Read-only is NOT required — planning a write is the whole point.
     let statements = [sql];
     if let Err(error) = validate_sandbox_batch(&statements, false, Some(database_type)) {
-        log_sandbox_denial(&connection_id, statements.len(), &error);
-        return Err(error.into());
+        log_sandbox_denial(&connection_id, statements.len(), &error.to_string());
+        return Err(error);
     }
     let explain_sql = match database_type {
         // SQLite-family engines expose a readable plan through EXPLAIN QUERY
@@ -827,9 +917,12 @@ pub async fn explain_agent_statement(
         DatabaseType::Oracle => format!("EXPLAIN PLAN FOR {}", statements[0]),
         _ => format!("EXPLAIN {}", statements[0]),
     };
-    run_sandboxed_statements(
+    let explain_batch =
+        AnalyzedSqlBatch::from_statements(std::slice::from_ref(&explain_sql), Some(database_type));
+    run_sandboxed_batch(
         &connection_id,
-        &[explain_sql],
+        &explain_batch,
+        Some(database_type),
         None,
         false,
         Some(SANDBOX_AGENT_MAX_ROWS),
@@ -874,8 +967,8 @@ pub async fn execute_agent_parameterized_query(
     if let Err(error) =
         validate_sandbox_batch(std::slice::from_ref(&sql), true, Some(database_type))
     {
-        log_sandbox_denial(&connection_id, 1, &error);
-        return Err(error.into());
+        log_sandbox_denial(&connection_id, 1, &error.to_string());
+        return Err(error);
     }
     let style = placeholder_style_for_database(database_type);
     let compiled =
@@ -932,23 +1025,25 @@ pub async fn execute_agent_readonly_query(
     // they could flip. Fail here first so a future change to the shared
     // sandbox helper cannot silently lower the agent boundary.
     if let Err(error) = validate_sandbox_batch(&statements, true, Some(database_type)) {
-        log_sandbox_denial(&connection_id, statements.len(), &error);
-        return Err(error.into());
+        log_sandbox_denial(&connection_id, statements.len(), &error.to_string());
+        return Err(error);
     }
-    execute_sandboxed_query(
-        connection_id,
-        statements,
-        Some(true),
+    execute_sandboxed_query_with_scope(
+        &connection_id,
+        &statements,
+        true,
         request_id,
         // Agent tool path: never carries human approval.
-        None,
+        false,
         // AI reads are capped so an unbounded SELECT returns a flagged sample.
         Some(SANDBOX_AGENT_MAX_ROWS),
-        db_manager,
-        cancellation_state,
-        safe_mode,
-        sandbox_limiter,
-        sandbox_gate,
+        SandboxCallerScope::Agent,
+        true,
+        db_manager.inner(),
+        cancellation_state.inner(),
+        safe_mode.inner(),
+        sandbox_limiter.inner(),
+        sandbox_gate.inner(),
     )
     .await
 }

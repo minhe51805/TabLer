@@ -11,10 +11,25 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { MouseEvent as ReactMouseEvent } from "react";
 import { createPortal } from "react-dom";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "../../utils/tauri-invoke";
+import { TauriCommandError } from "../../utils/tauri-error";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { Activity, BarChart3, Check, Copy, Minus, Pause, Play, Search, Square, Trash2, Workflow, Zap, X } from "lucide-react";
+import {
+  Activity,
+  BarChart3,
+  Check,
+  Copy,
+  Minus,
+  Pause,
+  Play,
+  Search,
+  Square,
+  Trash2,
+  Workflow,
+  Zap,
+  X,
+} from "lucide-react";
 import type { QueryResult } from "../../types";
 import { ProfilerTopQueries } from "./ProfilerTopQueries";
 import { ProfilerExplain } from "./ProfilerExplain";
@@ -93,10 +108,13 @@ function cellNumber(value: Cell | undefined): number {
 function mapSamples(result: QueryResult, canonical: string[]): ProfilerSample[] {
   const index: Record<string, number> = {};
   for (const name of canonical) {
-    index[name] = result.columns.findIndex((column) => column.name.toLowerCase() === name.toLowerCase());
+    index[name] = result.columns.findIndex(
+      (column) => column.name.toLowerCase() === name.toLowerCase(),
+    );
   }
   const text = (row: Cell[], name: string) => (index[name] >= 0 ? cellText(row[index[name]]) : "");
-  const numeric = (row: Cell[], name: string) => (index[name] >= 0 ? cellNumber(row[index[name]]) : 0);
+  const numeric = (row: Cell[], name: string) =>
+    index[name] >= 0 ? cellNumber(row[index[name]]) : 0;
   return result.rows.map((row) => ({
     sessionId: text(row, "session_id"),
     dbName: text(row, "db_name"),
@@ -125,7 +143,11 @@ function durationTone(ms: number): string {
   return "text-[var(--text-primary)]";
 }
 
-function mergeSamples(previous: TraceEvent[], samples: ProfilerSample[], now: number): TraceEvent[] {
+function mergeSamples(
+  previous: TraceEvent[],
+  samples: ProfilerSample[],
+  now: number,
+): TraceEvent[] {
   const byKey = new Map<string, TraceEvent>();
   for (const event of previous) byKey.set(event.key, { ...event, active: false });
   for (const sample of samples) {
@@ -148,7 +170,12 @@ function mergeSamples(previous: TraceEvent[], samples: ProfilerSample[], now: nu
     .slice(0, MAX_TRACE_EVENTS);
 }
 
-export function ProfilerModal({ connectionId, connectionName, onClose, variant = "overlay" }: Props) {
+export function ProfilerModal({
+  connectionId,
+  connectionName,
+  onClose,
+  variant = "overlay",
+}: Props) {
   const isStandalone = variant === "standalone";
   const [probe, setProbe] = useState<ProfilerProbe | null>(null);
   const [probeError, setProbeError] = useState<string | null>(null);
@@ -183,6 +210,10 @@ export function ProfilerModal({ connectionId, connectionName, onClose, variant =
       })
       .catch((error) => {
         if (cancelled) return;
+        if (error instanceof TauriCommandError && error.code === "connection-not-found") {
+          onCloseRef.current();
+          return;
+        }
         setProbeError(error instanceof Error ? error.message : String(error));
         setRunning(false);
       });
@@ -235,6 +266,10 @@ export function ProfilerModal({ connectionId, connectionName, onClose, variant =
         setPollError(null);
       } catch (error) {
         if (cancelled) return;
+        if (error instanceof TauriCommandError && error.code === "connection-not-found") {
+          onCloseRef.current();
+          return;
+        }
         setPollError(error instanceof Error ? error.message : String(error));
         setRunning(false);
         return; // stop the loop — `running` is now false
@@ -353,268 +388,304 @@ export function ProfilerModal({ connectionId, connectionName, onClose, variant =
       }
       onClick={isStandalone ? undefined : (event) => event.stopPropagation()}
     >
-        <div className="profiler-header" onMouseDown={isStandalone ? handleHeaderDrag : undefined}>
-          <span className="profiler-header-icon">
-            <Activity className="w-[19px] h-[19px]" />
-          </span>
-          <div className="profiler-header-titles">
-            <div className="profiler-title-row">
-              <span className="profiler-title">Profiler</span>
-              {tab === "live" && running && (
-                <span className="profiler-live-badge">
-                  <span className="profiler-dot is-on">
-                    <span className="profiler-dot-ping" />
-                    <span className="profiler-dot-core" />
-                  </span>
-                  Live
+      <div className="profiler-header" onMouseDown={isStandalone ? handleHeaderDrag : undefined}>
+        <span className="profiler-header-icon">
+          <Activity className="w-[19px] h-[19px]" />
+        </span>
+        <div className="profiler-header-titles">
+          <div className="profiler-title-row">
+            <span className="profiler-title">Profiler</span>
+            {tab === "live" && running && (
+              <span className="profiler-live-badge">
+                <span className="profiler-dot is-on">
+                  <span className="profiler-dot-ping" />
+                  <span className="profiler-dot-core" />
                 </span>
-              )}
-            </div>
-            <div className="profiler-subtitle">
-              {connectionName}
-              {tab === "live" && probe ? ` · ${probe.source}` : ""}
-            </div>
+                Live
+              </span>
+            )}
           </div>
-          {tab === "live" && probe && (
+          <div className="profiler-subtitle">
+            {connectionName}
+            {tab === "live" && probe ? ` · ${probe.source}` : ""}
+          </div>
+        </div>
+        {tab === "live" && probe && (
+          <button
+            type="button"
+            className="profiler-header-btn"
+            onClick={() => setRunning((value) => !value)}
+            title={running ? "Pause capture" : "Start capture"}
+          >
+            {running ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+          </button>
+        )}
+        {tab === "live" && (
+          <button
+            type="button"
+            className="profiler-header-btn is-danger"
+            onClick={() => setEvents([])}
+            title="Clear trace"
+          >
+            <Trash2 className="w-4 h-4" />
+          </button>
+        )}
+        {isStandalone && (
+          <>
+            <span className="profiler-header-divider" />
             <button
               type="button"
               className="profiler-header-btn"
-              onClick={() => setRunning((value) => !value)}
-              title={running ? "Pause capture" : "Start capture"}
+              onClick={handleMinimizeWindow}
+              title="Minimize"
             >
-              {running ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+              <Minus className="w-4 h-4" />
             </button>
-          )}
-          {tab === "live" && (
-            <button type="button" className="profiler-header-btn is-danger" onClick={() => setEvents([])} title="Clear trace">
-              <Trash2 className="w-4 h-4" />
+            <button
+              type="button"
+              className="profiler-header-btn"
+              onClick={handleToggleMaximizeWindow}
+              title="Maximize"
+            >
+              <Square className="w-3.5 h-3.5" />
             </button>
-          )}
-          {isStandalone && (
-            <>
-              <span className="profiler-header-divider" />
-              <button type="button" className="profiler-header-btn" onClick={handleMinimizeWindow} title="Minimize">
-                <Minus className="w-4 h-4" />
-              </button>
-              <button type="button" className="profiler-header-btn" onClick={handleToggleMaximizeWindow} title="Maximize">
-                <Square className="w-3.5 h-3.5" />
-              </button>
-            </>
-          )}
-          <button type="button" className="profiler-header-btn is-danger" onClick={onClose} title="Close">
-            <X className="w-4 h-4" />
-          </button>
-        </div>
-        <div className="profiler-tabbar">
-          <div className="profiler-tabs">
-            {([
+          </>
+        )}
+        <button
+          type="button"
+          className="profiler-header-btn is-danger"
+          onClick={onClose}
+          title="Close"
+        >
+          <X className="w-4 h-4" />
+        </button>
+      </div>
+      <div className="profiler-tabbar">
+        <div className="profiler-tabs">
+          {(
+            [
               ["live", "Live Trace", Zap],
               ["top", "Top Queries", BarChart3],
-            ] as const).map(([value, label, Icon]) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setTab(value)}
-                className={`profiler-tab${tab === value ? " is-active" : ""}`}
-              >
-                <Icon className="w-3.5 h-3.5" />
-                {label}
-              </button>
-            ))}
+            ] as const
+          ).map(([value, label, Icon]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setTab(value)}
+              className={`profiler-tab${tab === value ? " is-active" : ""}`}
+            >
+              <Icon className="w-3.5 h-3.5" />
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {tab === "top" ? (
+        <ProfilerTopQueries connectionId={connectionId} />
+      ) : probeError ? (
+        <div className="profiler-unavailable">
+          <div className="profiler-unavailable-inner">
+            <span className="profiler-unavailable-icon">
+              <Activity className="w-6 h-6" />
+            </span>
+            <div className="profiler-unavailable-title">Profiler unavailable</div>
+            <div className="profiler-unavailable-msg">{probeError}</div>
           </div>
         </div>
-        {tab === "top" ? (
-          <ProfilerTopQueries connectionId={connectionId} />
-        ) : probeError ? (
-          <div className="profiler-unavailable">
-            <div className="profiler-unavailable-inner">
-              <span className="profiler-unavailable-icon">
-                <Activity className="w-6 h-6" />
+      ) : (
+        <>
+          <div className="profiler-toolbar">
+            <span className={`profiler-status${running ? " is-live" : ""}`}>
+              <span className={`profiler-dot${running ? " is-on" : ""}`}>
+                {running && <span className="profiler-dot-ping" />}
+                <span className="profiler-dot-core" />
               </span>
-              <div className="profiler-unavailable-title">Profiler unavailable</div>
-              <div className="profiler-unavailable-msg">{probeError}</div>
+              {running ? "Capturing" : "Paused"}
+            </span>
+
+            <div className="profiler-controls">
+              <label className="profiler-control">
+                <span className="profiler-control-label">Every</span>
+                <select
+                  className="profiler-field"
+                  value={intervalMs}
+                  onChange={(event) => setIntervalMs(Number(event.target.value))}
+                >
+                  {POLL_INTERVAL_CHOICES.map((choice) => (
+                    <option key={choice} value={choice}>
+                      {choice} ms
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <span className="profiler-control-divider" />
+              <label className="profiler-control">
+                <span className="profiler-control-label">Min</span>
+                <input
+                  type="number"
+                  min={0}
+                  step={100}
+                  value={minDurationMs}
+                  onChange={(event) => setMinDurationMs(Math.max(0, Number(event.target.value)))}
+                  className="profiler-field profiler-field-num"
+                />
+                <span className="profiler-control-unit">ms</span>
+              </label>
+              <span className="profiler-control-divider" />
+              <label className="profiler-control profiler-checkbox">
+                <input
+                  type="checkbox"
+                  checked={activeOnly}
+                  onChange={(event) => setActiveOnly(event.target.checked)}
+                  className="accent-[var(--accent)]"
+                />
+                Active only
+              </label>
+            </div>
+
+            <div className="profiler-search">
+              <Search className="profiler-search-icon w-3.5 h-3.5" />
+              <input
+                type="text"
+                placeholder="Filter SQL, user, database, app…"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                className="profiler-search-input"
+              />
+            </div>
+
+            <div className="profiler-counts">
+              <span className="profiler-count is-active">
+                <span className="profiler-count-dot" />
+                {activeCount} active
+              </span>
+              <span className="profiler-count">{events.length} captured</span>
             </div>
           </div>
-        ) : (
-          <>
-            <div className="profiler-toolbar">
-              <span className={`profiler-status${running ? " is-live" : ""}`}>
-                <span className={`profiler-dot${running ? " is-on" : ""}`}>
-                  {running && <span className="profiler-dot-ping" />}
-                  <span className="profiler-dot-core" />
-                </span>
-                {running ? "Capturing" : "Paused"}
-              </span>
 
-              <div className="profiler-controls">
-                <label className="profiler-control">
-                  <span className="profiler-control-label">Every</span>
-                  <select
-                    className="profiler-field"
-                    value={intervalMs}
-                    onChange={(event) => setIntervalMs(Number(event.target.value))}
-                  >
-                    {POLL_INTERVAL_CHOICES.map((choice) => (
-                      <option key={choice} value={choice}>{choice} ms</option>
-                    ))}
-                  </select>
-                </label>
-                <span className="profiler-control-divider" />
-                <label className="profiler-control">
-                  <span className="profiler-control-label">Min</span>
-                  <input
-                    type="number"
-                    min={0}
-                    step={100}
-                    value={minDurationMs}
-                    onChange={(event) => setMinDurationMs(Math.max(0, Number(event.target.value)))}
-                    className="profiler-field profiler-field-num"
-                  />
-                  <span className="profiler-control-unit">ms</span>
-                </label>
-                <span className="profiler-control-divider" />
-                <label className="profiler-control profiler-checkbox">
-                  <input
-                    type="checkbox"
-                    checked={activeOnly}
-                    onChange={(event) => setActiveOnly(event.target.checked)}
-                    className="accent-[var(--accent)]"
-                  />
-                  Active only
-                </label>
-              </div>
-
-              <div className="profiler-search">
-                <Search className="profiler-search-icon w-3.5 h-3.5" />
-                <input
-                  type="text"
-                  placeholder="Filter SQL, user, database, app…"
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  className="profiler-search-input"
-                />
-              </div>
-
-              <div className="profiler-counts">
-                <span className="profiler-count is-active">
-                  <span className="profiler-count-dot" />
-                  {activeCount} active
-                </span>
-                <span className="profiler-count">{events.length} captured</span>
-              </div>
+          {pollError && (
+            <div className="profiler-error">
+              <span className="profiler-error-label">Error:</span>
+              <span className="profiler-error-msg">{pollError}</span>
+            </div>
+          )}
+          <div className="profiler-body">
+            <div className="profiler-scroll">
+              <table className="profiler-table">
+                <thead>
+                  <tr>
+                    <th className="profiler-th profiler-th-status" aria-label="Status" />
+                    <th className="profiler-th">Duration</th>
+                    <th className="profiler-th">Database</th>
+                    <th className="profiler-th">User</th>
+                    <th className="profiler-th">State</th>
+                    <th className="profiler-th profiler-th-sql">SQL</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className={`profiler-empty${running ? " is-live" : ""}`}>
+                        <div className="profiler-empty-inner">
+                          <span className="profiler-empty-orb">
+                            {running && (
+                              <>
+                                <span className="profiler-empty-wave profiler-empty-wave-1" />
+                                <span className="profiler-empty-wave profiler-empty-wave-2" />
+                              </>
+                            )}
+                            <span className="profiler-empty-orb-core">
+                              <Activity className={`w-6 h-6 ${running ? "animate-pulse" : ""}`} />
+                            </span>
+                          </span>
+                          <div className="profiler-empty-title">
+                            {running ? "Waiting for active statements…" : "No statements captured"}
+                          </div>
+                          <div className="profiler-empty-hint">
+                            {running
+                              ? "Run a query on this connection and it will show up here in real time."
+                              : "No captured statements match the filters."}
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  ) : (
+                    filtered.map((event) => (
+                      <tr
+                        key={event.key}
+                        onClick={() => setSelectedKey(event.key)}
+                        className={`profiler-row${selectedKey === event.key ? " is-selected" : ""}`}
+                      >
+                        <td className="profiler-td profiler-td-status">
+                          <span
+                            className={`profiler-dot${event.active ? " is-on" : ""}`}
+                            title={event.active ? "Running" : "Finished"}
+                          >
+                            {event.active && <span className="profiler-dot-ping" />}
+                            <span className="profiler-dot-core" />
+                          </span>
+                        </td>
+                        <td className="profiler-td">
+                          <span className={`profiler-duration ${durationTone(event.durationMs)}`}>
+                            {formatDuration(event.durationMs)}
+                          </span>
+                        </td>
+                        <td className="profiler-td profiler-cell-truncate">
+                          {event.dbName || "—"}
+                        </td>
+                        <td className="profiler-td profiler-cell-truncate">
+                          {event.username || "—"}
+                        </td>
+                        <td className="profiler-td">
+                          {event.state ? (
+                            <span className="profiler-state-badge">{event.state}</span>
+                          ) : (
+                            <span className="profiler-muted">—</span>
+                          )}
+                        </td>
+                        <td className="profiler-td profiler-sql-cell">{event.queryText || "—"}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
             </div>
 
-            {pollError && (
-              <div className="profiler-error">
-                <span className="profiler-error-label">Error:</span>
-                <span className="profiler-error-msg">{pollError}</span>
-              </div>
-            )}
-            <div className="profiler-body">
-              <div className="profiler-scroll">
-                <table className="profiler-table">
-                  <thead>
-                    <tr>
-                      <th className="profiler-th profiler-th-status" aria-label="Status" />
-                      <th className="profiler-th">Duration</th>
-                      <th className="profiler-th">Database</th>
-                      <th className="profiler-th">User</th>
-                      <th className="profiler-th">State</th>
-                      <th className="profiler-th profiler-th-sql">SQL</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {filtered.length === 0 ? (
-                      <tr>
-                        <td colSpan={6} className={`profiler-empty${running ? " is-live" : ""}`}>
-                          <div className="profiler-empty-inner">
-                            <span className="profiler-empty-orb">
-                              {running && (
-                                <>
-                                  <span className="profiler-empty-wave profiler-empty-wave-1" />
-                                  <span className="profiler-empty-wave profiler-empty-wave-2" />
-                                </>
-                              )}
-                              <span className="profiler-empty-orb-core">
-                                <Activity className={`w-6 h-6 ${running ? "animate-pulse" : ""}`} />
-                              </span>
-                            </span>
-                            <div className="profiler-empty-title">
-                              {running ? "Waiting for active statements…" : "No statements captured"}
-                            </div>
-                            <div className="profiler-empty-hint">
-                              {running
-                                ? "Run a query on this connection and it will show up here in real time."
-                                : "No captured statements match the filters."}
-                            </div>
-                          </div>
-                        </td>
-                      </tr>
-                    ) : (
-                      filtered.map((event) => (
-                        <tr
-                          key={event.key}
-                          onClick={() => setSelectedKey(event.key)}
-                          className={`profiler-row${selectedKey === event.key ? " is-selected" : ""}`}
-                        >
-                          <td className="profiler-td profiler-td-status">
-                            <span className={`profiler-dot${event.active ? " is-on" : ""}`} title={event.active ? "Running" : "Finished"}>
-                              {event.active && <span className="profiler-dot-ping" />}
-                              <span className="profiler-dot-core" />
-                            </span>
-                          </td>
-                          <td className="profiler-td">
-                            <span className={`profiler-duration ${durationTone(event.durationMs)}`}>
-                              {formatDuration(event.durationMs)}
-                            </span>
-                          </td>
-                          <td className="profiler-td profiler-cell-truncate">{event.dbName || "—"}</td>
-                          <td className="profiler-td profiler-cell-truncate">{event.username || "—"}</td>
-                          <td className="profiler-td">
-                            {event.state ? (
-                              <span className="profiler-state-badge">{event.state}</span>
-                            ) : (
-                              <span className="profiler-muted">—</span>
-                            )}
-                          </td>
-                          <td className="profiler-td profiler-sql-cell">{event.queryText || "—"}</td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              {selected && (
-                <div className="profiler-detail">
-                  <div className="profiler-detail-head">
-                    <strong className="profiler-detail-title">Statement detail</strong>
-                    <div className="profiler-detail-actions">
-                      {probe?.transport !== MONGO_TRANSPORT && (
-                        <button
-                          type="button"
-                          className="profiler-detail-btn"
-                          onClick={() => selected.queryText && setExplainSql(selected.queryText)}
-                          disabled={!selected.queryText}
-                          title="Show the query plan (planning only, nothing executes)"
-                        >
-                          <Workflow className="w-3.5 h-3.5" />
-                          Explain
-                        </button>
-                      )}
+            {selected && (
+              <div className="profiler-detail">
+                <div className="profiler-detail-head">
+                  <strong className="profiler-detail-title">Statement detail</strong>
+                  <div className="profiler-detail-actions">
+                    {probe?.transport !== MONGO_TRANSPORT && (
                       <button
                         type="button"
                         className="profiler-detail-btn"
-                        onClick={() => copySql(selected.queryText)}
+                        onClick={() => selected.queryText && setExplainSql(selected.queryText)}
+                        disabled={!selected.queryText}
+                        title="Show the query plan (planning only, nothing executes)"
                       >
-                        {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
-                        {copied ? "Copied" : "Copy"}
+                        <Workflow className="w-3.5 h-3.5" />
+                        Explain
                       </button>
-                    </div>
+                    )}
+                    <button
+                      type="button"
+                      className="profiler-detail-btn"
+                      onClick={() => copySql(selected.queryText)}
+                    >
+                      {copied ? (
+                        <Check className="w-3.5 h-3.5 text-emerald-500" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                      {copied ? "Copied" : "Copy"}
+                    </button>
                   </div>
-                  <div className="profiler-detail-body">
-                    <dl className="profiler-dl">
-                      {([
+                </div>
+                <div className="profiler-detail-body">
+                  <dl className="profiler-dl">
+                    {(
+                      [
                         ["Session", selected.sessionId],
                         ["Database", selected.dbName],
                         ["User", selected.username],
@@ -624,32 +695,33 @@ export function ProfilerModal({ connectionId, connectionName, onClose, variant =
                         ["Wait", selected.waitEvent],
                         ["Duration", formatDuration(selected.durationMs)],
                         ["Status", selected.active ? "Running" : "Finished"],
-                      ] as const).map(([label, value]) => (
-                        <div key={label} className="profiler-dl-row">
-                          <dt className="profiler-dl-key">{label}</dt>
-                          <dd className="profiler-dl-val">{value || "—"}</dd>
-                        </div>
-                      ))}
-                    </dl>
-                    <div className="profiler-sql-box">
-                      <div className="profiler-sql-box-head">SQL</div>
-                      <pre className="profiler-sql-box-pre">{selected.queryText || "—"}</pre>
-                    </div>
+                      ] as const
+                    ).map(([label, value]) => (
+                      <div key={label} className="profiler-dl-row">
+                        <dt className="profiler-dl-key">{label}</dt>
+                        <dd className="profiler-dl-val">{value || "—"}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                  <div className="profiler-sql-box">
+                    <div className="profiler-sql-box-head">SQL</div>
+                    <pre className="profiler-sql-box-pre">{selected.queryText || "—"}</pre>
                   </div>
                 </div>
-              )}
-            </div>
-          </>
-        )}
-        {explainSql && probe && (
-          <ProfilerExplain
-            connectionId={connectionId}
-            engine={probe.engine}
-            sql={explainSql}
-            onClose={() => setExplainSql(null)}
-          />
-        )}
-      </div>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+      {explainSql && probe && (
+        <ProfilerExplain
+          connectionId={connectionId}
+          engine={probe.engine}
+          sql={explainSql}
+          onClose={() => setExplainSql(null)}
+        />
+      )}
+    </div>
   );
 
   if (isStandalone) {

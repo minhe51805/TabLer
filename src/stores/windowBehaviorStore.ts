@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "../utils/tauri-invoke";
 
 // Resident mode: when enabled, closing the main window hides it to the system
 // tray instead of quitting (the Rust side reads the flag synchronously inside

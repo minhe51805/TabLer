@@ -16,6 +16,8 @@ export interface AIExecuteSandboxedQueryCommandArgs extends Record<string, unkno
   statements: string[];
   requireReadOnly?: boolean;
   requestId?: string;
+  safeModeApprovedByUser?: boolean;
+  maxRows?: number;
 }
 
 export interface AIExecuteAgentParameterizedQueryCommandArgs extends Record<string, unknown> {

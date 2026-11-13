@@ -129,7 +129,13 @@ pub(crate) fn install_bundle_from_path(
     }
     if let Err(error) = fs::rename(&staging, &destination) {
         if rollback.exists() {
-            let _ = fs::rename(&rollback, &destination);
+            if let Err(rollback_err) = fs::rename(&rollback, &destination) {
+                log::error!(
+                    "operation=plugin.install_rollback status=failed plugin_id={} error={}",
+                    staged.manifest.id,
+                    rollback_err
+                );
+            }
         }
         let _ = remove_dir_if_exists(&staging);
         return Err(format!(
@@ -164,7 +170,13 @@ pub(crate) fn install_bundle_from_path(
     if let Err(error) = storage.save_plugins(&records) {
         let _ = remove_dir_if_exists(&destination);
         if rollback.exists() {
-            let _ = fs::rename(&rollback, &destination);
+            if let Err(rollback_err) = fs::rename(&rollback, &destination) {
+                log::error!(
+                    "operation=plugin.save_rollback status=failed plugin_id={} error={}",
+                    record.manifest.id,
+                    rollback_err
+                );
+            }
         }
         return Err(format!("Failed to save installed plugins: {error}"));
     }

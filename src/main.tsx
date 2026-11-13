@@ -1,7 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import "./styles/boot-failure.css";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "./utils/tauri-invoke";
 import {
   StorageRecoveryDialog,
   type StorageHealthReport,

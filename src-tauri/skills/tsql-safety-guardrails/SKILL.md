@@ -1,7 +1,7 @@
 ---
 name: tsql-safety-guardrails
 description: This skill should be used when the user asks to "delete rows", "update data", "drop or truncate a table", "clean up data", or any request that would modify the database.
-version: 1.0.0
+version: 1.1.0
 license: MIT
 ---
 
@@ -91,6 +91,9 @@ reported without the affected-row count is an unverified claim.
 
 ## See also
 
+- `references/engine-matrix.md` — the same workflow translated per engine:
+  transaction syntax, affected-row read-back, identifier quoting, destructive-DDL
+  guards, and the charset/collation traps.
 - The `tsql-dialect-mastery` skill — correctness traps, including the `MERGE` and
   `UPDATE … FROM` hazards referenced above.
 - The `data-profiling` skill — the read-only profiling queries used in step 2.

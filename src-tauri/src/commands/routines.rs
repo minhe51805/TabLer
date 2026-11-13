@@ -124,7 +124,7 @@ pub async fn list_routines(
     connection_id: String,
     database: Option<String>,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<Vec<RoutineInfo>, String> {
+) -> Result<Vec<RoutineInfo>, crate::error::AppError> {
     let database_type = db_manager
         .connection_database_type(&connection_id)
         .await
@@ -133,7 +133,7 @@ pub async fn list_routines(
         && !is_mysql_family(database_type)
         && database_type != DatabaseType::MSSQL
     {
-        return Err(unsupported(database_type, "Routines").to_string());
+        return Err(unsupported(database_type, "Routines").to_string().into());
     }
     let driver = db_manager
         .get_driver(&connection_id)
@@ -295,7 +295,7 @@ pub async fn get_routine_definition(
     schema: Option<String>,
     database: Option<String>,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<RoutineDefinition, String> {
+) -> Result<RoutineDefinition, crate::error::AppError> {
     let database_type = db_manager
         .connection_database_type(&connection_id)
         .await
@@ -306,7 +306,7 @@ pub async fn get_routine_definition(
         .map_err(|e| e.to_string())?;
     let name = routine_name.trim();
     if name.is_empty() {
-        return Err("A routine name is required.".to_string());
+        return Err("A routine name is required.".to_string().into());
     }
 
     if is_postgres_family(database_type) {
@@ -326,7 +326,7 @@ pub async fn get_routine_definition(
         );
         let result = run_metadata_query(&driver, &sql).await?;
         if result.rows.is_empty() {
-            return Err(format!("Routine '{name}' was not found."));
+            return Err(format!("Routine '{name}' was not found.").into());
         }
         let kind = if result
             .rows
@@ -373,7 +373,7 @@ pub async fn get_routine_definition(
         );
         let result = run_metadata_query(&driver, &lookup).await?;
         let Some(row) = result.rows.first() else {
-            return Err(format!("Routine '{name}' was not found."));
+            return Err(format!("Routine '{name}' was not found.").into());
         };
         let routine_type = row
             .first()
@@ -414,7 +414,8 @@ pub async fn get_routine_definition(
         let Some(definition) = definition else {
             return Err(format!(
                 "The definition of routine '{name}' is not available (insufficient privileges?)."
-            ));
+            )
+            .into());
         };
         return Ok(RoutineDefinition {
             name: name.to_string(),
@@ -448,7 +449,7 @@ pub async fn get_routine_definition(
         );
         let result = run_metadata_query(&driver, &sql).await?;
         let Some(row) = result.rows.first() else {
-            return Err(format!("Routine '{name}' was not found."));
+            return Err(format!("Routine '{name}' was not found.").into());
         };
         let object_type = row.first().and_then(cell_to_string).unwrap_or_default();
         let kind = routine_kind(match object_type.as_str() {
@@ -459,7 +460,8 @@ pub async fn get_routine_definition(
         let Some(definition) = row.get(1).and_then(cell_to_string) else {
             return Err(format!(
                 "The definition of routine '{name}' is not available (encrypted or CLR assembly)."
-            ));
+            )
+            .into());
         };
         return Ok(RoutineDefinition {
             name: name.to_string(),
@@ -468,7 +470,9 @@ pub async fn get_routine_definition(
         });
     }
 
-    Err(unsupported(database_type, "Routine definitions").to_string())
+    Err(unsupported(database_type, "Routine definitions")
+        .to_string()
+        .into())
 }
 
 async fn run_metadata_query(

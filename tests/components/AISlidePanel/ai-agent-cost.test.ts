@@ -15,11 +15,13 @@ describe("extractAgentUsageTokens", () => {
   });
 
   it("prefers an explicit total when the provider reports one", () => {
-    expect(extractAgentUsageTokens({
-      prompt_tokens: 100,
-      completion_tokens: 40,
-      total_tokens: 137,
-    })).toBe(137);
+    expect(
+      extractAgentUsageTokens({
+        prompt_tokens: 100,
+        completion_tokens: 40,
+        total_tokens: 137,
+      }),
+    ).toBe(137);
   });
 
   it("reads the Gemini usageMetadata total", () => {

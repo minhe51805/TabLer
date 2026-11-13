@@ -145,7 +145,9 @@ describe("createAgentActionRequestor", () => {
     try {
       askAI
         .mockRejectedValueOnce(
-          new Error('The AI provider "Test" returned HTTP 429 Too Many Requests. It asks to retry after 2 s (retry_after_ms=2000).'),
+          new Error(
+            'The AI provider "Test" returned HTTP 429 Too Many Requests. It asks to retry after 2 s (retry_after_ms=2000).',
+          ),
         )
         .mockResolvedValueOnce('{"action":"finish"}');
       const onRetryWait = vi.fn();

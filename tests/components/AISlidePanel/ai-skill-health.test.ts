@@ -35,9 +35,7 @@ describe("buildSkillHealthReport", () => {
 
     // Enabled cost only counts the enabled skills.
     expect(report.enabledCatalogCostChars).toBe(
-      report.rows
-        .filter((row) => row.enabled)
-        .reduce((sum, row) => sum + row.catalogCostChars, 0),
+      report.rows.filter((row) => row.enabled).reduce((sum, row) => sum + row.catalogCostChars, 0),
     );
   });
 });

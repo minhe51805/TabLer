@@ -134,21 +134,27 @@ pub fn apply_window_profile_to_main(app: &AppHandle, profile: WindowProfile) -> 
 }
 
 #[tauri::command]
-pub fn apply_window_profile(profile: WindowProfile, app: AppHandle) -> Result<(), String> {
-    apply_window_profile_to_main(&app, profile)
+pub fn apply_window_profile(
+    profile: WindowProfile,
+    app: AppHandle,
+) -> Result<(), crate::error::AppError> {
+    apply_window_profile_to_main(&app, profile).map_err(crate::error::AppError::from)
 }
 
 /// Open an http(s) URL in the user's default browser (Help → Report an issue /
 /// Send feedback). The scheme is restricted so the command can never be used
 /// to launch local files or custom protocol handlers.
 #[tauri::command]
-pub fn open_external_url(url: String, app: AppHandle) -> Result<(), String> {
+pub fn open_external_url(url: String, app: AppHandle) -> Result<(), crate::error::AppError> {
     if !url.starts_with("https://") && !url.starts_with("http://") {
-        return Err("Only http(s) URLs can be opened externally".to_string());
+        return Err("Only http(s) URLs can be opened externally"
+            .to_string()
+            .into());
     }
     app.opener()
         .open_url(&url, None::<String>)
         .map_err(|e| format!("Failed to open external URL: {}", e))
+        .map_err(crate::error::AppError::from)
 }
 
 /// Whether closing the main window hides it to the tray instead of quitting.
@@ -161,7 +167,7 @@ pub fn keep_running_in_background() -> bool {
 }
 
 #[tauri::command]
-pub fn set_keep_running_in_background(enabled: bool) -> Result<(), String> {
+pub fn set_keep_running_in_background(enabled: bool) -> Result<(), crate::error::AppError> {
     KEEP_RUNNING_IN_BACKGROUND.store(if enabled { 1 } else { 0 }, Ordering::Relaxed);
     Ok(())
 }

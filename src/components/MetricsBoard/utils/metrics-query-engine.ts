@@ -2,7 +2,7 @@
  * Query runtime: error formatting, timeouts, SQL helpers, metric extraction, execution.
  */
 
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "../../../utils/tauri-invoke";
 import { translateCurrent } from "../../../i18n";
 import type { QueryResult } from "../../../types";
 import {

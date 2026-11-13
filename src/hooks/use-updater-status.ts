@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "../utils/tauri-invoke";
 import { useCallback, useEffect, useState } from "react";
 
 /** Payload returned by the `check_for_update` Tauri command. */

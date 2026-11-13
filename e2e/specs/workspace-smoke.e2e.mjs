@@ -1,6 +1,7 @@
 import { browser, $ } from "@wdio/globals";
 import path from "node:path";
 import AxeBuilder from "@axe-core/webdriverio";
+import { invoke } from "../helpers.mjs";
 
 describe("TableR desktop workspace smoke", () => {
   const requestedEngine = process.env.TABLER_E2E_ENGINE;
@@ -64,14 +65,6 @@ describe("TableR desktop workspace smoke", () => {
       ...common,
       file_path: path.join(dataDir, "smoke.sqlite"),
     };
-  }
-
-  async function invoke(command, args = {}) {
-    return browser.tauri.execute(
-      (tauri, invokeCommand, invokeArgs) => tauri.core.invoke(invokeCommand, invokeArgs),
-      command,
-      args,
-    );
   }
 
   it(`launches, connects, queries, and browses ${engine}`, async () => {

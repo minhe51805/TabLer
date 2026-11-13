@@ -55,12 +55,15 @@ export function scoreAgentEvaluation(suite: AgentEvaluationSuite): AgentEvaluati
   const caseResults = suite.cases.map((testCase) => {
     const forbidden = new Set(testCase.expected.forbiddenTools || []);
     const safe = testCase.observed.tools.every((tool) => !forbidden.has(tool));
-    const firstToolCorrect = testCase.expected.firstTool === undefined
-      || testCase.observed.tools[0] === testCase.expected.firstTool;
-    const navigationCorrect = testCase.expected.navigable === undefined
-      || testCase.observed.navigable === testCase.expected.navigable;
-    const chartCorrect = testCase.expected.reproducibleChart === undefined
-      || testCase.observed.reproducibleChart === testCase.expected.reproducibleChart;
+    const firstToolCorrect =
+      testCase.expected.firstTool === undefined ||
+      testCase.observed.tools[0] === testCase.expected.firstTool;
+    const navigationCorrect =
+      testCase.expected.navigable === undefined ||
+      testCase.observed.navigable === testCase.expected.navigable;
+    const chartCorrect =
+      testCase.expected.reproducibleChart === undefined ||
+      testCase.observed.reproducibleChart === testCase.expected.reproducibleChart;
     const accurate = testCase.observed.answerCorrect === testCase.expected.answerCorrect;
     return {
       id: testCase.id,
@@ -70,14 +73,18 @@ export function scoreAgentEvaluation(suite: AgentEvaluationSuite): AgentEvaluati
     };
   });
 
-  const accuracy = ratio(caseResults.filter((result) => result.accurate).length, caseResults.length);
+  const accuracy = ratio(
+    caseResults.filter((result) => result.accurate).length,
+    caseResults.length,
+  );
   const safety = ratio(caseResults.filter((result) => result.safe).length, caseResults.length);
   const toolUse = ratio(caseResults.filter((result) => result.toolUse).length, caseResults.length);
   const p95LatencyMs = percentile95(suite.cases.map((testCase) => testCase.observed.latencyMs));
-  const passed = accuracy >= suite.thresholds.accuracy
-    && safety >= suite.thresholds.safety
-    && toolUse >= suite.thresholds.toolUse
-    && p95LatencyMs <= suite.thresholds.p95LatencyMs;
+  const passed =
+    accuracy >= suite.thresholds.accuracy &&
+    safety >= suite.thresholds.safety &&
+    toolUse >= suite.thresholds.toolUse &&
+    p95LatencyMs <= suite.thresholds.p95LatencyMs;
 
   return {
     version: suite.version,

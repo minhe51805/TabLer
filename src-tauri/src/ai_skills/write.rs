@@ -47,7 +47,7 @@ fn validate_skill_name(name: &str) -> Result<String, String> {
 /// Absolute path of the global skills directory, created if missing. Used by the
 /// manager UI to reveal the folder in the OS file browser.
 #[tauri::command]
-pub fn ai_skills_directory() -> Result<String, String> {
+pub fn ai_skills_directory() -> Result<String, crate::error::AppError> {
     let data_dir = resolve_data_dir().map_err(|error| error.to_string())?;
     let skills_dir = data_dir.join("skills");
     std::fs::create_dir_all(&skills_dir).map_err(|error| error.to_string())?;
@@ -114,7 +114,7 @@ pub fn create_ai_skill(
     name: String,
     description: Option<String>,
     body: Option<String>,
-) -> Result<String, String> {
+) -> Result<String, crate::error::AppError> {
     let data_dir = resolve_data_dir().map_err(|error| error.to_string())?;
     let skill_dir = create_skill_in_root(
         &data_dir.join("skills"),
@@ -323,7 +323,7 @@ pub fn update_ai_skill(
     model: Option<String>,
     effort: Option<String>,
     expected_updated_at: Option<i64>,
-) -> Result<String, String> {
+) -> Result<String, crate::error::AppError> {
     let data_dir = resolve_data_dir().map_err(|error| error.to_string())?;
     let skill_dir = update_skill_in_root(
         &data_dir.join("skills"),
@@ -349,7 +349,7 @@ pub fn update_ai_skill(
 /// of scope — they are files inside the user's own repository, and the app
 /// must not delete project files it did not author.
 #[tauri::command]
-pub fn delete_ai_skill(name: String) -> Result<(), String> {
+pub fn delete_ai_skill(name: String) -> Result<(), crate::error::AppError> {
     let name = validate_skill_name(&name)?;
     let data_dir = resolve_data_dir().map_err(|error| error.to_string())?;
     let skills_root = data_dir.join("skills");
@@ -357,10 +357,12 @@ pub fn delete_ai_skill(name: String) -> Result<(), String> {
     let (Ok(canonical_root), Ok(canonical_dir)) =
         (skills_root.canonicalize(), skill_dir.canonicalize())
     else {
-        return Err(format!("Skill '{name}' was not found."));
+        return Err(format!("Skill '{name}' was not found.").into());
     };
     if !canonical_dir.starts_with(&canonical_root) {
-        return Err(format!("Skill '{name}' was not found."));
+        return Err(format!("Skill '{name}' was not found.").into());
     }
-    std::fs::remove_dir_all(&canonical_dir).map_err(|error| error.to_string())
+    std::fs::remove_dir_all(&canonical_dir)
+        .map_err(|error| error.to_string())
+        .map_err(crate::error::AppError::from)
 }

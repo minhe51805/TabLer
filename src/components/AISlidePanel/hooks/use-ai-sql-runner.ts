@@ -1,5 +1,6 @@
 import { useCallback, useState } from "react";
 import { useConnectionStore } from "../../../stores/connectionStore";
+import { SANDBOX_AGENT_MAX_ROWS } from "../../../stores/queryStore";
 import type { QueryResult } from "../../../types";
 import { splitSqlStatements } from "../../../utils/sqlStatements";
 import { emitAppToast } from "../../../utils/app-toast";
@@ -54,7 +55,7 @@ interface UseAISqlRunnerOptions {
     connectionId: string,
     statements: string[],
     requireReadOnly?: boolean,
-    options?: { userInitiated?: boolean; preApproved?: boolean },
+    options?: { userInitiated?: boolean; preApproved?: boolean; maxRows?: number },
   ) => Promise<QueryResult>;
   setError: (message: string | null) => void;
   switchDatabase: (connectionId: string, database: string) => Promise<void>;
@@ -235,6 +236,7 @@ export function useAISqlRunner({
 
         const queryResult = await executeSandboxQuery(connectionId, statements, undefined, {
           preApproved,
+          maxRows: SANDBOX_AGENT_MAX_ROWS,
         });
         if (hasMutatingStatements) {
           const invalidateStructure = statements.some((statement) => {

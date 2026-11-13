@@ -2,6 +2,7 @@ use std::path::PathBuf;
 
 use crate::utils::paths::resolve_data_dir;
 
+use super::lint::lint_skill_text;
 use super::parse::{
     dir_display_name, list_skill_resource_files, parse_skill_md, skill_md_path,
     skill_md_updated_at, validate_resource_rel,
@@ -33,6 +34,9 @@ pub(crate) fn skill_roots(workspace_dir: Option<&str>) -> Vec<(PathBuf, String)>
 pub fn discover_ai_skills_in_roots(roots: &[(PathBuf, String)]) -> AISkillListReport {
     let mut summaries: Vec<AISkillSummary> = Vec::new();
     let mut errors: Vec<AISkillLoadError> = Vec::new();
+    // Names paired with their SKILL.md paths so truncation can name exactly
+    // which entries were hidden instead of reporting an anonymous overflow.
+    let mut catalog_paths: Vec<(String, String)> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     for (root, source) in roots {
         let entries = match std::fs::read_dir(root) {
@@ -115,7 +119,31 @@ pub fn discover_ai_skills_in_roots(roots: &[(PathBuf, String)]) -> AISkillListRe
             if seen.contains(&parsed_name) {
                 continue;
             }
+            // Safety lint: the body is injected into the agent context verbatim,
+            // so EVERY discovered skill — built-in, workspace shadow, or user
+            // authored — is screened for instruction overrides, shell requests
+            // and secret exfiltration before it can reach the catalog. The
+            // former name-based exemption for built-ins was a bypass: a
+            // workspace skill shadowing a built-in name skipped the lint
+            // entirely. The shipped pack stays clean by construction via the
+            // `every_builtin_body_passes_the_safety_lint` seed test; see
+            // `lint::lint_skill_text` for the declared limitations.
+            let findings = lint_skill_text(&raw);
+            if !findings.is_empty() {
+                log::warn!(
+                    "ai_skills: '{}' ({}) blocked by the safety lint: {} finding(s)",
+                    parsed_name,
+                    source,
+                    findings.len()
+                );
+                errors.push(AISkillLoadError {
+                    path: file_path.display().to_string(),
+                    reason: format!("Blocked by the skill safety lint: {}", findings.join("; ")),
+                });
+                continue;
+            }
             seen.insert(parsed_name.clone());
+            catalog_paths.push((parsed_name.clone(), file_path.display().to_string()));
             summaries.push(AISkillSummary {
                 name: parsed_name,
                 description: meta.description.clone().unwrap_or_default(),
@@ -131,7 +159,23 @@ pub fn discover_ai_skills_in_roots(roots: &[(PathBuf, String)]) -> AISkillListRe
             summaries.len(),
             MAX_SKILLS_PER_CATALOG
         );
-        summaries.truncate(MAX_SKILLS_PER_CATALOG);
+        // Silent truncation is how a skill disappears without anyone noticing:
+        // every hidden entry surfaces as a load error so the manager lists
+        // exactly which skills beyond the cap were dropped.
+        for hidden in summaries.split_off(MAX_SKILLS_PER_CATALOG) {
+            let path = catalog_paths
+                .iter()
+                .find(|(name, _)| *name == hidden.name)
+                .map(|(_, path)| path.clone())
+                .unwrap_or_else(|| hidden.name.clone());
+            errors.push(AISkillLoadError {
+                path,
+                reason: format!(
+                    "Hidden by the catalog cap of {} skills — prune or disable unused skills so every skill stays visible.",
+                    MAX_SKILLS_PER_CATALOG
+                ),
+            });
+        }
     }
     AISkillListReport {
         skills: summaries,
@@ -235,7 +279,9 @@ pub fn read_skill_in_roots(
 /// the agent's `<available_skills>` block, plus every SKILL.md that failed to
 /// load so the manager can surface it instead of dropping it silently.
 #[tauri::command]
-pub fn list_ai_skills(workspace_dir: Option<String>) -> Result<AISkillListReport, String> {
+pub fn list_ai_skills(
+    workspace_dir: Option<String>,
+) -> Result<AISkillListReport, crate::error::AppError> {
     Ok(discover_ai_skills(workspace_dir.as_deref()))
 }
 
@@ -245,8 +291,8 @@ pub fn list_ai_skills(workspace_dir: Option<String>) -> Result<AISkillListReport
 pub fn read_ai_skill(
     workspace_dir: Option<String>,
     name: String,
-) -> Result<AISkillContent, String> {
-    read_ai_skill_by_name(workspace_dir.as_deref(), &name)
+) -> Result<AISkillContent, crate::error::AppError> {
+    read_ai_skill_by_name(workspace_dir.as_deref(), &name).map_err(crate::error::AppError::from)
 }
 
 /// Resolve one bundled resource file (references/, scripts/) of a skill across
@@ -324,6 +370,7 @@ pub fn read_ai_skill_resource(
     workspace_dir: Option<String>,
     name: String,
     resource: String,
-) -> Result<AISkillResource, String> {
+) -> Result<AISkillResource, crate::error::AppError> {
     read_skill_resource_in_roots(&skill_roots(workspace_dir.as_deref()), &name, &resource)
+        .map_err(crate::error::AppError::from)
 }

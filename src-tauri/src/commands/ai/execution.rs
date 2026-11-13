@@ -1,52 +1,38 @@
 use crate::database::ai_models::{
     AIProviderConfig, AIProviderType, AIRequest, AIRequestMode, AIResponse,
 };
+use crate::error::{AppError, ErrorCode};
 use crate::storage::ai_storage::AIStorage;
 use crate::utils::rate_limiter::AIRequestLimiter;
 use futures_util::StreamExt;
 use tauri::AppHandle;
-use tokio::time::{sleep, Duration};
 use tokio_util::sync::CancellationToken;
 
 use super::endpoints::{
-    is_nvidia_integrate_endpoint, provider_requires_api_key, resolve_models_list_endpoint,
-    resolve_provider_endpoint, should_retry_openai_like_status, validate_ai_endpoint,
+    provider_requires_api_key, resolve_models_list_endpoint, validate_ai_endpoint,
 };
 use super::errors::{
-    ai_provider_api_error, ai_provider_config_error, ai_provider_http_status_error,
-    ai_provider_non_json_response_error, ai_provider_request_error, ai_provider_response_error,
-    ai_provider_response_error_with_preview, response_retry_after_seconds, tag_ai_error_kind,
-    AiErrorKind,
+    ai_cancelled_error, ai_provider_api_error, ai_provider_config_error,
+    ai_provider_http_status_error, ai_provider_non_json_response_error, ai_provider_request_error,
+    ai_provider_response_error, ai_provider_response_error_with_preview,
+    response_retry_after_seconds,
 };
-use super::extraction::{
-    extract_anthropic_reasoning, extract_anthropic_response_text, extract_gemini_reasoning,
-    extract_gemini_response_text, extract_openai_like_reasoning, extract_openai_like_response_text,
-    extract_tool_call_as_action_json, publish_stream_payload, split_think_block,
-    ToolCallStreamState,
-};
-use super::prompt::build_ai_prompt;
+use super::extraction::{extract_provider_response, StreamResponseAccumulator};
 use super::providers::{
-    apply_attachments, apply_conversation_history, apply_native_tools,
-    build_provider_request_body_with_thinking, effective_wire_provider,
-    is_thinking_param_rejection, mark_model_thinking_unsupported, model_thinking_unsupported,
-    parse_models_list_response, resolve_provider_body_shape, streaming_endpoint,
-    streaming_request_body_with_thinking,
+    build_provider_http_request, effective_wire_provider, is_thinking_param_rejection,
+    mark_model_thinking_unsupported, model_thinking_unsupported, parse_models_list_response,
+    prepare_provider_wire_request, PreparedProviderWireRequest,
 };
-use super::{
-    ai_http_client, emit_ai_stream_event, run_blocking_storage_task, FetchedModel,
-    AI_REQUEST_CANCELLED_ERROR, MAX_AI_STREAM_OUTPUT_BYTES,
-};
+use super::{ai_http_client, emit_ai_stream_event, run_blocking_storage_task, FetchedModel};
 
-/// Calls a provider's "list models" API and returns the model IDs it exposes,
-/// powering the "Fetch models" button in AI settings so users don't have to
-/// type each model by hand. Auth mirrors the chat path (Anthropic `x-api-key`,
-/// Gemini `x-goog-api-key`, everything else Bearer).
 pub(crate) async fn fetch_provider_models(
     config: &AIProviderConfig,
     api_key: Option<&str>,
-) -> Result<Vec<FetchedModel>, String> {
-    let (endpoint, shape) = resolve_models_list_endpoint(config)?;
-    validate_ai_endpoint(config, &endpoint)?;
+) -> Result<Vec<FetchedModel>, AppError> {
+    let (endpoint, shape) = resolve_models_list_endpoint(config)
+        .map_err(|msg| AppError::structured(ErrorCode::ValidationError, msg, false))?;
+    validate_ai_endpoint(config, &endpoint)
+        .map_err(|msg| AppError::structured(ErrorCode::ValidationError, msg, false))?;
 
     let mut request_builder = ai_http_client().get(&endpoint);
     match effective_wire_provider(config, &endpoint) {
@@ -92,11 +78,201 @@ pub(crate) async fn fetch_provider_models(
         .map_err(|_| ai_provider_response_error())?;
     let models = parse_models_list_response(shape, &resp_json);
     if models.is_empty() {
-        return Err(
-            "The provider responded, but no models were found. Add model IDs manually.".to_string(),
-        );
+        return Err(AppError::structured(
+            ErrorCode::ValidationError,
+            "The provider responded, but no models were found. Add model IDs manually.",
+            false,
+        ));
     }
     Ok(models)
+}
+
+async fn resolve_request_provider_config_and_key(
+    request: &AIRequest,
+    storage: &AIStorage,
+) -> Result<(AIProviderConfig, Option<String>), AppError> {
+    let storage = storage.clone();
+    let override_provider_id = request.provider_id.clone();
+    let (mut config, api_key) = run_blocking_storage_task(move || {
+        let config = match override_provider_id.as_deref() {
+            Some(provider_id) if !provider_id.trim().is_empty() => storage
+                .get_enabled_provider_config_by_id(provider_id.trim())
+                .map_err(|_| ai_provider_config_error())?,
+            _ => storage
+                .get_active_provider_config()
+                .map_err(|_| ai_provider_config_error())?,
+        };
+        let api_key = if provider_requires_api_key(&config.provider_type) {
+            Some(
+                storage
+                    .get_api_key(&config.id)
+                    .map_err(|_| ai_provider_config_error())?,
+            )
+        } else {
+            storage
+                .get_api_key_optional(&config.id)
+                .map_err(|_| ai_provider_config_error())?
+        };
+        Ok((config, api_key))
+    })
+    .await?;
+
+    if let Some(model_override) = request.model.as_deref() {
+        let trimmed = model_override.trim();
+        if !trimmed.is_empty() {
+            config.model = trimmed.to_string();
+        }
+    }
+
+    if !config.is_enabled {
+        return Err(AppError::structured(
+            ErrorCode::ValidationError,
+            "Selected AI provider is disabled.",
+            false,
+        ));
+    }
+    if request.mode == AIRequestMode::Inline && !config.allow_inline_completion {
+        return Err(AppError::structured(
+            ErrorCode::ValidationError,
+            "Inline AI completion is disabled for this provider.",
+            false,
+        ));
+    }
+
+    Ok((config, api_key))
+}
+
+/// Dispatches an AI HTTP POST once, with a 1x thinking-parameter 400 self-heal
+/// shared uniformly across every provider and across both streaming and blocking
+/// execution. Transient HTTP retries are intentionally NOT repeated here — the
+/// frontend transport coordinator owns bounded retry and failover in one place.
+async fn send_with_thinking_self_heal(
+    config: &AIProviderConfig,
+    request: &AIRequest,
+    api_key: Option<&str>,
+    streaming: bool,
+    cancellation_token: &CancellationToken,
+) -> Result<(reqwest::Response, PreparedProviderWireRequest), AppError> {
+    let client = ai_http_client();
+    let mut prepared = prepare_provider_wire_request(config, request, streaming, None)?;
+
+    for attempt in 0..2 {
+        let http_req = build_provider_http_request(client, config, &prepared, api_key);
+        let response = tokio::select! {
+            _ = cancellation_token.cancelled() => return Err(ai_cancelled_error()),
+            res = http_req.send() => res
+                .map_err(|error| ai_provider_request_error(config, &prepared.endpoint, &error))?,
+        };
+
+        let status = response.status();
+        if status.is_success() {
+            return Ok((response, prepared));
+        }
+
+        let retry_after = response_retry_after_seconds(&response);
+        let raw_body = tokio::select! {
+            _ = cancellation_token.cancelled() => return Err(ai_cancelled_error()),
+            text = response.text() => text.map_err(|_| ai_provider_response_error())?,
+        };
+
+        if attempt == 0
+            && status.as_u16() == 400
+            && !model_thinking_unsupported(&config.model)
+            && is_thinking_param_rejection(&raw_body)
+        {
+            mark_model_thinking_unsupported(&config.model);
+            prepared = prepare_provider_wire_request(config, request, streaming, Some(false))?;
+            continue;
+        }
+
+        return Err(ai_provider_http_status_error(
+            config,
+            &prepared.endpoint,
+            status,
+            &raw_body,
+            api_key,
+            retry_after,
+        ));
+    }
+
+    Err(ai_provider_response_error())
+}
+
+fn extract_inline_error_message(payload: &serde_json::Value) -> Option<String> {
+    let err = payload.get("error")?;
+    if err.is_null() {
+        return None;
+    }
+    if let Some(msg) = err.get("message").and_then(|v| v.as_str()) {
+        Some(msg.to_string())
+    } else if let Some(msg) = err.as_str() {
+        Some(msg.to_string())
+    } else {
+        Some(err.to_string())
+    }
+}
+
+fn process_sse_line<F>(
+    raw_line: &str,
+    wire_provider: &AIProviderType,
+    api_key: Option<&str>,
+    accumulator: &mut StreamResponseAccumulator,
+    emit: &mut F,
+) -> Result<(), AppError>
+where
+    F: FnMut(&'static str, Option<String>, Option<serde_json::Value>) -> Result<(), String>,
+{
+    let trimmed = raw_line.trim();
+    if trimmed.is_empty()
+        || trimmed.starts_with(':')
+        || trimmed.starts_with("event:")
+        || trimmed.starts_with("id:")
+        || trimmed.starts_with("retry:")
+    {
+        return Ok(());
+    }
+    let has_data_prefix = trimmed.starts_with("data:");
+    let line = if has_data_prefix {
+        trimmed.trim_start_matches("data:").trim()
+    } else {
+        trimmed
+    };
+    if line.is_empty() || line == "[DONE]" {
+        return Ok(());
+    }
+    match serde_json::from_str::<serde_json::Value>(line) {
+        Ok(payload) => {
+            if let Some(err_msg) = extract_inline_error_message(&payload) {
+                return Err(ai_provider_api_error(&err_msg, api_key));
+            }
+            accumulator
+                .push_frame_with_sink(wire_provider, &payload, emit)
+                .map_err(|msg| AppError::ai(ErrorCode::AiInvalidResponse, msg, false, None))?;
+            Ok(())
+        }
+        Err(err) => {
+            if line.starts_with('{') || line.starts_with('[') {
+                log::warn!(
+                    "Malformed JSON frame in AI stream (bytes={}): {}",
+                    line.len(),
+                    err
+                );
+                return Err(AppError::ai(
+                    ErrorCode::AiInvalidResponse,
+                    format!("AI stream returned malformed JSON frame: {err}"),
+                    true,
+                    None,
+                ));
+            }
+            log::warn!(
+                "Ignoring non-JSON SSE line in AI stream (has_data_prefix={}, bytes={}): {}",
+                has_data_prefix,
+                line.len(),
+                err
+            );
+            Ok(())
+        }
+    }
 }
 
 pub(crate) async fn execute_ai_stream_request(
@@ -106,750 +282,178 @@ pub(crate) async fn execute_ai_stream_request(
     storage: &AIStorage,
     ai_rate_limiter: &AIRequestLimiter,
     cancellation_token: CancellationToken,
-) -> Result<(), String> {
-    let storage = storage.clone();
-    let override_provider_id = request.provider_id.clone();
-    let (config, api_key) = run_blocking_storage_task(move || {
-        let config = match override_provider_id.as_deref() {
-            Some(provider_id) if !provider_id.trim().is_empty() => storage
-                .get_enabled_provider_config_by_id(provider_id.trim())
-                .map_err(|_| ai_provider_config_error())?,
-            _ => storage
-                .get_active_provider_config()
-                .map_err(|_| ai_provider_config_error())?,
-        };
-        let api_key = if provider_requires_api_key(&config.provider_type) {
-            Some(
-                storage
-                    .get_api_key(&config.id)
-                    .map_err(|_| ai_provider_config_error())?,
-            )
-        } else {
-            storage
-                .get_api_key_optional(&config.id)
-                .map_err(|_| ai_provider_config_error())?
-        };
-        Ok((config, api_key))
-    })
-    .await?;
-    let mut config = config;
-    // Per-request model override (the failover chain's model tier); a blank
-    // override keeps the provider's configured model untouched.
-    if let Some(model_override) = request.model.as_deref() {
-        let trimmed = model_override.trim();
-        if !trimmed.is_empty() {
-            config.model = trimmed.to_string();
-        }
-    }
+) -> Result<AIResponse, AppError> {
+    execute_ai_stream_request_with_sink(
+        request,
+        storage,
+        ai_rate_limiter,
+        cancellation_token,
+        crate::config::AI_STREAM_CHUNK_IDLE_TIMEOUT,
+        |kind, text, usage| emit_ai_stream_event(app, request_id, kind, text, usage),
+    )
+    .await
+}
+
+pub(crate) async fn execute_ai_stream_request_with_sink<F>(
+    request: AIRequest,
+    storage: &AIStorage,
+    ai_rate_limiter: &AIRequestLimiter,
+    cancellation_token: CancellationToken,
+    chunk_idle_timeout: std::time::Duration,
+    mut on_event: F,
+) -> Result<AIResponse, AppError>
+where
+    F: FnMut(&'static str, Option<String>, Option<serde_json::Value>) -> Result<(), String>,
+{
+    request.validate().map_err(|e| {
+        AppError::structured(
+            ErrorCode::ValidationError,
+            format!("Invalid request: {e}"),
+            false,
+        )
+    })?;
+
+    let (config, api_key) = resolve_request_provider_config_and_key(&request, storage).await?;
 
     ai_rate_limiter
         .check(&format!("{}:{:?}:stream", config.id, request.mode))
-        .await?;
-    if !config.is_enabled {
-        return Err("Selected AI provider is disabled.".to_string());
-    }
+        .await
+        .map_err(AppError::rate_limited_raw)?;
 
-    let effective_context = if config.allow_schema_context {
-        request.context.trim()
-    } else {
-        ""
-    };
-    let (system_prompt, prompt) = build_ai_prompt(
-        &request.mode,
-        &request.intent,
-        &request.language,
-        effective_context,
-        &request.history,
-        &request.prompt,
-    );
-    let base_endpoint = resolve_provider_endpoint(&config);
-    validate_ai_endpoint(&config, &base_endpoint)?;
-    let wire_provider = effective_wire_provider(&config, &base_endpoint);
-    let endpoint = streaming_endpoint(&config, &base_endpoint);
-    let mut body = streaming_request_body_with_thinking(
+    let (response, prepared) = send_with_thinking_self_heal(
         &config,
-        &base_endpoint,
-        &system_prompt,
-        &prompt,
-        &request.mode,
-        request.enable_thinking,
-    );
-    // Native function-calling rides the stream too: the frontend opts in via
-    // `NATIVE_TOOL_CALLING_ENABLED`, so tool definitions must be injected here
-    // exactly like the non-streaming path or the model answers with plain text.
-    apply_native_tools(
-        &mut body,
-        &wire_provider,
-        request.tools.as_ref(),
-        request.tool_choice.as_ref(),
-    );
-    apply_conversation_history(
-        &mut body,
-        resolve_provider_body_shape(&config, &base_endpoint),
-        &request.history,
-    );
-    apply_attachments(
-        &mut body,
-        resolve_provider_body_shape(&config, &base_endpoint),
-        &prompt,
-        &request.attachments,
-    );
-    let mut request_builder = ai_http_client().post(&endpoint);
-    match wire_provider {
-        AIProviderType::Anthropic => {
-            request_builder = request_builder
-                .header("x-api-key", api_key.as_deref().unwrap_or_default())
-                .header("anthropic-version", crate::config::ANTHROPIC_API_VERSION);
-        }
-        AIProviderType::Gemini => {
-            request_builder =
-                request_builder.header("x-goog-api-key", api_key.as_deref().unwrap_or_default());
-        }
-        _ => {
-            if let Some(api_key) = api_key.as_deref() {
-                request_builder = request_builder.bearer_auth(api_key);
-            }
-        }
-    }
+        &request,
+        api_key.as_deref(),
+        true,
+        &cancellation_token,
+    )
+    .await?;
 
-    let response = tokio::select! {
-        _ = cancellation_token.cancelled() => return Err(tag_ai_error_kind(
-            AI_REQUEST_CANCELLED_ERROR.to_string(),
-            AiErrorKind::Cancelled,
-        )),
-        response = request_builder.json(&body).send() => response
-            .map_err(|error| ai_provider_request_error(&config, &endpoint, &error))?,
+    let provider_label = if config.name.trim().is_empty() {
+        format!("{:?}", config.provider_type)
+    } else {
+        config.name.trim().to_string()
     };
-    let status = response.status();
-    let retry_after = response_retry_after_seconds(&response);
-    if !status.is_success() {
-        let raw_body = response
-            .text()
-            .await
-            .map_err(|_| ai_provider_response_error())?;
-        return Err(ai_provider_http_status_error(
-            &config,
-            &endpoint,
-            status,
-            &raw_body,
-            api_key.as_deref(),
-            retry_after,
-        ));
-    }
 
     let mut stream = response.bytes_stream();
     let mut buffer = Vec::<u8>::new();
-    let mut pending_text = String::new();
-    let mut visible_started = false;
-    let mut output_bytes = 0usize;
-    // Re-wraps streamed native tool-call fragments into the action-JSON text
-    // contract so the frontend agent loop parses the stream unchanged.
-    let mut tool_call_state = ToolCallStreamState::default();
+    let mut accumulator = StreamResponseAccumulator::default();
 
     loop {
         let next = tokio::select! {
-            _ = cancellation_token.cancelled() => return Err(tag_ai_error_kind(
-                AI_REQUEST_CANCELLED_ERROR.to_string(),
-                AiErrorKind::Cancelled,
-            )),
+            _ = cancellation_token.cancelled() => return Err(ai_cancelled_error()),
+            _ = tokio::time::sleep(chunk_idle_timeout) => {
+                return Err(AppError::ai(
+                    ErrorCode::AiTimeout,
+                    format!(
+                        "The AI stream from \"{provider_label}\" stalled for over {} seconds without sending data.",
+                        chunk_idle_timeout.as_secs()
+                    ),
+                    true,
+                    None,
+                ));
+            }
             next = stream.next() => next,
         };
         let Some(chunk) = next else { break };
         let chunk = chunk.map_err(|_| ai_provider_response_error())?;
         buffer.extend_from_slice(&chunk);
         if buffer.len() > super::MAX_AI_STREAM_BUFFER_BYTES {
-            return Err("AI stream frame exceeded the 1 MB buffer limit.".to_string());
+            return Err(AppError::ai(
+                ErrorCode::AiInvalidResponse,
+                "AI stream frame exceeded the 1 MB buffer limit.",
+                false,
+                None,
+            ));
         }
 
         while let Some(newline) = buffer.iter().position(|byte| *byte == 10) {
-            let line = buffer.drain(..=newline).collect::<Vec<_>>();
-            let line = String::from_utf8_lossy(&line);
-            let line = line.trim().trim_start_matches("data:").trim();
-            if line.is_empty() || line == "[DONE]" || line.starts_with("event:") {
-                continue;
-            }
-            if let Ok(payload) = serde_json::from_str::<serde_json::Value>(line) {
-                // Streamed native tool calls arrive as name + argument JSON
-                // fragments; re-wrap them into the action-JSON text contract so
-                // the frontend agent loop parses the stream unchanged. These
-                // fragments bypass `take_visible_stream_delta` on purpose —
-                // they are protocol JSON, not prose, and the `<think>` filter
-                // would corrupt them.
-                for fragment in tool_call_state.push_payload(&wire_provider, &payload) {
-                    output_bytes = output_bytes.saturating_add(fragment.len());
-                    if output_bytes > MAX_AI_STREAM_OUTPUT_BYTES {
-                        return Err("AI stream exceeded the 2 MB output limit.".to_string());
-                    }
-                    emit_ai_stream_event(app, request_id, "text_delta", Some(fragment), None)?;
-                }
-                publish_stream_payload(
-                    app,
-                    request_id,
-                    &wire_provider,
-                    &payload,
-                    &mut pending_text,
-                    &mut visible_started,
-                    &mut output_bytes,
-                )?;
-            }
+            let line_bytes = buffer.drain(..=newline).collect::<Vec<_>>();
+            let line = String::from_utf8_lossy(&line_bytes);
+            process_sse_line(
+                &line,
+                &prepared.wire_provider,
+                api_key.as_deref(),
+                &mut accumulator,
+                &mut on_event,
+            )?;
         }
     }
 
     if !buffer.is_empty() {
         let line = String::from_utf8_lossy(&buffer);
-        let line = line.trim().trim_start_matches("data:").trim();
-        if let Ok(payload) = serde_json::from_str::<serde_json::Value>(line) {
-            for fragment in tool_call_state.push_payload(&wire_provider, &payload) {
-                output_bytes = output_bytes.saturating_add(fragment.len());
-                if output_bytes > MAX_AI_STREAM_OUTPUT_BYTES {
-                    return Err("AI stream exceeded the 2 MB output limit.".to_string());
-                }
-                emit_ai_stream_event(app, request_id, "text_delta", Some(fragment), None)?;
-            }
-            publish_stream_payload(
-                app,
-                request_id,
-                &wire_provider,
-                &payload,
-                &mut pending_text,
-                &mut visible_started,
-                &mut output_bytes,
-            )?;
-        }
+        process_sse_line(
+            &line,
+            &prepared.wire_provider,
+            api_key.as_deref(),
+            &mut accumulator,
+            &mut on_event,
+        )?;
     }
-    Ok(())
+
+    Ok(accumulator.into_response(prepared.used_canonical_tools))
 }
 
 pub(crate) async fn execute_ai_request(
     request: AIRequest,
     storage: &AIStorage,
     ai_rate_limiter: &AIRequestLimiter,
-) -> Result<AIResponse, String> {
-    request
-        .validate()
-        .map_err(|e| format!("Invalid request: {}", e))?;
+    cancellation_token: CancellationToken,
+) -> Result<AIResponse, AppError> {
+    request.validate().map_err(|e| {
+        AppError::structured(
+            ErrorCode::ValidationError,
+            format!("Invalid request: {e}"),
+            false,
+        )
+    })?;
 
-    let client = ai_http_client();
-    let storage = storage.clone();
-    let override_provider_id = request.provider_id.clone();
-    let (config, api_key) = run_blocking_storage_task(move || {
-        let config = match override_provider_id.as_deref() {
-            Some(provider_id) if !provider_id.trim().is_empty() => storage
-                .get_enabled_provider_config_by_id(provider_id.trim())
-                .map_err(|_| ai_provider_config_error())?,
-            _ => storage
-                .get_active_provider_config()
-                .map_err(|_| ai_provider_config_error())?,
-        };
-        let api_key = if provider_requires_api_key(&config.provider_type) {
-            Some(
-                storage
-                    .get_api_key(&config.id)
-                    .map_err(|_| ai_provider_config_error())?,
-            )
-        } else {
-            storage
-                .get_api_key_optional(&config.id)
-                .map_err(|_| ai_provider_config_error())?
-        };
-
-        Ok((config, api_key))
-    })
-    .await?;
-    let mut config = config;
-    // Per-request model override (the failover chain's model tier); a blank
-    // override keeps the provider's configured model untouched.
-    if let Some(model_override) = request.model.as_deref() {
-        let trimmed = model_override.trim();
-        if !trimmed.is_empty() {
-            config.model = trimmed.to_string();
-        }
-    }
+    let (config, api_key) = resolve_request_provider_config_and_key(&request, storage).await?;
 
     ai_rate_limiter
         .check(&format!("{}:{:?}", config.id, request.mode))
-        .await?;
+        .await
+        .map_err(AppError::rate_limited_raw)?;
 
-    if !config.is_enabled {
-        return Err("Selected AI provider is disabled.".to_string());
-    }
-    if request.mode == AIRequestMode::Inline && !config.allow_inline_completion {
-        return Err("Inline AI completion is disabled for this provider.".to_string());
-    }
+    let (response, prepared) = send_with_thinking_self_heal(
+        &config,
+        &request,
+        api_key.as_deref(),
+        false,
+        &cancellation_token,
+    )
+    .await?;
 
-    let effective_context = if config.allow_schema_context {
-        request.context.trim()
-    } else {
-        ""
+    let raw_body = tokio::select! {
+        _ = cancellation_token.cancelled() => return Err(ai_cancelled_error()),
+        text = response.text() => text.map_err(|_| ai_provider_response_error())?,
     };
-    let (system_prompt, prompt) = build_ai_prompt(
-        &request.mode,
-        &request.intent,
-        &request.language,
-        effective_context,
-        &request.history,
-        &request.prompt,
-    );
 
-    match config.provider_type {
-        AIProviderType::OpenAI
-        | AIProviderType::OpenRouter
-        | AIProviderType::Ollama
-        | AIProviderType::Custom => {
-            let endpoint = resolve_provider_endpoint(&config);
-            validate_ai_endpoint(&config, &endpoint)?;
-            let wire_provider = effective_wire_provider(&config, &endpoint);
-            let mut body = build_provider_request_body_with_thinking(
-                &config,
-                &endpoint,
-                &system_prompt,
-                &prompt,
-                &request.mode,
-                request.enable_thinking,
-            );
-            apply_native_tools(
-                &mut body,
-                &wire_provider,
-                request.tools.as_ref(),
-                request.tool_choice.as_ref(),
-            );
-            apply_conversation_history(
-                &mut body,
-                resolve_provider_body_shape(&config, &endpoint),
-                &request.history,
-            );
-            apply_attachments(
-                &mut body,
-                resolve_provider_body_shape(&config, &endpoint),
-                &prompt,
-                &request.attachments,
-            );
-            let max_attempts = if is_nvidia_integrate_endpoint(&endpoint) {
-                3
-            } else {
-                2
-            };
+    let resp_json: serde_json::Value = serde_json::from_str(&raw_body).map_err(|_| {
+        ai_provider_non_json_response_error(
+            &config,
+            &prepared.endpoint,
+            &raw_body,
+            api_key.as_deref(),
+        )
+    })?;
 
-            for attempt in 0..max_attempts {
-                let mut req = client.post(&endpoint);
-                if matches!(wire_provider, AIProviderType::Anthropic) {
-                    req = req
-                        .header("x-api-key", api_key.as_deref().unwrap_or_default())
-                        .header("anthropic-version", crate::config::ANTHROPIC_API_VERSION)
-                        .header(
-                            "anthropic-beta",
-                            crate::config::ANTHROPIC_CONTEXT_MANAGEMENT_BETA,
-                        );
-                } else if let Some(ref api_key) = api_key {
-                    req = req.bearer_auth(api_key);
-                }
-
-                let response = req
-                    .json(&body)
-                    .send()
-                    .await
-                    .map_err(|error| ai_provider_request_error(&config, &endpoint, &error))?;
-
-                let status = response.status();
-                let retry_after = response_retry_after_seconds(&response);
-                let raw_body = response
-                    .text()
-                    .await
-                    .map_err(|_| ai_provider_response_error())?;
-
-                if !status.is_success() {
-                    // D2 self-heal: if the provider rejected the extended-thinking
-                    // parameter with a 400, record that this model won't accept it
-                    // and rebuild the body without thinking for one clean retry.
-                    // The mark also spares every later turn / send path from
-                    // re-sending a parameter the model doesn't understand.
-                    if status.as_u16() == 400
-                        && !model_thinking_unsupported(&config.model)
-                        && is_thinking_param_rejection(&raw_body)
-                        && attempt + 1 < max_attempts
-                    {
-                        mark_model_thinking_unsupported(&config.model);
-                        body = build_provider_request_body_with_thinking(
-                            &config,
-                            &endpoint,
-                            &system_prompt,
-                            &prompt,
-                            &request.mode,
-                            Some(false),
-                        );
-                        apply_native_tools(
-                            &mut body,
-                            &wire_provider,
-                            request.tools.as_ref(),
-                            request.tool_choice.as_ref(),
-                        );
-                        apply_conversation_history(
-                            &mut body,
-                            resolve_provider_body_shape(&config, &endpoint),
-                            &request.history,
-                        );
-                        apply_attachments(
-                            &mut body,
-                            resolve_provider_body_shape(&config, &endpoint),
-                            &prompt,
-                            &request.attachments,
-                        );
-                        continue;
-                    }
-                    if should_retry_openai_like_status(status) && attempt + 1 < max_attempts {
-                        sleep(Duration::from_millis(
-                            crate::config::AI_RETRY_BACKOFF_BASE_MS * (attempt as u64 + 1),
-                        ))
-                        .await;
-                        continue;
-                    }
-
-                    if let Ok(resp_json) = serde_json::from_str::<serde_json::Value>(&raw_body) {
-                        if let Some(err) = resp_json.get("error") {
-                            let msg = if let Some(m) = err.get("message").and_then(|v| v.as_str()) {
-                                m.to_string()
-                            } else if let Some(m) = err.as_str() {
-                                m.to_string()
-                            } else {
-                                err.to_string()
-                            };
-                            return Err(ai_provider_api_error(&msg, api_key.as_deref()));
-                        }
-
-                        return Err(ai_provider_response_error_with_preview(
-                            &config,
-                            &endpoint,
-                            &resp_json,
-                            api_key.as_deref(),
-                        ));
-                    }
-
-                    return Err(ai_provider_http_status_error(
-                        &config,
-                        &endpoint,
-                        status,
-                        &raw_body,
-                        api_key.as_deref(),
-                        retry_after,
-                    ));
-                }
-
-                let resp_json: serde_json::Value =
-                    serde_json::from_str(&raw_body).map_err(|_| {
-                        ai_provider_non_json_response_error(
-                            &config,
-                            &endpoint,
-                            &raw_body,
-                            api_key.as_deref(),
-                        )
-                    })?;
-
-                if let Some(err) = resp_json.get("error") {
-                    let msg = if let Some(m) = err.get("message").and_then(|v| v.as_str()) {
-                        m.to_string()
-                    } else if let Some(m) = err.as_str() {
-                        m.to_string()
-                    } else {
-                        err.to_string()
-                    };
-                    return Err(ai_provider_api_error(&msg, api_key.as_deref()));
-                }
-
-                if let Some(action) = extract_tool_call_as_action_json(&wire_provider, &resp_json) {
-                    return Ok(AIResponse {
-                        text: action,
-                        reasoning: None,
-                        error: None,
-                    });
-                }
-
-                if matches!(wire_provider, AIProviderType::Anthropic) {
-                    if let Some(text) = extract_anthropic_response_text(&resp_json) {
-                        let block_reasoning = extract_anthropic_reasoning(&resp_json);
-                        let (think_reasoning, cleaned) = split_think_block(&text);
-                        return Ok(AIResponse {
-                            text: cleaned,
-                            reasoning: block_reasoning.or(think_reasoning),
-                            error: None,
-                        });
-                    }
-                } else if let Some(text) = extract_openai_like_response_text(&resp_json) {
-                    let field_reasoning = extract_openai_like_reasoning(&resp_json);
-                    let (think_reasoning, cleaned) = split_think_block(&text);
-                    let reasoning = field_reasoning.or(think_reasoning);
-                    return Ok(AIResponse {
-                        text: cleaned,
-                        reasoning,
-                        error: None,
-                    });
-                }
-
-                return Err(ai_provider_response_error_with_preview(
-                    &config,
-                    &endpoint,
-                    &resp_json,
-                    api_key.as_deref(),
-                ));
-            }
-
-            Err(ai_provider_response_error())
-        }
-        AIProviderType::Anthropic => {
-            let endpoint = resolve_provider_endpoint(&config);
-            validate_ai_endpoint(&config, &endpoint)?;
-            let mut body = build_provider_request_body_with_thinking(
-                &config,
-                &endpoint,
-                &system_prompt,
-                &prompt,
-                &request.mode,
-                request.enable_thinking,
-            );
-            apply_native_tools(
-                &mut body,
-                &config.provider_type,
-                request.tools.as_ref(),
-                request.tool_choice.as_ref(),
-            );
-            apply_conversation_history(
-                &mut body,
-                resolve_provider_body_shape(&config, &endpoint),
-                &request.history,
-            );
-            apply_attachments(
-                &mut body,
-                resolve_provider_body_shape(&config, &endpoint),
-                &prompt,
-                &request.attachments,
-            );
-
-            let response = client
-                .post(&endpoint)
-                .header("x-api-key", api_key.as_deref().unwrap_or_default())
-                .header("anthropic-version", crate::config::ANTHROPIC_API_VERSION)
-                .header(
-                    "anthropic-beta",
-                    crate::config::ANTHROPIC_CONTEXT_MANAGEMENT_BETA,
-                )
-                .json(&body)
-                .send()
-                .await
-                .map_err(|error| ai_provider_request_error(&config, &endpoint, &error))?;
-
-            let status = response.status();
-            let retry_after = response_retry_after_seconds(&response);
-            let raw_body = response
-                .text()
-                .await
-                .map_err(|_| ai_provider_response_error())?;
-
-            if !status.is_success() {
-                if let Ok(resp_json) = serde_json::from_str::<serde_json::Value>(&raw_body) {
-                    if let Some(err) = resp_json.get("error") {
-                        let msg = if let Some(m) = err.get("message").and_then(|v| v.as_str()) {
-                            m.to_string()
-                        } else if let Some(m) = err.as_str() {
-                            m.to_string()
-                        } else {
-                            err.to_string()
-                        };
-                        return Err(ai_provider_api_error(&msg, api_key.as_deref()));
-                    }
-
-                    return Err(ai_provider_response_error_with_preview(
-                        &config,
-                        &endpoint,
-                        &resp_json,
-                        api_key.as_deref(),
-                    ));
-                }
-
-                return Err(ai_provider_http_status_error(
-                    &config,
-                    &endpoint,
-                    status,
-                    &raw_body,
-                    api_key.as_deref(),
-                    retry_after,
-                ));
-            }
-
-            let resp_json: serde_json::Value = serde_json::from_str(&raw_body).map_err(|_| {
-                ai_provider_non_json_response_error(
-                    &config,
-                    &endpoint,
-                    &raw_body,
-                    api_key.as_deref(),
-                )
-            })?;
-            if let Some(err) = resp_json.get("error") {
-                let msg = if let Some(m) = err.get("message").and_then(|v| v.as_str()) {
-                    m.to_string()
-                } else if let Some(m) = err.as_str() {
-                    m.to_string()
-                } else {
-                    err.to_string()
-                };
-                return Err(ai_provider_api_error(&msg, api_key.as_deref()));
-            }
-
-            if let Some(action) =
-                extract_tool_call_as_action_json(&config.provider_type, &resp_json)
-            {
-                return Ok(AIResponse {
-                    text: action,
-                    reasoning: None,
-                    error: None,
-                });
-            }
-
-            if let Some(text) = extract_anthropic_response_text(&resp_json) {
-                let block_reasoning = extract_anthropic_reasoning(&resp_json);
-                let (think_reasoning, cleaned) = split_think_block(&text);
-                return Ok(AIResponse {
-                    text: cleaned,
-                    reasoning: block_reasoning.or(think_reasoning),
-                    error: None,
-                });
-            }
-
-            Err(ai_provider_response_error_with_preview(
-                &config,
-                &endpoint,
-                &resp_json,
-                api_key.as_deref(),
-            ))
-        }
-        AIProviderType::Gemini | AIProviderType::Vertex => {
-            let endpoint = resolve_provider_endpoint(&config);
-            validate_ai_endpoint(&config, &endpoint)?;
-            let mut body = build_provider_request_body_with_thinking(
-                &config,
-                &endpoint,
-                &system_prompt,
-                &prompt,
-                &request.mode,
-                request.enable_thinking,
-            );
-            apply_native_tools(
-                &mut body,
-                &config.provider_type,
-                request.tools.as_ref(),
-                request.tool_choice.as_ref(),
-            );
-            apply_conversation_history(
-                &mut body,
-                resolve_provider_body_shape(&config, &endpoint),
-                &request.history,
-            );
-            apply_attachments(
-                &mut body,
-                resolve_provider_body_shape(&config, &endpoint),
-                &prompt,
-                &request.attachments,
-            );
-
-            let mut request_builder = client.post(&endpoint);
-            if matches!(config.provider_type, AIProviderType::Vertex) {
-                // Vertex AI authenticates with an OAuth2 Bearer access token
-                // rather than Gemini's x-goog-api-key header. The generateContent
-                // body/response wire format is otherwise identical.
-                if let Some(ref token) = api_key {
-                    request_builder = request_builder.bearer_auth(token);
-                }
-            } else {
-                request_builder = request_builder
-                    .header("x-goog-api-key", api_key.as_deref().unwrap_or_default());
-            }
-            let response = request_builder
-                .json(&body)
-                .send()
-                .await
-                .map_err(|error| ai_provider_request_error(&config, &endpoint, &error))?;
-
-            let status = response.status();
-            let retry_after = response_retry_after_seconds(&response);
-            let raw_body = response
-                .text()
-                .await
-                .map_err(|_| ai_provider_response_error())?;
-
-            if !status.is_success() {
-                if let Ok(resp_json) = serde_json::from_str::<serde_json::Value>(&raw_body) {
-                    if let Some(err) = resp_json.get("error") {
-                        let msg = if let Some(m) = err.get("message").and_then(|v| v.as_str()) {
-                            m.to_string()
-                        } else if let Some(m) = err.as_str() {
-                            m.to_string()
-                        } else {
-                            err.to_string()
-                        };
-                        return Err(ai_provider_api_error(&msg, api_key.as_deref()));
-                    }
-
-                    return Err(ai_provider_response_error_with_preview(
-                        &config,
-                        &endpoint,
-                        &resp_json,
-                        api_key.as_deref(),
-                    ));
-                }
-
-                return Err(ai_provider_http_status_error(
-                    &config,
-                    &endpoint,
-                    status,
-                    &raw_body,
-                    api_key.as_deref(),
-                    retry_after,
-                ));
-            }
-
-            let resp_json: serde_json::Value = serde_json::from_str(&raw_body).map_err(|_| {
-                ai_provider_non_json_response_error(
-                    &config,
-                    &endpoint,
-                    &raw_body,
-                    api_key.as_deref(),
-                )
-            })?;
-            if let Some(err) = resp_json.get("error") {
-                let msg = if let Some(m) = err.get("message").and_then(|v| v.as_str()) {
-                    m.to_string()
-                } else if let Some(m) = err.as_str() {
-                    m.to_string()
-                } else {
-                    err.to_string()
-                };
-                return Err(ai_provider_api_error(&msg, api_key.as_deref()));
-            }
-
-            if let Some(action) =
-                extract_tool_call_as_action_json(&config.provider_type, &resp_json)
-            {
-                return Ok(AIResponse {
-                    text: action,
-                    reasoning: None,
-                    error: None,
-                });
-            }
-
-            if let Some(text) = extract_gemini_response_text(&resp_json) {
-                let thought_reasoning = extract_gemini_reasoning(&resp_json);
-                let (think_reasoning, cleaned) = split_think_block(&text);
-                return Ok(AIResponse {
-                    text: cleaned,
-                    reasoning: thought_reasoning.or(think_reasoning),
-                    error: None,
-                });
-            }
-
-            Err(ai_provider_response_error_with_preview(
-                &config,
-                &endpoint,
-                &resp_json,
-                api_key.as_deref(),
-            ))
-        }
+    if let Some(err_msg) = extract_inline_error_message(&resp_json) {
+        return Err(ai_provider_api_error(&err_msg, api_key.as_deref()));
     }
+
+    if let Some(extracted) = extract_provider_response(
+        &prepared.wire_provider,
+        &resp_json,
+        prepared.used_canonical_tools,
+    ) {
+        return Ok(extracted);
+    }
+
+    Err(ai_provider_response_error_with_preview(
+        &config,
+        &prepared.endpoint,
+        &resp_json,
+        api_key.as_deref(),
+    ))
 }

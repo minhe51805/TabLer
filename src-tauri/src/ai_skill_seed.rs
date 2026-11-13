@@ -167,19 +167,41 @@ const BUILTIN_SKILLS: &[BuiltinSkill] = &[
     },
     BuiltinSkill {
         name: "tsql-safety-guardrails",
-        version: "1.0.0",
-        files: &[BuiltinSkillFile {
-            rel_path: "SKILL.md",
-            content: include_str!("../skills/tsql-safety-guardrails/SKILL.md"),
-        }],
+        version: "1.1.0",
+        files: &[
+            BuiltinSkillFile {
+                rel_path: "SKILL.md",
+                content: include_str!("../skills/tsql-safety-guardrails/SKILL.md"),
+            },
+            BuiltinSkillFile {
+                rel_path: "references/engine-matrix.md",
+                content: include_str!(
+                    "../skills/tsql-safety-guardrails/references/engine-matrix.md"
+                ),
+            },
+        ],
     },
     BuiltinSkill {
         name: "query-performance-tuning",
-        version: "1.0.0",
-        files: &[BuiltinSkillFile {
-            rel_path: "SKILL.md",
-            content: include_str!("../skills/query-performance-tuning/SKILL.md"),
-        }],
+        version: "1.1.0",
+        files: &[
+            BuiltinSkillFile {
+                rel_path: "SKILL.md",
+                content: include_str!("../skills/query-performance-tuning/SKILL.md"),
+            },
+            BuiltinSkillFile {
+                rel_path: "references/plan-operators.md",
+                content: include_str!(
+                    "../skills/query-performance-tuning/references/plan-operators.md"
+                ),
+            },
+            BuiltinSkillFile {
+                rel_path: "references/engine-evidence.md",
+                content: include_str!(
+                    "../skills/query-performance-tuning/references/engine-evidence.md"
+                ),
+            },
+        ],
     },
     BuiltinSkill {
         name: "data-profiling",
@@ -213,11 +235,19 @@ const BUILTIN_SKILLS: &[BuiltinSkill] = &[
     },
     BuiltinSkill {
         name: "postgres-dialect-mastery",
-        version: "1.0.0",
-        files: &[BuiltinSkillFile {
-            rel_path: "SKILL.md",
-            content: include_str!("../skills/postgres-dialect-mastery/SKILL.md"),
-        }],
+        version: "1.1.0",
+        files: &[
+            BuiltinSkillFile {
+                rel_path: "SKILL.md",
+                content: include_str!("../skills/postgres-dialect-mastery/SKILL.md"),
+            },
+            BuiltinSkillFile {
+                rel_path: "references/index-flavors.md",
+                content: include_str!(
+                    "../skills/postgres-dialect-mastery/references/index-flavors.md"
+                ),
+            },
+        ],
     },
     BuiltinSkill {
         name: "mysql-dialect-mastery",
@@ -229,10 +259,26 @@ const BUILTIN_SKILLS: &[BuiltinSkill] = &[
     },
     BuiltinSkill {
         name: "sqlite-dialect-mastery",
-        version: "1.0.0",
+        version: "1.1.0",
+        files: &[
+            BuiltinSkillFile {
+                rel_path: "SKILL.md",
+                content: include_str!("../skills/sqlite-dialect-mastery/SKILL.md"),
+            },
+            BuiltinSkillFile {
+                rel_path: "references/pragma-guide.md",
+                content: include_str!(
+                    "../skills/sqlite-dialect-mastery/references/pragma-guide.md"
+                ),
+            },
+        ],
+    },
+    BuiltinSkill {
+        name: "duckdb-dialect-mastery",
+        version: "1.0.1",
         files: &[BuiltinSkillFile {
             rel_path: "SKILL.md",
-            content: include_str!("../skills/sqlite-dialect-mastery/SKILL.md"),
+            content: include_str!("../skills/duckdb-dialect-mastery/SKILL.md"),
         }],
     },
     BuiltinSkill {
@@ -372,15 +418,16 @@ fn global_skills_root() -> Result<PathBuf, String> {
 
 /// Idempotent seed, exposed so the skills manager can re-run it on demand.
 #[tauri::command]
-pub fn seed_ai_builtin_skills(force: Option<bool>) -> Result<SeedReport, String> {
+pub fn seed_ai_builtin_skills(force: Option<bool>) -> Result<SeedReport, crate::error::AppError> {
     seed_into_root(&global_skills_root()?, force.unwrap_or(false))
+        .map_err(crate::error::AppError::from)
 }
 
 /// Force-restore every built-in skill, discarding user edits to them. This is the
 /// only path that overwrites a modified skill, and it is always user-initiated.
 #[tauri::command]
-pub fn reset_ai_builtin_skills() -> Result<SeedReport, String> {
-    seed_into_root(&global_skills_root()?, true)
+pub fn reset_ai_builtin_skills() -> Result<SeedReport, crate::error::AppError> {
+    seed_into_root(&global_skills_root()?, true).map_err(crate::error::AppError::from)
 }
 
 /// Names + versions of the shipped pack, for the manager UI and tests.
@@ -448,6 +495,59 @@ mod tests {
                 "{}: frontmatter must declare `name: {}`",
                 skill.name,
                 skill.name
+            );
+        }
+    }
+
+    /// The struct's `version` is the single source the seeder's manifest is keyed
+    /// on, while the frontmatter `version` is what discovery surfaces in the
+    /// manager. A forgotten bump on either side shows users two different
+    /// versions, so the real parser (not a string-contains check) must prove the
+    /// two agree for every entry.
+    #[test]
+    fn every_builtin_frontmatter_version_matches_the_struct() {
+        for skill in BUILTIN_SKILLS {
+            let skill_md = skill
+                .files
+                .iter()
+                .find(|file| file.rel_path == "SKILL.md")
+                .unwrap_or_else(|| panic!("{}: must ship SKILL.md", skill.name));
+            let (meta, _) = crate::ai_skills::parse::parse_skill_md(skill_md.content);
+            assert_eq!(
+                meta.name.as_deref(),
+                Some(skill.name),
+                "{}: frontmatter name drifts from the seed struct",
+                skill.name
+            );
+            assert_eq!(
+                meta.version.as_deref(),
+                Some(skill.version),
+                "{}: frontmatter version drifts from the seed struct — bump both sides together",
+                skill.name
+            );
+        }
+    }
+
+    /// The discovery lint runs on EVERY skill since the 2026-11-01 security
+    /// review — built-ins included, so a workspace shadow of a built-in name
+    /// cannot skip it. That only works if the shipped pack itself never trips
+    /// the phrases: this test is the guardrail that keeps the lint-all design
+    /// possible. If a future pack edit trips a phrase, rephrase the skill (its
+    /// own text teaches the same thing without injection-shaped wording).
+    #[test]
+    fn every_builtin_body_passes_the_safety_lint() {
+        for skill in BUILTIN_SKILLS {
+            let skill_md = skill
+                .files
+                .iter()
+                .find(|file| file.rel_path == "SKILL.md")
+                .unwrap_or_else(|| panic!("{}: must ship SKILL.md", skill.name));
+            let findings = crate::ai_skills::lint::lint_skill_text(skill_md.content);
+            assert!(
+                findings.is_empty(),
+                "{}: SKILL.md trips the safety lint — {:?}. Rephrase the skill so it teaches without injection-shaped wording.",
+                skill.name,
+                findings
             );
         }
     }

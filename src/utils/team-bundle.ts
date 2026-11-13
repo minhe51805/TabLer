@@ -6,7 +6,7 @@
  * Distinct from utils/workspace-bundle.ts, which is the encrypted
  * workspace-sync payload format.
  */
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "./tauri-invoke";
 
 export interface BundleItemPreview {
   index: number;

@@ -1,4 +1,22 @@
-import { BookOpen, PenLine, Brain, CheckCircle2, ChevronDown, ChevronRight, Database, Eye, HelpCircle, ListTree, Loader2, RotateCcw, Save, Search, Sparkles, Wand2, AlertCircle } from "lucide-react";
+import {
+  BookOpen,
+  PenLine,
+  Brain,
+  CheckCircle2,
+  ChevronDown,
+  ChevronRight,
+  Database,
+  Eye,
+  HelpCircle,
+  ListTree,
+  Loader2,
+  RotateCcw,
+  Save,
+  Search,
+  Sparkles,
+  Wand2,
+  AlertCircle,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { useI18n } from "../../i18n";
@@ -30,9 +48,9 @@ function normalizeThinkMessage(message: string): string {
 
 function headerThinkingTitle(steps: AIWorkspaceAgentStep[]): string {
   const flat = normalizeThinkMessage(
-    steps.find((step) => step.action === "think"
-      && step.message
-      && step.message !== "No message provided.")?.message ?? "",
+    steps.find(
+      (step) => step.action === "think" && step.message && step.message !== "No message provided.",
+    )?.message ?? "",
   );
   if (!flat) return "";
   return flat.length > 90 ? `${flat.slice(0, 87)}...` : flat;
@@ -99,7 +117,7 @@ function getActionIcon(action: AIWorkspaceAgentActionName): ReactNode {
 
 function getActionLabel(
   action: AIWorkspaceAgentActionName,
-  copy: ReturnType<typeof getAIWorkspaceCopy>
+  copy: ReturnType<typeof getAIWorkspaceCopy>,
 ): string {
   switch (action) {
     case "plan":
@@ -177,7 +195,9 @@ export function AIAgentSteps({ steps, compact = false, durationMs }: AIAgentStep
   const showDuration = Boolean(!expanded && runSettled && durationMs && durationMs > 0);
 
   return (
-    <div className={`ai-agent-steps ${compact ? "is-compact" : ""} ${expanded ? "" : "is-collapsed"}`}>
+    <div
+      className={`ai-agent-steps ${compact ? "is-compact" : ""} ${expanded ? "" : "is-collapsed"}`}
+    >
       <button
         type="button"
         className="ai-agent-steps-head"
@@ -188,96 +208,117 @@ export function AIAgentSteps({ steps, compact = false, durationMs }: AIAgentStep
         <Sparkles className="w-3.5 h-3.5" />
         <span>{copy.modal.agentStepsLabel}</span>
         <span className="ai-agent-steps-head-right">
-          {showDuration && <span className="ai-agent-steps-duration">{formatStepsDuration(durationMs as number)}</span>}
+          {showDuration && (
+            <span className="ai-agent-steps-duration">
+              {formatStepsDuration(durationMs as number)}
+            </span>
+          )}
           {thinkingTitle && <span className="ai-agent-steps-title">{thinkingTitle}</span>}
-          {expanded
-            ? <ChevronDown className="w-3.5 h-3.5 ai-agent-steps-chevron" />
-            : <ChevronRight className="w-3.5 h-3.5 ai-agent-steps-chevron" />}
+          {expanded ? (
+            <ChevronDown className="w-3.5 h-3.5 ai-agent-steps-chevron" />
+          ) : (
+            <ChevronRight className="w-3.5 h-3.5 ai-agent-steps-chevron" />
+          )}
         </span>
       </button>
       {expanded && (
-      <ol className="ai-agent-steps-list">
-        {steps.map((step) => {
-          const statusLabel =
-            step.status === "running"
-              ? copy.modal.agentStatusRunning
-              : step.status === "error"
-                ? copy.modal.agentStatusError
-                : copy.modal.agentStatusDone;
-          const isPlan = step.action === "plan";
-          // A running "think" step ("Thinking…" / "Composing response…")
-          // renders as a dots-only live pill like the plan row — the message
-          // stays available for the collapsed header and the settled trace.
-          const isThinkWait = step.action === "think" && step.status === "running";
-          // The machine-readable `@@facts:` footer is harness plumbing — it
-          // feeds the quality gates but must never render into the visible
-          // trace (audit fix: it used to leak raw JSON into the bubble).
-          const observation = parseAgentFacts(step.observation ?? "").text.trim();
-          // Models sometimes omit the per-step message; fall back to a
-          // localized action label instead of showing "No message provided.".
-          const displayMessage = step.message.trim() && step.message !== "No message provided."
-            ? step.action === "think"
-              ? normalizeThinkMessage(step.message)
-              : step.message
-            : getActionLabel(step.action, copy);
-          return (
-            <li
-              key={step.step}
-              className={`ai-agent-step ai-agent-step--${step.status} ${isPlan ? "ai-agent-step--plan" : ""}`}
-            >
-              <span className="ai-agent-step-rail" aria-hidden="true">
-                <span className="ai-agent-step-icon">{getActionIcon(step.action)}</span>
-              </span>
-              <div className="ai-agent-step-body">
-                <div className="ai-agent-step-line">
-                  <span className="ai-agent-step-action">{getActionLabel(step.action, copy)}</span>
-                  {!isPlan && !isThinkWait && (
-                    <span className={`ai-agent-step-status ai-agent-step-status--${step.status}`}>
-                      {step.status === "running" ? (
-                        <Loader2 className="w-3 h-3 ai-agent-step-spin" />
-                      ) : step.status === "error" ? (
-                        <AlertCircle className="w-3 h-3" />
-                      ) : (
-                        <CheckCircle2 className="w-3 h-3" />
-                      )}
-                      {statusLabel}
+        <ol className="ai-agent-steps-list">
+          {steps.map((step) => {
+            const statusLabel =
+              step.status === "running"
+                ? copy.modal.agentStatusRunning
+                : step.status === "error"
+                  ? copy.modal.agentStatusError
+                  : copy.modal.agentStatusDone;
+            const isPlan = step.action === "plan";
+            // A running "think" step ("Thinking…" / "Composing response…")
+            // renders as a dots-only live pill like the plan row — the message
+            // stays available for the collapsed header and the settled trace.
+            const isThinkWait = step.action === "think" && step.status === "running";
+            // The machine-readable `@@facts:` footer is harness plumbing — it
+            // feeds the quality gates but must never render into the visible
+            // trace (audit fix: it used to leak raw JSON into the bubble).
+            const observation = parseAgentFacts(step.observation ?? "").text.trim();
+            // Models sometimes omit the per-step message; fall back to a
+            // localized action label instead of showing "No message provided.".
+            const displayMessage =
+              step.message.trim() && step.message !== "No message provided."
+                ? step.action === "think"
+                  ? normalizeThinkMessage(step.message)
+                  : step.message
+                : getActionLabel(step.action, copy);
+            return (
+              <li
+                key={step.step}
+                className={`ai-agent-step ai-agent-step--${step.status} ${isPlan ? "ai-agent-step--plan" : ""}`}
+              >
+                <span className="ai-agent-step-rail" aria-hidden="true">
+                  <span className="ai-agent-step-icon">{getActionIcon(step.action)}</span>
+                </span>
+                <div className="ai-agent-step-body">
+                  <div className="ai-agent-step-line">
+                    <span className="ai-agent-step-action">
+                      {getActionLabel(step.action, copy)}
                     </span>
+                    {!isPlan && !isThinkWait && (
+                      <span className={`ai-agent-step-status ai-agent-step-status--${step.status}`}>
+                        {step.status === "running" ? (
+                          <Loader2 className="w-3 h-3 ai-agent-step-spin" />
+                        ) : step.status === "error" ? (
+                          <AlertCircle className="w-3 h-3" />
+                        ) : (
+                          <CheckCircle2 className="w-3 h-3" />
+                        )}
+                        {statusLabel}
+                      </span>
+                    )}
+                  </div>
+
+                  {isPlan && step.status === "running" && (
+                    <div className="ai-agent-step-live-activity" aria-live="polite">
+                      <span className="ai-agent-step-live-dots" aria-hidden="true">
+                        <span />
+                        <span />
+                        <span />
+                      </span>
+                      <span>{copy.modal.agentStatusRunning}</span>
+                    </div>
                   )}
+                  {isThinkWait && (
+                    <div className="ai-agent-step-live-activity" aria-live="polite">
+                      <span className="ai-agent-step-live-dots" aria-hidden="true">
+                        <span />
+                        <span />
+                        <span />
+                      </span>
+                      <span className="sr-only">{statusLabel}</span>
+                    </div>
+                  )}
+
+                  {displayMessage &&
+                    !isThinkWait &&
+                    (isPlan ? (
+                      <AIWorkspaceMarkdown
+                        className="ai-agent-step-plan-text"
+                        compact
+                        text={displayMessage}
+                      />
+                    ) : (
+                      <p className="ai-agent-step-message">{displayMessage}</p>
+                    ))}
+
+                  {!isPlan &&
+                    observation &&
+                    (compact ? (
+                      <p className="ai-agent-step-peek">{peekObservation(observation)}</p>
+                    ) : (
+                      <pre className="ai-agent-step-observation">{observation}</pre>
+                    ))}
                 </div>
-
-                {isPlan && step.status === "running" && (
-                  <div className="ai-agent-step-live-activity" aria-live="polite">
-                    <span className="ai-agent-step-live-dots" aria-hidden="true"><span /><span /><span /></span>
-                    <span>{copy.modal.agentStatusRunning}</span>
-                  </div>
-                )}
-                {isThinkWait && (
-                  <div className="ai-agent-step-live-activity" aria-live="polite">
-                    <span className="ai-agent-step-live-dots" aria-hidden="true"><span /><span /><span /></span>
-                    <span className="sr-only">{statusLabel}</span>
-                  </div>
-                )}
-
-                {displayMessage && !isThinkWait && (
-                  isPlan ? (
-                    <AIWorkspaceMarkdown className="ai-agent-step-plan-text" compact text={displayMessage} />
-                  ) : (
-                    <p className="ai-agent-step-message">{displayMessage}</p>
-                  )
-                )}
-
-                {!isPlan && observation && (
-                  compact ? (
-                    <p className="ai-agent-step-peek">{peekObservation(observation)}</p>
-                  ) : (
-                    <pre className="ai-agent-step-observation">{observation}</pre>
-                  )
-                )}
-              </div>
-            </li>
-          );
-        })}
-      </ol>
+              </li>
+            );
+          })}
+        </ol>
       )}
     </div>
   );

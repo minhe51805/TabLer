@@ -1,3 +1,4 @@
+import { APP_EVENTS } from "../../utils/app-events";
 import type { Command } from "../../stores/commandPaletteStore";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUIStore } from "../../stores/uiStore";
@@ -572,7 +573,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       action: makeAction(
         "tools.query-schedules",
         () => {
-          window.dispatchEvent(new CustomEvent("toggle-query-schedules-palette"));
+          window.dispatchEvent(new CustomEvent(APP_EVENTS.toggleQuerySchedulesPalette));
         },
         ctx,
       ),

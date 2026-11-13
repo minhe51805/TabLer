@@ -1,7 +1,7 @@
 ---
 name: postgres-dialect-mastery
 description: This skill should be used when the user asks to "write PostgreSQL SQL", "use ON CONFLICT", "fix a RETURNING clause", or when the target engine is Postgres.
-version: 1.0.0
+version: 1.1.0
 license: MIT
 ---
 
@@ -92,5 +92,7 @@ difference between estimated and actual rows (stale statistics — consider `ANA
 
 ## See also
 
+- `references/index-flavors.md` — partial, expression, covering (`INCLUDE`), GIN and
+  BRIN indexes, and why FK columns are not auto-indexed.
 - `query-performance-tuning` — sargability and index reasoning that apply across engines.
 - `tsql-safety-guardrails` — the mutation discipline (engine-independent).

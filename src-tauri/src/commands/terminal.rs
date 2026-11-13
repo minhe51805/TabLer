@@ -224,7 +224,7 @@ pub fn open_terminal(
     rows: u16,
     cwd: Option<String>,
     database_context: Option<TerminalDatabaseContext>,
-) -> Result<TerminalSessionInfo, String> {
+) -> Result<TerminalSessionInfo, crate::error::AppError> {
     {
         let guard = terminal_manager
             .sessions
@@ -368,7 +368,7 @@ pub fn write_terminal(
     terminal_manager: State<'_, TerminalManager>,
     session_id: String,
     data: String,
-) -> Result<(), String> {
+) -> Result<(), crate::error::AppError> {
     let sessions = terminal_manager
         .sessions
         .lock()
@@ -397,7 +397,7 @@ pub fn resize_terminal(
     session_id: String,
     cols: u16,
     rows: u16,
-) -> Result<(), String> {
+) -> Result<(), crate::error::AppError> {
     let sessions = terminal_manager
         .sessions
         .lock()
@@ -439,7 +439,7 @@ pub fn resize_terminal(
 pub fn close_terminal(
     terminal_manager: State<'_, TerminalManager>,
     session_id: String,
-) -> Result<(), String> {
+) -> Result<(), crate::error::AppError> {
     let session = {
         let mut sessions = terminal_manager
             .sessions

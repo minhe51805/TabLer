@@ -32,6 +32,13 @@ pub const AI_MAX_HISTORY_CHARS: usize = 24_000;
 /// Sized for the real catalog: 34 tool specs serialize to ~29.5k chars, so
 /// 40k leaves headroom for spec growth while still rejecting abusive payloads.
 pub const AI_MAX_TOOLS_CHARS: usize = 40_000;
+/// Max structured multi-turn items (`assistant` / `tool_result` / `user`) in
+/// an active agent run (`AIRequest::agent_turns`).
+pub const AI_MAX_AGENT_TURNS: usize = 64;
+/// Max cumulative characters across all `AIRequest::agent_turns` items.
+pub const AI_MAX_AGENT_TURNS_CHARS: usize = 160_000;
+/// Max idle gap between SSE chunks before an AI stream is aborted as timed out.
+pub const AI_STREAM_CHUNK_IDLE_TIMEOUT: Duration = Duration::from_secs(60);
 
 // ─────────────────────────────────────────────────────────────────────────
 // AI provider wire config (D3 + D10)

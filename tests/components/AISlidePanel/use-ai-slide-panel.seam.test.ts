@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import hookSource from "@/components/AISlidePanel/ai-agent-generate.ts?raw";
+import facadeSource from "@/components/AISlidePanel/ai-agent-generate.ts?raw";
+import contextLoaderSource from "@/components/AISlidePanel/agent-engine/context-loader.ts?raw";
+import turnDriverSource from "@/components/AISlidePanel/agent-engine/turn-driver.ts?raw";
+
+const hookSource = [facadeSource, contextLoaderSource, turnDriverSource].join("\n");
 
 describe("edit_query_sql seam pin (hook wiring tripwire)", () => {
   // Tripwire for the forgotten-wiring bug class: if the hook stops feeding

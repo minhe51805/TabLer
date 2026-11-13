@@ -1,5 +1,10 @@
 use crate::database::models::DatabaseType;
-use crate::utils::safe_mode::{assert_sql_allowed_at_level_with_approval, clamp_safe_mode_level};
+use crate::error::AppError;
+use crate::utils::safe_mode::{
+    assert_decision_allowed_at_level_with_approval, assert_sql_allowed_at_level_with_approval,
+    clamp_safe_mode_level,
+};
+use crate::utils::sql::SqlSafetyDecision;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use tokio::sync::RwLock;
@@ -100,6 +105,17 @@ impl SafeModeState {
         assert_sql_allowed_at_level_with_approval(level, sql, database_type, user_approved)
     }
 
+    pub async fn assert_decision_allowed_with_approval(
+        &self,
+        connection_id: &str,
+        decision: &SqlSafetyDecision,
+        user_approved: bool,
+    ) -> Result<(), AppError> {
+        let level = self.effective_level(connection_id).await;
+        assert_decision_allowed_at_level_with_approval(level, decision, user_approved)
+            .map_err(AppError::safe_mode_blocked)
+    }
+
     /// Gate for commands that mutate data WITHOUT going through the SQL
     /// editor (grid edits, file imports, maintenance, user/role changes) —
     /// Safe Mode never saw their SQL, so they assert a representative
@@ -145,7 +161,7 @@ pub async fn set_safe_mode_policy(
     connection_overrides: Vec<SafeModeOverridePayload>,
     production_connection_ids: Vec<String>,
     safe_mode: tauri::State<'_, SafeModeState>,
-) -> Result<(), String> {
+) -> Result<(), crate::error::AppError> {
     safe_mode
         .set_policy(SafeModePolicyPayload {
             global_level,

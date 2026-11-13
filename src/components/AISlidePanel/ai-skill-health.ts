@@ -58,8 +58,9 @@ export function buildSkillHealthReport(
     const used = usage[entry.name];
     const enabled = isEnabled(entry.name);
     const runs = used?.runs ?? 0;
-    const catalogCostChars =
-      enabled ? entry.name.length + entry.description.length + SKILL_CATALOG_FRAMING_CHARS : 0;
+    const catalogCostChars = enabled
+      ? entry.name.length + entry.description.length + SKILL_CATALOG_FRAMING_CHARS
+      : 0;
     return {
       name: entry.name,
       description: entry.description,

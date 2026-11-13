@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { invokeWithTimeout, invokeMutation } from "../utils/tauri-utils";
+import { TauriCommandError } from "../utils/tauri-error";
 import { emitAppToast } from "../utils/app-toast";
 import type {
   ColumnDetail,
@@ -23,6 +24,9 @@ import { getOrLoadTableColumns, getOrLoadTableStructure } from "../utils/schema-
 import type { TableExportFormat } from "../utils/export-formats";
 import { useConnectionStore } from "./connectionStore";
 import { invokeAIWorkspaceToolWithTimeout } from "../utils/ai-tool-command-client";
+
+/** Mirror of `SANDBOX_AGENT_MAX_ROWS` in `src-tauri/src/config.rs`. */
+export const SANDBOX_AGENT_MAX_ROWS = 5_000;
 
 /** Result of an atomic CSV file import (import_csv_file_atomically). */
 export interface AtomicCsvImportSummary {
@@ -59,7 +63,7 @@ export interface QueryState {
     connectionId: string,
     statements: string[],
     requireReadOnly?: boolean,
-    options?: { userInitiated?: boolean; preApproved?: boolean },
+    options?: { userInitiated?: boolean; preApproved?: boolean; maxRows?: number },
   ) => Promise<QueryResult>;
   executeAgentReadonlyQuery: (connectionId: string, statements: string[]) => Promise<QueryResult>;
   executeAgentParameterizedQuery: (
@@ -177,7 +181,20 @@ const PROGRESSIVE_FALLBACK_DENY =
 const PROGRESSIVE_FALLBACK_ALLOW =
   /unsupported|not supported|unknown command|not implemented|no such command|invalid command|ipc|transport|failed to fetch|channel|webview/i;
 
+const NON_FALLBACK_ERROR_CODES = new Set([
+  "sandbox-denied",
+  "sandbox-throttled",
+  "safe-mode-blocked",
+  "query-cancelled",
+  "query-timeout",
+  "rate-limited",
+  "connection-not-found",
+]);
+
 export function canFallbackToLegacyQuery(error: unknown): boolean {
+  if (error instanceof TauriCommandError && NON_FALLBACK_ERROR_CODES.has(error.code)) {
+    return false;
+  }
   const message = error instanceof Error ? error.message : String(error);
   if (PROGRESSIVE_FALLBACK_DENY.test(message)) return false;
   return PROGRESSIVE_FALLBACK_ALLOW.test(message);
@@ -364,13 +381,22 @@ export const useQueryStore = create<QueryState>((set, get) => ({
     connectionId: string,
     statements: string[],
     requireReadOnly = false,
-    options?: { userInitiated?: boolean; preApproved?: boolean },
+    options?: { userInitiated?: boolean; preApproved?: boolean; maxRows?: number },
   ) => {
+    const maxRows =
+      typeof options?.maxRows === "number" &&
+      Number.isFinite(options.maxRows) &&
+      options.maxRows > 0
+        ? Math.floor(options.maxRows)
+        : undefined;
     // Same instant-repeat behaviour as executeQuery: the joined statements are
-    // the cache key, so identical batches hit within the TTL.
+    // the cache key, scoped by maxRows so capped Agent reads never share cache
+    // entries with uncapped Workspace queries.
     const database = useConnectionStore.getState().currentDatabase;
     const cacheSql = statements.join(";\n");
-    const cached = getCachedQueryResult(connectionId, cacheSql, database);
+    const scopedCacheSql =
+      maxRows !== undefined ? `${cacheSql}\n/*agent-max-rows:${maxRows}*/` : cacheSql;
+    const cached = getCachedQueryResult(connectionId, scopedCacheSql, database);
     if (cached) return cached;
     const safety = await assertQueryAllowed(cacheSql, connectionId, options);
     const requestId = crypto.randomUUID();
@@ -391,6 +417,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
           requireReadOnly,
           requestId,
           safeModeApprovedByUser: safety.userConfirmed === true,
+          ...(maxRows !== undefined ? { maxRows } : {}),
         },
         120_000,
         "Sandbox query",
@@ -399,7 +426,7 @@ export const useQueryStore = create<QueryState>((set, get) => ({
         useConnectionStore.getState().invalidateSchemaMetadata(connectionId);
       }
       if (safety.readOnly) {
-        setCachedQueryResult(connectionId, cacheSql, database, result);
+        setCachedQueryResult(connectionId, scopedCacheSql, database, result);
       } else {
         invalidateQueryResultCache(connectionId);
       }

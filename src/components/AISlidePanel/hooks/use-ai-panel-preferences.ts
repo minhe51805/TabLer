@@ -3,6 +3,8 @@ import type { Dispatch, SetStateAction } from "react";
 import type { AIProviderConfig } from "../../../types";
 import { normalizeAIProviderConfigs } from "../../../utils/ai-provider-registry";
 import { markManualProviderOverride } from "../../../stores/aiStore";
+import { APP_EVENTS } from "../../../utils/app-events";
+import { EventCenter } from "../../../stores/event-center";
 import { useSafeModeStore } from "../../../stores/safeModeStore";
 import type { AIWorkspaceAgentAutonomy, AIWorkspaceInteractionMode } from "../ai-workspace-types";
 
@@ -55,7 +57,7 @@ export function useAIPanelPreferences(options: UseAIPanelPreferencesOptions) {
   );
   const openSettings = useCallback(() => {
     setIsHistoryOpen(false);
-    window.dispatchEvent(new CustomEvent("open-ai-settings"));
+    EventCenter.emit(APP_EVENTS.openAISettings);
   }, [setIsHistoryOpen]);
   // Fresh config mirror: switches are chained, so each queued switch must read
   // the latest known provider list instead of the closure snapshot.

@@ -1,4 +1,5 @@
 import { APP_EVENTS } from "../../utils/app-events";
+import { EventCenter } from "../../stores/event-center";
 import type { Command } from "../../stores/commandPaletteStore";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUIStore } from "../../stores/uiStore";
@@ -52,7 +53,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
     const next = Math.min(UI_FONT_SCALE_MAX, Math.max(UI_FONT_SCALE_MIN, current + delta));
     window.localStorage.setItem("tabler.uiFontScale", String(next));
     document.documentElement.style.fontSize = `${next}%`;
-    window.dispatchEvent(new CustomEvent("font-scale-changed", { detail: { scale: next } }));
+    EventCenter.emit(APP_EVENTS.fontScaleChanged, { scale: next });
   };
 
   // Recent connections: last 5 successfully connected saved connections,
@@ -109,7 +110,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       action: makeAction(
         "file.open-sql-file",
         () => {
-          window.dispatchEvent(new CustomEvent("open-sql-file-palette"));
+          EventCenter.emit(APP_EVENTS.openSqlFilePalette);
         },
         ctx,
       ),
@@ -121,7 +122,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       action: makeAction(
         "file.import-sql-file",
         () => {
-          window.dispatchEvent(new CustomEvent("import-sql-file-palette"));
+          EventCenter.emit(APP_EVENTS.importSqlFilePalette);
         },
         ctx,
       ),
@@ -133,7 +134,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       action: makeAction(
         "tools.schema-diff",
         () => {
-          window.dispatchEvent(new CustomEvent("open-schema-diff-palette"));
+          EventCenter.emit(APP_EVENTS.openSchemaDiffPalette);
         },
         ctx,
       ),
@@ -145,7 +146,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       action: makeAction(
         "tools.import-csv",
         () => {
-          window.dispatchEvent(new CustomEvent("open-data-import-palette"));
+          EventCenter.emit(APP_EVENTS.openDataImportPalette);
         },
         ctx,
       ),
@@ -208,9 +209,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
         () => {
           const { activeTabId } = useUIStore.getState();
           if (activeTabId) {
-            window.dispatchEvent(
-              new CustomEvent("toggle-query-results-pane", { detail: { tabId: activeTabId } }),
-            );
+            EventCenter.emit(APP_EVENTS.toggleQueryResultsPane, { tabId: activeTabId });
           }
         },
         ctx,
@@ -253,7 +252,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
         () => {
           window.localStorage.setItem("tabler.uiFontScale", "100");
           document.documentElement.style.fontSize = "100%";
-          window.dispatchEvent(new CustomEvent("font-scale-changed", { detail: { scale: 100 } }));
+          EventCenter.emit(APP_EVENTS.fontScaleChanged, { scale: 100 });
         },
         ctx,
       ),
@@ -307,7 +306,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       action: makeAction(
         "query.format",
         () => {
-          window.dispatchEvent(new CustomEvent("format-sql-palette"));
+          EventCenter.emit(APP_EVENTS.formatSqlPalette);
         },
         ctx,
       ),
@@ -370,9 +369,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       action: makeAction(
         "database.new-connection",
         () => {
-          window.dispatchEvent(
-            new CustomEvent("open-connection-form-palette", { detail: { intent: "connect" } }),
-          );
+          EventCenter.emit(APP_EVENTS.openConnectionFormPalette, { intent: "connect" });
         },
         ctx,
       ),
@@ -384,9 +381,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       action: makeAction(
         "database.connect",
         () => {
-          window.dispatchEvent(
-            new CustomEvent("open-connection-form-palette", { detail: { intent: "connect" } }),
-          );
+          EventCenter.emit(APP_EVENTS.openConnectionFormPalette, { intent: "connect" });
         },
         ctx,
       ),
@@ -460,7 +455,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       action: makeAction(
         "ai.open-panel",
         () => {
-          window.dispatchEvent(new CustomEvent("open-ai-slide-panel", {}));
+          EventCenter.emit(APP_EVENTS.openAISlidePanel, {});
         },
         ctx,
       ),
@@ -472,7 +467,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       action: makeAction(
         "ai.ask",
         () => {
-          window.dispatchEvent(new CustomEvent("open-ai-slide-panel", {}));
+          EventCenter.emit(APP_EVENTS.openAISlidePanel, {});
         },
         ctx,
       ),
@@ -484,7 +479,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       action: makeAction(
         "ai.clear-history",
         () => {
-          window.dispatchEvent(new CustomEvent("clear-ai-history-palette"));
+          EventCenter.emit(APP_EVENTS.clearAiHistoryPalette);
         },
         ctx,
       ),
@@ -498,7 +493,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       action: makeAction(
         "tools.keyboard-shortcuts",
         () => {
-          window.dispatchEvent(new CustomEvent("open-keyboard-shortcuts-palette"));
+          EventCenter.emit(APP_EVENTS.openKeyboardShortcutsPalette);
         },
         ctx,
       ),
@@ -560,7 +555,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       action: makeAction(
         "tools.live-profiler",
         () => {
-          window.dispatchEvent(new CustomEvent("open-live-profiler"));
+          EventCenter.emit(APP_EVENTS.openLiveProfiler);
         },
         ctx,
       ),
@@ -573,7 +568,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       action: makeAction(
         "tools.query-schedules",
         () => {
-          window.dispatchEvent(new CustomEvent(APP_EVENTS.toggleQuerySchedulesPalette));
+          EventCenter.emit(APP_EVENTS.toggleQuerySchedulesPalette);
         },
         ctx,
       ),
@@ -587,7 +582,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       action: makeAction(
         "nav.focus-explorer",
         () => {
-          window.dispatchEvent(new CustomEvent("focus-explorer-search"));
+          EventCenter.emit(APP_EVENTS.focusExplorerSearch);
         },
         ctx,
       ),
@@ -599,7 +594,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       action: makeAction(
         "nav.focus-sql-editor",
         () => {
-          window.dispatchEvent(new CustomEvent("focus-sql-editor-palette"));
+          EventCenter.emit(APP_EVENTS.focusSqlEditorPalette);
         },
         ctx,
       ),
@@ -611,7 +606,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       action: makeAction(
         "nav.focus-results",
         () => {
-          window.dispatchEvent(new CustomEvent("focus-results-palette"));
+          EventCenter.emit(APP_EVENTS.focusResultsPalette);
         },
         ctx,
       ),
@@ -659,7 +654,7 @@ export function buildCommandRegistry(ctx: CommandContext): Command[] {
       action: makeAction(
         "help.keyboard-shortcuts",
         () => {
-          window.dispatchEvent(new CustomEvent("open-keyboard-shortcuts-palette"));
+          EventCenter.emit(APP_EVENTS.openKeyboardShortcutsPalette);
         },
         ctx,
       ),

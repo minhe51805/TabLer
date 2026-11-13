@@ -1,9 +1,21 @@
-import { useCallback, useRef, type Dispatch, type RefObject, type SetStateAction } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type RefObject,
+  type SetStateAction,
+} from "react";
 import type { ColumnDetail, QueryResult } from "../../../types";
 import type { DatabaseType } from "../../../types/database";
 import type { ConnectionConfig, ForeignKeyInfo } from "../../../types";
 import { resolveDataWindowColumns } from "../data-window";
+import { translateCurrent } from "../../../i18n";
+import { emitAppToast } from "../../../utils/app-toast";
 import { devLogError } from "../../../utils/logger";
+import { APP_EVENTS } from "../../../utils/app-events";
+import { EventCenter } from "../../../stores/event-center";
 import { changeScopeKey } from "../../../stores/change-tracking-store";
 import {
   buildTableCacheKey,
@@ -84,6 +96,17 @@ interface DataGridTableFetcherParams {
   /** True while the grid renders a page served from the local cache — the
    *  footer shows a "Cached" pill so stale data is never invisible. */
   setDataFromCache: Dispatch<SetStateAction<boolean>>;
+  data: QueryResult | null;
+  currentPage: number;
+  rowFocusToken?: number | string;
+  restorePersistedColumnLayout: () => {
+    filter: string;
+    sort?: { column: string; direction: "ASC" | "DESC" } | null;
+  };
+  setFilterDraft: Dispatch<SetStateAction<string>>;
+  setTableFilter: Dispatch<SetStateAction<string>>;
+  setSortColumn: Dispatch<SetStateAction<string | null>>;
+  setSortDir: Dispatch<SetStateAction<"ASC" | "DESC">>;
 
   // Shared refs (named bundle prevents mix-ups at the call site)
   refs: {
@@ -138,6 +161,14 @@ export function useDataGridTableFetcher({
   setStructureStatus,
   setError,
   setDataFromCache,
+  data,
+  currentPage,
+  rowFocusToken,
+  restorePersistedColumnLayout,
+  setFilterDraft,
+  setTableFilter,
+  setSortColumn,
+  setSortDir,
   refs,
 }: DataGridTableFetcherParams) {
   const {
@@ -158,35 +189,12 @@ export function useDataGridTableFetcher({
   // without re-creating (and re-firing) on every structure load.
   const structureColumnsRef = useRef(structureColumns);
   structureColumnsRef.current = structureColumns;
-  const setLoadedTablePage = useCallback(
-    (page: number, result: QueryResult) => {
-      if (page === 0) loadedTablePagesRef.current.clear();
-      loadedTablePagesRef.current.set(page, result);
-      const rows: QueryResult["rows"] = [];
-      for (let index = 0; loadedTablePagesRef.current.has(index); index += 1) {
-        rows.push(...(loadedTablePagesRef.current.get(index)?.rows ?? []));
-      }
-      const canonicalColumns = loadedTablePagesRef.current.get(0)?.columns ?? [];
-      setData((previous) => ({
-        ...result,
-        columns: resolveDataWindowColumns(
-          canonicalColumns,
-          previous?.columns ?? [],
-          result.columns,
-        ),
-        rows,
-      }));
-      setHasMoreTableRows(result.rows.length === PAGE_SIZE);
-    },
-    [loadedTablePagesRef, setData, setHasMoreTableRows],
-  );
-
   /** Register the scope-keyed column map + db type used for staged-change
-   *  SQL previews. Must run on EVERY structure path (fresh fetch AND cache
-   *  hits) or a stale map from another connection's same-named table can
-   *  misroute an update. */
+   *  SQL previews. Must run on EVERY data/structure path (initial page load,
+   *  fresh structure fetch, and cache hits) so fast keyboard/range edits never
+   *  outrun the 180ms metadata warmup. */
   const registerColumnMetadata = useCallback(
-    (columns: ColumnDetail[]) => {
+    (columns: ReadonlyArray<{ name: string }>) => {
       if (!tableName || columns.length === 0) return;
       const scopeKey = changeScopeKey(connectionId, database, tableName);
       const colNameMap: Record<number, string> = {};
@@ -198,6 +206,30 @@ export function useDataGridTableFetcher({
       setDbType(scopeKey, connection?.db_type);
     },
     [connectionId, connections, database, setColumnNameMap, setDbType, tableName],
+  );
+
+  const setLoadedTablePage = useCallback(
+    (page: number, result: QueryResult) => {
+      if (page === 0) loadedTablePagesRef.current.clear();
+      loadedTablePagesRef.current.set(page, result);
+      const rows: QueryResult["rows"] = [];
+      for (let index = 0; loadedTablePagesRef.current.has(index); index += 1) {
+        rows.push(...(loadedTablePagesRef.current.get(index)?.rows ?? []));
+      }
+      const canonicalColumns = loadedTablePagesRef.current.get(0)?.columns ?? [];
+      registerColumnMetadata(canonicalColumns.length > 0 ? canonicalColumns : result.columns);
+      setData((previous) => ({
+        ...result,
+        columns: resolveDataWindowColumns(
+          canonicalColumns,
+          previous?.columns ?? [],
+          result.columns,
+        ),
+        rows,
+      }));
+      setHasMoreTableRows(result.rows.length === PAGE_SIZE);
+    },
+    [loadedTablePagesRef, registerColumnMetadata, setData, setHasMoreTableRows],
   );
 
   const patchLoadedTableCell = useCallback(
@@ -309,15 +341,11 @@ export function useDataGridTableFetcher({
         setIsLoading(false);
 
         if (result.execution_time_ms >= 0) {
-          window.dispatchEvent(
-            new CustomEvent("workspace-activity", {
-              detail: {
-                connectionId,
-                label: "Load",
-                durationMs: result.execution_time_ms,
-              },
-            }),
-          );
+          EventCenter.emit(APP_EVENTS.workspaceActivity, {
+            connectionId,
+            label: "Load",
+            durationMs: result.execution_time_ms,
+          });
         }
 
         if (page === 0 && isActiveRef.current) {
@@ -560,11 +588,127 @@ export function useDataGridTableFetcher({
     tableName,
   ]);
 
+  /** Reload button feedback: spinner while refetching, toast when done. */
+  const [isReloadingData, setIsReloadingData] = useState(false);
+  const handleReloadData = useCallback(async () => {
+    if (isReloadingData) return;
+    setIsReloadingData(true);
+    const startedAt = Date.now();
+    let ok = false;
+    try {
+      ok = await refreshTableFromStart();
+    } finally {
+      // Keep the spinner on screen for at least 450ms so a fast DB still shows
+      // the rotation instead of flickering.
+      const elapsed = Date.now() - startedAt;
+      if (elapsed < 450) await new Promise((resolve) => setTimeout(resolve, 450 - elapsed));
+      setIsReloadingData(false);
+    }
+    emitAppToast(
+      ok
+        ? { title: translateCurrent("datagrid.reloadSuccess"), tone: "success" }
+        : {
+            title: translateCurrent("datagrid.reloadFailed"),
+            description: translateCurrent("datagrid.reloadFailedDesc"),
+            tone: "error",
+          },
+    );
+  }, [isReloadingData, refreshTableFromStart]);
+
+  useEffect(() => {
+    if (externalResult) {
+      setData(externalResult);
+      loadedTablePagesRef.current.clear();
+      setStructureColumns([]);
+      setTotalRows(externalResult.rows.length);
+      setIsLoading(false);
+      setDataFromCache(false);
+      setStructureStatus("ready");
+      structurePromiseRef.current = null;
+      structureRetryAttemptRef.current = 0;
+      if (structureRetryTimeoutRef.current !== null) {
+        window.clearTimeout(structureRetryTimeoutRef.current);
+        structureRetryTimeoutRef.current = null;
+      }
+      structureRequestIdRef.current += 1;
+      return;
+    }
+
+    setData(null);
+    loadedTablePagesRef.current.clear();
+    setHasMoreTableRows(true);
+    setStructureColumns([]);
+    setTotalRows(0);
+    setDataFromCache(false);
+    setCurrentPage(0);
+    const persistedLayout = restorePersistedColumnLayout();
+    setFilterDraft(persistedLayout.filter);
+    setTableFilter(persistedLayout.filter);
+    setSortColumn(persistedLayout.sort?.column ?? null);
+    setSortDir(persistedLayout.sort?.direction ?? "ASC");
+    setStructureStatus("idle");
+    structurePromiseRef.current = null;
+    structureRetryAttemptRef.current = 0;
+    if (structureRetryTimeoutRef.current !== null) {
+      window.clearTimeout(structureRetryTimeoutRef.current);
+      structureRetryTimeoutRef.current = null;
+    }
+    requestIdRef.current += 1;
+    countRequestIdRef.current += 1;
+    structureRequestIdRef.current += 1;
+  }, [
+    connectionId,
+    countRequestIdRef,
+    database,
+    externalResult,
+    loadedTablePagesRef,
+    requestIdRef,
+    restorePersistedColumnLayout,
+    rowFocusToken,
+    setCurrentPage,
+    setData,
+    setDataFromCache,
+    setFilterDraft,
+    setHasMoreTableRows,
+    setIsLoading,
+    setSortColumn,
+    setSortDir,
+    setStructureColumns,
+    setStructureStatus,
+    setTableFilter,
+    setTotalRows,
+    structurePromiseRef,
+    structureRequestIdRef,
+    structureRetryAttemptRef,
+    structureRetryTimeoutRef,
+    tableName,
+  ]);
+
+  useEffect(() => {
+    if (!tableName || externalResult || !isActive) return;
+    void fetchData(currentPage);
+  }, [currentPage, externalResult, fetchData, isActive, tableName]);
+
+  useEffect(() => {
+    if (!tableName || externalResult || !isActive || !data) return;
+    if (structureStatus !== "idle") return;
+
+    const warmupId = window.setTimeout(() => {
+      void ensureStructureLoaded().catch((error) => {
+        devLogError("Inline edit metadata warmup failed:", error);
+      });
+    }, 180);
+
+    return () => window.clearTimeout(warmupId);
+  }, [data, ensureStructureLoaded, externalResult, isActive, structureStatus, tableName]);
+
   return {
     setLoadedTablePage,
     patchLoadedTableCell,
     fetchData,
     refreshTableFromStart,
     ensureStructureLoaded,
+    isReloadingData,
+    handleReloadData,
   };
 }

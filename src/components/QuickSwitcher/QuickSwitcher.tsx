@@ -15,8 +15,15 @@ import {
   Hash,
   Clock,
 } from "lucide-react";
-import { useQuickSwitcherStore, fuzzySearch, type SwitcherItem, type SwitcherItemKind } from "../../stores/quickSwitcherStore";
+import {
+  useQuickSwitcherStore,
+  fuzzySearch,
+  type SwitcherItem,
+  type SwitcherItemKind,
+} from "../../stores/quickSwitcherStore";
 import { useUIStore } from "../../stores/uiStore";
+import { APP_EVENTS } from "../../utils/app-events";
+import { EventCenter } from "../../stores/event-center";
 import { useSqlFavoritesStore } from "../../stores/sql-favorites-store";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useQueryStore } from "../../stores/queryStore";
@@ -60,26 +67,18 @@ interface QuickSwitcherProps {
 }
 
 export function QuickSwitcher(props: QuickSwitcherProps) {
-  const {
-    onOpenSavedQuery,
-    onConnect,
-  } = props;
+  const { onOpenSavedQuery, onConnect } = props;
 
-  const {
-    isOpen,
-    searchQuery,
-    recentItemIds,
-    close,
-    setSearchQuery,
-    addRecentItem,
-  } = useQuickSwitcherStore();
+  const { isOpen, searchQuery, recentItemIds, close, setSearchQuery, addRecentItem } =
+    useQuickSwitcherStore();
 
   const tabs = useUIStore((s) => s.tabs);
   const addTab = useUIStore((s) => s.addTab);
   const setActiveTab = useUIStore((s) => s.setActiveTab);
   const favorites = useSqlFavoritesStore((s) => s.favorites);
   const loadFavorites = useSqlFavoritesStore((s) => s.loadFavorites);
-  const { connections, activeConnectionId, currentDatabase, tables, schemaObjects } = useConnectionStore((s) => s);
+  const { connections, activeConnectionId, currentDatabase, tables, schemaObjects } =
+    useConnectionStore((s) => s);
   const getTableColumnsPreview = useQueryStore((s) => s.getTableColumnsPreview);
   const { entries: historyEntries, loadHistory } = useQueryHistoryStore((s) => s);
 
@@ -94,7 +93,14 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
     if (!isOpen) return;
     if (favorites.length === 0) void loadFavorites();
     if (activeConnectionId && historyEntries.length === 0) void loadHistory(activeConnectionId);
-  }, [activeConnectionId, favorites.length, historyEntries.length, isOpen, loadFavorites, loadHistory]);
+  }, [
+    activeConnectionId,
+    favorites.length,
+    historyEntries.length,
+    isOpen,
+    loadFavorites,
+    loadHistory,
+  ]);
 
   useEffect(() => {
     if (!shouldSearchColumns || !activeConnectionId) return;
@@ -109,18 +115,27 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
       for (let start = 0; start < visibleTables.length; start += 4) {
         const batch = visibleTables.slice(start, start + 4);
         const results = await Promise.allSettled(
-          batch.map((table) => getTableColumnsPreview(
-            activeConnectionId,
-            qualifyTableName(table.name, table.schema),
-            currentDatabase || undefined,
-          )),
+          batch.map((table) =>
+            getTableColumnsPreview(
+              activeConnectionId,
+              qualifyTableName(table.name, table.schema),
+              currentDatabase || undefined,
+            ),
+          ),
         );
         results.forEach((result, index) => {
           if (result.status !== "fulfilled") return;
           const table = batch[index];
           const tableIdentifier = qualifyTableName(table.name, table.schema);
           for (const column of result.value as ColumnDetail[]) {
-            const itemId = scopedItemId("column", activeConnectionId, currentDatabase, table.schema, table.name, column.name);
+            const itemId = scopedItemId(
+              "column",
+              activeConnectionId,
+              currentDatabase,
+              table.schema,
+              table.name,
+              column.name,
+            );
             nextItems.push({
               id: itemId,
               kind: "column",
@@ -151,16 +166,26 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
     };
 
     void loadColumns();
-    return () => { cancelled = true; };
-  }, [activeConnectionId, addRecentItem, addTab, close, currentDatabase, getTableColumnsPreview, shouldSearchColumns, tables]);
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    activeConnectionId,
+    addRecentItem,
+    addTab,
+    close,
+    currentDatabase,
+    getTableColumnsPreview,
+    shouldSearchColumns,
+    tables,
+  ]);
 
   useEffect(() => {
     const handleSchemaInvalidation = () => {
       columnScopeRef.current = null;
       setColumnItems([]);
     };
-    window.addEventListener("schema-cache-invalidated", handleSchemaInvalidation);
-    return () => window.removeEventListener("schema-cache-invalidated", handleSchemaInvalidation);
+    return EventCenter.on(APP_EVENTS.schemaCacheInvalidated, handleSchemaInvalidation);
   }, []);
 
   // Build searchable items from current app state
@@ -174,9 +199,12 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
         id: `tab:${tab.id}`,
         kind: "tab",
         label: title,
-        description: tab.type === "query" && tab.content?.trim()
-          ? tab.content.replace(/\s+/g, " ").trim().slice(0, 80)
-          : tab.tableName ? `Table: ${tab.tableName}` : tab.type,
+        description:
+          tab.type === "query" && tab.content?.trim()
+            ? tab.content.replace(/\s+/g, " ").trim().slice(0, 80)
+            : tab.tableName
+              ? `Table: ${tab.tableName}`
+              : tab.type,
         meta: tab.database,
         action: () => {
           setActiveTab(tab.id);
@@ -189,7 +217,13 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
     if (activeConnectionId) {
       for (const table of tables) {
         const tableIdentifier = qualifyTableName(table.name, table.schema);
-        const itemId = scopedItemId("table", activeConnectionId, currentDatabase, table.schema, table.name);
+        const itemId = scopedItemId(
+          "table",
+          activeConnectionId,
+          currentDatabase,
+          table.schema,
+          table.name,
+        );
         items.push({
           id: itemId,
           kind: "table",
@@ -212,7 +246,14 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
       }
 
       for (const object of schemaObjects) {
-        const itemId = scopedItemId("object", activeConnectionId, currentDatabase, object.schema, object.object_type, object.name);
+        const itemId = scopedItemId(
+          "object",
+          activeConnectionId,
+          currentDatabase,
+          object.schema,
+          object.object_type,
+          object.name,
+        );
         items.push({
           id: itemId,
           kind: "schema-object",
@@ -247,7 +288,10 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
         kind: "saved-query",
         label: fav.name,
         description: fav.sql.replace(/\s+/g, " ").trim().slice(0, 80),
-        meta: [fav.database, fav.tags.length > 0 ? fav.tags.join(", ") : undefined].filter(Boolean).join(" - ") || undefined,
+        meta:
+          [fav.database, fav.tags.length > 0 ? fav.tags.join(", ") : undefined]
+            .filter(Boolean)
+            .join(" - ") || undefined,
         action: () => {
           onOpenSavedQuery?.(fav.id);
           addRecentItem(itemId);
@@ -259,7 +303,12 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
     for (const entry of historyEntries) {
       if (activeConnectionId && entry.connection_id !== activeConnectionId) continue;
       if (entry.database && currentDatabase && entry.database !== currentDatabase) continue;
-      const itemId = scopedItemId("history", entry.connection_id, entry.database, String(entry.id ?? entry.executed_at));
+      const itemId = scopedItemId(
+        "history",
+        entry.connection_id,
+        entry.database,
+        String(entry.id ?? entry.executed_at),
+      );
       items.push({
         id: itemId,
         kind: "history",
@@ -297,7 +346,23 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
     }
 
     return items;
-  }, [activeConnectionId, addRecentItem, addTab, close, columnItems, connections, currentDatabase, favorites, historyEntries, onConnect, onOpenSavedQuery, schemaObjects, setActiveTab, tabs, tables]);
+  }, [
+    activeConnectionId,
+    addRecentItem,
+    addTab,
+    close,
+    columnItems,
+    connections,
+    currentDatabase,
+    favorites,
+    historyEntries,
+    onConnect,
+    onOpenSavedQuery,
+    schemaObjects,
+    setActiveTab,
+    tabs,
+    tables,
+  ]);
 
   // Filter with fuzzy search
   const filteredItems = useMemo(
@@ -363,7 +428,13 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
   let globalIdx = 0;
 
   return (
-    <div className="qs-backdrop" onClick={close} role="dialog" aria-modal aria-label="Quick Switcher">
+    <div
+      className="qs-backdrop"
+      onClick={close}
+      role="dialog"
+      aria-modal
+      aria-label="Quick Switcher"
+    >
       <div className="qs-modal" onClick={(e) => e.stopPropagation()} onKeyDown={handleKeyDown}>
         {/* Search */}
         <div className="qs-search">
@@ -382,10 +453,17 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
             aria-label="Search workspace"
             aria-controls="quick-switcher-results"
             aria-expanded="true"
-            aria-activedescendant={filteredItems[selectedIndex] ? `quick-switcher-option-${selectedIndex}` : undefined}
+            aria-activedescendant={
+              filteredItems[selectedIndex] ? `quick-switcher-option-${selectedIndex}` : undefined
+            }
           />
           {searchQuery && (
-            <button type="button" className="qs-clear-btn" aria-label="Clear search" onClick={() => setSearchQuery("")}>
+            <button
+              type="button"
+              className="qs-clear-btn"
+              aria-label="Clear search"
+              onClick={() => setSearchQuery("")}
+            >
               <X size={14} />
             </button>
           )}
@@ -434,9 +512,7 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
                             <span className="qs-item-desc">{item.description}</span>
                           )}
                         </div>
-                        {item.meta && (
-                          <span className="qs-item-meta">{item.meta}</span>
-                        )}
+                        {item.meta && <span className="qs-item-meta">{item.meta}</span>}
                       </div>
                     );
                   })}
@@ -448,9 +524,15 @@ export function QuickSwitcher(props: QuickSwitcherProps) {
 
         {/* Footer */}
         <div className="qs-footer">
-          <span><kbd>↑↓</kbd> Navigate</span>
-          <span><kbd>↵</kbd> Open</span>
-          <span><kbd>Esc</kbd> Close</span>
+          <span>
+            <kbd>↑↓</kbd> Navigate
+          </span>
+          <span>
+            <kbd>↵</kbd> Open
+          </span>
+          <span>
+            <kbd>Esc</kbd> Close
+          </span>
         </div>
       </div>
     </div>

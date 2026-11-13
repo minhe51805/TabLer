@@ -5,7 +5,7 @@ import { emitAppToast } from "../../../utils/app-toast";
 import { getCurrentAppLanguage, translateCurrent } from "../../../i18n";
 import { buildStableRowIdentity } from "../row-identity";
 import { getDataGridPowerCopy } from "../datagrid-power-copy";
-import type { GridSelectionState } from "../grid-selection";
+import { createEmptyGridSelection, type GridSelectionState } from "../grid-selection";
 import {
   buildRangeTsv,
   getPrimaryGridRange,
@@ -29,13 +29,16 @@ import {
 } from "./useDataGrid";
 import type { AnonymizerValue } from "../../../utils/anonymizer";
 
+const EMPTY_GRID_SELECTION = createEmptyGridSelection();
+
 interface DataGridRangeOperationsParams {
   /**
    * Selection state lives in DISPLAYED row space: keyboard navigation,
    * Ctrl+A and cell clicks all address the rows the user can see, so
    * filtered-out rows can never enter a range.
    */
-  gridSelection: GridSelectionState;
+  gridSelection?: GridSelectionState;
+  getGridSelection?: () => GridSelectionState;
   data: QueryResult | null;
   /** Rows in display order (quick filter + local sort applied). */
   displayedRows: GridCellValue[][];
@@ -70,6 +73,7 @@ interface DataGridRangeOperationsParams {
  */
 export function useDataGridRangeOperations({
   gridSelection,
+  getGridSelection,
   data,
   displayedRows,
   displayedRowIndices,
@@ -87,6 +91,10 @@ export function useDataGridRangeOperations({
   maskedColumnNames,
   maskRowsForCopy,
 }: DataGridRangeOperationsParams) {
+  const resolveSelection = useCallback(
+    () => (getGridSelection ? getGridSelection() : (gridSelection ?? EMPTY_GRID_SELECTION)),
+    [getGridSelection, gridSelection],
+  );
   const buildContext = useCallback((): RangeUpdateContext | null => {
     if (!data) return null;
     return {
@@ -187,7 +195,7 @@ export function useDataGridRangeOperations({
   /** Copy the selected rectangle as TSV. Returns true when the grid owned the shortcut. */
   const handleRangeCopy = useCallback((): boolean => {
     if (!data || displayedRows.length === 0 || resolvedColumns.length === 0) return false;
-    const range = getPrimaryGridRange(gridSelection, {
+    const range = getPrimaryGridRange(resolveSelection(), {
       rowCount: displayedRows.length,
       columnCount: resolvedColumns.length,
     });
@@ -208,7 +216,7 @@ export function useDataGridRangeOperations({
       }
     })();
     return true;
-  }, [data, displayedRows, gridSelection, maskRowsForCopy, resolvedColumns, setError]);
+  }, [data, displayedRows, maskRowsForCopy, resolveSelection, resolvedColumns, setError]);
 
   /**
    * Paste a TSV/CSV matrix at the active cell as ONE staged batch.
@@ -218,7 +226,7 @@ export function useDataGridRangeOperations({
    */
   const handleRangePaste = useCallback((): boolean => {
     if (!enabled || !data) return false;
-    const anchor = gridSelection.activeCell;
+    const anchor = resolveSelection().activeCell;
     if (!anchor) return false;
 
     void (async () => {
@@ -250,14 +258,14 @@ export function useDataGridRangeOperations({
       commitUpdates(plan, translateCurrent("datagrid.rangePasteStaged"));
     })();
     return true;
-  }, [buildContext, commitUpdates, data, enabled, gridSelection, setError]);
+  }, [buildContext, commitUpdates, data, enabled, resolveSelection, setError]);
 
   /** Stage NULL for every editable cell of the selection. */
   const handleRangeDelete = useCallback((): boolean => {
     if (!enabled) return false;
     const context = buildContext();
     if (!context) return false;
-    const range = getPrimaryGridRange(gridSelection, {
+    const range = getPrimaryGridRange(resolveSelection(), {
       rowCount: context.rows.length,
       columnCount: context.columns.length,
     });
@@ -266,7 +274,7 @@ export function useDataGridRangeOperations({
       planClearUpdates(range, context),
       translateCurrent("datagrid.rangeDeleteStaged"),
     );
-  }, [buildContext, commitUpdates, enabled, gridSelection]);
+  }, [buildContext, commitUpdates, enabled, resolveSelection]);
 
   /**
    * Fill the range downward from its top row. Only claims the shortcut for a
@@ -276,7 +284,7 @@ export function useDataGridRangeOperations({
     if (!enabled) return false;
     const context = buildContext();
     if (!context) return false;
-    const range = getPrimaryGridRange(gridSelection, {
+    const range = getPrimaryGridRange(resolveSelection(), {
       rowCount: context.rows.length,
       columnCount: context.columns.length,
     });
@@ -285,7 +293,7 @@ export function useDataGridRangeOperations({
       planFillDownUpdates(range, context),
       translateCurrent("datagrid.rangeFillStaged"),
     );
-  }, [buildContext, commitUpdates, enabled, gridSelection]);
+  }, [buildContext, commitUpdates, enabled, resolveSelection]);
 
   /**
    * Stage one value across the whole selection ("Set selected cells to…").
@@ -298,7 +306,7 @@ export function useDataGridRangeOperations({
       if (!enabled) return copy.setCells.errNotEditable;
       const context = buildContext();
       if (!context) return copy.setCells.errNoData;
-      const range = getPrimaryGridRange(gridSelection, {
+      const range = getPrimaryGridRange(resolveSelection(), {
         rowCount: context.rows.length,
         columnCount: context.columns.length,
       });
@@ -317,7 +325,7 @@ export function useDataGridRangeOperations({
       }
       return null;
     },
-    [buildContext, commitUpdates, enabled, gridSelection],
+    [buildContext, commitUpdates, enabled, resolveSelection],
   );
 
   return {

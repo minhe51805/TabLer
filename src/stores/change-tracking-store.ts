@@ -150,6 +150,8 @@ interface ChangeTrackingStoreState extends Omit<
   history: Record<string, ScopedStagedChange[][]>;
   /** Redo snapshots per scope key. */
   future: Record<string, ScopedStagedChange[][]>;
+  /** Scope key that opened the preview modal (`null` matches legacy unscoped opens). */
+  previewScopeKey: string | null;
   /** Reference to column names map per scope for SQL preview generation */
   _columnNameMap: Record<string, Record<number, string>>;
   /** DB type per scope for SQL generation */
@@ -165,6 +167,7 @@ interface ChangeTrackingStoreActions extends Omit<
   | "undoLast"
   | "redoLast"
   | "discardAll"
+  | "openPreview"
   | "getChangeCount"
   | "hasPendingChanges"
 > {
@@ -182,6 +185,8 @@ interface ChangeTrackingStoreActions extends Omit<
   redoLast: (scopeKey: string) => ScopedStagedChange[] | null;
   /** Discard every staged change in a scope as one undo step. */
   discardAll: (scopeKey: string) => void;
+  /** Open the preview modal, optionally scoped to one grid instance's key. */
+  openPreview: (scopeKey?: string) => void;
   /** Get the count of staged changes for a scope */
   getChangeCount: (scopeKey: string) => number;
   /** Undo depth for a scope (drives the toolbar badge). */
@@ -221,6 +226,7 @@ export const useChangeTrackingStore = create<FullChangeTrackingStore>()((set, ge
   history: {},
   future: {},
   isPreviewOpen: false,
+  previewScopeKey: null,
   selectedChangeId: null,
   _columnNameMap: {},
   _dbTypeMap: {},
@@ -345,9 +351,9 @@ export const useChangeTrackingStore = create<FullChangeTrackingStore>()((set, ge
     return next;
   },
 
-  openPreview: () => set({ isPreviewOpen: true }),
+  openPreview: (scopeKey) => set({ isPreviewOpen: true, previewScopeKey: scopeKey ?? null }),
 
-  closePreview: () => set({ isPreviewOpen: false, selectedChangeId: null }),
+  closePreview: () => set({ isPreviewOpen: false, previewScopeKey: null, selectedChangeId: null }),
 
   selectChange: (id) => set({ selectedChangeId: id }),
 
@@ -375,12 +381,25 @@ export const useChangeTrackingStore = create<FullChangeTrackingStore>()((set, ge
   },
 
   setColumnNameMap: (scopeKey, map) => {
+    const existing = get()._columnNameMap[scopeKey];
+    if (existing) {
+      const existingRecord = existing as Record<string, string>;
+      const nextRecord = map as Record<string, string>;
+      const nextKeys = Object.keys(nextRecord);
+      if (
+        nextKeys.length === Object.keys(existingRecord).length &&
+        nextKeys.every((key) => existingRecord[key] === nextRecord[key])
+      ) {
+        return;
+      }
+    }
     set((s) => ({
       _columnNameMap: { ...s._columnNameMap, [scopeKey]: map },
     }));
   },
 
   setDbType: (scopeKey, dbType) => {
+    if (get()._dbTypeMap[scopeKey] === dbType) return;
     set((s) => ({
       _dbTypeMap: { ...s._dbTypeMap, [scopeKey]: dbType },
     }));

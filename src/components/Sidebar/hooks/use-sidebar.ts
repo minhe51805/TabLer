@@ -7,6 +7,7 @@ import { useConnectionStore } from "../../../stores/connectionStore";
 import { useUIStore } from "../../../stores/uiStore";
 import { useI18n } from "../../../i18n";
 import { useEvent, EventCenter } from "../../../stores/event-center";
+import { APP_EVENTS } from "../../../utils/app-events";
 import { getQualifiedTableName, normalizeObjectSql, copyToClipboard } from "../SidebarUtils";
 import { getBulkActionsCopy } from "../bulk-actions-copy";
 import { getCodegenCopy } from "../codegen-copy";
@@ -998,8 +999,7 @@ export function useSidebar() {
       searchInputRef.current?.select();
     };
 
-    window.addEventListener("focus-explorer-search", handleFocusSearch);
-    return () => window.removeEventListener("focus-explorer-search", handleFocusSearch);
+    return EventCenter.on(APP_EVENTS.focusExplorerSearch, handleFocusSearch);
   }, []);
 
   // EventCenter: respond to explorer-search-focus event

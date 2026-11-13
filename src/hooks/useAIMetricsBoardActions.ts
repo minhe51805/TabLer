@@ -13,6 +13,8 @@ import type {
   OpenAIMetricsBoardDetail,
 } from "../utils/metrics-board-templates";
 import { emitAppToast } from "../utils/app-toast";
+import { APP_EVENTS } from "../utils/app-events";
+import { EventCenter } from "../stores/event-center";
 
 const BUSINESS_TABLE_PRIORITY = [
   "users",
@@ -105,11 +107,7 @@ function dispatchCompletion(
   payload: OpenAIMetricsBoardCompletionDetail,
 ) {
   if (!requestId) return;
-  window.dispatchEvent(
-    new CustomEvent("open-ai-metrics-board-complete", {
-      detail: { requestId, ...payload },
-    }),
-  );
+  EventCenter.emit(APP_EVENTS.openAIMetricsBoardComplete, { requestId, ...payload });
 }
 
 async function collectMetricsSchemaHints(
@@ -472,11 +470,7 @@ export function useAIMetricsBoardActions(language: string) {
           const freshBoards = storage.readStoredBoards();
           const mergedBoards = mergeBoardDelta(freshBoards, targetBoard, nextBoard, created);
           storage.writeStoredBoards(mergedBoards);
-          window.dispatchEvent(
-            new CustomEvent("metrics-boards-updated", {
-              detail: { connectionId: targetConnectionId },
-            }),
-          );
+          EventCenter.emit(APP_EVENTS.metricsBoardsUpdated, { connectionId: targetConnectionId });
         }
         setLeftPanel("metrics");
         if (existingMetricsTab) {
@@ -507,11 +501,10 @@ export function useAIMetricsBoardActions(language: string) {
         });
         if (didChange && addedWidgetIds.length) {
           window.setTimeout(() => {
-            window.dispatchEvent(
-              new CustomEvent("focus-metrics-widget", {
-                detail: { boardId: nextBoard!.id, widgetId: addedWidgetIds[0] },
-              }),
-            );
+            EventCenter.emit(APP_EVENTS.focusMetricsWidget, {
+              boardId: nextBoard!.id,
+              widgetId: addedWidgetIds[0],
+            });
           }, 60);
         }
       } catch (error) {

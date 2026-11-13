@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUIStore } from "../../stores/uiStore";
+import { APP_EVENTS } from "../../utils/app-events";
+import { EventCenter } from "../../stores/event-center";
 import { useI18n } from "../../i18n";
 import { buildMetricsBoardAttachmentSnapshot } from "./metrics-board-attachment";
 import {
@@ -167,11 +169,7 @@ export function MetricsBoard({
       const allBoards = readStoredBoards();
       const otherBoards = allBoards.filter((board) => board.connection_id !== connectionId);
       writeStoredBoards([...otherBoards, ...nextBoards]);
-      window.dispatchEvent(
-        new CustomEvent("metrics-boards-updated", {
-          detail: { connectionId },
-        }),
-      );
+      EventCenter.emit(APP_EVENTS.metricsBoardsUpdated, { connectionId });
     },
     [connectionId],
   );
@@ -199,8 +197,8 @@ export function MetricsBoard({
   }, [boardId, connectionId, database, persistBoards]);
 
   useEffect(() => {
-    const handleBoardsUpdated = (event: Event) => {
-      const detail = (event as CustomEvent<{ connectionId?: string }>).detail;
+    const handleBoardsUpdated = (event: CustomEvent<{ connectionId?: string } | undefined>) => {
+      const detail = event.detail;
       if (detail?.connectionId && detail.connectionId !== connectionId) {
         return;
       }
@@ -221,8 +219,7 @@ export function MetricsBoard({
       });
     };
 
-    window.addEventListener("metrics-boards-updated", handleBoardsUpdated);
-    return () => window.removeEventListener("metrics-boards-updated", handleBoardsUpdated);
+    return EventCenter.on(APP_EVENTS.metricsBoardsUpdated, handleBoardsUpdated);
   }, [boardId, connectionId]);
 
   const filteredBoards = useMemo(() => {
@@ -298,11 +295,7 @@ export function MetricsBoard({
           const allBoards = readStoredBoards();
           const otherBoards = allBoards.filter((board) => board.connection_id !== connectionId);
           writeStoredBoards([...otherBoards, ...nextBoards]);
-          window.dispatchEvent(
-            new CustomEvent("metrics-boards-updated", {
-              detail: { connectionId },
-            }),
-          );
+          EventCenter.emit(APP_EVENTS.metricsBoardsUpdated, { connectionId });
           return nextBoards;
         });
       }, 400);
@@ -457,8 +450,7 @@ export function MetricsBoard({
       setCanvasContextMenu(null);
     };
 
-    window.addEventListener("focus-metrics-widget", handleFocusMetricsWidget);
-    return () => window.removeEventListener("focus-metrics-widget", handleFocusMetricsWidget);
+    return EventCenter.on(APP_EVENTS.focusMetricsWidget, handleFocusMetricsWidget);
   }, [activeBoardId]);
 
   useEffect(() => {
@@ -587,14 +579,10 @@ export function MetricsBoard({
   });
 
   const handleOpenDatabaseSidebar = useCallback(() => {
-    window.dispatchEvent(
-      new CustomEvent("open-left-sidebar-panel", {
-        detail: {
-          panel: "database",
-          focusSearch: true,
-        },
-      }),
-    );
+    EventCenter.emit(APP_EVENTS.openLeftSidebarPanel, {
+      panel: "database",
+      focusSearch: true,
+    });
   }, []);
 
   const handleFocusMetricsSidebar = useCallback(() => {
@@ -611,20 +599,14 @@ export function MetricsBoard({
       databaseLabel: displayDatabaseLabel,
     });
 
-    window.dispatchEvent(
-      new CustomEvent("open-ai-slide-panel", {
-        detail: {
-          attachment: {
-            text: attachmentText,
-            source:
-              language === "vi"
-                ? `Dashboard: ${activeBoard.name}`
-                : `Dashboard: ${activeBoard.name}`,
-            boardId: activeBoard.id,
-          },
-        },
-      }),
-    );
+    EventCenter.emit(APP_EVENTS.openAISlidePanel, {
+      attachment: {
+        text: attachmentText,
+        source:
+          language === "vi" ? `Dashboard: ${activeBoard.name}` : `Dashboard: ${activeBoard.name}`,
+        boardId: activeBoard.id,
+      },
+    });
   }, [activeBoard, displayConnectionLabel, displayDatabaseLabel, language]);
 
   const openWidgetResult = useCallback(

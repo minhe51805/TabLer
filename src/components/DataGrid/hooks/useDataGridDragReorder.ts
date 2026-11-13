@@ -3,6 +3,8 @@ import type { ConnectionConfig, DatabaseType, QueryResult } from "../../../types
 import { getCurrentAppLanguage } from "../../../i18n";
 import { quoteIdentifier } from "../../../utils/sql-generator";
 import { getDataGridCopy } from "../datagrid-copy";
+import { APP_EVENTS } from "../../../utils/app-events";
+import { EventCenter } from "../../../stores/event-center";
 import { buildRowPrimaryKeys, type ResolvedColumn } from "./useDataGrid";
 
 /** SQL literal for a cell value — mirrors cellToSql in utils/sql-generator. */
@@ -149,11 +151,12 @@ export function useDataGridDragReorder({
         await executeQuery(connectionId, sql);
 
         invalidateTableCaches(connectionId, tableName, database);
-        window.dispatchEvent(
-          new CustomEvent("table-data-updated", {
-            detail: { connectionId, database, tableName, sourceId: dataGridInstanceIdRef.current },
-          }),
-        );
+        EventCenter.emit(APP_EVENTS.tableDataUpdated, {
+          connectionId,
+          database,
+          tableName,
+          sourceId: dataGridInstanceIdRef.current,
+        });
         await refreshTableFromStart();
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);

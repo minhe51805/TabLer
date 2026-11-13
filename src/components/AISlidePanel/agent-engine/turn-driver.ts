@@ -12,6 +12,8 @@ import type {
   QueryResult,
 } from "../../../types";
 import { getActiveAIProvider } from "../../../utils/ai-provider-registry";
+import { APP_EVENTS } from "../../../utils/app-events";
+import { EventCenter } from "../../../stores/event-center";
 import { normalizeAIRequestError } from "../../../utils/ai-request-errors";
 import { invokeWithTimeout } from "../../../utils/tauri-utils";
 import { manageAgentMetricsBoard } from "../agent-tools/metrics-board-manager";
@@ -379,19 +381,15 @@ export async function driveAgentTurns(params: {
     requestIdRef,
     openQueryTab: ({ sql: tabSql, title, autoRun }) => {
       const tabIdsBefore = new Set(useUIStore.getState().tabs.map((tab) => tab.id));
-      window.dispatchEvent(
-        new CustomEvent("open-ai-workspace-query", {
-          detail: {
-            sql: tabSql,
-            connectionId,
-            database: currentDatabase || undefined,
-            title,
-            resultViewMode: "table" as const,
-            autoRun,
-            focusWorkspace: true,
-          },
-        }),
-      );
+      EventCenter.emit(APP_EVENTS.openAIWorkspaceQuery, {
+        sql: tabSql,
+        connectionId: connectionId ?? undefined,
+        database: currentDatabase || undefined,
+        title,
+        resultViewMode: "table" as const,
+        autoRun,
+        focusWorkspace: true,
+      });
       return useUIStore
         .getState()
         .tabs.some((tab) => tab.type === "query" && !tabIdsBefore.has(tab.id));

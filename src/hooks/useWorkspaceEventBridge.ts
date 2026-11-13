@@ -4,6 +4,8 @@ import type { OpenAIMetricsBoardDetail } from "../utils/metrics-board-templates"
 import type { WorkspaceActivityState } from "../types/app-types";
 import { useAppLayoutStore } from "../stores/appLayoutStore";
 import { useModalStore } from "../stores/modalStore";
+import { EventCenter } from "../stores/event-center";
+import { APP_EVENTS } from "../utils/app-events";
 
 export interface OpenAIWorkspaceQueryDetail {
   sql?: string;
@@ -25,9 +27,7 @@ interface UseWorkspaceEventBridgeOptions {
   openAI: (prompt?: string, attachment?: AIWorkspaceAttachment) => void;
   openAIWorkspaceQuery: (detail: OpenAIWorkspaceQueryDetail) => void;
   openAIMetricsBoard: (detail: OpenAIMetricsBoardDetail) => void | Promise<void>;
-  setWorkspaceActivity: Dispatch<
-    SetStateAction<Record<string, WorkspaceActivityState>>
-  >;
+  setWorkspaceActivity: Dispatch<SetStateAction<Record<string, WorkspaceActivityState>>>;
 }
 
 export function useWorkspaceEventBridge({
@@ -41,11 +41,8 @@ export function useWorkspaceEventBridge({
   const setLeftPanel = useAppLayoutStore((state) => state.setLeftPanel);
 
   useEffect(() => {
-    const handleOpenAI = (event: Event) => {
-      const detail = (event as CustomEvent<{
-        prompt?: string;
-        attachment?: { text?: string; source?: string; boardId?: string };
-      }>).detail;
+    const offOpenAI = EventCenter.on(APP_EVENTS.openAISlidePanel, (event) => {
+      const detail = event.detail;
       openAI(
         detail?.prompt,
         detail?.attachment?.text
@@ -56,44 +53,35 @@ export function useWorkspaceEventBridge({
             }
           : undefined,
       );
-    };
+    });
 
-    const handleOpenAIWorkspaceQuery = (event: Event) => {
-      openAIWorkspaceQuery(
-        (event as CustomEvent<OpenAIWorkspaceQueryDetail>).detail ?? {},
-      );
-    };
+    const offOpenAIWorkspaceQuery = EventCenter.on(APP_EVENTS.openAIWorkspaceQuery, (event) => {
+      openAIWorkspaceQuery(event.detail ?? {});
+    });
 
-    const handleOpenAIMetricsBoard = (event: Event) => {
-      void openAIMetricsBoard(
-        (event as CustomEvent<OpenAIMetricsBoardDetail>).detail ?? {},
-      );
-    };
+    const offOpenAIMetricsBoard = EventCenter.on(APP_EVENTS.openAIMetricsBoard, (event) => {
+      void openAIMetricsBoard(event.detail ?? {});
+    });
 
-    const handleOpenAISettings = () => setShowAISettings(true);
+    const offOpenAISettings = EventCenter.on(APP_EVENTS.openAISettings, () =>
+      setShowAISettings(true),
+    );
 
-    const handleOpenLeftSidebarPanel = (event: Event) => {
-      const detail = (event as CustomEvent<{
-        panel?: "database" | "metrics";
-        focusSearch?: boolean;
-      }>).detail;
+    const offOpenLeftSidebarPanel = EventCenter.on(APP_EVENTS.openLeftSidebarPanel, (event) => {
+      const detail = event.detail;
       if (!detail?.panel) return;
 
       setIsSidebarCollapsed(false);
       setLeftPanel(detail.panel);
       if (detail.panel === "database" && detail.focusSearch) {
         window.setTimeout(() => {
-          window.dispatchEvent(new CustomEvent("focus-explorer-search"));
+          EventCenter.emit(APP_EVENTS.focusExplorerSearch);
         }, 0);
       }
-    };
+    });
 
-    const handleWorkspaceActivity = (event: Event) => {
-      const detail = (event as CustomEvent<{
-        connectionId?: string;
-        label?: string;
-        durationMs?: number;
-      }>).detail;
+    const offWorkspaceActivity = EventCenter.on(APP_EVENTS.workspaceActivity, (event) => {
+      const detail = event.detail;
       if (!detail?.connectionId || typeof detail.durationMs !== "number" || detail.durationMs < 0) {
         return;
       }
@@ -106,21 +94,15 @@ export function useWorkspaceEventBridge({
           at: Date.now(),
         },
       }));
-    };
+    });
 
-    window.addEventListener("open-ai-slide-panel", handleOpenAI);
-    window.addEventListener("open-ai-workspace-query", handleOpenAIWorkspaceQuery);
-    window.addEventListener("open-ai-metrics-board", handleOpenAIMetricsBoard);
-    window.addEventListener("open-ai-settings", handleOpenAISettings);
-    window.addEventListener("open-left-sidebar-panel", handleOpenLeftSidebarPanel);
-    window.addEventListener("workspace-activity", handleWorkspaceActivity);
     return () => {
-      window.removeEventListener("open-ai-slide-panel", handleOpenAI);
-      window.removeEventListener("open-ai-workspace-query", handleOpenAIWorkspaceQuery);
-      window.removeEventListener("open-ai-metrics-board", handleOpenAIMetricsBoard);
-      window.removeEventListener("open-ai-settings", handleOpenAISettings);
-      window.removeEventListener("open-left-sidebar-panel", handleOpenLeftSidebarPanel);
-      window.removeEventListener("workspace-activity", handleWorkspaceActivity);
+      offOpenAI();
+      offOpenAIWorkspaceQuery();
+      offOpenAIMetricsBoard();
+      offOpenAISettings();
+      offOpenLeftSidebarPanel();
+      offWorkspaceActivity();
     };
   }, [
     openAI,

@@ -4,6 +4,8 @@ import { agentToolError, isRetryableAgentToolError } from "../agent-tool-executo
 import { invalidateAgentMemoryIndex } from "../hooks/use-agent-memory";
 import { formatMemoryCopy, getAIMemoryCopy } from "../ai-memory-copy";
 import { emitAppToast } from "../../../utils/app-toast";
+import { APP_EVENTS } from "../../../utils/app-events";
+import { EventCenter } from "../../../stores/event-center";
 import { invokeMutation } from "../../../utils/tauri-utils";
 import type { AgentToolModule } from "./shared";
 
@@ -53,15 +55,11 @@ export const tools: AgentToolModule[] = [
         // Same freshness contract as saves: the next run must not serve a
         // deleted entry from the TTL cache.
         invalidateAgentMemoryIndex(ctx.memoryScope.connectionId);
-        window.dispatchEvent(
-          new CustomEvent("workspace-activity", {
-            detail: {
-              connectionId: ctx.connectionId,
-              label: `Memory deleted: ${memoryName}`,
-              durationMs: 0,
-            },
-          }),
-        );
+        EventCenter.emit(APP_EVENTS.workspaceActivity, {
+          connectionId: ctx.connectionId,
+          label: `Memory deleted: ${memoryName}`,
+          durationMs: 0,
+        });
         return `Memory "${memoryName}" permanently deleted from this scope. The freed slot is available to the next save_memory.`;
       } catch (errorValue) {
         if (isSupersededAIRequestError(errorValue)) throw errorValue;
@@ -101,15 +99,11 @@ export const tools: AgentToolModule[] = [
             database: ctx.memoryScope.database ?? null,
           },
         );
-        window.dispatchEvent(
-          new CustomEvent("workspace-activity", {
-            detail: {
-              connectionId: ctx.connectionId,
-              label: `Memory: ${content.name}`,
-              durationMs: 0,
-            },
-          }),
-        );
+        EventCenter.emit(APP_EVENTS.workspaceActivity, {
+          connectionId: ctx.connectionId,
+          label: `Memory: ${content.name}`,
+          durationMs: 0,
+        });
         const updatedNote = content.updatedAt ? ` (last updated ${content.updatedAt})` : "";
         return [
           `Memory "${content.name}" loaded${updatedNote}. Treat it as a saved observation, not a live fact — re-verify anything the schema contradicts:`,
@@ -170,15 +164,11 @@ export const tools: AgentToolModule[] = [
           }),
           durationMs: 4000,
         });
-        window.dispatchEvent(
-          new CustomEvent("workspace-activity", {
-            detail: {
-              connectionId: ctx.connectionId,
-              label: `Memory saved: ${saved.name}`,
-              durationMs: 0,
-            },
-          }),
-        );
+        EventCenter.emit(APP_EVENTS.workspaceActivity, {
+          connectionId: ctx.connectionId,
+          label: `Memory saved: ${saved.name}`,
+          durationMs: 0,
+        });
         // The injected index must not serve a stale (pre-save) view on the
         // next run within the TTL window.
         invalidateAgentMemoryIndex(ctx.memoryScope.connectionId);
@@ -258,15 +248,11 @@ export const tools: AgentToolModule[] = [
             durationMs: 4000,
           });
         }
-        window.dispatchEvent(
-          new CustomEvent("workspace-activity", {
-            detail: {
-              connectionId: ctx.connectionId,
-              label: `Memory tool: ${memoryArgs.command}`,
-              durationMs: 0,
-            },
-          }),
-        );
+        EventCenter.emit(APP_EVENTS.workspaceActivity, {
+          connectionId: ctx.connectionId,
+          label: `Memory tool: ${memoryArgs.command}`,
+          durationMs: 0,
+        });
         return result;
       } catch (errorValue) {
         if (isSupersededAIRequestError(errorValue)) throw errorValue;

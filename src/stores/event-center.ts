@@ -40,8 +40,62 @@ export type EventMap = {
     database?: string;
     tableName?: string;
     invalidateStructure?: boolean;
+    sourceId?: string;
   };
   "table-structure-updated": { connectionId: string; database?: string; tableName: string };
+
+  // Workspace activity & cache invalidation
+  "workspace-activity": {
+    connectionId?: string | null;
+    label?: string;
+    durationMs: number;
+  };
+  "schema-cache-invalidated": { connectionId: string; database?: string };
+  "metrics-boards-updated": { connectionId?: string } | undefined;
+  "focus-metrics-widget": { boardId?: string; widgetId: string };
+
+  // AI & workspace navigation bridge
+  "open-ai-slide-panel":
+    | {
+        prompt?: string;
+        attachment?: { text?: string; source?: string; boardId?: string };
+      }
+    | undefined;
+  "open-ai-workspace-query": import("../hooks/useWorkspaceEventBridge").OpenAIWorkspaceQueryDetail;
+  "open-ai-metrics-board": import("../utils/metrics-board-templates").OpenAIMetricsBoardDetail;
+  "open-ai-metrics-board-complete": {
+    requestId: string;
+  } & import("../utils/metrics-board-templates").OpenAIMetricsBoardCompletionDetail;
+  "open-ai-settings": void;
+  "open-left-sidebar-panel": {
+    panel?: "database" | "metrics";
+    focusSearch?: boolean;
+  };
+  "insert-sql-from-ai": { sql: string };
+  "toggle-query-results-pane": { tabId?: string } | undefined;
+  "focus-explorer-search": void;
+  "open-live-profiler": void;
+  "open-keyboard-shortcuts-palette": void;
+  "toggle-query-schedules-palette": void;
+  "launcher-focus-connection": { connectionId: string; immediate?: boolean };
+
+  // DataGrid scoped keyboard commands
+  "datagrid-undo": void;
+  "datagrid-redo": void;
+  "datagrid-duplicate-row": void;
+  "datagrid-fk-preview": void;
+
+  // Palette & UI shell commands
+  "format-sql-palette": void;
+  "focus-sql-editor-palette": void;
+  "focus-results-palette": void;
+  "open-sql-file-palette": void;
+  "import-sql-file-palette": void;
+  "clear-ai-history-palette": void;
+  "font-scale-changed": { scale: number };
+  "open-connection-form-palette": { intent: "connect" | "bootstrap" };
+  "open-data-import-palette": { path?: string } | undefined;
+  "open-schema-diff-palette": void;
 
   // AI panel events
   "ai-panel-open": { prompt?: string; context?: Record<string, unknown> };
@@ -146,9 +200,13 @@ export const EventCenter = {
     window.addEventListener(name, handler);
   },
 
-  /** Emit an event. Detail must match the event name. */
-  emit<N extends EventName>(name: N, detail: EventDetail<N>): void {
-    window.dispatchEvent(new CustomEvent(name, { detail }));
+  /** Emit an event. Detail is optional only for void / optional-detail events. */
+  emit<N extends EventName>(
+    name: N,
+    ...args: undefined extends EventDetail<N> ? [detail?: EventDetail<N>] : [detail: EventDetail<N>]
+  ): void {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(new CustomEvent(name, { detail: args[0] }));
   },
 };
 

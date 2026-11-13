@@ -2,12 +2,16 @@
  * Change Tracking Preview Modal — shows staged changes as SQL diff before commit.
  */
 import { X, Check, AlertTriangle } from "lucide-react";
+import { useShallow } from "zustand/react/shallow";
 import { StagedChangeDetail } from "./StagedChangeDetail";
 import {
   useChangeTrackingStore,
   changeScopeKey,
   changeMatchesScope,
+  type ScopedStagedChange,
 } from "../../../stores/change-tracking-store";
+
+const EMPTY_SCOPED_CHANGES: ScopedStagedChange[] = [];
 
 interface Props {
   connectionId: string;
@@ -26,11 +30,18 @@ export function ChangeTrackingPreviewModal({
   onDiscard,
   isApplying = false,
 }: Props) {
-  const { stagedChanges, isPreviewOpen, selectedChangeId, selectChange, closePreview } =
-    useChangeTrackingStore();
-
   const scope = tableName ? changeScopeKey(connectionId, database, tableName) : "";
-  const tableChanges = stagedChanges.filter((c) => changeMatchesScope(c, scope));
+  const isPreviewOpen = useChangeTrackingStore(
+    (s) => s.isPreviewOpen && (s.previewScopeKey === null || s.previewScopeKey === scope),
+  );
+  const tableChanges = useChangeTrackingStore(
+    useShallow((s) =>
+      scope ? s.stagedChanges.filter((c) => changeMatchesScope(c, scope)) : EMPTY_SCOPED_CHANGES,
+    ),
+  );
+  const selectedChangeId = useChangeTrackingStore((s) => s.selectedChangeId);
+  const selectChange = useChangeTrackingStore((s) => s.selectChange);
+  const closePreview = useChangeTrackingStore((s) => s.closePreview);
 
   if (!isPreviewOpen || tableChanges.length === 0) {
     return null;

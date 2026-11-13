@@ -1,12 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect } from "react";
 import { translateLanguage, type AppLanguage } from "../../../i18n";
-import {
-  denyPendingAIFailoverConsent,
-  resolveAIFailoverConsent,
-} from "../../../utils/ai-failover-consent";
+import type { AIProviderConfig } from "../../../types";
+import { resolveAIFailoverConsent } from "../../../utils/ai-failover-consent";
 import { approveDataRead, dataReadScopeKey, revokeDataRead } from "../ai-data-read-approvals";
 import { isVisualizationPrompt, prefersVietnameseSystemReply } from "../ai-visualization-intent";
-import type { AIProviderConfig } from "../../../types";
+import { useAIPanelStore } from "../store/aiPanelStore";
 
 export interface VisualizationReadConsentState {
   title: string;
@@ -20,18 +18,15 @@ interface UseAIConsentGatesOptions {
   currentDatabase: string | null;
   language: AppLanguage;
   activeProvider: AIProviderConfig | null | undefined;
-  /** Runs synchronously right after the panel opens / the database changes,
-   *  AFTER useAIWorkspaceEffects has cleared the approval — kept in the caller
-   *  because effect ordering across hooks is call-order dependent. */
 }
 
 /**
  * Every consent gate the panel can block a run on: the remembered
  * visualization/data-read grant, the always-ask destructive consent, the
  * once-only provider failover consent, and the session data-read toggle.
- * Resolvers live in refs so a cancelled run can deny every pending dialog at
- * once through `denyPendingConsents` — denials are never persisted, a stopped
- * run is not a user decision.
+ * Backed by `consentSlice` in `useAIPanelStore` so `denyPendingConsents` can be
+ * invoked directly on generation cancellation or panel close without circular
+ * ref forwarding (`denyPendingConsentsRef`).
  */
 export function useAIConsentGates({
   connectionId,
@@ -39,42 +34,47 @@ export function useAIConsentGates({
   language,
   activeProvider,
 }: UseAIConsentGatesOptions) {
-  const visualizationConsentResolverRef = useRef<((value: boolean) => void) | null>(null);
-  const visualizationApprovalScopeRef = useRef<string | null>(null);
-  const destructiveConsentResolverRef = useRef<((approved: boolean) => void) | null>(null);
-  const [visualizationConsentPending, setVisualizationConsentPending] =
-    useState<VisualizationReadConsentState | null>(null);
-  const [destructiveConsentPending, setDestructiveConsentPending] =
-    useState<VisualizationReadConsentState | null>(null);
-  const [isFailoverConsentPending, setIsFailoverConsentPending] = useState(false);
-  const [isSessionDataReadEnabled, setIsSessionDataReadEnabled] = useState(false);
+  const visualizationConsentPending = useAIPanelStore((state) => state.visualizationConsentPending);
+  const destructiveConsentPending = useAIPanelStore((state) => state.destructiveConsentPending);
+  const isFailoverConsentPending = useAIPanelStore((state) => state.isFailoverConsentPending);
+  const isSessionDataReadEnabled = useAIPanelStore((state) => state.isSessionDataReadEnabled);
 
-  // Deny every consent this component can be waiting on. Denials are never
-  // persisted — a cancelled run is not a user decision, so the question may
-  // be asked again on the next run.
-  const denyPendingConsents = useCallback(() => {
-    visualizationConsentResolverRef.current?.(false);
-    visualizationConsentResolverRef.current = null;
-    setVisualizationConsentPending(null);
-    destructiveConsentResolverRef.current?.(false);
-    destructiveConsentResolverRef.current = null;
-    setDestructiveConsentPending(null);
-    denyPendingAIFailoverConsent();
-    setIsFailoverConsentPending(false);
-  }, []);
+  const setVisualizationConsentPending = useAIPanelStore(
+    (state) => state.setVisualizationConsentPending,
+  );
+  const setDestructiveConsentPending = useAIPanelStore(
+    (state) => state.setDestructiveConsentPending,
+  );
+  const setIsFailoverConsentPending = useAIPanelStore((state) => state.setIsFailoverConsentPending);
+  const setIsSessionDataReadEnabled = useAIPanelStore((state) => state.setIsSessionDataReadEnabled);
+  const setVisualizationApprovalScope = useAIPanelStore(
+    (state) => state.setVisualizationApprovalScope,
+  );
+  const openVisualizationConsentPrompt = useAIPanelStore(
+    (state) => state.openVisualizationConsentPrompt,
+  );
+  const settleVisualizationConsent = useAIPanelStore((state) => state.settleVisualizationConsent);
+  const openDestructiveConsentPrompt = useAIPanelStore(
+    (state) => state.openDestructiveConsentPrompt,
+  );
+  const settleDestructiveConsent = useAIPanelStore((state) => state.settleDestructiveConsent);
+  const denyPendingConsents = useAIPanelStore((state) => state.denyPendingConsents);
 
-  // The agent hook raises "ai-failover-consent-request" the first time a
-  // provider fails; the dialog below collects the once-only decision.
+  // The agent transport raises "ai-failover-consent-request" the first time a
+  // provider fails; the dialog collects the once-only decision.
   useEffect(() => {
     const onRequest = () => setIsFailoverConsentPending(true);
     window.addEventListener("ai-failover-consent-request", onRequest);
     return () => window.removeEventListener("ai-failover-consent-request", onRequest);
-  }, []);
+  }, [setIsFailoverConsentPending]);
 
-  const handleResolveFailoverConsent = useCallback((approved: boolean) => {
-    setIsFailoverConsentPending(false);
-    resolveAIFailoverConsent(approved);
-  }, []);
+  const handleResolveFailoverConsent = useCallback(
+    (approved: boolean) => {
+      setIsFailoverConsentPending(false);
+      resolveAIFailoverConsent(approved);
+    },
+    [setIsFailoverConsentPending],
+  );
 
   const failoverConsentState = isFailoverConsentPending
     ? {
@@ -88,30 +88,38 @@ export function useAIConsentGates({
     : null;
 
   const getCurrentVisualizationApprovalScope = useCallback(
-    // Persistent scope: connection + database only. Once a database is
-    // approved the prompt stays quiet across app launches and AI sessions
-    // (see ai-data-read-approvals.ts).
     () => dataReadScopeKey(connectionId, currentDatabase),
     [connectionId, currentDatabase],
   );
 
-  const resolveVisualizationConsent = useCallback(
+  const applyVisualizationDecisionSideEffects = useCallback(
     (approved: boolean) => {
-      const resolver = visualizationConsentResolverRef.current;
-      visualizationConsentResolverRef.current = null;
-      setVisualizationConsentPending(null);
+      const currentScope = getCurrentVisualizationApprovalScope();
       if (approved) {
         approveDataRead(connectionId, currentDatabase);
-        visualizationApprovalScopeRef.current = getCurrentVisualizationApprovalScope();
+        setVisualizationApprovalScope(currentScope);
         setIsSessionDataReadEnabled(true);
-      } else if (visualizationApprovalScopeRef.current === getCurrentVisualizationApprovalScope()) {
+      } else if (useAIPanelStore.getState().visualizationApprovalScope === currentScope) {
         revokeDataRead(connectionId, currentDatabase);
-        visualizationApprovalScopeRef.current = null;
+        setVisualizationApprovalScope(null);
         setIsSessionDataReadEnabled(false);
       }
-      resolver?.(approved);
     },
-    [connectionId, currentDatabase, getCurrentVisualizationApprovalScope],
+    [
+      connectionId,
+      currentDatabase,
+      getCurrentVisualizationApprovalScope,
+      setIsSessionDataReadEnabled,
+      setVisualizationApprovalScope,
+    ],
+  );
+
+  const resolveVisualizationConsent = useCallback(
+    (approved: boolean) => {
+      applyVisualizationDecisionSideEffects(approved);
+      settleVisualizationConsent(approved);
+    },
+    [applyVisualizationDecisionSideEffects, settleVisualizationConsent],
   );
 
   const requestVisualizationReadConsent = useCallback(
@@ -120,99 +128,77 @@ export function useAIConsentGates({
         return true;
       }
 
-      if (visualizationApprovalScopeRef.current === getCurrentVisualizationApprovalScope()) {
+      if (
+        useAIPanelStore.getState().visualizationApprovalScope ===
+        getCurrentVisualizationApprovalScope()
+      ) {
         return true;
-      }
-
-      if (visualizationConsentResolverRef.current) {
-        visualizationConsentResolverRef.current(false);
-        visualizationConsentResolverRef.current = null;
       }
 
       const isVietnamese = prefersVietnameseSystemReply(promptText, language);
       const isVisualization = isVisualizationPrompt(promptText);
       const databaseLabel = currentDatabase || "current database";
 
-      return new Promise<boolean>((resolve) => {
-        visualizationConsentResolverRef.current = resolve;
-        setVisualizationConsentPending({
-          title: isVietnamese
-            ? isVisualization
-              ? "Cấp quyền đọc data để vẽ biểu đồ?"
-              : "Cấp quyền đọc data cho Agent?"
-            : isVisualization
-              ? "Allow AI to read data for charts?"
-              : "Allow Agent to read live data?",
-          message: isVietnamese
-            ? isVisualization
-              ? `Model đã có schema để hiểu cấu trúc DB. Bước tiếp theo cần đọc dữ liệu chỉ-đọc trong ${databaseLabel} để tạo chart/dashboard. Quyền sẽ được ghi nhớ cho database này, không hỏi lại. Bạn có muốn tiếp tục không?`
-              : `Agent đã có schema để hiểu cấu trúc DB. Bước tiếp theo cần đọc dữ liệu chỉ-đọc trong ${databaseLabel} để trả lời. Quyền sẽ được ghi nhớ cho database này, không hỏi lại. Bạn có muốn tiếp tục không?`
-            : isVisualization
-              ? `The model already has a schema capsule for structure. The next step needs read-only access to live data in ${databaseLabel} to build charts or dashboards. The grant is remembered for this database and will not be asked again. Continue?`
-              : `The agent already has the database schema. The next step needs read-only access to live data in ${databaseLabel} to answer your request. The grant is remembered for this database and will not be asked again. Continue?`,
-          confirmText: isVietnamese ? "Cho phép đọc data" : "Allow data read",
-          cancelText: isVietnamese ? "Không cho phép" : "Deny",
-        });
+      return openVisualizationConsentPrompt({
+        title: isVietnamese
+          ? isVisualization
+            ? "Cấp quyền đọc data để vẽ biểu đồ?"
+            : "Cấp quyền đọc data cho Agent?"
+          : isVisualization
+            ? "Allow AI to read data for charts?"
+            : "Allow Agent to read live data?",
+        message: isVietnamese
+          ? isVisualization
+            ? `Model đã có schema để hiểu cấu trúc DB. Bước tiếp theo cần đọc dữ liệu chỉ-đọc trong ${databaseLabel} để tạo chart/dashboard. Quyền sẽ được ghi nhớ cho database này, không hỏi lại. Bạn có muốn tiếp tục không?`
+            : `Agent đã có schema để hiểu cấu trúc DB. Bước tiếp theo cần đọc dữ liệu chỉ-đọc trong ${databaseLabel} để trả lời. Quyền sẽ được ghi nhớ cho database này, không hỏi lại. Bạn có muốn tiếp tục không?`
+          : isVisualization
+            ? `The model already has a schema capsule for structure. The next step needs read-only access to live data in ${databaseLabel} to build charts or dashboards. The grant is remembered for this database and will not be asked again. Continue?`
+            : `The agent already has the database schema. The next step needs read-only access to live data in ${databaseLabel} to answer your request. The grant is remembered for this database and will not be asked again. Continue?`,
+        confirmText: isVietnamese ? "Cho phép đọc data" : "Allow data read",
+        cancelText: isVietnamese ? "Không cho phép" : "Deny",
       });
     },
-    [connectionId, currentDatabase, getCurrentVisualizationApprovalScope, language],
+    [
+      connectionId,
+      currentDatabase,
+      getCurrentVisualizationApprovalScope,
+      language,
+      openVisualizationConsentPrompt,
+    ],
   );
 
-  // Destructive-action consent: ALWAYS asks, every single time. It never
-  // reuses the standing data-read grant (which silently auto-approves) and
-  // never persists an approval. Used for irreversible operations such as the
-  // agent's delete_memory, which must not ride on a read permission.
-  const resolveDestructiveConsent = useCallback((approved: boolean) => {
-    const resolver = destructiveConsentResolverRef.current;
-    destructiveConsentResolverRef.current = null;
-    setDestructiveConsentPending(null);
-    resolver?.(approved);
-  }, []);
+  const resolveDestructiveConsent = useCallback(
+    (approved: boolean) => {
+      settleDestructiveConsent(approved);
+    },
+    [settleDestructiveConsent],
+  );
 
   const requestDestructiveConsent = useCallback(
-    async (detail: {
-      title: string;
-      message: string;
-      confirmText?: string;
-      cancelText?: string;
-    }) => {
-      // A new destructive prompt cancels any still-pending one (resolved false).
-      destructiveConsentResolverRef.current?.(false);
-      destructiveConsentResolverRef.current = null;
-      return new Promise<boolean>((resolve) => {
-        destructiveConsentResolverRef.current = resolve;
-        setDestructiveConsentPending({
-          title: detail.title,
-          message: detail.message,
-          confirmText: detail.confirmText ?? "Confirm",
-          cancelText: detail.cancelText ?? "Cancel",
-        });
-      });
-    },
-    [],
+    async (detail: { title: string; message: string; confirmText?: string; cancelText?: string }) =>
+      openDestructiveConsentPrompt({
+        title: detail.title,
+        message: detail.message,
+        confirmText: detail.confirmText ?? "Confirm",
+        cancelText: detail.cancelText ?? "Cancel",
+      }),
+    [openDestructiveConsentPrompt],
   );
 
-  // Clicking the Data toggle only OPENS the confirmation dialog; the grant
-  // happens in resolveVisualizationConsent once the user confirms, so no
-  // permission is ever remembered from a single click.
   const confirmSessionDataReadEnable = useCallback(() => {
     if (!connectionId) {
       return;
     }
-    if (visualizationApprovalScopeRef.current === getCurrentVisualizationApprovalScope()) {
+    if (
+      useAIPanelStore.getState().visualizationApprovalScope ===
+      getCurrentVisualizationApprovalScope()
+    ) {
       return;
-    }
-    if (visualizationConsentResolverRef.current) {
-      visualizationConsentResolverRef.current(false);
-      visualizationConsentResolverRef.current = null;
     }
     const isVietnamese = language === "vi";
     const databaseLabel =
       currentDatabase || (isVietnamese ? "database hiện tại" : "the current database");
-    visualizationConsentResolverRef.current = (approved: boolean) => {
-      resolveVisualizationConsent(approved);
-    };
-    setVisualizationConsentPending({
+    void openVisualizationConsentPrompt({
       title: isVietnamese ? "Cho phép AI đọc live data?" : "Allow AI to read live data?",
       message: isVietnamese
         ? `TableR sẽ cho AI đọc dữ liệu chỉ-đọc trong ${databaseLabel} cho đến khi bạn tắt quyền này hoặc đổi sang database khác. Quyền được ghi nhớ, không hỏi lại. Tiếp tục?`
@@ -225,7 +211,7 @@ export function useAIConsentGates({
     currentDatabase,
     getCurrentVisualizationApprovalScope,
     language,
-    resolveVisualizationConsent,
+    openVisualizationConsentPrompt,
   ]);
 
   const setSessionDataReadEnabled = useCallback(
@@ -235,24 +221,26 @@ export function useAIConsentGates({
         return;
       }
 
-      if (visualizationConsentResolverRef.current) {
-        visualizationConsentResolverRef.current(false);
-        visualizationConsentResolverRef.current = null;
-      }
-      // An explicit toggle back to Ask re-arms the prompt for this database
-      // only; approvals for other databases stay remembered.
+      settleVisualizationConsent(false);
       revokeDataRead(connectionId, currentDatabase);
-      visualizationApprovalScopeRef.current = null;
+      setVisualizationApprovalScope(null);
       setVisualizationConsentPending(null);
       setIsSessionDataReadEnabled(false);
     },
-    [confirmSessionDataReadEnable, connectionId, currentDatabase],
+    [
+      confirmSessionDataReadEnable,
+      connectionId,
+      currentDatabase,
+      setIsSessionDataReadEnabled,
+      setVisualizationApprovalScope,
+      setVisualizationConsentPending,
+      settleVisualizationConsent,
+    ],
   );
 
   return {
     denyPendingConsents,
     destructiveConsentPending,
-    destructiveConsentResolverRef,
     failoverConsentState,
     getCurrentVisualizationApprovalScope,
     handleResolveFailoverConsent,
@@ -264,9 +252,8 @@ export function useAIConsentGates({
     setDestructiveConsentPending,
     setIsSessionDataReadEnabled,
     setSessionDataReadEnabled,
+    setVisualizationApprovalScope,
     setVisualizationConsentPending,
-    visualizationApprovalScopeRef,
     visualizationConsentPending,
-    visualizationConsentResolverRef,
   };
 }

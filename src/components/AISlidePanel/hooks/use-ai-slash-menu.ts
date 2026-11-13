@@ -16,10 +16,11 @@ import {
 import type { getAIWorkspaceCopy } from "../ai-workspace-copy";
 import type { AppLanguage } from "../../../i18n";
 import type { DatabaseType } from "../../../types";
+import { useAIPanelStore } from "../store/aiPanelStore";
+
+const SLASH_PREFIX_RE = /^\/([a-zA-Z0-9_-]*)$/;
 
 interface UseAISlashMenuOptions {
-  promptDraft: string;
-  setPromptDraft: (value: string) => void;
   connectionId: string | null;
   activeConnectionDbType: DatabaseType | null | undefined;
   currentDatabase: string | null;
@@ -28,15 +29,15 @@ interface UseAISlashMenuOptions {
   setError: (message: string | null) => void;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
 }
+
 /**
  * The composer "/" command surface: the file-backed command registry, the
  * menu's open/match/dismiss state, and the built-in `/backup` + `/rollback`
- * handlers. A picked command parks in the composer (`commitSlashCommand`)
- * except `/rollback`, whose checkpoint picker is itself the confirmation.
+ * handlers. Subscribes only to the derived slash-query prefix in
+ * `useAIPanelStore` so ordinary composer typing causes ZERO re-renders in the
+ * parent panel.
  */
 export function useAISlashMenu({
-  promptDraft,
-  setPromptDraft,
   connectionId,
   activeConnectionDbType,
   currentDatabase,
@@ -45,8 +46,21 @@ export function useAISlashMenu({
   setError,
   composerTextareaRef,
 }: UseAISlashMenuOptions) {
-  const [slashActiveIndex, setSlashActiveIndex] = useState(0);
-  const [slashDismissed, setSlashDismissed] = useState(false);
+  const slashQueryPrefix = useAIPanelStore((state) => {
+    const match = SLASH_PREFIX_RE.exec(state.promptDraft.trim());
+    return match ? match[1] : null;
+  });
+  const slashActiveIndex = useAIPanelStore((state) =>
+    SLASH_PREFIX_RE.test(state.promptDraft.trim()) ? state.slashActiveIndex : 0,
+  );
+  const slashDismissed = useAIPanelStore((state) =>
+    SLASH_PREFIX_RE.test(state.promptDraft.trim()) ? state.slashDismissed : false,
+  );
+  const setPromptDraft = useAIPanelStore((state) => state.setPromptDraft);
+  const updateComposerDraft = useAIPanelStore((state) => state.updateComposerDraft);
+  const setSlashActiveIndex = useAIPanelStore((state) => state.setSlashActiveIndex);
+  const setSlashDismissed = useAIPanelStore((state) => state.setSlashDismissed);
+
   const [isBackingUp, setIsBackingUp] = useState(false);
   const [fileCommands, setFileCommands] = useState<AgentFileCommand[]>([]);
 
@@ -58,14 +72,10 @@ export function useAISlashMenu({
           commands: AgentFileCommand[];
           report?: { errors?: { path: string; reason: string }[] };
         }>("list_user_slash_commands", {
-          // Linked-folder commands only load when the workspace dir is passed;
-          // without it the registry silently sees builtin/global commands only.
           workspaceDir: await getLinkedWorkspaceDir(),
         });
         if (cancelled) return;
         setFileCommands(registry.commands ?? []);
-        // A file that failed to parse is skipped by the loader; surface it so
-        // "the command is not in the menu" is diagnosable instead of silent.
         const loadErrors = registry.report?.errors ?? [];
         for (const error of loadErrors) {
           console.warn(`[AIWorkspace] skipped slash command ${error.path}: ${error.reason}`);
@@ -82,8 +92,6 @@ export function useAISlashMenu({
           });
         }
       } catch (error) {
-        // A missing registry must never break the composer: the native commands
-        // still work and plain prompts still go through untouched.
         console.warn("[AIWorkspace] command registry unavailable:", error);
       }
     })();
@@ -109,15 +117,12 @@ export function useAISlashMenu({
       ),
     [aiCopy, fileCommands],
   );
-  // Menu opens only while the draft is exactly "/<name chars>" — plain typing,
-  // not mid-sentence slashes, so normal prompts are never interrupted. Command
-  // names allow letters, digits, dashes and underscores (review-sql etc.).
-  const slashQueryMatch = /^\/([a-zA-Z0-9_-]*)$/.exec(promptDraft.trim());
+
   const slashMatches = useMemo(
-    () => (slashQueryMatch ? matchSlashCommands(slashQueryMatch[1], slashCommands) : []),
-    [slashCommands, slashQueryMatch],
+    () => (slashQueryPrefix !== null ? matchSlashCommands(slashQueryPrefix, slashCommands) : []),
+    [slashCommands, slashQueryPrefix],
   );
-  const slashMenuOpen = slashQueryMatch !== null && slashMatches.length > 0 && !slashDismissed;
+  const slashMenuOpen = slashQueryPrefix !== null && slashMatches.length > 0 && !slashDismissed;
 
   const handleBackupCommand = useCallback(async () => {
     if (isBackingUp) return;
@@ -127,8 +132,8 @@ export function useAISlashMenu({
     }
     setIsBackingUp(true);
     try {
-      // "/backup <note>" — the trailing note becomes the checkpoint label.
-      const noteMatch = /^\/backup\s+(.+)$/i.exec(promptDraft.trim());
+      const currentDraft = useAIPanelStore.getState().promptDraft;
+      const noteMatch = /^\/backup\s+(.+)$/i.exec(currentDraft.trim());
       const result = await invokeWithTimeout<{
         fileName: string;
         label: string;
@@ -176,7 +181,6 @@ export function useAISlashMenu({
     currentDatabase,
     isBackingUp,
     language,
-    promptDraft,
     setError,
   ]);
 
@@ -220,7 +224,6 @@ export function useAISlashMenu({
           durationMs: 10_000,
         });
       }
-      // Schema caches across the app must not keep serving pre-rollback data.
       window.dispatchEvent(
         new CustomEvent("table-data-updated", {
           detail: { connectionId, invalidateStructure: true },
@@ -252,21 +255,8 @@ export function useAISlashMenu({
     setError,
   ]);
 
-  /**
-   * A command picked from the "/" menu lands in the composer, it does not run:
-   * the draft becomes `/name`, the caret follows it, and the user runs it with an
-   * ordinary Enter through `handleGenerate` — the one path that expands
-   * file-backed runbooks and handles `/backup`, `/compact` and `/rollback`. That
-   * keeps arguments reachable (`/backup nightly`, `/profile orders`) and stops a
-   * mis-click from starting work the user never confirmed.
-   *
-   * `/rollback` is the exception: it opens the checkpoint picker, which is itself
-   * the confirmation step (`runsSlashCommandImmediately`).
-   */
   const commitSlashCommand = useCallback(
     (name: string) => {
-      // Dismissed for the same keystroke, or the freshly inserted `/help` would be
-      // read as a search prefix and immediately re-open the menu over the caret.
       setSlashDismissed(true);
       setSlashActiveIndex(0);
       if (runsSlashCommandImmediately(name)) {
@@ -276,9 +266,6 @@ export function useAISlashMenu({
       }
       const draft = slashCommandDraft(name);
       setPromptDraft(draft);
-      // Same idiom as the panel's initial prompt: the caret must sit after the
-      // inserted command, so the next keystroke types an argument instead of
-      // being swallowed before the text.
       window.requestAnimationFrame(() => {
         const composer = composerTextareaRef.current;
         if (!composer) return;
@@ -286,17 +273,20 @@ export function useAISlashMenu({
         composer.setSelectionRange(draft.length, draft.length);
       });
     },
-    [composerTextareaRef, handleRollbackCommand, setPromptDraft],
+    [
+      composerTextareaRef,
+      handleRollbackCommand,
+      setPromptDraft,
+      setSlashActiveIndex,
+      setSlashDismissed,
+    ],
   );
 
-  // Composer edits re-arm the "/" menu (Escape dismissal lasts one keystroke).
   const handleComposerPromptChange = useCallback(
     (value: string) => {
-      setSlashDismissed(false);
-      setSlashActiveIndex(0);
-      setPromptDraft(value);
+      updateComposerDraft(value);
     },
-    [setPromptDraft],
+    [updateComposerDraft],
   );
 
   return {

@@ -22,3 +22,7 @@ export const AI_MAX_HISTORY_CHARS = 24_000;
  * Sized for the real catalog: 34 tool specs serialize to ~29.5k chars, so
  * 40k leaves headroom for spec growth while still rejecting abusive payloads. */
 export const AI_MAX_TOOLS_CHARS = 40_000;
+/** Max structured multi-turn items in an active agent run (`AIRequest.agent_turns`). */
+export const AI_MAX_AGENT_TURNS = 64;
+/** Max cumulative characters across all `AIRequest.agent_turns` items. */
+export const AI_MAX_AGENT_TURNS_CHARS = 160_000;

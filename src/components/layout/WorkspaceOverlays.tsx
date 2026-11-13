@@ -5,6 +5,7 @@ import { AppKeyboardHandler } from "../AppKeyboardHandler";
 import { ErrorBoundary } from "../ErrorBoundary";
 import { TitleBarWindowControls } from "../TitleBarWindowControls";
 import { StartupConnectionManager } from "../StartupConnectionManager";
+import { APP_EVENTS } from "../../utils/app-events";
 import type { ConnectionConfig, Tab } from "../../types/database";
 import type { RowInspectorData } from "../RowInspector/RowInspector";
 
@@ -169,8 +170,9 @@ export function WorkspaceOverlays(props: WorkspaceOverlaysProps) {
 
   useEffect(() => {
     const toggleSchedules = () => setShowQuerySchedules((current: boolean) => !current);
-    window.addEventListener("toggle-query-schedules-palette", toggleSchedules);
-    return () => window.removeEventListener("toggle-query-schedules-palette", toggleSchedules);
+    window.addEventListener(APP_EVENTS.toggleQuerySchedulesPalette, toggleSchedules);
+    return () =>
+      window.removeEventListener(APP_EVENTS.toggleQuerySchedulesPalette, toggleSchedules);
   }, [setShowQuerySchedules]);
 
   return (

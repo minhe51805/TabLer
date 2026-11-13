@@ -1,13 +1,31 @@
 use crate::error::AppError;
 use std::collections::HashMap;
-use std::sync::Arc;
-use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
+use std::sync::{Arc, Mutex as StdMutex};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::{Duration, Instant};
 
 pub const SANDBOX_MAX_CONCURRENCY: usize = 8;
 pub const SANDBOX_BREAKER_FAILURE_THRESHOLD: u32 = 10;
 pub const SANDBOX_BREAKER_FAILURE_WINDOW: Duration = Duration::from_secs(60);
 pub const SANDBOX_BREAKER_OPEN_DURATION: Duration = Duration::from_secs(30);
+
+/// Isolates autonomous agent queries from human workspace / MetricsBoard queries
+/// so a noisy agent run can never trip the circuit breaker or rate budget of the
+/// user's own SQL editor or dashboard widgets on the same connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SandboxCallerScope {
+    Workspace,
+    Agent,
+}
+
+impl SandboxCallerScope {
+    pub fn scoped_key(self, connection_id: &str) -> String {
+        match self {
+            Self::Workspace => format!("workspace:{connection_id}"),
+            Self::Agent => format!("agent:{connection_id}"),
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 struct BreakerEntry {
@@ -19,37 +37,81 @@ struct BreakerEntry {
     half_open_probe_in_flight: bool,
 }
 
+pub struct HalfOpenProbeGuard {
+    breakers: Arc<StdMutex<HashMap<String, BreakerEntry>>>,
+    connection_id: String,
+    armed: bool,
+}
+
+impl HalfOpenProbeGuard {
+    pub fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for HalfOpenProbeGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let mut breakers = self
+            .breakers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(entry) = breakers.get_mut(&self.connection_id) {
+            entry.half_open_probe_in_flight = false;
+        }
+    }
+}
+
 pub struct SandboxGateState {
-    breakers: Mutex<HashMap<String, BreakerEntry>>,
-    execution_slots: Arc<Semaphore>,
+    breakers: Arc<StdMutex<HashMap<String, BreakerEntry>>>,
+    workspace_slots: Arc<Semaphore>,
+    agent_slots: Arc<Semaphore>,
 }
 
 impl Default for SandboxGateState {
     fn default() -> Self {
         Self {
-            breakers: Mutex::new(HashMap::new()),
-            execution_slots: Arc::new(Semaphore::new(SANDBOX_MAX_CONCURRENCY)),
+            breakers: Arc::new(StdMutex::new(HashMap::new())),
+            workspace_slots: Arc::new(Semaphore::new(SANDBOX_MAX_CONCURRENCY)),
+            agent_slots: Arc::new(Semaphore::new(SANDBOX_MAX_CONCURRENCY)),
         }
     }
 }
 
 impl SandboxGateState {
+    #[cfg(test)]
     pub async fn acquire_execution_slot(&self) -> Result<OwnedSemaphorePermit, AppError> {
-        self.execution_slots
-            .clone()
+        self.acquire_execution_slot_for_scope(SandboxCallerScope::Workspace)
+            .await
+    }
+
+    pub async fn acquire_execution_slot_for_scope(
+        &self,
+        scope: SandboxCallerScope,
+    ) -> Result<OwnedSemaphorePermit, AppError> {
+        let semaphore = match scope {
+            SandboxCallerScope::Workspace => Arc::clone(&self.workspace_slots),
+            SandboxCallerScope::Agent => Arc::clone(&self.agent_slots),
+        };
+        semaphore
             .acquire_owned()
             .await
             .map_err(|_| AppError::SandboxThrottled("execution queue is closed".to_string()))
     }
 
-    pub async fn check_breaker(&self, connection_id: &str) -> Result<(), AppError> {
+    fn check_breaker_inner(&self, connection_id: &str) -> Result<bool, AppError> {
         let now = Instant::now();
-        let mut breakers = self.breakers.lock().await;
+        let mut breakers = self
+            .breakers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let Some(entry) = breakers.get_mut(connection_id) else {
-            return Ok(());
+            return Ok(false);
         };
         let Some(opened_until) = entry.opened_until else {
-            return Ok(());
+            return Ok(false);
         };
         if now < opened_until {
             let retry_after = opened_until.duration_since(now).as_secs().max(1);
@@ -63,12 +125,39 @@ impl SandboxGateState {
             ));
         }
         entry.half_open_probe_in_flight = true;
-        Ok(())
+        Ok(true)
+    }
+
+    #[cfg(test)]
+    pub async fn check_breaker(&self, connection_id: &str) -> Result<(), AppError> {
+        self.check_breaker_inner(connection_id).map(|_| ())
+    }
+
+    pub async fn enter_breaker(&self, connection_id: &str) -> Result<HalfOpenProbeGuard, AppError> {
+        let claimed_probe = self.check_breaker_inner(connection_id)?;
+        Ok(HalfOpenProbeGuard {
+            breakers: Arc::clone(&self.breakers),
+            connection_id: connection_id.to_string(),
+            armed: claimed_probe,
+        })
+    }
+
+    pub async fn release_half_open_probe(&self, connection_id: &str) {
+        let mut breakers = self
+            .breakers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(entry) = breakers.get_mut(connection_id) {
+            entry.half_open_probe_in_flight = false;
+        }
     }
 
     pub async fn record_failure(&self, connection_id: &str, fingerprint: &str) {
         let now = Instant::now();
-        let mut breakers = self.breakers.lock().await;
+        let mut breakers = self
+            .breakers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let entry = breakers.entry(connection_id.to_string()).or_default();
         if entry
             .last_failure
@@ -99,13 +188,17 @@ impl SandboxGateState {
     }
 
     pub async fn record_success(&self, connection_id: &str) {
-        self.breakers.lock().await.remove(connection_id);
+        let mut breakers = self
+            .breakers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        breakers.remove(connection_id);
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{SandboxGateState, SANDBOX_MAX_CONCURRENCY};
+    use super::{SandboxCallerScope, SandboxGateState, SANDBOX_MAX_CONCURRENCY};
     use crate::utils::rate_limiter::{SandboxExecutionLimiter, SlidingWindowRateLimiter};
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
@@ -223,5 +316,24 @@ mod tests {
         }
         let error = state.check_breaker("connection-1").await.unwrap_err();
         assert!(error.to_string().contains("circuit breaker is open"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn agent_scope_breaker_and_limiter_do_not_block_workspace_scope() {
+        let state = SandboxGateState::default();
+        let limiter = SandboxExecutionLimiter::new();
+        let agent_key = SandboxCallerScope::Agent.scoped_key("conn-shared");
+        let workspace_key = SandboxCallerScope::Workspace.scoped_key("conn-shared");
+
+        for _ in 0..10 {
+            limiter.check(&agent_key).await.unwrap();
+            state.record_failure(&agent_key, "bad-agent-sql").await;
+        }
+        assert!(limiter.check(&agent_key).await.is_err());
+        assert!(state.check_breaker(&agent_key).await.is_err());
+
+        // Human / MetricsBoard calls on the same connection remain healthy.
+        limiter.check(&workspace_key).await.unwrap();
+        state.check_breaker(&workspace_key).await.unwrap();
     }
 }

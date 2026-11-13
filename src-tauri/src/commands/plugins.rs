@@ -106,16 +106,18 @@ pub struct PluginUpdateCandidate {
 pub async fn get_plugin_registry(
     registry_url: Option<String>,
     plugin_storage: State<'_, PluginStorage>,
-) -> Result<PluginRegistryIndex, String> {
+) -> Result<PluginRegistryIndex, crate::error::AppError> {
     let cache_path = plugin_storage.registry_cache_path();
-    fetch_registry_index(registry_url, Some(&cache_path)).await
+    fetch_registry_index(registry_url, Some(&cache_path))
+        .await
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
 pub async fn check_plugin_updates(
     registry_url: Option<String>,
     plugin_storage: State<'_, PluginStorage>,
-) -> Result<Vec<PluginUpdateCandidate>, String> {
+) -> Result<Vec<PluginUpdateCandidate>, crate::error::AppError> {
     let cache_path = plugin_storage.registry_cache_path();
     let index = fetch_registry_index(registry_url, Some(&cache_path)).await?;
     let records = plugin_storage
@@ -151,7 +153,7 @@ pub async fn install_registry_plugin(
     registry_url: Option<String>,
     plugin_storage: State<'_, PluginStorage>,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<InstalledPluginRecord, String> {
+) -> Result<InstalledPluginRecord, crate::error::AppError> {
     let cache_path = plugin_storage.registry_cache_path();
     let index = fetch_registry_index(registry_url, Some(&cache_path)).await?;
     let package = latest_compatible_package(&index, &plugin_id)?.clone();
@@ -174,16 +176,18 @@ pub async fn install_registry_plugin(
 #[tauri::command]
 pub async fn list_installed_plugins(
     plugin_storage: State<'_, PluginStorage>,
-) -> Result<Vec<InstalledPluginRecord>, String> {
+) -> Result<Vec<InstalledPluginRecord>, crate::error::AppError> {
     let storage = plugin_storage.inner().clone();
-    run_blocking_plugin_task(move || sync_installed_plugins(&storage)).await
+    run_blocking_plugin_task(move || sync_installed_plugins(&storage))
+        .await
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
 pub async fn install_plugin_bundle(
     plugin_storage: State<'_, PluginStorage>,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<InstalledPluginRecord, String> {
+) -> Result<InstalledPluginRecord, crate::error::AppError> {
     let selected_folder = FileDialog::new()
         .pick_folder()
         .ok_or_else(|| "No plugin bundle selected.".to_string())?;
@@ -205,7 +209,7 @@ pub async fn set_plugin_enabled(
     enabled: bool,
     plugin_storage: State<'_, PluginStorage>,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<InstalledPluginRecord, String> {
+) -> Result<InstalledPluginRecord, crate::error::AppError> {
     let storage = plugin_storage.inner().clone();
     let updated = run_blocking_plugin_task(move || {
         let mut records = storage
@@ -243,7 +247,7 @@ pub async fn rollback_plugin_bundle(
     plugin_id: String,
     plugin_storage: State<'_, PluginStorage>,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<InstalledPluginRecord, String> {
+) -> Result<InstalledPluginRecord, crate::error::AppError> {
     let storage = plugin_storage.inner().clone();
     let restored = run_blocking_plugin_task(move || {
         let mut records = storage
@@ -269,13 +273,37 @@ pub async fn rollback_plugin_bundle(
         fs::rename(&destination, &swap)
             .map_err(|e| format!("Failed to stage the current plugin version: {e}"))?;
         if let Err(error) = fs::rename(&rollback, &destination) {
-            let _ = fs::rename(&swap, &destination);
+            if let Err(restore_err) = fs::rename(&swap, &destination) {
+                log::error!(
+                    "operation=plugin.rollback_restore status=failed plugin_id={} error={}",
+                    plugin_id,
+                    restore_err
+                );
+            }
             return Err(format!("Failed to activate the rollback version: {error}"));
         }
         if let Err(error) = fs::rename(&swap, &rollback) {
-            let _ = fs::rename(&destination, &swap);
-            let _ = fs::rename(&rollback, &destination);
-            let _ = fs::rename(&swap, &rollback);
+            if let Err(step_err) = fs::rename(&destination, &swap) {
+                log::error!(
+                    "operation=plugin.rollback_unwind_stage status=failed plugin_id={} error={}",
+                    plugin_id,
+                    step_err
+                );
+            }
+            if let Err(step_err) = fs::rename(&rollback, &destination) {
+                log::error!(
+                    "operation=plugin.rollback_unwind_restore status=failed plugin_id={} error={}",
+                    plugin_id,
+                    step_err
+                );
+            }
+            if let Err(step_err) = fs::rename(&swap, &rollback) {
+                log::error!(
+                    "operation=plugin.rollback_unwind_swap status=failed plugin_id={} error={}",
+                    plugin_id,
+                    step_err
+                );
+            }
             return Err(format!(
                 "Failed to preserve the replaced plugin version: {error}"
             ));
@@ -316,7 +344,7 @@ pub async fn uninstall_plugin_bundle(
     plugin_id: String,
     plugin_storage: State<'_, PluginStorage>,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<(), String> {
+) -> Result<(), crate::error::AppError> {
     let storage = plugin_storage.inner().clone();
     let removed_plugin_id = plugin_id.clone();
     run_blocking_plugin_task(move || {
@@ -346,9 +374,11 @@ pub async fn uninstall_plugin_bundle(
 #[tauri::command]
 pub async fn reload_installed_plugins(
     plugin_storage: State<'_, PluginStorage>,
-) -> Result<Vec<InstalledPluginRecord>, String> {
+) -> Result<Vec<InstalledPluginRecord>, crate::error::AppError> {
     let storage = plugin_storage.inner().clone();
-    run_blocking_plugin_task(move || sync_installed_plugins(&storage)).await
+    run_blocking_plugin_task(move || sync_installed_plugins(&storage))
+        .await
+        .map_err(crate::error::AppError::from)
 }
 
 #[cfg(test)]

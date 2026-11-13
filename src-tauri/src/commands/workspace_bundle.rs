@@ -340,7 +340,7 @@ pub fn export_workspace_bundle(
     ai_storage: State<'_, AIStorage>,
     ui_prefs: Option<BTreeMap<String, String>>,
     encrypt_password: Option<String>,
-) -> Result<String, String> {
+) -> Result<String, crate::error::AppError> {
     export_workspace_bundle_core(
         &path,
         &conn_storage,
@@ -350,6 +350,7 @@ pub fn export_workspace_bundle(
         ui_prefs.unwrap_or_default(),
         encrypt_password.as_deref(),
     )
+    .map_err(crate::error::AppError::from)
 }
 
 fn export_workspace_bundle_core(
@@ -450,7 +451,7 @@ pub fn import_workspace_bundle(
     ai_storage: State<'_, AIStorage>,
     ui_pref_keys: Option<Vec<String>>,
     password: Option<String>,
-) -> Result<WorkspaceBundleImportResult, String> {
+) -> Result<WorkspaceBundleImportResult, crate::error::AppError> {
     import_workspace_bundle_core(
         &path,
         selection,
@@ -461,6 +462,7 @@ pub fn import_workspace_bundle(
         ui_pref_keys.unwrap_or_default().into_iter().collect(),
         password.as_deref(),
     )
+    .map_err(crate::error::AppError::from)
 }
 
 #[allow(clippy::too_many_arguments)]

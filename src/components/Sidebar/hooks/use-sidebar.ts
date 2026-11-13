@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "../../../utils/tauri-invoke";
 import { open as openDirectoryDialog } from "@tauri-apps/plugin-dialog";
 
 import { useConnectionStore } from "../../../stores/connectionStore";

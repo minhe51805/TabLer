@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const invokeMutationMock = vi.fn();
 const invokeWithTimeoutMock = vi.fn();
 const listenMock = vi.fn();
-let streamListener: ((event: { payload: Record<string, unknown> }) => void) | undefined;
+const streamListeners: Array<(event: { payload: Record<string, unknown> }) => void> = [];
 
 vi.mock("@tauri-apps/api/event", () => ({
   listen: (...args: unknown[]) => listenMock(...args),
@@ -16,7 +16,9 @@ vi.mock("@/utils/tauri-utils", () => ({
 
 import { useAIStore } from "@/stores/aiStore";
 import { useGlobalErrorStore } from "@/stores/globalErrorStore";
-import type { AIConversationMessage, AIProviderConfig } from "@/types";
+import { setAIFailoverConsent } from "@/utils/ai-failover-consent";
+import { TauriCommandError } from "@/utils/tauri-error";
+import type { AIConversationMessage, AIProviderConfig, CanonicalAgentTurn } from "@/types";
 
 const provider: AIProviderConfig = {
   id: "provider-1",
@@ -30,22 +32,34 @@ const provider: AIProviderConfig = {
   allow_inline_completion: true,
 };
 
+function emitStreamEvent(payload: Record<string, unknown>) {
+  for (const listener of [...streamListeners]) {
+    listener({ payload });
+  }
+}
+
 describe("aiStore", () => {
   beforeEach(() => {
     invokeMutationMock.mockReset();
     invokeWithTimeoutMock.mockReset();
     listenMock.mockReset();
-    streamListener = undefined;
+    streamListeners.length = 0;
+    window.localStorage.removeItem("tabler.ai.failoverConsent");
     listenMock.mockImplementation(async (_eventName, listener) => {
-      streamListener = listener;
-      return vi.fn();
+      streamListeners.push(listener);
+      return vi.fn(() => {
+        const idx = streamListeners.indexOf(listener);
+        if (idx >= 0) streamListeners.splice(idx, 1);
+      });
     });
     useAIStore.setState({
       aiConfigs: [],
+      activeStreams: {},
       activeAIRequestId: null,
       requestPhase: "idle",
       streamingText: "",
       streamingReasoning: false,
+      streamingReasoningText: "",
       streamingUsage: null,
     });
     useGlobalErrorStore.getState().clearError();
@@ -83,47 +97,61 @@ describe("aiStore", () => {
     );
   });
 
-  it("streams agent responses with native tool calling over ask_ai_stream", async () => {
+  it("streams agent responses with canonical_tools and structured AIResponse over ask_ai_stream", async () => {
     useAIStore.setState({ aiConfigs: [provider] });
     invokeWithTimeoutMock.mockImplementation(
       async (command: string, args?: { request?: { request_id?: string } }) => {
-        if (command === "load_ai_configs") {
-          return [[provider], { "provider-1": true }];
-        }
         if (command === "ask_ai_stream") {
           const requestId = args?.request?.request_id;
-          // The backend re-wraps streamed tool-call fragments into the
-          // action-JSON contract; emit it in two deltas like a real stream.
-          streamListener?.({
-            payload: {
-              requestId,
-              kind: "text_delta",
-              text: '{"action":"finish","args":{"response":"SEL',
-            },
+          emitStreamEvent({
+            requestId,
+            kind: "text_delta",
+            text: '{"action":"finish","args":{"response":"SEL',
           });
-          streamListener?.({
-            payload: {
-              requestId,
-              kind: "text_delta",
-              text: 'ECT 1"},"message":""}',
-            },
+          emitStreamEvent({
+            requestId,
+            kind: "text_delta",
+            text: 'ECT 1"},"message":""}',
           });
-          return undefined;
+          return {
+            text: '{"action":"finish","args":{"response":"SELECT 1"},"message":""}',
+            reasoning: "Checked schema.",
+            tool_calls: [
+              {
+                id: "call_1",
+                name: "finish",
+                arguments: { response: "SELECT 1" },
+              },
+            ],
+            thought_signature: "sig-test",
+            usage: { input_tokens: 120, output_tokens: 30, total_tokens: 150 },
+          };
         }
         return null;
       },
     );
 
-    await expect(
-      useAIStore.getState().askAIWithReasoning("write SQL", "schema", "panel", "agent"),
-    ).resolves.toEqual({
-      text: '{"action":"finish","args":{"response":"SELECT 1"},"message":""}',
-      reasoning: undefined,
-      modelUsed: "gpt-test",
+    const turn = await useAIStore.getState().askAIAgentTurn("write SQL", "schema", [], undefined, {
+      retryPolicy: {
+        maxRetries: 0,
+        initialDelayMs: 10,
+        maxDelayMs: 50,
+        jitterRatio: 0,
+        maxRetryWaitMs: 50,
+        retryableCodes: ["timeout", "provider"],
+      },
     });
 
-    // Native tool calling now rides the streaming path: the tool payload is
-    // forwarded on ask_ai_stream and the finish answer streams token-by-token.
+    expect(turn).toEqual({
+      text: '{"action":"finish","args":{"response":"SELECT 1"},"message":""}',
+      reasoning: "Checked schema.",
+      toolCalls: [{ id: "call_1", name: "finish", arguments: { response: "SELECT 1" } }],
+      thoughtSignature: "sig-test",
+      usage: { input_tokens: 120, output_tokens: 30, total_tokens: 150 },
+      modelUsed: "gpt-test",
+      providerUsed: "provider-1",
+    });
+
     expect(invokeWithTimeoutMock).toHaveBeenCalledWith(
       "ask_ai_stream",
       expect.objectContaining({
@@ -133,25 +161,62 @@ describe("aiStore", () => {
           mode: "panel",
           intent: "agent",
           request_id: expect.any(String),
-          tools: expect.any(Array),
-          tool_choice: "auto",
+          canonical_tools: expect.any(Array),
+          allow_native_memory_tool: true,
         }),
       }),
       120_000,
       "AI request",
       expect.objectContaining({ onTimeout: expect.any(Function) }),
     );
-    expect(invokeWithTimeoutMock).not.toHaveBeenCalledWith(
-      "ask_ai",
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-      expect.anything(),
-    );
     expect(useAIStore.getState().requestPhase).toBe("idle");
-    // The finish answer was extracted live from the partial action JSON.
     expect(useAIStore.getState().streamingText).toBe("SELECT 1");
-    expect(listenMock).toHaveBeenCalledWith("ai-stream-event", expect.any(Function));
+  });
+
+  it("isolates concurrent stream sessions so a background helper never clobbers foreground streaming", async () => {
+    useAIStore.setState({ aiConfigs: [provider] });
+    let resolveForeground: (() => void) | undefined;
+    let foregroundReqId: string | undefined;
+
+    invokeWithTimeoutMock.mockImplementation(
+      async (command: string, args?: { request?: { request_id?: string; prompt?: string } }) => {
+        if (command !== "ask_ai_stream") return null;
+        const reqId = args?.request?.request_id ?? "";
+        if (args?.request?.prompt === "foreground") {
+          foregroundReqId = reqId;
+          emitStreamEvent({ requestId: reqId, kind: "text_delta", text: "Hello " });
+          await new Promise<void>((resolve) => {
+            resolveForeground = resolve;
+          });
+          emitStreamEvent({ requestId: reqId, kind: "text_delta", text: "world!" });
+          return undefined;
+        }
+        // Background helper call (`trackInPanel: false`)
+        emitStreamEvent({ requestId: reqId, kind: "text_delta", text: "helper answer" });
+        return { text: "helper answer", tool_calls: [] };
+      },
+    );
+
+    const foregroundPromise = useAIStore
+      .getState()
+      .askAIWithReasoning("foreground", "ctx", "panel", "general");
+
+    await vi.waitFor(() => expect(foregroundReqId).toBeDefined());
+    expect(useAIStore.getState().activeAIRequestId).toBe(foregroundReqId);
+
+    const bgText = await useAIStore
+      .getState()
+      .askAI("background", "ctx", "panel", "general", [], undefined, { trackInPanel: false });
+    expect(bgText).toBe("helper answer");
+
+    // Foreground activeAIRequestId and streamingText remain intact after background call finishes!
+    expect(useAIStore.getState().activeAIRequestId).toBe(foregroundReqId);
+    expect(useAIStore.getState().streamingText).toBe("Hello ");
+
+    resolveForeground?.();
+    const fgResult = await foregroundPromise;
+    expect(fgResult.text).toBe("Hello world!");
+    expect(useAIStore.getState().streamingText).toBe("Hello world!");
   });
 
   it("cancels the active provider request", async () => {
@@ -256,16 +321,14 @@ describe("aiStore", () => {
       true,
     );
 
-    // A second promotion walks past the new primary to the next enabled one.
     const again = useAIStore.getState().promoteNextEnabledProvider();
     expect(again?.id).toBe("provider-3");
 
-    // A lone provider has nowhere to go.
     useAIStore.setState({ aiConfigs: [provider] });
     expect(useAIStore.getState().promoteNextEnabledProvider()).toBeNull();
   });
 
-  it("fails over to the next enabled provider for the retry without moving the primary", async () => {
+  it("gates cross-provider failover on SEC-T04 consent (declined stays on primary; approved switches)", async () => {
     const fallback: AIProviderConfig = {
       ...provider,
       id: "provider-2",
@@ -274,18 +337,31 @@ describe("aiStore", () => {
       is_primary: false,
     };
     useAIStore.setState({ aiConfigs: [provider, fallback] });
-    invokeMutationMock.mockImplementation(async (command: string) => {
-      if (command === "cancel_ai_request") return true;
-      return null;
-    });
-    let streamAttempts = 0;
+    invokeMutationMock.mockResolvedValue(true);
+
+    const seenProvidersWhenDeclined: Array<string | null> = [];
+    setAIFailoverConsent("declined");
     invokeWithTimeoutMock.mockImplementation(
-      async (
-        command: string,
-        args?: {
-          request?: { provider_id?: string | null };
-        },
-      ) => {
+      async (command: string, args?: { request?: { provider_id?: string | null } }) => {
+        if (command === "ask_ai_stream") {
+          seenProvidersWhenDeclined.push(args?.request?.provider_id ?? null);
+          throw new Error("HTTP 429 Too Many Requests: rate limit exceeded");
+        }
+        return null;
+      },
+    );
+
+    await expect(useAIStore.getState().askAI("prompt", "context", "panel", "sql")).rejects.toThrow(
+      /429/,
+    );
+    expect(seenProvidersWhenDeclined).toEqual(["provider-1"]);
+
+    // Now approve consent: cross-provider failover succeeds without flipping is_primary.
+    setAIFailoverConsent("approved");
+    let streamAttempts = 0;
+    const failoverProviderIds: Array<string | null> = [];
+    invokeWithTimeoutMock.mockImplementation(
+      async (command: string, args?: { request?: { provider_id?: string | null } }) => {
         if (command === "ask_ai_stream") {
           streamAttempts += 1;
           if (streamAttempts === 1) {
@@ -297,28 +373,22 @@ describe("aiStore", () => {
         return null;
       },
     );
-    const failoverProviderIds: Array<string | null> = [];
 
     await expect(useAIStore.getState().askAI("prompt", "context", "panel", "sql")).resolves.toBe(
       "",
     );
-
-    // The retry went to the next enabled provider...
     expect(streamAttempts).toBe(2);
     expect(failoverProviderIds).toEqual(["provider-2"]);
-    // ...but the configured primary is deliberately left untouched: the single
-    // visible promotion is owned by the agent run, not by every transport
-    // retry, so the selector never flip-flops between providers.
-    const configs = useAIStore.getState().aiConfigs;
-    expect(configs.find((config) => config.id === "provider-1")?.is_primary).toBe(true);
-    expect(configs.find((config) => config.id === "provider-2")?.is_primary).toBe(false);
-    expect(invokeMutationMock).not.toHaveBeenCalledWith("save_ai_configs", expect.anything());
+    expect(useAIStore.getState().aiConfigs.find((c) => c.id === "provider-1")?.is_primary).toBe(
+      true,
+    );
   });
 
-  it("walks every enabled model of every enabled provider in the failover chain", async () => {
+  it("bounds per-provider model fallback to primary + at most 1 fallback model (never walking full catalog)", async () => {
+    setAIFailoverConsent("approved");
     const multiModelProvider: AIProviderConfig = {
       ...provider,
-      models: ["gpt-test", "gpt-alt"],
+      models: ["gpt-test", "gpt-alt-1", "gpt-alt-2", "gpt-alt-3", "gpt-alt-4"],
     };
     const second: AIProviderConfig = {
       ...provider,
@@ -335,29 +405,17 @@ describe("aiStore", () => {
       provider_type: "gemini",
       model: "gem-a",
       models: ["gem-a", "gem-b"],
-      // Hidden models stay out of the chain, mirroring the composer switcher.
       disabled_models: ["gem-b"],
       is_primary: false,
     };
-    const fourth: AIProviderConfig = {
-      ...provider,
-      id: "provider-4",
-      name: "Llama",
-      model: "llama-test",
-      is_primary: false,
-    };
-    useAIStore.setState({ aiConfigs: [multiModelProvider, second, third, fourth] });
-    invokeMutationMock.mockImplementation(async (command: string) => {
-      if (command === "cancel_ai_request") return true;
-      return null;
-    });
+    useAIStore.setState({ aiConfigs: [multiModelProvider, second, third] });
+    invokeMutationMock.mockResolvedValue(true);
+
     const chainStops: Array<{ providerId: string | null; model: string | null }> = [];
     invokeWithTimeoutMock.mockImplementation(
       async (
         command: string,
-        args?: {
-          request?: { provider_id?: string | null; model?: string | null };
-        },
+        args?: { request?: { provider_id?: string | null; model?: string | null } },
       ) => {
         if (command === "ask_ai_stream") {
           chainStops.push({
@@ -370,25 +428,90 @@ describe("aiStore", () => {
       },
     );
 
-    // Every stop in the chain fails, so the run exhausts the full chain and
-    // surfaces the last error instead of silently giving up early.
     await expect(
       useAIStore.getState().askAI("prompt", "context", "panel", "sql"),
     ).rejects.toThrow();
 
-    // Active provider's configured model first, then its other models, then
-    // the remaining enabled providers in order — including the fourth one,
-    // which the old 3-attempt cap never reached.
+    // gpt-alt-2..4 are NOT walked! Only primary + 1 fallback on provider-1, then provider-2, provider-3.
     expect(chainStops).toEqual([
       { providerId: "provider-1", model: "gpt-test" },
-      { providerId: "provider-1", model: "gpt-alt" },
+      { providerId: "provider-1", model: "gpt-alt-1" },
       { providerId: "provider-2", model: "claude-test" },
       { providerId: "provider-3", model: "gem-a" },
-      { providerId: "provider-4", model: "llama-test" },
     ]);
   });
 
-  it("forwards the full conversation history unchanged to every provider in the failover chain (context survives a provider switch)", async () => {
+  it("aborts current provider immediately on ai-auth (401/403) and aborts entire run on rate-limited or ai-bad-request", async () => {
+    setAIFailoverConsent("approved");
+    const multiModelPrimary: AIProviderConfig = {
+      ...provider,
+      models: ["gpt-test", "gpt-alt-1"],
+    };
+    const backup: AIProviderConfig = {
+      ...provider,
+      id: "provider-2",
+      name: "Claude",
+      provider_type: "anthropic",
+      model: "claude-test",
+      is_primary: false,
+    };
+    useAIStore.setState({ aiConfigs: [multiModelPrimary, backup] });
+    invokeMutationMock.mockResolvedValue(true);
+
+    // 1. ai-auth skips gpt-alt-1 on provider-1 and jumps straight to provider-2.
+    const authStops: Array<{ providerId: string | null; model: string | null }> = [];
+    invokeWithTimeoutMock.mockImplementation(
+      async (
+        command: string,
+        args?: { request?: { provider_id?: string | null; model?: string | null } },
+      ) => {
+        if (command === "ask_ai_stream") {
+          const pid = args?.request?.provider_id ?? null;
+          authStops.push({ providerId: pid, model: args?.request?.model ?? null });
+          if (pid === "provider-1") {
+            throw new TauriCommandError({
+              code: "ai-auth",
+              message: "401 Invalid API key",
+              retryable: false,
+            });
+          }
+          return { text: "from backup", tool_calls: [] };
+        }
+        return null;
+      },
+    );
+
+    await expect(useAIStore.getState().askAI("hi", "ctx", "panel", "general")).resolves.toBe(
+      "from backup",
+    );
+    expect(authStops).toEqual([
+      { providerId: "provider-1", model: "gpt-test" },
+      { providerId: "provider-2", model: "claude-test" },
+    ]);
+
+    // 2. Local TableR `rate-limited` aborts immediately after 1 call without failing over.
+    const localLimiterStops: string[] = [];
+    invokeWithTimeoutMock.mockImplementation(
+      async (command: string, args?: { request?: { provider_id?: string | null } }) => {
+        if (command === "ask_ai_stream") {
+          localLimiterStops.push(args?.request?.provider_id ?? "");
+          throw new TauriCommandError({
+            code: "rate-limited",
+            message: "Too many AI requests in a short window.",
+            retryable: true,
+          });
+        }
+        return null;
+      },
+    );
+    await expect(
+      useAIStore.getState().askAI("hi", "ctx", "panel", "general"),
+    ).rejects.toMatchObject({ backendCode: "rate-limited" });
+    expect(localLimiterStops).toEqual(["provider-1"]);
+  });
+
+  it("forwards conversation history and canonical agent_turns unchanged across provider failover", async () => {
+    setAIFailoverConsent("approved");
     const second: AIProviderConfig = {
       ...provider,
       id: "provider-2",
@@ -399,37 +522,43 @@ describe("aiStore", () => {
     };
     useAIStore.setState({ aiConfigs: [provider, second] });
 
-    // A running conversation: the workspace digest pair + earlier turns the
-    // model must keep in mind. The panel builds this shape; here we assert the
-    // transport layer forwards it INTACT to whichever provider handles the turn,
-    // so switching model/provider mid-run never loses context.
     const history: AIConversationMessage[] = [
-      {
-        role: "user",
-        content:
-          "[Workspace context — keep this in mind for the task]\nMigrating dbo.taikhoan to the new schema.",
-      },
-      { role: "assistant", content: "Understood. I'll keep this workspace context in mind." },
       { role: "user", content: "What tables exist?" },
-      { role: "assistant", content: "There are three: users, orders, items." },
-      { role: "user", content: "How are orders and users related?" },
+      { role: "assistant", content: "users, orders." },
+    ];
+    const agentTurns: CanonicalAgentTurn[] = [
+      {
+        role: "assistant",
+        text: "Checking users schema",
+        tool_calls: [{ id: "call_1", name: "describe_table", arguments: { table: "users" } }],
+      },
+      {
+        role: "tool_result",
+        call_id: "call_1",
+        tool_name: "describe_table",
+        content: "T=users|C:id:int!pk",
+      },
     ];
 
-    invokeMutationMock.mockImplementation(async (command: string) =>
-      command === "cancel_ai_request" ? true : null,
-    );
-    const seenHistories: unknown[] = [];
-    const seenProviderIds: Array<string | null> = [];
+    invokeMutationMock.mockResolvedValue(true);
+    const seenPayloads: Array<{
+      providerId: string | null;
+      history: unknown;
+      agentTurns: unknown;
+    }> = [];
     invokeWithTimeoutMock.mockImplementation(
       async (
         command: string,
         args?: {
-          request?: { provider_id?: string | null; history?: unknown };
+          request?: { provider_id?: string | null; history?: unknown; agent_turns?: unknown };
         },
       ) => {
         if (command === "ask_ai_stream") {
-          seenHistories.push(args?.request?.history);
-          seenProviderIds.push(args?.request?.provider_id ?? null);
+          seenPayloads.push({
+            providerId: args?.request?.provider_id ?? null,
+            history: args?.request?.history,
+            agentTurns: args?.request?.agent_turns,
+          });
           throw new Error("HTTP 503 Service Unavailable");
         }
         return null;
@@ -437,18 +566,22 @@ describe("aiStore", () => {
     );
 
     await expect(
-      useAIStore
-        .getState()
-        .askAI("orders.user_id references users.id, right?", "context", "panel", "sql", history),
+      useAIStore.getState().askAIAgentTurn("inspect orders", "context", history, undefined, {
+        agentTurns,
+        retryPolicy: {
+          maxRetries: 0,
+          initialDelayMs: 10,
+          maxDelayMs: 50,
+          jitterRatio: 0,
+          maxRetryWaitMs: 50,
+          retryableCodes: ["timeout", "provider"],
+        },
+      }),
     ).rejects.toThrow();
 
-    // The run switched from the primary to the fallback provider...
-    expect(seenProviderIds).toEqual(["provider-1", "provider-2"]);
-    // ...and BOTH attempts received the identical, complete history — nothing
-    // dropped or mutated on the switch.
-    expect(seenHistories).toHaveLength(2);
-    for (const seen of seenHistories) {
-      expect(seen).toEqual(history);
-    }
+    expect(seenPayloads).toEqual([
+      { providerId: "provider-1", history, agentTurns },
+      { providerId: "provider-2", history, agentTurns },
+    ]);
   });
 });

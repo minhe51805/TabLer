@@ -121,6 +121,11 @@ pub(crate) fn list_skill_resource_files(skill_dir: &Path) -> Vec<String> {
         collect_resource_files(&canonical_dir, &skill_dir.join(sub), sub, &mut out, 0);
     }
     out.sort();
+    // benign-cap: resources past 64 only trim what the picker and the agent can
+    // enumerate for one skill — the skill itself still loads, and the shipped
+    // pack is gated at this same number by scripts/validate-agent-skills.mjs,
+    // so a built-in can never exceed it. A user skill that reaches this is
+    // pathological by design (64 documents behind one SKILL.md).
     out.truncate(MAX_SKILL_RESOURCES);
     out
 }

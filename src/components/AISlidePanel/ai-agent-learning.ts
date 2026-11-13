@@ -266,18 +266,26 @@ export async function applyLearningProposal(
   invoke: LearningInvoker,
 ): Promise<string> {
   if (proposal.kind === "memory") {
-    return String(
-      await invoke("save_agent_memory", {
-        name: proposal.memory.name,
-        body: proposal.memory.body,
-        description: proposal.memory.description,
-        connectionId: scope.connectionId ?? null,
-        database: scope.database ?? null,
-        // A learning proposal is agent-proposed even when user-approved —
-        // the agent found the fact, so origin stays "agent".
-        origin: "agent",
-      }),
-    );
+    const saved = await invoke("save_agent_memory", {
+      name: proposal.memory.name,
+      body: proposal.memory.body,
+      description: proposal.memory.description,
+      connectionId: scope.connectionId ?? null,
+      database: scope.database ?? null,
+      // A learning proposal is agent-proposed even when user-approved —
+      // the agent found the fact, so origin stays "agent".
+      origin: "agent",
+    });
+    if (typeof saved === "string") {
+      return saved;
+    }
+    if (saved && typeof saved === "object" && "name" in saved) {
+      const savedName = (saved as { name?: unknown }).name;
+      if (typeof savedName === "string" && savedName.trim()) {
+        return savedName;
+      }
+    }
+    return proposal.memory.name;
   }
   if (proposal.kind === "rule") {
     return String(

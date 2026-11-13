@@ -1,4 +1,3 @@
-import type { RefObject } from "react";
 import type {
   AIConversationMessage,
   AIRequestAttachment,
@@ -11,7 +10,10 @@ import {
   computeAgentRetryDelay,
   DEFAULT_AGENT_RETRY_POLICY,
   type AgentRetryPolicy,
+  type AgentRetryWaitInfo,
 } from "./ai-retry-policy";
+
+export type { AgentRetryWaitInfo };
 
 /** Message used to signal that a newer AI request replaced the current one. */
 export const AI_REQUEST_REPLACED_MESSAGE = "This AI request was replaced by a newer one.";
@@ -32,16 +34,6 @@ export function isSupersededAIRequestError(errorValue: unknown): boolean {
   }
 
   return String(errorValue) === AI_REQUEST_REPLACED_MESSAGE;
-}
-
-/** Info surfaced to the caller before one in-line retry wait starts. */
-export interface AgentRetryWaitInfo {
-  delayMs: number;
-  reason: "rate-limit" | "transient";
-  retryAfterMs?: number;
-  /** 1-based retry attempt about to run. */
-  retry: number;
-  maxRetries: number;
 }
 
 interface AgentActionRequestorDeps {
@@ -65,7 +57,7 @@ interface AgentActionRequestorDeps {
    * no matter which call composes the action.
    */
   unattendedReadOnly?: boolean;
-  requestIdRef: RefObject<number>;
+  requestIdRef: { readonly current: number };
   requestHistory: AIConversationMessage[];
   /** Image attachments for this run. They ride EVERY model call so whichever
    *  step ends up composing the final answer can still see the image. Sending

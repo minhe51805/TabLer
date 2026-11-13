@@ -1,3 +1,5 @@
+import { TauriCommandError, type TauriErrorCode } from "./tauri-error";
+
 export type AIRequestErrorCode =
   "cancelled" | "timeout" | "provider" | "invalid-response" | "unknown";
 
@@ -6,22 +8,26 @@ export class AIRequestError extends Error {
   readonly retryable: boolean;
   /** Provider-advertised wait (Retry-After) in ms, when the error carries one. */
   readonly providerRetryAfterMs?: number;
+  /** Exact structured backend `ErrorCode` when delivered via `TauriCommandError`. */
+  readonly backendCode?: TauriErrorCode | string;
 
   constructor(
     code: AIRequestErrorCode,
     message: string,
     retryable = code !== "unknown",
     providerRetryAfterMs?: number,
+    backendCode?: TauriErrorCode | string,
   ) {
     super(message);
     this.name = "AIRequestError";
     this.code = code;
     this.retryable = retryable;
     if (providerRetryAfterMs !== undefined) this.providerRetryAfterMs = providerRetryAfterMs;
+    if (backendCode !== undefined) this.backendCode = backendCode;
   }
 }
 
-/** Extract a `retry_after_ms=<n>` marker from a provider error message. */
+/** Legacy fallback: extract a `retry_after_ms=<n>` marker from plain-Error strings. */
 function extractRetryAfterMs(message: string): number | undefined {
   const match = message.match(/retry_after_ms=(\d+)/i);
   if (!match) return undefined;
@@ -29,64 +35,75 @@ function extractRetryAfterMs(message: string): number | undefined {
   return Number.isFinite(value) && value > 0 ? value : undefined;
 }
 
-/**
- * Machine-readable classification the Rust AI layer appends to its error
- * messages (`src-tauri/src/commands/ai/errors.rs`). The shared contract (marker
- * key + the set of kinds) lives in `tests/fixtures/ai-error-kinds.json`.
- */
-export const AI_ERROR_KIND_MARKER_KEY = "ai_error_kind";
-const AI_ERROR_KIND_PATTERN = new RegExp(`\\s*\\[${AI_ERROR_KIND_MARKER_KEY}=([a-z-]+)\\]`, "i");
-
-const KNOWN_AI_REQUEST_ERROR_CODES: readonly AIRequestErrorCode[] = [
-  "cancelled",
-  "timeout",
-  "provider",
-  "invalid-response",
-  "unknown",
-];
-
-function asAIRequestErrorCode(value: string): AIRequestErrorCode | undefined {
-  return (KNOWN_AI_REQUEST_ERROR_CODES as readonly string[]).includes(value)
-    ? (value as AIRequestErrorCode)
-    : undefined;
+function classifyStructuredCode(
+  code: string,
+  message: string,
+  retryableHint: boolean | undefined,
+  retryAfterMs: number | undefined,
+): AIRequestError | undefined {
+  switch (code) {
+    case "ai-cancelled":
+      return new AIRequestError("cancelled", "AI request cancelled.", true, retryAfterMs, code);
+    case "ai-timeout":
+      return new AIRequestError("timeout", message, true, retryAfterMs, code);
+    case "ai-invalid-response":
+      return new AIRequestError(
+        "invalid-response",
+        message,
+        retryableHint ?? true,
+        retryAfterMs,
+        code,
+      );
+    case "ai-rate-limited":
+    case "ai-provider-transient":
+      return new AIRequestError("provider", message, retryableHint ?? true, retryAfterMs, code);
+    case "ai-auth":
+    case "ai-bad-request":
+      // Auth (401/403) and bad-request (400/422) errors must NOT be retried against the same provider.
+      return new AIRequestError("provider", message, false, undefined, code);
+    case "rate-limited":
+      // Local TableR rate limiter: retrying immediately only burns more attempts.
+      return new AIRequestError("provider", message, false, retryAfterMs, code);
+    case "validation-error":
+    case "storage-error":
+      return new AIRequestError("unknown", message, false, undefined, code);
+    default:
+      return undefined;
+  }
 }
 
-/**
- * Splits a backend AI error message into its authoritative `kind` marker (when
- * present) and the human-facing text with the marker removed, so the marker
- * never reaches the user.
- */
-function splitTaggedKind(message: string): { code?: AIRequestErrorCode; message: string } {
-  const match = message.match(AI_ERROR_KIND_PATTERN);
-  if (!match) return { message };
-  const stripped = message.replace(AI_ERROR_KIND_PATTERN, "").trim();
-  return { code: asAIRequestErrorCode(match[1].toLowerCase()), message: stripped };
-}
-
-export function normalizeAIRequestError(errorValue: unknown) {
+export function normalizeAIRequestError(errorValue: unknown): AIRequestError {
   if (errorValue instanceof AIRequestError) return errorValue;
 
-  const rawMessage = errorValue instanceof Error ? errorValue.message : String(errorValue);
-  const providerRetryAfterMs = extractRetryAfterMs(rawMessage);
-
-  // Prefer the backend's authoritative kind marker over fragile substring
-  // guessing (tech-debt D7). The heuristics below remain the fallback for
-  // untagged failures: client-side timeouts, rate-limit/config errors, and any
-  // non-provider path that never gets tagged.
-  const tagged = splitTaggedKind(rawMessage);
-  if (tagged.code) {
-    if (tagged.code === "cancelled") {
-      return new AIRequestError("cancelled", "AI request cancelled.", true, providerRetryAfterMs);
-    }
-    return new AIRequestError(
-      tagged.code,
-      tagged.message,
-      tagged.code !== "unknown",
-      providerRetryAfterMs,
+  // Prefer structured `TauriCommandError` (or raw IPC `{ code, message, retryable, retryAfterMs }`).
+  if (errorValue instanceof TauriCommandError) {
+    const mapped = classifyStructuredCode(
+      errorValue.code,
+      errorValue.message,
+      errorValue.retryable,
+      errorValue.retryAfterMs ?? extractRetryAfterMs(errorValue.message),
     );
+    if (mapped) return mapped;
+  } else if (errorValue && typeof errorValue === "object" && "code" in errorValue) {
+    const rec = errorValue as {
+      code?: unknown;
+      message?: unknown;
+      retryable?: unknown;
+      retryAfterMs?: unknown;
+    };
+    if (typeof rec.code === "string" && typeof rec.message === "string") {
+      const mapped = classifyStructuredCode(
+        rec.code,
+        rec.message,
+        typeof rec.retryable === "boolean" ? rec.retryable : undefined,
+        typeof rec.retryAfterMs === "number" ? rec.retryAfterMs : extractRetryAfterMs(rec.message),
+      );
+      if (mapped) return mapped;
+    }
   }
 
-  const message = tagged.message;
+  const message = errorValue instanceof Error ? errorValue.message : String(errorValue);
+  const providerRetryAfterMs = extractRetryAfterMs(message);
   const normalized = message.toLowerCase();
 
   if (normalized.includes("cancelled") || normalized.includes("canceled")) {
@@ -103,12 +120,14 @@ export function normalizeAIRequestError(errorValue: unknown) {
   ) {
     return new AIRequestError("invalid-response", message, true, providerRetryAfterMs);
   }
+  if (normalized.includes("too many ai requests")) {
+    return new AIRequestError("provider", message, false, providerRetryAfterMs, "rate-limited");
+  }
   if (
     normalized.includes("provider") ||
     normalized.includes("ai api") ||
     normalized.includes("api key") ||
     normalized.includes("rate limit") ||
-    normalized.includes("too many ai requests") ||
     normalized.includes("network") ||
     normalized.includes("connection") ||
     normalized.includes("http ") ||

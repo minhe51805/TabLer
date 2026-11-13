@@ -14,7 +14,9 @@ pub struct UpdateStatus {
 
 /// Check if an update is available
 #[tauri::command]
-pub async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateStatus, String> {
+pub async fn check_for_update(
+    app: tauri::AppHandle,
+) -> Result<UpdateStatus, crate::error::AppError> {
     let updater = app
         .updater()
         .map_err(|e| format!("Updater not available: {e}"))?;
@@ -29,7 +31,7 @@ pub async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateStatus, Str
             version: None,
             body: None,
         }),
-        Err(e) => Err(format!("Failed to check for updates: {e}")),
+        Err(e) => Err(format!("Failed to check for updates: {e}").into()),
     }
 }
 
@@ -44,7 +46,9 @@ pub fn updater_enabled(app: tauri::AppHandle) -> bool {
 /// Download and install the update, emitting `update-download-progress`
 /// events (percent 0-100) so the UI can show a progress indicator.
 #[tauri::command]
-pub async fn download_and_install_update(app: tauri::AppHandle) -> Result<(), String> {
+pub async fn download_and_install_update(
+    app: tauri::AppHandle,
+) -> Result<(), crate::error::AppError> {
     let updater = app
         .updater()
         .map_err(|e| format!("Updater not available: {e}"))?;

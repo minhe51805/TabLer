@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState, type MutableRefObject, type RefObject } from "react";
+import { useCallback, useMemo, type MutableRefObject, type RefObject } from "react";
 import { emitAppToast } from "../../../utils/app-toast";
 import { invokeMutation } from "../../../utils/tauri-utils";
 import {
@@ -10,6 +10,7 @@ import {
 } from "../ai-conversation-state";
 import type { AIWorkspaceBubbleData, AIWorkspaceInteractionMode } from "../ai-workspace-types";
 import type { AppLanguage } from "../../../i18n";
+import { useAIPanelStore } from "../store/aiPanelStore";
 import type { ThreadMemoryEntry } from "./use-ai-chat-workspaces";
 
 interface UseAIChatThreadsOptions {
@@ -23,8 +24,6 @@ interface UseAIChatThreadsOptions {
   threadMemories: Record<string, ThreadMemoryEntry>;
   initialThreadRef: MutableRefObject<AIChatThread | null>;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
-  activeGenerationBubbleIdRef: MutableRefObject<string | null>;
-  cancelledGenerationBubbleIdsRef: MutableRefObject<Set<string>>;
   initialPrompt: string;
   isGenerating: boolean;
   isRunning: boolean;
@@ -74,8 +73,6 @@ export function useAIChatThreads({
   threadMemories,
   initialThreadRef,
   composerTextareaRef,
-  activeGenerationBubbleIdRef,
-  cancelledGenerationBubbleIdsRef,
   initialPrompt,
   isGenerating,
   isRunning,
@@ -92,10 +89,18 @@ export function useAIChatThreads({
   setThreadMemories,
   setWorkspaceInteractionModes,
 }: UseAIChatThreadsOptions) {
-  const [deleteThreadPending, setDeleteThreadPending] = useState<string | null>(null);
+  const deleteThreadPending = useAIPanelStore((state) => state.deleteThreadPending);
+  const setDeleteThreadPending = useAIPanelStore((state) => state.setDeleteThreadPending);
 
   const handleSelectThread = useCallback(
     (threadId: string) => {
+      if (threadId !== activeThreadId) {
+        // Switching threads mid-run must abort any in-flight generation, deny
+        // pending consent modals, and clear queued follow-ups so nothing leaks
+        // across threads.
+        cancelGeneration();
+        setError(null);
+      }
       setActiveThreadId(threadId);
       setActiveThreadIdsByWorkspace((current) => ({
         ...current,
@@ -105,18 +110,24 @@ export function useAIChatThreads({
       setAttachedSelection(null);
     },
     [
+      activeThreadId,
+      cancelGeneration,
       currentWorkspaceKey,
       setActiveThreadId,
       setActiveThreadIdsByWorkspace,
       setAttachedSelection,
+      setError,
       setIsHistoryOpen,
     ],
   );
 
-  const handleRequestDeleteThread = useCallback((threadId: string, event: React.MouseEvent) => {
-    event.stopPropagation();
-    setDeleteThreadPending(threadId);
-  }, []);
+  const handleRequestDeleteThread = useCallback(
+    (threadId: string, event: React.MouseEvent) => {
+      event.stopPropagation();
+      setDeleteThreadPending(threadId);
+    },
+    [setDeleteThreadPending],
+  );
 
   const handleConfirmDeleteThread = useCallback(() => {
     const threadId = deleteThreadPending;
@@ -170,6 +181,7 @@ export function useAIChatThreads({
     setActiveThreadIdsByWorkspace,
     setBubbles,
     setChatThreads,
+    setDeleteThreadPending,
     setThreadMemories,
   ]);
 
@@ -211,9 +223,10 @@ export function useAIChatThreads({
 
   const handleCancelDeleteThread = useCallback(() => {
     setDeleteThreadPending(null);
-  }, []);
+  }, [setDeleteThreadPending]);
 
   const handleCreateChatThread = useCallback(() => {
+    cancelGeneration();
     const nextThread = createChatThread(workspaceThreads.length + 1, currentWorkspaceKey);
     setChatThreads((current) => [...current, nextThread]);
     setActiveThreadId(nextThread.id);
@@ -236,6 +249,7 @@ export function useAIChatThreads({
       }
     });
   }, [
+    cancelGeneration,
     composerTextareaRef,
     currentWorkspaceKey,
     initialPrompt,
@@ -250,22 +264,10 @@ export function useAIChatThreads({
   ]);
 
   const handleResetStage = useCallback(() => {
-    // Starting a fresh thread must also stop any in-flight generation: the
-    // background run keeps publishing progress (provider failover retries)
-    // and re-rendering the panel while the user looks at the new empty
-    // thread, which reads as constant jitter.
-    const activeBubbleId = activeGenerationBubbleIdRef.current;
-    if (activeBubbleId) {
-      cancelledGenerationBubbleIdsRef.current.add(activeBubbleId);
-    }
-    cancelGeneration();
+    // Starting a fresh thread stops any in-flight generation inside
+    // `handleCreateChatThread` -> `cancelGeneration()`.
     handleCreateChatThread();
-  }, [
-    activeGenerationBubbleIdRef,
-    cancelGeneration,
-    cancelledGenerationBubbleIdsRef,
-    handleCreateChatThread,
-  ]);
+  }, [handleCreateChatThread]);
 
   /** Reloads the current conversation from the persisted SQLite history so a
    *  stale-looking chat can be refreshed without touching live generations. */

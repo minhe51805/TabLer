@@ -1,12 +1,21 @@
-import { invoke } from "@tauri-apps/api/core";
 import { trackUsage } from "./usage-counter";
+import {
+  TauriCommandError,
+  TauriTimeoutError,
+  toTauriCommandError,
+  type TauriErrorCode,
+  type TauriErrorPayload,
+} from "./tauri-error";
+import { invokeCommand } from "./tauri-invoke";
 
-export class TauriTimeoutError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "TauriTimeoutError";
-  }
-}
+export {
+  TauriCommandError,
+  TauriTimeoutError,
+  toTauriCommandError,
+  invokeCommand,
+  type TauriErrorCode,
+  type TauriErrorPayload,
+};
 
 interface InvokeTimeoutOptions {
   onTimeout?: () => unknown | Promise<unknown>;
@@ -54,7 +63,7 @@ export async function saveExportFile(options: {
 export async function openExternalUrl(url: string): Promise<void> {
   if ("__TAURI_INTERNALS__" in window) {
     try {
-      await invoke("open_external_url", { url });
+      await invokeCommand("open_external_url", { url });
       return;
     } catch (error) {
       console.warn("[Tauri] open_external_url failed, falling back to window.open:", error);
@@ -95,7 +104,7 @@ export function invokeWithTimeout<T>(
           });
         });
     }, timeoutMs);
-    invoke<T>(command, args).then(
+    invokeCommand<T>(command, args).then(
       (value) => {
         finish(() => resolve(value));
       },
@@ -107,5 +116,5 @@ export function invokeWithTimeout<T>(
 }
 
 export function invokeMutation<T>(command: string, args: Record<string, unknown>): Promise<T> {
-  return invoke<T>(command, args);
+  return invokeCommand<T>(command, args);
 }

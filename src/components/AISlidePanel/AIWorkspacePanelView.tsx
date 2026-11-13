@@ -33,7 +33,7 @@ import { AIAgentInsights } from "./AIAgentInsights";
 import { AIAgentLearnings } from "./AIAgentLearnings";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 import { formatThreadTimestamp, type AIChatThread } from "./ai-conversation-state";
-import { AIComposerDock } from "./AIComposerDock";
+import { AIComposerDockConnected } from "./AIComposerDockConnected";
 import { AIConversationView } from "./AIConversationView";
 import { AIWorkspaceSwitcher } from "./AIWorkspaceSwitcher";
 import { AIWorkspaceChatActionModal } from "./AIWorkspaceChatActionModal";
@@ -45,8 +45,6 @@ import { AISkillsManagerModal } from "./AISkillsManagerModal";
 import { AIRulesManagerModal } from "./AIRulesManagerModal";
 import type { AIAgentRecordLink } from "./ai-agent-record-links";
 import { AIAttachmentManager } from "./AIAttachmentManager";
-import type { AIAttachmentDraft } from "../../utils/ai-attachments";
-import type { SelectionContextState } from "./ai-panel-selection";
 import type {
   AIWorkspaceAgentAutonomy,
   AIWorkspaceBubbleData,
@@ -214,9 +212,9 @@ export interface AIWorkspacePanelViewModel {
   activeInteractionMode: AIWorkspaceInteractionMode;
   activeProvider?: AIProviderConfig;
   aiCopy: AIWorkspaceCopy;
-  attachedSelection: SelectionContextState | null;
+  baseContextChars: number;
+  contextLimitTokens: number;
   bubbleCountByThread: Map<string, number>;
-  composerFooterNote: string;
   composerRef: RefObject<HTMLDivElement | null>;
   composerTextareaRef: RefObject<HTMLTextAreaElement | null>;
   connectionId: string | null;
@@ -228,7 +226,6 @@ export interface AIWorkspacePanelViewModel {
   isCancelling: boolean;
   isGenerating: boolean;
   isAttachmentManagerOpen: boolean;
-  composerAttachments: AIAttachmentDraft[];
   isHistoryOpen: boolean;
   isLongformComposer: boolean;
   isRunning: boolean;
@@ -250,7 +247,6 @@ export interface AIWorkspacePanelViewModel {
   >;
   restoreCheckpoint: (connectionId: string, fileName: string, dbType: string) => Promise<unknown>;
   language: string;
-  promptDraft: string;
   recentWorkspaceThreads: AIChatThread[];
   renameThread: (threadId: string, label: string) => void;
   sessionDataReadButtonLabel: string;
@@ -263,7 +259,6 @@ export interface AIWorkspacePanelViewModel {
   destructiveConsentPending: ConfirmState | null;
   failoverConsentPending: ConfirmState | null;
   chatThreadRef: RefObject<HTMLDivElement | null>;
-  contextUsage: { used: number; limit: number };
   activeChatWorkspaceId: string | null;
   activeChatWorkspaceName: string | null;
   activeChatWorkspaceContextUpdatedAt: number | null;
@@ -300,8 +295,6 @@ export interface AIWorkspacePanelViewModel {
   retryBubble: (bubble: AIWorkspaceBubbleData) => void;
   /** Re-runs a finished bubble's prompt in place (same chat slot). */
   regenerateBubble: (bubble: AIWorkspaceBubbleData) => void;
-  /** Number of sends parked while a run is in flight (composer chip). */
-  pendingQueueCount: number;
   /** Drops every queued send. */
   clearPendingQueue: () => void;
   /** Edit a finished turn's prompt and re-run it into the same chat slot. */
@@ -349,15 +342,19 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
   // twice when Safe Mode is on, since the grant suspends it.
   const [isFullAccessConfirmOpen, setFullAccessConfirmOpen] = useState(false);
   const [isFullAccessSafeModeConfirmOpen, setFullAccessSafeModeConfirmOpen] = useState(false);
+  const activeAgentAutonomy = m.activeAgentAutonomy;
+  const selectAgentAutonomy = m.selectAgentAutonomy;
+  const setPromptDraft = m.setPromptDraft;
+
   const handleSelectAgentAutonomy = useCallback(
     (autonomy: AIWorkspaceAgentAutonomy) => {
-      if (autonomy === "full" && m.activeAgentAutonomy !== "full") {
+      if (autonomy === "full" && activeAgentAutonomy !== "full") {
         setFullAccessConfirmOpen(true);
         return;
       }
-      m.selectAgentAutonomy(autonomy);
+      selectAgentAutonomy(autonomy);
     },
-    [m],
+    [activeAgentAutonomy, selectAgentAutonomy],
   );
   // Step 1 of the full-access grant: the plain "runs everything" consent.
   // When Safe Mode is on, a second explicit confirm gates its suspension —
@@ -368,16 +365,19 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
       setFullAccessSafeModeConfirmOpen(true);
       return;
     }
-    m.selectAgentAutonomy("full");
-  }, [m]);
+    selectAgentAutonomy("full");
+  }, [selectAgentAutonomy]);
   const handleFullAccessSafeModeConfirmed = useCallback(() => {
     setFullAccessSafeModeConfirmOpen(false);
     useSafeModeStore.getState().suspendSafeModeForFullAccess();
-    m.selectAgentAutonomy("full");
-  }, [m]);
+    selectAgentAutonomy("full");
+  }, [selectAgentAutonomy]);
   // Stable callbacks so the memoized AIConversationView skips re-renders
-  // triggered by unrelated panel state (composer keystrokes, health ticks...).
-  const handleUseSuggestion = useCallback((prompt: string) => m.setPromptDraft(prompt), [m]);
+  // triggered by unrelated panel state (composer keystrokes, slash menu, health ticks...).
+  const handleUseSuggestion = useCallback(
+    (prompt: string) => setPromptDraft(prompt),
+    [setPromptDraft],
+  );
   const panelWidth = useAppLayoutStore((state) => state.aiPanelWidth);
   const setPanelWidth = useAppLayoutStore((state) => state.setAIPanelWidth);
   const displayPanelWidth = useAIPanelDisplayWidth(panelWidth);
@@ -442,6 +442,7 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
                   <button
                     type="button"
                     className="toolbar-btn icon-only"
+                    data-testid="agent-skills-toggle"
                     onClick={() => setSkillsModalOpen(true)}
                     title={m.language === "vi" ? "Quản lý Agent Skills" : "Agent Skills"}
                   >
@@ -648,15 +649,11 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
                 copy={m.aiCopy}
                 scope={buildInsightScope(m.connectionId, m.currentDatabase)}
               />
-              <AIComposerDock
+              <AIComposerDockConnected
                 copy={m.aiCopy}
-                prompt={m.promptDraft}
                 textareaRef={m.composerTextareaRef}
-                footerNote={m.composerFooterNote}
-                contextUsage={m.contextUsage}
-                attachedSelectionSource={m.attachedSelection?.source}
-                hasAttachedSelectionText={Boolean(m.attachedSelection?.text.trim())}
-                attachments={m.composerAttachments}
+                baseContextChars={m.baseContextChars}
+                contextLimitTokens={m.contextLimitTokens}
                 onAddAttachmentFiles={m.addAttachmentFiles}
                 onRemoveAttachment={m.removeAttachment}
                 onOpenAttachmentManager={m.openAttachmentManager}
@@ -666,7 +663,6 @@ export function AIWorkspacePanelView({ model: m }: { model: AIWorkspacePanelView
                 providers={m.switchableProviders}
                 isSwitchingProvider={m.isSwitchingProvider}
                 isGenerating={m.isGenerating}
-                pendingQueueCount={m.pendingQueueCount}
                 onClearPendingQueue={m.clearPendingQueue}
                 isCancelling={m.isCancelling}
                 isConnectionAvailable={Boolean(m.connectionId)}

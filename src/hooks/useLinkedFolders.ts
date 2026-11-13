@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "../utils/tauri-invoke";
 import { listen } from "@tauri-apps/api/event";
 import { emitAppToast } from "../utils/app-toast";
 

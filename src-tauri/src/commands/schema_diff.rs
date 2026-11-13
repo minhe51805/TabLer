@@ -114,7 +114,7 @@ pub async fn compare_schemas(
     database_b: Option<String>,
     max_tables: Option<usize>,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<SchemaDiffResult, String> {
+) -> Result<SchemaDiffResult, crate::error::AppError> {
     let driver_a = db_manager
         .get_driver(&connection_a)
         .await
@@ -434,9 +434,11 @@ pub fn build_migration_script(
 pub async fn generate_migration_script(
     diff: SchemaDiffResult,
     options: MigrationOptions,
-) -> Result<String, String> {
+) -> Result<String, crate::error::AppError> {
     let dialect = parse_dialect(&options.dialect).map_err(|error| error.to_string())?;
-    build_migration_script(&diff, dialect, options.include_drops).map_err(|error| error.to_string())
+    build_migration_script(&diff, dialect, options.include_drops)
+        .map_err(|error| error.to_string())
+        .map_err(crate::error::AppError::from)
 }
 
 #[cfg(test)]

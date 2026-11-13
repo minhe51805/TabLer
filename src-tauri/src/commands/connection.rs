@@ -111,10 +111,10 @@ impl ConnectionAttemptCancellationState {
 pub async fn cancel_connection_attempt(
     request_id: String,
     cancellation_state: State<'_, ConnectionAttemptCancellationState>,
-) -> Result<bool, String> {
+) -> Result<bool, crate::error::AppError> {
     let request_id = request_id.trim();
     if request_id.is_empty() {
-        return Err("Request ID cannot be empty.".to_string());
+        return Err("Request ID cannot be empty.".to_string().into());
     }
     Ok(cancellation_state.cancel(request_id).await)
 }
@@ -123,11 +123,12 @@ pub async fn cancel_connection_attempt(
 pub async fn get_connection_capabilities(
     connection_id: String,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<DriverCapabilityProfile, String> {
+) -> Result<DriverCapabilityProfile, crate::error::AppError> {
     db_manager
         .get_connection_capabilities(&connection_id)
         .await
         .map_err(|error| error.to_string())
+        .map_err(crate::error::AppError::from)
 }
 
 /// Reports which `plugin_native` engines were compiled into this build. Builtin
@@ -283,7 +284,7 @@ pub async fn connect_database(
     conn_storage: State<'_, ConnectionStorage>,
     connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
     cancellation_state: State<'_, ConnectionAttemptCancellationState>,
-) -> Result<String, ConnectionErrorInfo> {
+) -> Result<String, crate::error::AppError> {
     let started_at = std::time::Instant::now();
     config.resolve_env_vars();
     config.fill_generated_name();
@@ -303,7 +304,7 @@ pub async fn connect_database(
         .await
     {
         log_connection_limiter_rejection("connection.connect");
-        return Err(ConnectionErrorInfo::unclassified(error));
+        return Err(ConnectionErrorInfo::unclassified(error).into());
     }
 
     let request_id = request_id
@@ -352,9 +353,13 @@ pub async fn connect_database(
                 Err(_) => " Cleanup timed out.".to_string(),
             };
 
-        return Err(ConnectionErrorInfo::unclassified(
-            connection_save_failure_message(&save_error, &disconnect_message),
-        ));
+        return Err(
+            ConnectionErrorInfo::unclassified(connection_save_failure_message(
+                &save_error,
+                &disconnect_message,
+            ))
+            .into(),
+        );
     }
 
     Ok(config.id.clone())
@@ -364,11 +369,12 @@ pub async fn connect_database(
 pub async fn disconnect_database(
     connection_id: String,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<(), String> {
+) -> Result<(), crate::error::AppError> {
     timeout(DISCONNECT_TIMEOUT, db_manager.disconnect(&connection_id))
         .await
         .map_err(|_| "Disconnect timed out after 15 seconds.".to_string())?
         .map_err(format_disconnect_runtime_error)
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -378,7 +384,7 @@ pub async fn test_connection(
     conn_storage: State<'_, ConnectionStorage>,
     connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
     cancellation_state: State<'_, ConnectionAttemptCancellationState>,
-) -> Result<String, ConnectionErrorInfo> {
+) -> Result<String, crate::error::AppError> {
     let started_at = std::time::Instant::now();
     config.resolve_env_vars();
     config.fill_generated_name();
@@ -398,7 +404,7 @@ pub async fn test_connection(
         .await
     {
         log_connection_limiter_rejection("connection.test");
-        return Err(ConnectionErrorInfo::unclassified(error));
+        return Err(ConnectionErrorInfo::unclassified(error).into());
     }
 
     let temp_manager = DatabaseManager::new();
@@ -441,7 +447,7 @@ pub async fn test_connection(
 pub async fn list_databases(
     connection_id: String,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<Vec<DatabaseInfo>, String> {
+) -> Result<Vec<DatabaseInfo>, crate::error::AppError> {
     let driver = db_manager
         .get_driver(&connection_id)
         .await
@@ -450,6 +456,7 @@ pub async fn list_databases(
         .list_databases()
         .await
         .map_err(format_database_listing_error)
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -457,7 +464,7 @@ pub async fn use_database(
     connection_id: String,
     database: String,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<(), String> {
+) -> Result<(), crate::error::AppError> {
     let driver = db_manager
         .get_driver(&connection_id)
         .await
@@ -466,6 +473,7 @@ pub async fn use_database(
         .await
         .map_err(|_| "Switching database timed out after 15 seconds.".to_string())?
         .map_err(format_database_switch_error)
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -474,7 +482,7 @@ pub async fn create_local_database(
     database_name: String,
     bootstrap_statements: Option<Vec<String>>,
     connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
-) -> Result<String, String> {
+) -> Result<String, crate::error::AppError> {
     config.resolve_env_vars();
     config.fill_generated_name();
     config
@@ -486,7 +494,7 @@ pub async fn create_local_database(
 
     let requested_database = database_name.trim();
     if requested_database.is_empty() {
-        return Err("Database name cannot be empty.".to_string());
+        return Err("Database name cannot be empty.".to_string().into());
     }
 
     let bootstrap_statements = bootstrap_statements.unwrap_or_default();
@@ -497,7 +505,8 @@ pub async fn create_local_database(
             create_local_sqlite_database(&config, requested_database, &bootstrap_statements),
         )
         .await
-        .map_err(|_| "Local SQLite bootstrap timed out after 60 seconds.".to_string())?;
+        .map_err(|_| "Local SQLite bootstrap timed out after 60 seconds.".to_string())?
+        .map_err(crate::error::AppError::from);
     }
 
     let host = config
@@ -507,7 +516,9 @@ pub async fn create_local_database(
 
     if !is_local_host(host) {
         return Err(
-            "Local database creation is only enabled for localhost or 127.0.0.1.".to_string(),
+            "Local database creation is only enabled for localhost or 127.0.0.1."
+                .to_string()
+                .into(),
         );
     }
 
@@ -517,28 +528,34 @@ pub async fn create_local_database(
             create_local_postgres_database(&config, requested_database, &bootstrap_statements),
         )
         .await
-        .map_err(|_| "Local PostgreSQL bootstrap timed out after 60 seconds.".to_string())?,
+        .map_err(|_| "Local PostgreSQL bootstrap timed out after 60 seconds.".to_string())?
+        .map_err(crate::error::AppError::from),
         DatabaseType::MySQL | DatabaseType::MariaDB => timeout(
             bootstrap_timeout(),
             create_local_mysql_database(&config, requested_database, &bootstrap_statements),
         )
         .await
-        .map_err(|_| "Local MySQL bootstrap timed out after 60 seconds.".to_string())?,
+        .map_err(|_| "Local MySQL bootstrap timed out after 60 seconds.".to_string())?
+        .map_err(crate::error::AppError::from),
         DatabaseType::MSSQL => timeout(
             bootstrap_timeout(),
             create_local_mssql_database(&config, requested_database, &bootstrap_statements),
         )
         .await
-        .map_err(|_| "Local SQL Server bootstrap timed out after 60 seconds.".to_string())?,
+        .map_err(|_| "Local SQL Server bootstrap timed out after 60 seconds.".to_string())?
+        .map_err(crate::error::AppError::from),
         _ => Err(format!(
             "{:?} local database bootstrap is not wired into this build yet.",
             config.db_type
-        )),
+        )
+        .into()),
     }
 }
 
 #[tauri::command]
-pub async fn suggest_sqlite_database_path(database_name: String) -> Result<String, String> {
+pub async fn suggest_sqlite_database_path(
+    database_name: String,
+) -> Result<String, crate::error::AppError> {
     let requested_name = database_name.trim();
     let path = default_sqlite_database_path(if requested_name.is_empty() {
         "local-database"
@@ -550,7 +567,9 @@ pub async fn suggest_sqlite_database_path(database_name: String) -> Result<Strin
 }
 
 #[tauri::command]
-pub async fn pick_sqlite_database_path(database_name: String) -> Result<Option<String>, String> {
+pub async fn pick_sqlite_database_path(
+    database_name: String,
+) -> Result<Option<String>, crate::error::AppError> {
     let suggested_path = default_sqlite_database_path(&database_name)?;
     let file_name = suggested_path
         .file_name()
@@ -578,7 +597,7 @@ pub async fn pick_sqlite_database_path(database_name: String) -> Result<Option<S
 #[tauri::command]
 pub async fn get_saved_connections(
     conn_storage: State<'_, ConnectionStorage>,
-) -> Result<Vec<ConnectionConfig>, String> {
+) -> Result<Vec<ConnectionConfig>, crate::error::AppError> {
     let storage = conn_storage.inner().clone();
     run_blocking_storage_task(move || {
         storage
@@ -595,6 +614,7 @@ pub async fn get_saved_connections(
             .map_err(|_| "Failed to load saved connections.".to_string())
     })
     .await
+    .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -605,7 +625,7 @@ pub async fn connect_saved_connection(
     conn_storage: State<'_, ConnectionStorage>,
     connection_rate_limiter: State<'_, ConnectionAttemptLimiter>,
     cancellation_state: State<'_, ConnectionAttemptCancellationState>,
-) -> Result<String, ConnectionErrorInfo> {
+) -> Result<String, crate::error::AppError> {
     let storage = conn_storage.inner().clone();
     let requested_connection_id = connection_id.clone();
     let mut config = run_blocking_storage_task(move || {
@@ -654,13 +674,15 @@ pub async fn rename_saved_connection(
     connection_id: String,
     name: String,
     conn_storage: State<'_, ConnectionStorage>,
-) -> Result<(), String> {
+) -> Result<(), crate::error::AppError> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
-        return Err("Connection name must not be empty.".to_string());
+        return Err("Connection name must not be empty.".to_string().into());
     }
     if trimmed.chars().count() > 80 {
-        return Err("Connection name is too long (max 80 characters).".to_string());
+        return Err("Connection name is too long (max 80 characters)."
+            .to_string()
+            .into());
     }
     let storage = conn_storage.inner().clone();
     let clean_name = trimmed.to_string();
@@ -674,13 +696,14 @@ pub async fn rename_saved_connection(
             .map_err(|_| "Failed to save the renamed connection.".to_string())
     })
     .await
+    .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
 pub async fn delete_saved_connection(
     connection_id: String,
     conn_storage: State<'_, ConnectionStorage>,
-) -> Result<(), String> {
+) -> Result<(), crate::error::AppError> {
     let storage = conn_storage.inner().clone();
     run_blocking_storage_task(move || {
         storage
@@ -688,27 +711,28 @@ pub async fn delete_saved_connection(
             .map_err(|_| "Failed to delete the saved connection.".to_string())
     })
     .await
+    .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
 pub async fn check_connection_status(
     connection_id: String,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<bool, String> {
+) -> Result<bool, crate::error::AppError> {
     Ok(db_manager.is_connected(&connection_id).await)
 }
 
 /// Parse a connection URL string into ConnectionConfig
 /// Supports: postgresql://, postgres://, cockroachdb://, greenplum://, redshift://, mysql://, mariadb://, sqlite://, redis://, rediss://, mongodb://, mongodb+srv://
 #[tauri::command]
-pub fn parse_connection_url(url: String) -> Result<ConnectionConfig, String> {
-    ConnectionConfig::from_url(&url, None)
+pub fn parse_connection_url(url: String) -> Result<ConnectionConfig, crate::error::AppError> {
+    ConnectionConfig::from_url(&url, None).map_err(crate::error::AppError::from)
 }
 
 /// Get parsed details from a connection URL without creating a config
 #[tauri::command]
-pub fn parse_url_details(url: String) -> Result<ParsedConnectionUrl, String> {
-    ParsedConnectionUrl::parse(&url)
+pub fn parse_url_details(url: String) -> Result<ParsedConnectionUrl, crate::error::AppError> {
+    ParsedConnectionUrl::parse(&url).map_err(crate::error::AppError::from)
 }
 
 /// Get the Buy Me a Coffee support URL
@@ -719,9 +743,10 @@ pub fn get_support_url() -> String {
 
 /// Open the Buy Me a Coffee page in the default browser
 #[tauri::command]
-pub fn open_support_page(app: AppHandle) -> Result<(), String> {
+pub fn open_support_page(app: AppHandle) -> Result<(), crate::error::AppError> {
     let url = get_support_url();
     app.opener()
         .open_url(&url, None::<String>)
         .map_err(|e| format!("Failed to open support page: {}", e))
+        .map_err(crate::error::AppError::from)
 }

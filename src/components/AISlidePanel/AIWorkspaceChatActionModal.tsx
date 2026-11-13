@@ -21,9 +21,7 @@ interface AIWorkspaceChatActionModalProps {
 const MAX_TITLE_CHARS = 32;
 
 function truncateTitle(text: string) {
-  return text.length > MAX_TITLE_CHARS
-    ? `${text.slice(0, MAX_TITLE_CHARS - 1).trimEnd()}…`
-    : text;
+  return text.length > MAX_TITLE_CHARS ? `${text.slice(0, MAX_TITLE_CHARS - 1).trimEnd()}…` : text;
 }
 
 /**
@@ -79,25 +77,24 @@ export function AIWorkspaceChatActionModal({
 
   const normalizedQuery = query.trim().toLowerCase();
   const filteredThreads = useMemo(
-    () => threads.filter((thread) => {
-      if (!normalizedQuery) return true;
-      const memory = threadMemories[thread.id] ?? null;
-      const haystack = [thread.label, memory?.title ?? "", memory?.keywords.join(" ") ?? ""]
-        .join(" ")
-        .toLowerCase();
-      return normalizedQuery.split(/\s+/).every((token) => haystack.includes(token));
-    }),
+    () =>
+      threads.filter((thread) => {
+        if (!normalizedQuery) return true;
+        const memory = threadMemories[thread.id] ?? null;
+        const haystack = [thread.label, memory?.title ?? "", memory?.keywords.join(" ") ?? ""]
+          .join(" ")
+          .toLowerCase();
+        return normalizedQuery.split(/\s+/).every((token) => haystack.includes(token));
+      }),
     [normalizedQuery, threadMemories, threads],
   );
 
   if (!open) return null;
 
   const toggleThread = (threadId: string) => {
-    setSelectedIds((current) => (
-      current.includes(threadId)
-        ? current.filter((id) => id !== threadId)
-        : [...current, threadId]
-    ));
+    setSelectedIds((current) =>
+      current.includes(threadId) ? current.filter((id) => id !== threadId) : [...current, threadId],
+    );
   };
 
   const confirmAdd = () => {
@@ -148,7 +145,9 @@ export function AIWorkspaceChatActionModal({
             <div className="ai-ws-chat-action-target">
               <span className="ai-ws-chat-action-target-name">
                 <Database className="w-3 h-3" />
-                <span className="ai-ws-chat-action-target-value">{workspaceName ?? copy.autoMode}</span>
+                <span className="ai-ws-chat-action-target-value">
+                  {workspaceName ?? copy.autoMode}
+                </span>
               </span>
             </div>
             <div className="ai-ws-chat-action-search">
@@ -174,7 +173,9 @@ export function AIWorkspaceChatActionModal({
                       className={`ai-ws-chat-action-item ${isSelected ? "is-selected" : ""}`}
                       onClick={() => toggleThread(thread.id)}
                     >
-                      <span className={`ai-ws-chat-action-checkbox ${isSelected ? "is-checked" : ""}`}>
+                      <span
+                        className={`ai-ws-chat-action-checkbox ${isSelected ? "is-checked" : ""}`}
+                      >
                         {isSelected ? <Check className="w-3 h-3" /> : null}
                       </span>
                       <span className="ai-ws-chat-action-item-copy">
@@ -191,7 +192,11 @@ export function AIWorkspaceChatActionModal({
               )}
             </div>
             <div className="ai-ws-chat-action-footer">
-              <button type="button" className="ai-workspace-modal-btn" onClick={() => setStep("menu")}>
+              <button
+                type="button"
+                className="ai-workspace-modal-btn"
+                onClick={() => setStep("menu")}
+              >
                 {copy.chatActionBack}
               </button>
               <button

@@ -161,9 +161,11 @@ pub struct TableExportCancellationState {
 }
 
 impl TableExportCancellationState {
-    fn start(&self, operation_id: &str) -> Result<Arc<AtomicBool>, String> {
+    fn start(&self, operation_id: &str) -> Result<Arc<AtomicBool>, crate::error::AppError> {
         if operation_id.trim().is_empty() {
-            return Err("Export operation identifier is required.".to_string());
+            return Err("Export operation identifier is required."
+                .to_string()
+                .into());
         }
         let cancelled = Arc::new(AtomicBool::new(false));
         self.exports
@@ -266,7 +268,7 @@ pub async fn export_tables_to_directory(
     app: AppHandle,
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, TableExportCancellationState>,
-) -> Result<BulkTableExportResult, String> {
+) -> Result<BulkTableExportResult, crate::error::AppError> {
     db_manager
         .require_capability(&connection_id, DriverCapability::DataExport)
         .await
@@ -292,11 +294,13 @@ pub async fn export_tables_to_directory(
         .await
         .map_err(|e| e.to_string())?;
     if request.tables.is_empty() {
-        return Err("Select at least one table to export.".to_string());
+        return Err("Select at least one table to export.".to_string().into());
     }
     let directory = PathBuf::from(request.directory.trim());
     if !directory.is_dir() {
-        return Err("Choose an existing directory for the bulk export.".to_string());
+        return Err("Choose an existing directory for the bulk export."
+            .to_string()
+            .into());
     }
 
     let cancelled = cancellation_state.start(&operation_id)?;
@@ -374,7 +378,7 @@ pub async fn export_tables_to_directory(
                 }
                 failed.push(BulkTableExportFailure {
                     table: table.clone(),
-                    error,
+                    error: error.to_string(),
                 });
             }
         }
@@ -424,7 +428,7 @@ pub async fn export_table_data(
     app: AppHandle,
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, TableExportCancellationState>,
-) -> Result<TableDataExportResult, String> {
+) -> Result<TableDataExportResult, crate::error::AppError> {
     db_manager
         .require_capability(&connection_id, DriverCapability::DataExport)
         .await
@@ -463,7 +467,8 @@ pub async fn export_table_data(
         return Err(format!(
             "{EXPORT_FILE_EXISTS_CODE}: '{}' already exists. Confirm overwrite to replace it.",
             target_path.display()
-        ));
+        )
+        .into());
     }
     let temporary_path = temporary_export_path(&target_path);
     let cancelled = cancellation_state.start(&operation_id)?;
@@ -534,7 +539,7 @@ struct TableExportJob<'a> {
     cancelled: Arc<AtomicBool>,
 }
 
-async fn stream_table_export(job: TableExportJob<'_>) -> Result<u64, String> {
+async fn stream_table_export(job: TableExportJob<'_>) -> Result<u64, crate::error::AppError> {
     let TableExportJob {
         driver,
         request,
@@ -576,7 +581,9 @@ async fn stream_table_export(job: TableExportJob<'_>) -> Result<u64, String> {
         .map_err(|e| e.to_string())?
     {
         if cancelled.load(Ordering::Relaxed) {
-            return Err("Table export cancelled; incomplete output was removed.".to_string());
+            return Err("Table export cancelled; incomplete output was removed."
+                .to_string()
+                .into());
         }
         if batch.rows.is_empty() {
             continue;

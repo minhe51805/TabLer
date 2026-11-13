@@ -1,3 +1,4 @@
+import type { CanonicalToolCall } from "../../types";
 import { splitSqlStatements } from "../../utils/sqlStatements";
 import {
   extractJsonObjectCandidate,
@@ -481,6 +482,14 @@ export function parseAIAgentToolAction(rawResponse: string): AIAgentToolAction {
         : String(parseError ?? "Unknown JSON parse error");
     throw new Error(`The agent returned malformed JSON: ${message}`);
   }
+  return validateParsedAgentActionObject(parsed);
+}
+
+function validateParsedAgentActionObject(parsed: {
+  action?: unknown;
+  args?: unknown;
+  message?: unknown;
+}): AIAgentToolAction {
   const isNativeMemoryAction = parsed.action === NATIVE_MEMORY_TOOL_ACTION;
   if (!isNativeMemoryAction && !isAIAgentToolName(parsed.action)) {
     throw new Error("The agent returned an unsupported action.");
@@ -492,15 +501,12 @@ export function parseAIAgentToolAction(rawResponse: string): AIAgentToolAction {
     throw new Error("The agent returned invalid tool arguments.");
   }
 
-  // Native tool-calls from weak providers can arrive with `function.arguments`
-  // that the backend could not parse (shipped verbatim under
-  // `unparsedArguments` instead of being silently emptied). Run that payload
-  // through the same repair pipeline as text finals; an unrecoverable payload
-  // throws so the caller's bounded repair round can ask the model to re-emit
-  // the action with valid arguments.
   let args = (parsed.args as Record<string, unknown> | undefined) ?? {};
-  const unparsedArguments = args.unparsedArguments;
-  if (typeof unparsedArguments === "string") {
+  if ("unparsedArguments" in args && args.unparsedArguments !== undefined) {
+    const unparsedArguments = args.unparsedArguments;
+    if (typeof unparsedArguments !== "string") {
+      throw new Error("The agent returned malformed tool arguments.");
+    }
     const candidate = repairTruncatedJson(
       sanitizeJsonStringLiterals(extractJsonObjectCandidate(unparsedArguments)),
     );
@@ -520,12 +526,14 @@ export function parseAIAgentToolAction(rawResponse: string): AIAgentToolAction {
       );
     }
   }
-  const message = typeof parsed.message === "string" ? parsed.message.trim() : "";
+  const message =
+    typeof parsed.message === "string" && parsed.message.trim()
+      ? parsed.message.trim()
+      : typeof args.message === "string"
+        ? args.message.trim()
+        : "";
 
   if (isNativeMemoryAction) {
-    // Anthropic's native memory tool has no catalog spec — forward the command
-    // and filesystem args verbatim (the backend sandbox is the source of truth
-    // for path/size/traversal validation).
     return {
       action: NATIVE_MEMORY_TOOL_ACTION,
       args: parseNativeMemoryToolArgs(args),
@@ -538,6 +546,24 @@ export function parseAIAgentToolAction(rawResponse: string): AIAgentToolAction {
     args: parseAgentToolArgs(parsed.action as AIAgentToolName, args),
     message,
   } as AIAgentToolAction;
+}
+
+export function parseCanonicalToolCall(
+  call: CanonicalToolCall,
+  narrativeMessage = "",
+): AIAgentToolAction {
+  const hasObjectArgs =
+    call.arguments !== null && typeof call.arguments === "object" && !Array.isArray(call.arguments);
+  const rawMessage = hasObjectArgs ? call.arguments.message : undefined;
+  const inlineMessage =
+    typeof rawMessage === "string" && rawMessage.trim()
+      ? rawMessage.trim()
+      : narrativeMessage.trim();
+  return validateParsedAgentActionObject({
+    action: call.name,
+    args: call.arguments,
+    message: inlineMessage,
+  });
 }
 
 export function validateAIAgentReadonlySql(sql: string) {

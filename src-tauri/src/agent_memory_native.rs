@@ -586,7 +586,7 @@ pub fn run_agent_memory_tool(
     view_range: Option<Vec<i64>>,
     connection_id: Option<String>,
     database: Option<String>,
-) -> Result<String, String> {
+) -> Result<String, crate::error::AppError> {
     let parsed = build_command(
         &command,
         path,
@@ -613,7 +613,7 @@ pub fn run_agent_memory_tool(
     }
     let data_dir = resolve_data_dir().map_err(|error| error.to_string())?;
     let root = native_scope_root(&data_dir, connection_id.as_deref(), database.as_deref());
-    execute_memory_command_in(&root, &parsed)
+    execute_memory_command_in(&root, &parsed).map_err(crate::error::AppError::from)
 }
 
 #[cfg(test)]

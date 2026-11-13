@@ -14,6 +14,7 @@ vi.mock("@/components/AISlidePanel/ai-sql-confirm", () => ({
 
 import { useAISqlRunner } from "@/components/AISlidePanel/hooks/use-ai-sql-runner";
 import { useConnectionStore } from "@/stores/connectionStore";
+import { SANDBOX_AGENT_MAX_ROWS } from "@/stores/queryStore";
 
 const queryResult = {
   columns: [],
@@ -96,6 +97,7 @@ describe("useAISqlRunner Safe Mode pre-approval", () => {
     expect(requestAISqlConfirmationMock).not.toHaveBeenCalled();
     expect(executeSandboxQuery).toHaveBeenCalledWith("conn-1", ["SELECT * FROM users"], undefined, {
       preApproved: false,
+      maxRows: SANDBOX_AGENT_MAX_ROWS,
     });
   });
 
@@ -112,7 +114,7 @@ describe("useAISqlRunner Safe Mode pre-approval", () => {
       "conn-1",
       ["UPDATE users SET x = 1"],
       undefined,
-      { preApproved: true },
+      { preApproved: true, maxRows: SANDBOX_AGENT_MAX_ROWS },
     );
   });
 
@@ -130,7 +132,7 @@ describe("useAISqlRunner Safe Mode pre-approval", () => {
       "conn-1",
       ["UPDATE users SET x = 1"],
       undefined,
-      { preApproved: true },
+      { preApproved: true, maxRows: SANDBOX_AGENT_MAX_ROWS },
     );
   });
 
@@ -179,7 +181,7 @@ describe("useAISqlRunner auto-checkpoint safety net", () => {
       "conn-1",
       ["UPDATE users SET x = 1"],
       undefined,
-      { preApproved: true },
+      { preApproved: true, maxRows: SANDBOX_AGENT_MAX_ROWS },
     );
   });
 

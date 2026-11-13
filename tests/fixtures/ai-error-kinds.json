@@ -1,4 +1,12 @@
 {
-  "markerKey": "ai_error_kind",
-  "kinds": ["cancelled", "timeout", "provider", "invalid-response"]
+  "codes": [
+    "ai-cancelled",
+    "ai-timeout",
+    "ai-auth",
+    "ai-bad-request",
+    "ai-rate-limited",
+    "ai-provider-transient",
+    "ai-invalid-response",
+    "rate-limited"
+  ]
 }

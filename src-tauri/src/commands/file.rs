@@ -19,7 +19,7 @@ pub async fn save_export_file(
     filters: Option<Vec<SaveExportFilter>>,
     encoding: Option<String>,
     content_base64: Option<String>,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, crate::error::AppError> {
     // rfd dialogs must run on the main thread; hop off the async runtime so
     // the blocking dialog never stalls a tokio worker.
     let requested_name = file_name;
@@ -73,7 +73,7 @@ pub struct SaveExportFilter {
 /// Opens a file picker dialog filtered to SQL/text files and returns the file contents.
 /// Returns the full file path and content on success, or an error message.
 #[tauri::command]
-pub async fn read_sql_file() -> Result<SqlFileContent, String> {
+pub async fn read_sql_file() -> Result<SqlFileContent, crate::error::AppError> {
     let file_path = FileDialog::new()
         .add_filter("SQL files", &["sql"])
         .add_filter("Text files", &["txt"])
@@ -81,7 +81,7 @@ pub async fn read_sql_file() -> Result<SqlFileContent, String> {
         .pick_file()
         .ok_or_else(|| "No file selected.".to_string())?;
 
-    read_file_from_path(file_path)
+    read_file_from_path(file_path).map_err(crate::error::AppError::from)
 }
 
 fn read_file_from_path(file_path: PathBuf) -> Result<SqlFileContent, String> {
@@ -99,24 +99,26 @@ fn read_file_from_path(file_path: PathBuf) -> Result<SqlFileContent, String> {
 
 /// Reads a SQL file from an explicit path (used for drag-and-drop or recent files).
 #[tauri::command]
-pub async fn read_sql_file_from_path(path: String) -> Result<SqlFileContent, String> {
+pub async fn read_sql_file_from_path(
+    path: String,
+) -> Result<SqlFileContent, crate::error::AppError> {
     let file_path = PathBuf::from(&path);
     if !file_path.exists() {
-        return Err(format!("File not found: {path}"));
+        return Err(format!("File not found: {path}").into());
     }
-    read_file_from_path(file_path)
+    read_file_from_path(file_path).map_err(crate::error::AppError::from)
 }
 
 /// Opens a CSV/TSV file for preview. The import pipeline validates and maps its
 /// contents in the frontend before a transaction is requested from the backend.
 #[tauri::command]
-pub async fn read_csv_file() -> Result<CsvFileContent, String> {
+pub async fn read_csv_file() -> Result<CsvFileContent, crate::error::AppError> {
     let file_path = FileDialog::new()
         .add_filter("CSV files", &["csv"])
         .add_filter("Delimited text", &["tsv", "txt"])
         .pick_file()
         .ok_or_else(|| "No file selected.".to_string())?;
-    read_csv_file_from_path(file_path)
+    read_csv_file_from_path(file_path).map_err(crate::error::AppError::from)
 }
 
 fn read_csv_file_from_path(file_path: PathBuf) -> Result<CsvFileContent, String> {
@@ -178,7 +180,7 @@ fn detect_csv_delimiter(sample: &[u8]) -> Result<u8, String> {
 }
 
 #[tauri::command]
-pub async fn pick_database_file() -> Result<DatabaseFileSelection, String> {
+pub async fn pick_database_file() -> Result<DatabaseFileSelection, crate::error::AppError> {
     let file_path = FileDialog::new()
         .add_filter(
             "Database files",

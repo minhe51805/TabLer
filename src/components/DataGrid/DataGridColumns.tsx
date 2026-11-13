@@ -1,58 +1,46 @@
 import React from "react";
 import type { ColumnDef } from "@tanstack/react-table";
-import { ExternalLink } from "lucide-react";
 import type { EditingCell, GridCellValue, ResolvedColumn } from "./hooks/useDataGrid";
 import type { ForeignKeyInfo } from "../../types";
 import {
   getCellEditorType,
   isGeometryColumn,
   isBlobColumn,
-  formatCellValueForDisplay,
   type ColumnDisplayFormat,
 } from "./editors";
-import { renderGeometryCell } from "../../utils/geometry-renderer";
 import { ColumnHeader } from "./DataGridColumnHeader";
-import { getFaviconUrl, getUrlDomain, isImageUrl, isUrlCell } from "./urlCellDetection";
-import { renderCellEditor, type LookupValue } from "./cellEditorResolver";
-import { formatDate, parseDate } from "../../stores/dateFormatStore";
-import { getCurrentAppLanguage } from "../../i18n";
-import { getDataGridCopy } from "./datagrid-copy";
-import { getDataGridMaskingCopy } from "./datagrid-masking-copy";
+import type { LookupValue } from "./cellEditorResolver";
+import {
+  DataGridBodyCell,
+  DataGridRowIndexCell,
+  DataGridRowIndexHeader,
+  type EditingDraft,
+  type SetSelectedCellFn,
+} from "./components/DataGridCell";
 import "./datagrid-masking.css";
 
-/** Per-grid inline-edit draft. Created inside DataGrid (useRef) — never a
- *  module singleton, or two mounted grids would share one draft. */
-export interface EditingDraft {
-  current: string;
-}
+export type { EditingDraft, LookupValue };
 
-export type { LookupValue };
-
-interface SetSelectedCellFn {
-  (
-    cell: { row: number; col: number } | null,
-    modifiers?: { extend?: boolean; additive?: boolean },
-  ): void;
-}
+const DEFAULT_FOREIGN_KEYS: ForeignKeyInfo[] = [];
 
 interface DataGridColumnsProps {
   resolvedColumns: ResolvedColumn[];
   canSelectRows: boolean;
   canAttemptInlineEdit: boolean;
-  selectedRows: Set<number>;
+  selectedRows?: Set<number>;
   /** Active cell in DISPLAYED row space (matches gridSelection). */
-  selectedCell: { row: number; col: number } | null;
-  isCellSelected: (row: number, col: number) => boolean;
-  editingCell: EditingCell | null;
-  editingSeedValue: string;
-  savingCell: EditingCell | null;
+  selectedCell?: { row: number; col: number } | null;
+  isCellSelected?: (row: number, col: number) => boolean;
+  editingCell?: EditingCell | null;
+  editingSeedValue?: string;
+  savingCell?: EditingCell | null;
   sortColumn: string | null;
   sortDir: "ASC" | "DESC";
   /** Absolute offset of the first loaded row; keeps row identity stable across chunks. */
   rowOffset: number;
   /** Maps a filtered visible row back to its source row in the loaded data window. */
   rowIndexMap?: number[];
-  copiedCell: string | null;
+  copiedCell?: string | null;
   editingDraftRef: EditingDraft;
   /** Set true by editor onChange — distinguishes an untouched blur from a
    *  deliberate retype of the seed text (e.g. literal "NULL"). */
@@ -68,7 +56,7 @@ interface DataGridColumnsProps {
   commitEditingCell: (committed?: GridCellValue) => Promise<void>;
   cancelEditingCell: () => void;
   structureStatus: "idle" | "loading" | "ready" | "failed";
-  allVisibleRowsSelected: boolean;
+  allVisibleRowsSelected?: boolean;
   isBooleanColumn: (column: ResolvedColumn) => boolean;
   setSelectedCell: SetSelectedCellFn;
   /** All foreign keys for the current table */
@@ -140,7 +128,7 @@ export function buildDataGridColumns({
   isBooleanColumn: _isBooleanColumn,
   handleCopyValue,
   setSelectedCell,
-  foreignKeys = [],
+  foreignKeys = DEFAULT_FOREIGN_KEYS,
   lookupValuesCache,
   onLoadLookupValues,
   connectionId,
@@ -159,52 +147,24 @@ export function buildDataGridColumns({
   return [
     {
       id: "_row_num",
-      header: () => {
-        const copy = getDataGridCopy(getCurrentAppLanguage());
-        return canSelectRows ? (
-          <button
-            type="button"
-            className={`datagrid-index-toggle ${allVisibleRowsSelected ? "active" : ""}`}
-            onClick={handleToggleSelectAllRows}
-            title={
-              allVisibleRowsSelected
-                ? copy.rowHeader.clearSelectedRows
-                : copy.rowHeader.selectAllVisibleRows
-            }
-          >
-            #
-          </button>
-        ) : (
-          <span className="datagrid-index-label">#</span>
-        );
-      },
-      cell: ({ row }) => {
-        const copy = getDataGridCopy(getCurrentAppLanguage());
-        const sourceRowIndex = rowIndexMap?.[row.index] ?? row.index;
-        return canSelectRows ? (
-          <button
-            type="button"
-            className={`datagrid-index-value datagrid-index-selectable ${selectedRows.has(sourceRowIndex) ? "selected" : ""}`}
-            onClick={(event) => {
-              event.stopPropagation();
-              handleRowSelection(sourceRowIndex, event.nativeEvent);
-            }}
-            onDoubleClick={(event) => {
-              event.stopPropagation();
-              onOpenRowInspector?.(sourceRowIndex);
-            }}
-            title={
-              selectedRows.has(sourceRowIndex)
-                ? copy.rowHeader.rowSelected
-                : copy.rowHeader.selectRowInspect
-            }
-          >
-            {rowOffset + sourceRowIndex + 1}
-          </button>
-        ) : (
-          <span className="datagrid-index-value">{rowOffset + sourceRowIndex + 1}</span>
-        );
-      },
+      header: () => (
+        <DataGridRowIndexHeader
+          canSelectRows={canSelectRows}
+          allVisibleRowsSelected={allVisibleRowsSelected}
+          handleToggleSelectAllRows={handleToggleSelectAllRows}
+        />
+      ),
+      cell: ({ row }) => (
+        <DataGridRowIndexCell
+          rowIndex={row.index}
+          rowOffset={rowOffset}
+          rowIndexMap={rowIndexMap}
+          canSelectRows={canSelectRows}
+          selectedRows={selectedRows}
+          handleRowSelection={handleRowSelection}
+          onOpenRowInspector={onOpenRowInspector}
+        />
+      ),
       size: 72,
       minSize: 40,
       maxSize: 800,
@@ -258,191 +218,48 @@ export function buildDataGridColumns({
           getValue: () => unknown;
           row: { index: number };
         }) => {
-          const copy = getDataGridCopy(getCurrentAppLanguage());
-          const value = getValue() as GridCellValue;
           const rowIndex = tableRow.index;
           const sourceRowIndex = rowIndexMap?.[rowIndex] ?? rowIndex;
-          // Cell selection lives in displayed row space; editing/saving stay in
-          // source space because they address data.rows directly.
-          const isSelected = isCellSelected(rowIndex, idx);
-          const isEditing = editingCell?.row === sourceRowIndex && editingCell?.col === idx;
-          const isSaving = savingCell?.row === sourceRowIndex && savingCell?.col === idx;
-          const cellKey = `${sourceRowIndex}-${idx}`;
-          const stringValue = value === null ? null : String(value);
-          const isUrl = isUrlCell(stringValue);
-          const isImageCell = isUrl && stringValue !== null && isImageUrl(stringValue);
           // View-time masking: the masked matrix is aligned by displayed row
           // index; null means the async anonymizer is still computing.
           const maskedCell = isActivelyMasked ? (maskedRows?.[rowIndex]?.[idx] ?? null) : null;
           const maskPending = isActivelyMasked && maskedRows === null;
-          const maskingCopy = isActivelyMasked
-            ? getDataGridMaskingCopy(getCurrentAppLanguage())
-            : null;
-
-          // Custom date formatting (date detection hoisted per column)
-          let displayValue: string | null = null;
-          if (isDateColumn && dateFormat && stringValue !== null) {
-            const parsed = parseDate(stringValue);
-            displayValue = parsed ? formatDate(parsed, dateFormat) : stringValue;
-          }
 
           return (
-            <div
-              className={[
-                "datagrid-cell",
-                isSelected ? "selected" : "",
-                value === null ? "null-value" : "",
-                isEditableColumn ? "editable" : "",
-                isEditing ? "editing" : "",
-                isSaving ? "saving" : "",
-              ].join(" ")}
-              onMouseDown={(event) => {
-                if (!isEditableColumn || isEditing) return;
-
-                const isRepeatSelection =
-                  selectedCell?.row === rowIndex && selectedCell?.col === idx;
-                if (isRepeatSelection || event.detail >= 2) {
-                  event.preventDefault();
-                  event.stopPropagation();
-                  void startEditingCell(sourceRowIndex, idx);
-                }
-              }}
-              onClick={(event) => {
-                if (!isEditing) {
-                  setSelectedCell(
-                    { row: sourceRowIndex, col: idx },
-                    {
-                      extend: event.shiftKey,
-                      additive: event.metaKey || event.ctrlKey,
-                    },
-                  );
-                }
-              }}
-              onDoubleClick={() => {
-                if (!isEditableColumn) {
-                  // Masked columns copy the masked value; while the async
-                  // anonymizer is still computing there is nothing safe to
-                  // copy, so the double-click is a no-op.
-                  if (isActivelyMasked) {
-                    if (!maskPending) handleCopyValue(maskedCell, cellKey);
-                    return;
-                  }
-                  handleCopyValue(value, cellKey);
-                }
-              }}
-            >
-              {copiedCell === cellKey && (
-                <span className="absolute -top-5 left-1/2 -translate-x-1/2 text-[10px] bg-[var(--accent)] text-[var(--bg-primary)] px-1.5 py-0.5 rounded-md whitespace-nowrap z-10 font-semibold">
-                  {copy.grid.copied}
-                </span>
-              )}
-
-              {isEditing ? (
-                renderCellEditor({
-                  col,
-                  value,
-                  foreignKeys,
-                  lookupValuesCache,
-                  onLoadLookupValues,
-                  connectionId,
-                  editingSeedValue,
-                  editingDraftRef,
-                  editingTouchedRef,
-                  commitEditingCell,
-                  cancelEditingCell,
-                  dateFormat,
-                })
-              ) : (
-                <>
-                  {isSaving && (
-                    <span className="animate-spin inline-block w-3.5 h-3.5 border-2 border-[var(--accent)] border-t-transparent rounded-full" />
-                  )}
-                  {isActivelyMasked ? (
-                    <span
-                      className={`datagrid-cell-value masked${maskPending ? " masked-pending" : ""}`}
-                      data-null-placeholder={nullPlaceholder}
-                    >
-                      {maskPending
-                        ? maskingCopy?.pendingPlaceholder
-                        : maskedCell === null
-                          ? nullPlaceholder
-                          : String(maskedCell)}
-                    </span>
-                  ) : isImageCell && stringValue !== null ? (
-                    <div className="datagrid-url-cell">
-                      <img
-                        src={stringValue}
-                        alt=""
-                        className="datagrid-cell-thumb"
-                        loading="lazy"
-                        onError={(e) => {
-                          (e.target as HTMLImageElement).style.display = "none";
-                        }}
-                      />
-                      <a
-                        href={stringValue}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="datagrid-cell-value datagrid-url-link"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <ExternalLink className="w-2.5! h-2.5!" />
-                        <span>{getUrlDomain(stringValue)}</span>
-                      </a>
-                    </div>
-                  ) : isUrl && stringValue !== null ? (
-                    <div className="datagrid-url-cell">
-                      {(() => {
-                        const faviconUrl = getFaviconUrl(stringValue);
-                        return faviconUrl ? (
-                          <img
-                            src={faviconUrl}
-                            alt=""
-                            className="datagrid-cell-thumb datagrid-cell-favicon"
-                            loading="lazy"
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).style.display = "none";
-                            }}
-                          />
-                        ) : null;
-                      })()}
-                      <a
-                        href={stringValue}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="datagrid-cell-value datagrid-url-link"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <ExternalLink className="w-2.5! h-2.5!" />
-                        <span>{getUrlDomain(stringValue)}</span>
-                      </a>
-                    </div>
-                  ) : isDateColumn && displayValue !== null ? (
-                    <span
-                      className="datagrid-cell-value datagrid-cell-date"
-                      title={`Original: ${stringValue}`}
-                    >
-                      {displayValue}
-                    </span>
-                  ) : isGeometry && stringValue !== null ? (
-                    (() => {
-                      const geo = renderGeometryCell(stringValue);
-                      return (
-                        <span className="datagrid-cell-value" title={stringValue}>
-                          {geo.emoji} {geo.display}
-                        </span>
-                      );
-                    })()
-                  ) : (
-                    <span className="datagrid-cell-value" data-null-placeholder={nullPlaceholder}>
-                      {value === null
-                        ? nullPlaceholder
-                        : formatCellValueForDisplay(value, displayFormat, isBlob)}
-                    </span>
-                  )}
-                </>
-              )}
-            </div>
+            <DataGridBodyCell
+              col={col}
+              colIndex={idx}
+              rowIndex={rowIndex}
+              sourceRowIndex={sourceRowIndex}
+              value={getValue() as GridCellValue}
+              isDateColumn={isDateColumn}
+              isGeometry={isGeometry}
+              isBlob={isBlob}
+              displayFormat={displayFormat}
+              isActivelyMasked={isActivelyMasked}
+              maskedCell={maskedCell}
+              maskPending={maskPending}
+              isEditableColumn={isEditableColumn}
+              nullPlaceholder={nullPlaceholder}
+              dateFormat={dateFormat}
+              foreignKeys={foreignKeys}
+              lookupValuesCache={lookupValuesCache}
+              onLoadLookupValues={onLoadLookupValues}
+              connectionId={connectionId}
+              editingDraftRef={editingDraftRef}
+              editingTouchedRef={editingTouchedRef}
+              startEditingCell={startEditingCell}
+              commitEditingCell={commitEditingCell}
+              cancelEditingCell={cancelEditingCell}
+              handleCopyValue={handleCopyValue}
+              setSelectedCell={setSelectedCell}
+              selectedCell={selectedCell}
+              isCellSelected={isCellSelected}
+              editingCell={editingCell}
+              editingSeedValue={editingSeedValue}
+              savingCell={savingCell}
+              copiedCell={copiedCell}
+            />
           );
         },
       };

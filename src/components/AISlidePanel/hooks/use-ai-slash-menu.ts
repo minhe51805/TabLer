@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type RefObject } from "react";
 import { emitAppToast } from "../../../utils/app-toast";
+import { APP_EVENTS } from "../../../utils/app-events";
+import { EventCenter } from "../../../stores/event-center";
 import { invokeMutation, invokeWithTimeout } from "../../../utils/tauri-utils";
 import { getLinkedWorkspaceDir } from "../../../hooks/useLinkedFolders";
 import { useCommandPrefsStore } from "../../../stores/commandPrefsStore";
@@ -224,11 +226,10 @@ export function useAISlashMenu({
           durationMs: 10_000,
         });
       }
-      window.dispatchEvent(
-        new CustomEvent("table-data-updated", {
-          detail: { connectionId, invalidateStructure: true },
-        }),
-      );
+      EventCenter.emit(APP_EVENTS.tableDataUpdated, {
+        connectionId,
+        invalidateStructure: true,
+      });
       emitAppToast({
         tone: "success",
         title: language === "vi" ? "Đã rollback database" : "Database restored",

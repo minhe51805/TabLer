@@ -21,6 +21,8 @@ import { useWindowMenu } from "./useWindowMenu";
 import { useWindowMenuDismiss } from "./useWindowMenuDismiss";
 import { useDatabaseFileActions } from "./useDatabaseFileActions";
 import { requestAppConfirmation } from "../stores/confirmStore";
+import { APP_EVENTS } from "../utils/app-events";
+import { EventCenter } from "../stores/event-center";
 import { useAIMetricsBoardActions } from "./useAIMetricsBoardActions";
 
 interface WorkspaceMenuHandlerInputs {
@@ -297,7 +299,7 @@ export function useWorkspaceMenuHandlers(inputs: WorkspaceMenuHandlerInputs) {
     setIsSidebarCollapsed(false);
     setLeftPanel("database");
     window.setTimeout(() => {
-      window.dispatchEvent(new CustomEvent("focus-explorer-search"));
+      EventCenter.emit(APP_EVENTS.focusExplorerSearch);
     }, 0);
   }, [isConnected, setIsSidebarCollapsed, setLeftPanel]);
 
@@ -435,7 +437,7 @@ export function useWorkspaceMenuHandlers(inputs: WorkspaceMenuHandlerInputs) {
 
   const handleRunQueryFromHistory = useCallback(
     (sql: string) => {
-      window.dispatchEvent(new CustomEvent("insert-sql-from-ai", { detail: { sql } }));
+      EventCenter.emit(APP_EVENTS.insertSqlFromAI, { sql });
       setShowQueryHistory(false);
     },
     [setShowQueryHistory],
@@ -443,7 +445,7 @@ export function useWorkspaceMenuHandlers(inputs: WorkspaceMenuHandlerInputs) {
 
   const handleRunQueryFromFavorites = useCallback(
     (sql: string) => {
-      window.dispatchEvent(new CustomEvent("insert-sql-from-ai", { detail: { sql } }));
+      EventCenter.emit(APP_EVENTS.insertSqlFromAI, { sql });
       setShowSQLFavorites(false);
     },
     [setShowSQLFavorites],

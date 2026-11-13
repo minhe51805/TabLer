@@ -26,6 +26,8 @@ import { getSeedRowsCopy } from "../GenerateTestRows/seed-rows-copy";
 import { DataGridChartModal } from "./DataGridChartModal";
 import { getDataGridChartCopy } from "./datagrid-chart-copy";
 import { isNumericColumn } from "./chart-utils";
+import { APP_EVENTS } from "../../utils/app-events";
+import { EventCenter } from "../../stores/event-center";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   buildCsvContent,
@@ -740,7 +742,7 @@ export function DataGridToolbar({
               <button
                 type="button"
                 className="datagrid-footer-action"
-                onClick={() => window.dispatchEvent(new CustomEvent("datagrid-undo"))}
+                onClick={() => EventCenter.emit(APP_EVENTS.datagridUndo)}
                 title={t("datagrid.undoTitle")}
               >
                 <Undo2 className="!w-3.5 !h-3.5" />
@@ -749,7 +751,7 @@ export function DataGridToolbar({
               <button
                 type="button"
                 className="datagrid-footer-action"
-                onClick={() => window.dispatchEvent(new CustomEvent("datagrid-redo"))}
+                onClick={() => EventCenter.emit(APP_EVENTS.datagridRedo)}
                 title={t("datagrid.redoTitle")}
               >
                 <Redo2 className="!w-3.5 !h-3.5" />

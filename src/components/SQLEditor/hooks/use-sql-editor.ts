@@ -34,6 +34,7 @@ import {
   type SqlParameterDraft,
 } from "../../../utils/sql-parameters";
 import { EventCenter, type AiProposalExplainResult } from "../../../stores/event-center";
+import { APP_EVENTS } from "../../../utils/app-events";
 import { captureAgentEditedRunCheckpoint } from "../agent-edit-safety";
 import { useConnectionCapabilities } from "../../../hooks/useConnectionCapabilities";
 import { isCapabilitySupported } from "../../../types/capabilities";
@@ -551,15 +552,11 @@ export function useSQLEditor({
               normalized.startsWith("RENAME ")
             );
           });
-          window.dispatchEvent(
-            new CustomEvent("table-data-updated", {
-              detail: {
-                connectionId,
-                database: useConnectionStore.getState().currentDatabase || undefined,
-                invalidateStructure,
-              },
-            }),
-          );
+          EventCenter.emit(APP_EVENTS.tableDataUpdated, {
+            connectionId,
+            database: useConnectionStore.getState().currentDatabase || undefined,
+            invalidateStructure,
+          });
         }
       } catch (e) {
         if (e instanceof SafeModeCancelledError) {
@@ -755,7 +752,7 @@ export function useSQLEditor({
         monaco.KeyMod.CtrlCmd | monaco.KeyMod.Shift | monaco.KeyCode.KeyP,
       ],
       run: () => {
-        window.dispatchEvent(new CustomEvent("open-ai-slide-panel"));
+        EventCenter.emit(APP_EVENTS.openAISlidePanel);
       },
     });
 
@@ -927,11 +924,11 @@ export function useSQLEditor({
           : usesDirectExecution
             ? "Command"
             : "Run";
-    window.dispatchEvent(
-      new CustomEvent("workspace-activity", {
-        detail: { connectionId, label: activityLabel, durationMs: result.execution_time_ms },
-      }),
-    );
+    EventCenter.emit(APP_EVENTS.workspaceActivity, {
+      connectionId,
+      label: activityLabel,
+      durationMs: result.execution_time_ms,
+    });
   }, [connectionId, result, usesDirectExecution]);
 
   useEffect(() => {
@@ -998,9 +995,30 @@ export function useSQLEditor({
         }
       }
     };
-    window.addEventListener("insert-sql-from-ai", onInsertSQLFromAI);
-    return () => window.removeEventListener("insert-sql-from-ai", onInsertSQLFromAI);
+    return EventCenter.on(APP_EVENTS.insertSqlFromAI, onInsertSQLFromAI);
   }, []);
+
+  useEffect(() => {
+    const isActiveEditor = () => !tabId || useUIStore.getState().activeTabId === tabId;
+    const offFormat = EventCenter.on(APP_EVENTS.formatSqlPalette, () => {
+      if (isActiveEditor()) void handleFormatSql();
+    });
+    const offFocusSql = EventCenter.on(APP_EVENTS.focusSqlEditorPalette, () => {
+      if (isActiveEditor()) editorRef.current?.focus();
+    });
+    const offFocusResults = EventCenter.on(APP_EVENTS.focusResultsPalette, () => {
+      if (!isActiveEditor()) return;
+      const resultsEl = splitRef.current?.querySelector(
+        ".datagrid-table-wrap",
+      ) as HTMLElement | null;
+      resultsEl?.focus();
+    });
+    return () => {
+      offFormat();
+      offFocusSql();
+      offFocusResults();
+    };
+  }, [handleFormatSql, tabId]);
 
   useEffect(() => {
     if (runRequestNonce <= lastRunRequestNonceRef.current) return;
@@ -1030,13 +1048,11 @@ export function useSQLEditor({
   }, [flushPersistedContent]);
 
   useEffect(() => {
-    const handleToggleResultsPane = (event: Event) => {
-      const detail = (event as CustomEvent<{ tabId?: string }>).detail;
+    return EventCenter.on(APP_EVENTS.toggleQueryResultsPane, (event) => {
+      const detail = event.detail;
       if (detail?.tabId && tabId && detail.tabId !== tabId) return;
       setShowResultsPane((current) => !current);
-    };
-    window.addEventListener("toggle-query-results-pane", handleToggleResultsPane);
-    return () => window.removeEventListener("toggle-query-results-pane", handleToggleResultsPane);
+    });
   }, [tabId]);
 
   const handleSplitDrag = useCallback(

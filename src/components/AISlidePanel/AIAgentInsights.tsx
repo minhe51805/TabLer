@@ -11,6 +11,8 @@
 import { useMemo } from "react";
 import "../../styles/ai-insights.css";
 import { insightKey, useAgentInsightsStore } from "../../stores/agent-insights-store";
+import { APP_EVENTS } from "../../utils/app-events";
+import { EventCenter } from "../../stores/event-center";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 
 interface AIAgentInsightsProps {
@@ -68,11 +70,9 @@ export function AIAgentInsights({ copy, scope }: AIAgentInsightsProps) {
                 className="ai-insights-action"
                 title={copy.insights.useSuggestion}
                 onClick={() => {
-                  window.dispatchEvent(
-                    new CustomEvent("insert-sql-from-ai", {
-                      detail: { sql: insight.suggestedAction.prefill },
-                    }),
-                  );
+                  EventCenter.emit(APP_EVENTS.insertSqlFromAI, {
+                    sql: insight.suggestedAction.prefill,
+                  });
                   dismissInsight(insightKey(insight));
                 }}
               >

@@ -23,6 +23,7 @@ import { useConnectionStore } from "../../stores/connectionStore";
 import { useGlobalErrorStore } from "../../stores/globalErrorStore";
 import { useQueryStore } from "../../stores/queryStore";
 import { EventCenter } from "../../stores/event-center";
+import { APP_EVENTS } from "../../utils/app-events";
 import {
   parseClipboardText,
   buildPastePreview,
@@ -920,39 +921,34 @@ export function DataGrid({
   }, []);
 
   useEffect(() => {
-    const handleStructureUpdated = (event: Event) => {
-      const detail = (
-        event as CustomEvent<{
-          connectionId: string;
-          tableName: string;
-          database?: string;
-        }>
-      ).detail;
-
+    const handleStructureUpdated = (
+      event: CustomEvent<{
+        connectionId: string;
+        tableName: string;
+        database?: string;
+      }>,
+    ) => {
+      const detail = event.detail;
       if (!detail) return;
       invalidateTableCaches(detail.connectionId, detail.tableName, detail.database, {
         invalidateStructure: true,
       });
     };
 
-    window.addEventListener("table-structure-updated", handleStructureUpdated);
-    return () => {
-      window.removeEventListener("table-structure-updated", handleStructureUpdated);
-    };
+    return EventCenter.on(APP_EVENTS.tableStructureUpdated, handleStructureUpdated);
   }, []);
 
   useEffect(() => {
-    const handleTableDataUpdated = (event: Event) => {
-      const detail = (
-        event as CustomEvent<{
-          connectionId: string;
-          database?: string;
-          tableName?: string;
-          invalidateStructure?: boolean;
-          sourceId?: string;
-        }>
-      ).detail;
-
+    const handleTableDataUpdated = (
+      event: CustomEvent<{
+        connectionId: string;
+        database?: string;
+        tableName?: string;
+        invalidateStructure?: boolean;
+        sourceId?: string;
+      }>,
+    ) => {
+      const detail = event.detail;
       if (!detail || detail.connectionId !== connectionId) return;
       if (
         detail.database !== undefined &&
@@ -983,10 +979,7 @@ export function DataGrid({
       void fetchData(currentPage);
     };
 
-    window.addEventListener("table-data-updated", handleTableDataUpdated);
-    return () => {
-      window.removeEventListener("table-data-updated", handleTableDataUpdated);
-    };
+    return EventCenter.on(APP_EVENTS.tableDataUpdated, handleTableDataUpdated);
   }, [connectionId, currentPage, database, externalResult, fetchData, tableName]);
 
   // Deferred refresh: an update event may land while this grid is a
@@ -1039,13 +1032,13 @@ export function DataGrid({
       if (nextChanges) reconcileStagedChanges(nextChanges);
     };
 
-    window.addEventListener("datagrid-undo", handleUndo);
-    window.addEventListener("datagrid-redo", handleRedo);
+    const unlistenUndo = EventCenter.on(APP_EVENTS.datagridUndo, handleUndo);
+    const unlistenRedo = EventCenter.on(APP_EVENTS.datagridRedo, handleRedo);
 
     const handleDupRowEvent = () => {
       void handleDuplicateRow();
     };
-    window.addEventListener("datagrid-duplicate-row", handleDupRowEvent);
+    const unlistenDupRow = EventCenter.on(APP_EVENTS.datagridDuplicateRow, handleDupRowEvent);
 
     const handleFkPreviewEvent = () => {
       if (!selectedCell || !data || !resolvedColumns.length || !foreignKeys.length) return;
@@ -1081,13 +1074,13 @@ export function DataGrid({
           setIsLoadingFkPreview(false);
         });
     };
-    window.addEventListener("datagrid-fk-preview", handleFkPreviewEvent);
+    const unlistenFkPreview = EventCenter.on(APP_EVENTS.datagridFkPreview, handleFkPreviewEvent);
 
     return () => {
-      window.removeEventListener("datagrid-undo", handleUndo);
-      window.removeEventListener("datagrid-redo", handleRedo);
-      window.removeEventListener("datagrid-duplicate-row", handleDupRowEvent);
-      window.removeEventListener("datagrid-fk-preview", handleFkPreviewEvent);
+      unlistenUndo();
+      unlistenRedo();
+      unlistenDupRow();
+      unlistenFkPreview();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [

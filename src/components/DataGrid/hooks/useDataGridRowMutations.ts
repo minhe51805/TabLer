@@ -14,6 +14,8 @@ import { type CsvFileSelection } from "../dialogs/PasteRowsDialog";
 import type { PastePreview } from "../../../utils/clipboard-parser";
 import type { QueryResult } from "../../../types";
 import { emitAppToast } from "../../../utils/app-toast";
+import { APP_EVENTS } from "../../../utils/app-events";
+import { EventCenter } from "../../../stores/event-center";
 import { getCurrentAppLanguage } from "../../../i18n";
 import { getDataGridPowerCopy } from "../datagrid-power-copy";
 import { getDataGridCopy } from "../datagrid-copy";
@@ -240,16 +242,12 @@ export function useDataGridRowMutations({
       });
 
       invalidateTableCaches(connectionId, tableName, database);
-      window.dispatchEvent(
-        new CustomEvent("table-data-updated", {
-          detail: {
-            connectionId,
-            database,
-            tableName,
-            sourceId: dataGridInstanceIdRef.current,
-          },
-        }),
-      );
+      EventCenter.emit(APP_EVENTS.tableDataUpdated, {
+        connectionId,
+        database,
+        tableName,
+        sourceId: dataGridInstanceIdRef.current,
+      });
       await refreshTableFromStart();
     },
     [
@@ -495,11 +493,12 @@ export function useDataGridRowMutations({
       }
 
       invalidateTableCaches(connectionId, tableName, database);
-      window.dispatchEvent(
-        new CustomEvent("table-data-updated", {
-          detail: { connectionId, database, tableName, sourceId: dataGridInstanceIdRef.current },
-        }),
-      );
+      EventCenter.emit(APP_EVENTS.tableDataUpdated, {
+        connectionId,
+        database,
+        tableName,
+        sourceId: dataGridInstanceIdRef.current,
+      });
       await refreshTableFromStart();
       closePasteDialog(true);
     } catch (error) {
@@ -679,16 +678,12 @@ export function useDataGridRowMutations({
       setSelectedCell(null);
 
       invalidateTableCaches(connectionId, tableName, database);
-      window.dispatchEvent(
-        new CustomEvent("table-data-updated", {
-          detail: {
-            connectionId,
-            database,
-            tableName,
-            sourceId: dataGridInstanceIdRef.current,
-          },
-        }),
-      );
+      EventCenter.emit(APP_EVENTS.tableDataUpdated, {
+        connectionId,
+        database,
+        tableName,
+        sourceId: dataGridInstanceIdRef.current,
+      });
 
       await refreshTableFromStart();
     } catch (error) {

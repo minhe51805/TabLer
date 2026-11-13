@@ -16,6 +16,8 @@ import { assertStatementsAllowed, SafeModeCancelledError } from "../utils/safe-m
 import { invokeMutation } from "../utils/tauri-utils";
 import { requestAppConfirmation, requestAppExportEncryption } from "../stores/confirmStore";
 import { invalidateQueryResultCache } from "../utils/query-result-cache";
+import { APP_EVENTS } from "../utils/app-events";
+import { EventCenter } from "../stores/event-center";
 
 interface RestorePreview {
   statement_count: number;
@@ -203,15 +205,11 @@ export function useDatabaseFileActions(language: string) {
       });
       invalidateQueryResultCache(activeConnectionId);
       await refreshWorkspace();
-      window.dispatchEvent(
-        new CustomEvent("workspace-activity", {
-          detail: {
-            connectionId: activeConnectionId,
-            label: "Import SQL",
-            durationMs: Math.max(1, Math.round(performance.now() - startedAt)),
-          },
-        }),
-      );
+      EventCenter.emit(APP_EVENTS.workspaceActivity, {
+        connectionId: activeConnectionId,
+        label: "Import SQL",
+        durationMs: Math.max(1, Math.round(performance.now() - startedAt)),
+      });
       emitAppToast({
         tone: "success",
         title: language === "vi" ? "Da import tep SQL" : "SQL import complete",
@@ -262,11 +260,9 @@ export function useDatabaseFileActions(language: string) {
         (connection) => normalizeDatabaseFilePath(connection.file_path || "") === normalizedPath,
       );
       if (existingConnection) {
-        window.dispatchEvent(
-          new CustomEvent("launcher-focus-connection", {
-            detail: { connectionId: existingConnection.id },
-          }),
-        );
+        EventCenter.emit(APP_EVENTS.launcherFocusConnection, {
+          connectionId: existingConnection.id,
+        });
         if (connectedIds.has(existingConnection.id)) {
           const targetDatabase = existingConnection.database ?? null;
           useConnectionStore.setState({
@@ -313,9 +309,7 @@ export function useDatabaseFileActions(language: string) {
 
       await useConnectionStore.getState().connectToDatabase(nextConfig);
       await loadSavedConnections();
-      window.dispatchEvent(
-        new CustomEvent("launcher-focus-connection", { detail: { connectionId: nextConfig.id } }),
-      );
+      EventCenter.emit(APP_EVENTS.launcherFocusConnection, { connectionId: nextConfig.id });
       emitAppToast({
         tone: "success",
         title: language === "vi" ? "Da mo tep database" : "Database file opened",
@@ -376,15 +370,11 @@ export function useDatabaseFileActions(language: string) {
             ? `${activeConnection.name || activeConnection.db_type} da duoc xuat thanh cong.`
             : `${activeConnection.name || activeConnection.db_type} was exported successfully.`,
       });
-      window.dispatchEvent(
-        new CustomEvent("workspace-activity", {
-          detail: {
-            connectionId: activeConnectionId,
-            label: "Export",
-            durationMs: Math.max(1, Math.round(performance.now() - startedAt)),
-          },
-        }),
-      );
+      EventCenter.emit(APP_EVENTS.workspaceActivity, {
+        connectionId: activeConnectionId,
+        label: "Export",
+        durationMs: Math.max(1, Math.round(performance.now() - startedAt)),
+      });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message !== "No file selected.") {

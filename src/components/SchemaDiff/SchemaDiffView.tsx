@@ -5,6 +5,8 @@ import { useSchemaDiffStore } from "../../stores/schemaDiffStore";
 import { getSchemaDiffCopy } from "./schema-diff-copy";
 import { trackUsage } from "../../utils/usage-counter";
 import { SchemaDiffPanel } from "./SchemaDiffPanel";
+import { EventCenter } from "../../stores/event-center";
+import { APP_EVENTS } from "../../utils/app-events";
 
 /**
  * Schema Diff & migration tool (roadmap Phase 2A, Tools → Schema Diff).
@@ -19,9 +21,9 @@ export function SchemaDiffView() {
 
   // Open via Command Palette / menu event.
   useEffect(() => {
-    const open = () => useSchemaDiffStore.getState().open();
-    window.addEventListener("open-schema-diff-palette", open);
-    return () => window.removeEventListener("open-schema-diff-palette", open);
+    return EventCenter.on(APP_EVENTS.openSchemaDiffPalette, () => {
+      useSchemaDiffStore.getState().open();
+    });
   }, []);
 
   // Local usage counter: one count per open, not per render.

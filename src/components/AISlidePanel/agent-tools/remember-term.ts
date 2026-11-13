@@ -2,6 +2,8 @@ import { formatExecutionError } from "../../SQLEditor/SQLEditorUtils";
 import { isSupersededAIRequestError } from "../ai-agent-action-requestor";
 import { agentToolError, isRetryableAgentToolError } from "../agent-tool-executor-helpers";
 import { emitAppToast } from "../../../utils/app-toast";
+import { APP_EVENTS } from "../../../utils/app-events";
+import { EventCenter } from "../../../stores/event-center";
 import { getAISemanticCopy } from "../ai-semantic-copy";
 import { saveSemanticGlossaryEntry } from "../../../utils/semantic-glossary";
 import { stringifyAgentObservation, type AgentToolModule } from "./shared";
@@ -36,15 +38,11 @@ export const tool: AgentToolModule = {
         description: semanticCopy.savedToastBody.replace("{term}", savedTerm),
         durationMs: 4000,
       });
-      window.dispatchEvent(
-        new CustomEvent("workspace-activity", {
-          detail: {
-            connectionId: ctx.connectionId,
-            label: `Glossary saved: ${savedTerm}`,
-            durationMs: 0,
-          },
-        }),
-      );
+      EventCenter.emit(APP_EVENTS.workspaceActivity, {
+        connectionId: ctx.connectionId,
+        label: `Glossary saved: ${savedTerm}`,
+        durationMs: 0,
+      });
       return stringifyAgentObservation(frame, {
         saved: term,
         definition,

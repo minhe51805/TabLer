@@ -4,6 +4,8 @@ import type { DatabaseType } from "../../../types/database";
 import type { ConnectionConfig, ForeignKeyInfo } from "../../../types";
 import { resolveDataWindowColumns } from "../data-window";
 import { devLogError } from "../../../utils/logger";
+import { APP_EVENTS } from "../../../utils/app-events";
+import { EventCenter } from "../../../stores/event-center";
 import { changeScopeKey } from "../../../stores/change-tracking-store";
 import {
   buildTableCacheKey,
@@ -309,15 +311,11 @@ export function useDataGridTableFetcher({
         setIsLoading(false);
 
         if (result.execution_time_ms >= 0) {
-          window.dispatchEvent(
-            new CustomEvent("workspace-activity", {
-              detail: {
-                connectionId,
-                label: "Load",
-                durationMs: result.execution_time_ms,
-              },
-            }),
-          );
+          EventCenter.emit(APP_EVENTS.workspaceActivity, {
+            connectionId,
+            label: "Load",
+            durationMs: result.execution_time_ms,
+          });
         }
 
         if (page === 0 && isActiveRef.current) {

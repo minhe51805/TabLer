@@ -10,6 +10,8 @@ import {
 } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { useUIStore } from "../../stores/uiStore";
+import { APP_EVENTS } from "../../utils/app-events";
+import { EventCenter } from "../../stores/event-center";
 import type { MetricsBoardDefinition, MetricsWidgetDefinition, Tab } from "../../types";
 import { formatCountLabel, useI18n } from "../../i18n";
 import {
@@ -54,14 +56,13 @@ export function MetricsSidebar({ connectionId, database }: Props) {
   }, [syncBoards]);
 
   useEffect(() => {
-    const handleBoardsUpdated = (event: Event) => {
-      const detail = (event as CustomEvent<{ connectionId?: string }>).detail;
+    const handleBoardsUpdated = (event: CustomEvent<{ connectionId?: string } | undefined>) => {
+      const detail = event.detail;
       if (detail?.connectionId && detail.connectionId !== connectionId) return;
       syncBoards();
     };
 
-    window.addEventListener("metrics-boards-updated", handleBoardsUpdated);
-    return () => window.removeEventListener("metrics-boards-updated", handleBoardsUpdated);
+    return EventCenter.on(APP_EVENTS.metricsBoardsUpdated, handleBoardsUpdated);
   }, [connectionId, syncBoards]);
 
   useEffect(() => {
@@ -193,14 +194,10 @@ export function MetricsSidebar({ connectionId, database }: Props) {
     (board: MetricsBoardDefinition, widget: MetricsWidgetDefinition) => {
       ensureMetricsTab(board);
       window.setTimeout(() => {
-        window.dispatchEvent(
-          new CustomEvent("focus-metrics-widget", {
-            detail: {
-              boardId: board.id,
-              widgetId: widget.id,
-            },
-          }),
-        );
+        EventCenter.emit(APP_EVENTS.focusMetricsWidget, {
+          boardId: board.id,
+          widgetId: widget.id,
+        });
       }, 0);
     },
     [ensureMetricsTab],
@@ -211,11 +208,7 @@ export function MetricsSidebar({ connectionId, database }: Props) {
     const existingBoards = allBoards.filter((board) => board.connection_id === connectionId);
     const nextBoard = createBoardDefinition(connectionId, database, existingBoards);
     writeStoredBoards([...allBoards, nextBoard]);
-    window.dispatchEvent(
-      new CustomEvent("metrics-boards-updated", {
-        detail: { connectionId },
-      }),
-    );
+    EventCenter.emit(APP_EVENTS.metricsBoardsUpdated, { connectionId });
     setBoardSearch("");
     ensureMetricsTab(nextBoard);
   }, [connectionId, database, ensureMetricsTab]);
@@ -238,11 +231,7 @@ export function MetricsSidebar({ connectionId, database }: Props) {
         .filter((tab) => tab.type === "metrics" && tab.metricsBoardId === board.id)
         .forEach((tab) => updateTab(tab.id, { title: nextName }));
 
-      window.dispatchEvent(
-        new CustomEvent("metrics-boards-updated", {
-          detail: { connectionId },
-        }),
-      );
+      EventCenter.emit(APP_EVENTS.metricsBoardsUpdated, { connectionId });
     },
     [connectionId, tabs, updateTab],
   );
@@ -290,11 +279,7 @@ export function MetricsSidebar({ connectionId, database }: Props) {
           }
         });
 
-      window.dispatchEvent(
-        new CustomEvent("metrics-boards-updated", {
-          detail: { connectionId },
-        }),
-      );
+      EventCenter.emit(APP_EVENTS.metricsBoardsUpdated, { connectionId });
       setBoardMenu(null);
     },
     [activeTabId, connectionId, database, removeTab, tabs, updateTab],

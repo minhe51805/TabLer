@@ -4,6 +4,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { consumePendingCsvDrop } from "../../hooks/useCsvFileDrop";
 import { invokeMutation, invokeWithTimeout } from "../../utils/tauri-utils";
+import { EventCenter } from "../../stores/event-center";
+import { APP_EVENTS } from "../../utils/app-events";
 
 type ImportFormat = "csv" | "json" | "xlsx";
 
@@ -128,7 +130,7 @@ export function ImportWizard() {
   }, []);
 
   useEffect(() => {
-    const open = (event: Event) => {
+    const open = (event: CustomEvent<{ path?: string } | undefined>) => {
       setIsOpen(true);
       setPreview(null);
       setTargetTable("");
@@ -138,11 +140,10 @@ export function ImportWizard() {
       // A dropped file carries its path in the event detail; the pending-drop
       // stash covers drops that landed while this wizard was unmounted.
       const pending = consumePendingCsvDrop();
-      const path = (event as CustomEvent<{ path?: string }>).detail?.path ?? pending;
+      const path = event.detail?.path ?? pending;
       if (path) void pickFile("csv", path);
     };
-    window.addEventListener("open-data-import-palette", open);
-    return () => window.removeEventListener("open-data-import-palette", open);
+    return EventCenter.on(APP_EVENTS.openDataImportPalette, open);
   }, [pickFile]);
 
   // Drain a CSV dropped before the wizard was mounted (lazy global modals).

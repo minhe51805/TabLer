@@ -56,6 +56,107 @@ pub struct AIConversationMessage {
     pub content: String,
 }
 
+/// Provider-agnostic tool definition sent from the frontend so the backend can
+/// translate into any dialect (OpenAI, Anthropic, Gemini/Vertex, OllamaChat) —
+/// including mid-run cross-provider failover — without leaking unsupported keys
+/// onto text-only endpoints like `OllamaGenerate`.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct CanonicalToolSpec {
+    pub name: String,
+    pub description: String,
+    pub parameters: serde_json::Value,
+}
+
+/// Provider-agnostic tool invocation returned by the model and replayed in
+/// `CanonicalAgentTurn::Assistant`.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+pub struct CanonicalToolCall {
+    pub id: String,
+    pub name: String,
+    pub arguments: serde_json::Value,
+}
+
+/// Normalized token usage breakdown across all AI dialects.
+#[derive(Debug, Serialize, Deserialize, Clone, Default, PartialEq, Eq)]
+pub struct AIUsageStats {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub total_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_read_input_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_creation_input_tokens: Option<u64>,
+}
+
+impl AIUsageStats {
+    pub fn is_empty(&self) -> bool {
+        self.input_tokens.is_none()
+            && self.output_tokens.is_none()
+            && self.total_tokens.is_none()
+            && self.cache_read_input_tokens.is_none()
+            && self.cache_creation_input_tokens.is_none()
+    }
+}
+
+/// Provider-agnostic multi-turn agent message replayed after the initial user
+/// turn (`AIRequest::prompt`) during an active agent loop.
+#[derive(Debug, Serialize, Deserialize, Clone, PartialEq)]
+#[serde(tag = "role", rename_all = "snake_case")]
+pub enum CanonicalAgentTurn {
+    User {
+        content: String,
+    },
+    Assistant {
+        #[serde(default)]
+        text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reasoning: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        thought_signature: Option<String>,
+        #[serde(default)]
+        tool_calls: Vec<CanonicalToolCall>,
+    },
+    ToolResult {
+        call_id: String,
+        tool_name: String,
+        content: String,
+        #[serde(default)]
+        is_error: bool,
+    },
+}
+
+impl CanonicalAgentTurn {
+    pub fn approx_char_len(&self) -> usize {
+        match self {
+            Self::User { content } => content.len(),
+            Self::Assistant {
+                text,
+                reasoning,
+                thought_signature,
+                tool_calls,
+            } => {
+                let calls_len: usize = tool_calls
+                    .iter()
+                    .map(|call| call.id.len() + call.name.len() + call.arguments.to_string().len())
+                    .sum();
+                text.len()
+                    + reasoning.as_ref().map_or(0, String::len)
+                    + thought_signature.as_ref().map_or(0, String::len)
+                    + calls_len
+            }
+            Self::ToolResult {
+                call_id,
+                tool_name,
+                content,
+                ..
+            } => call_id.len() + tool_name.len() + content.len(),
+        }
+    }
+}
+
 /// A user attachment riding the current request. `kind` is "image" or "text";
 /// images carry base64 `data` (no data-URL prefix), text files carry the file
 /// contents inline. Field names stay snake_case to match the frontend wire
@@ -144,6 +245,19 @@ pub struct AIRequest {
     /// Empty keeps the classic text path byte-identical.
     #[serde(default)]
     pub attachments: Vec<AIRequestAttachment>,
+    /// Provider-agnostic native tool definitions translated per-dialect in Rust
+    /// (supports cross-provider mid-run failover and text-only `OllamaGenerate`
+    /// fallback).
+    #[serde(default)]
+    pub canonical_tools: Option<Vec<CanonicalToolSpec>>,
+    /// Enables Anthropic's native `memory_20250818` tool when targeting Claude;
+    /// automatically ignored on non-Anthropic wire dialects.
+    #[serde(default)]
+    pub allow_native_memory_tool: bool,
+    /// Structured multi-turn agent steps (`assistant`, `tool_result`, `user`)
+    /// replayed after the initial prompt turn.
+    #[serde(default)]
+    pub agent_turns: Vec<CanonicalAgentTurn>,
     /// Native function-calling tool definitions, already shaped for the target
     /// provider's wire format on the frontend. `None` (the default) keeps the
     /// classic text path with a byte-identical request body, so this field is
@@ -224,12 +338,32 @@ impl AIRequest {
                 return Err("Tool definitions are too large (max 40,000 characters)".to_string());
             }
         }
+        if let Some(canonical_tools) = &self.canonical_tools {
+            let serialized_len = serde_json::to_string(canonical_tools)
+                .map(|raw| raw.len())
+                .unwrap_or(usize::MAX);
+            if serialized_len > crate::config::AI_MAX_TOOLS_CHARS {
+                return Err("Tool definitions are too large (max 40,000 characters)".to_string());
+            }
+        }
+
+        if self.agent_turns.len() > crate::config::AI_MAX_AGENT_TURNS {
+            return Err("Agent turn transcript is too long (max 64 turns)".to_string());
+        }
+        let agent_turn_chars = self
+            .agent_turns
+            .iter()
+            .map(CanonicalAgentTurn::approx_char_len)
+            .sum::<usize>();
+        if agent_turn_chars > crate::config::AI_MAX_AGENT_TURNS_CHARS {
+            return Err("Agent turn transcript is too large (max 160,000 characters)".to_string());
+        }
 
         Ok(())
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct AIResponse {
     pub text: String,
     /// The model's real reasoning / chain-of-thought, when the provider exposes it
@@ -237,5 +371,60 @@ pub struct AIResponse {
     /// block in the content). `None` when the model returns no reasoning.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning: Option<String>,
+    /// Native tool calls returned by the model in canonical provider-agnostic form.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_calls: Vec<CanonicalToolCall>,
+    /// Provider signature associated with extended thinking (`thoughtSignature` on
+    /// Gemini 2.5/3, `thinking.signature` on Anthropic Claude 3.7/4) so subsequent
+    /// turns can echo it back faithfully.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub thought_signature: Option<String>,
+    /// Normalized token usage breakdown when reported by the provider.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage: Option<AIUsageStats>,
     pub error: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn canonical_agent_turns_roundtrip_wire_format_and_validate_caps() {
+        let turns = vec![
+            CanonicalAgentTurn::Assistant {
+                text: "Checking users and orders".to_string(),
+                reasoning: Some("Need schema for both tables.".to_string()),
+                thought_signature: Some("sig-123".to_string()),
+                tool_calls: vec![
+                    CanonicalToolCall {
+                        id: "call_1".to_string(),
+                        name: "describe_table".to_string(),
+                        arguments: json!({ "table": "users" }),
+                    },
+                    CanonicalToolCall {
+                        id: "call_2".to_string(),
+                        name: "describe_table".to_string(),
+                        arguments: json!({ "table": "orders" }),
+                    },
+                ],
+            },
+            CanonicalAgentTurn::ToolResult {
+                call_id: "call_1".to_string(),
+                tool_name: "describe_table".to_string(),
+                content: "id INT, email TEXT".to_string(),
+                is_error: false,
+            },
+        ];
+
+        let serialized = serde_json::to_value(&turns).expect("turns serialize");
+        assert_eq!(serialized[0]["role"], "assistant");
+        assert_eq!(serialized[0]["tool_calls"].as_array().unwrap().len(), 2);
+        assert_eq!(serialized[1]["role"], "tool_result");
+
+        let decoded: Vec<CanonicalAgentTurn> =
+            serde_json::from_value(serialized).expect("turns deserialize");
+        assert_eq!(decoded, turns);
+    }
 }

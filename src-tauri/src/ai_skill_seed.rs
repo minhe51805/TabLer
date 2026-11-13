@@ -418,15 +418,16 @@ fn global_skills_root() -> Result<PathBuf, String> {
 
 /// Idempotent seed, exposed so the skills manager can re-run it on demand.
 #[tauri::command]
-pub fn seed_ai_builtin_skills(force: Option<bool>) -> Result<SeedReport, String> {
+pub fn seed_ai_builtin_skills(force: Option<bool>) -> Result<SeedReport, crate::error::AppError> {
     seed_into_root(&global_skills_root()?, force.unwrap_or(false))
+        .map_err(crate::error::AppError::from)
 }
 
 /// Force-restore every built-in skill, discarding user edits to them. This is the
 /// only path that overwrites a modified skill, and it is always user-initiated.
 #[tauri::command]
-pub fn reset_ai_builtin_skills() -> Result<SeedReport, String> {
-    seed_into_root(&global_skills_root()?, true)
+pub fn reset_ai_builtin_skills() -> Result<SeedReport, crate::error::AppError> {
+    seed_into_root(&global_skills_root()?, true).map_err(crate::error::AppError::from)
 }
 
 /// Names + versions of the shipped pack, for the manager UI and tests.

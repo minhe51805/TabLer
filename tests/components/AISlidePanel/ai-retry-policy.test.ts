@@ -94,11 +94,22 @@ describe("computeAgentRetryDelay", () => {
 
 describe("mergeRunNotes", () => {
   const runnerSteps: AIWorkspaceAgentStep[] = [
-    { step: 1, action: "describe_table", message: "Inspect", observation: "TABLE=x", status: "done" },
+    {
+      step: 1,
+      action: "describe_table",
+      message: "Inspect",
+      observation: "TABLE=x",
+      status: "done",
+    },
     { step: 2, action: "run_readonly_sql", message: "Read", observation: "rows", status: "done" },
   ];
   const notes = [
-    { step: 3, action: "think" as const, message: "switched provider", observation: "manual switch" },
+    {
+      step: 3,
+      action: "think" as const,
+      message: "switched provider",
+      observation: "manual switch",
+    },
     { step: 4, action: "think" as const, message: "chain failover", observation: "chain" },
   ];
 
@@ -110,9 +121,7 @@ describe("mergeRunNotes", () => {
   });
 
   it("keeps runner step statuses intact and marks notes done", () => {
-    const errored: AIWorkspaceAgentStep[] = [
-      { ...runnerSteps[0], status: "error" },
-    ];
+    const errored: AIWorkspaceAgentStep[] = [{ ...runnerSteps[0], status: "error" }];
     const merged = mergeRunNotes(errored, notes);
     expect(merged[0].status).toBe("error");
     expect(merged[1].status).toBe("done");
@@ -136,15 +145,19 @@ describe("repeat-call helpers", () => {
 
   it("canonicalizes args regardless of property order", () => {
     expect(canonicalizeAgentArgs({ b: 1, a: 2 })).toBe(canonicalizeAgentArgs({ a: 2, b: 1 }));
-    expect(canonicalizeAgentArgs({ a: { y: 1, x: 2 } })).toBe(canonicalizeAgentArgs({ a: { x: 2, y: 1 } }));
+    expect(canonicalizeAgentArgs({ a: { y: 1, x: 2 } })).toBe(
+      canonicalizeAgentArgs({ a: { x: 2, y: 1 } }),
+    );
   });
 });
 
 describe("tool-error reflection helpers", () => {
-  const traceStep = (
-    action: AgentTraceStep["action"],
-    observation: string,
-  ): AgentTraceStep => ({ step: 1, action, message: action, observation });
+  const traceStep = (action: AgentTraceStep["action"], observation: string): AgentTraceStep => ({
+    step: 1,
+    action,
+    message: action,
+    observation,
+  });
 
   it("flags Tool error / Tool blocked observations, not successful ones", () => {
     expect(isFailedToolObservation("Tool error: timeout")).toBe(true);
@@ -156,7 +169,7 @@ describe("tool-error reflection helpers", () => {
   it("counts an unbroken trailing streak of failing tool calls with different tools", () => {
     const steps: AgentTraceStep[] = [
       traceStep("list_tables", "users, orders"),
-      traceStep("describe_table", "Tool error: Table \"nope\" is not present"),
+      traceStep("describe_table", 'Tool error: Table "nope" is not present'),
       traceStep("run_readonly_sql", "Tool error: syntax error"),
       traceStep("sample_table_data", "Tool blocked: read consent denied"),
     ];

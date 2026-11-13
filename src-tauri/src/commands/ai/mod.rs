@@ -132,20 +132,20 @@ fn ai_http_client() -> &'static reqwest::Client {
     })
 }
 
-async fn run_blocking_storage_task<T, F>(operation: F) -> Result<T, String>
+async fn run_blocking_storage_task<T, F>(operation: F) -> Result<T, AppError>
 where
     T: Send + 'static,
-    F: FnOnce() -> Result<T, String> + Send + 'static,
+    F: FnOnce() -> Result<T, AppError> + Send + 'static,
 {
     task::spawn_blocking(operation)
         .await
-        .map_err(|_| "Background AI task failed unexpectedly.".to_string())?
+        .map_err(|_| AppError::Other("Background AI task failed unexpectedly.".to_string()))?
 }
 
 #[tauri::command]
 pub async fn get_ai_configs(
     storage: State<'_, AIStorage>,
-) -> Result<(Vec<AIProviderConfig>, HashMap<String, bool>), String> {
+) -> Result<(Vec<AIProviderConfig>, HashMap<String, bool>), AppError> {
     let storage = storage.inner().clone();
     run_blocking_storage_task(move || {
         storage
@@ -161,7 +161,7 @@ pub async fn save_ai_configs(
     api_key_updates: HashMap<String, String>,
     cleared_provider_ids: Vec<String>,
     storage: State<'_, AIStorage>,
-) -> Result<(Vec<AIProviderConfig>, HashMap<String, bool>), String> {
+) -> Result<(Vec<AIProviderConfig>, HashMap<String, bool>), AppError> {
     let storage = storage.inner().clone();
     run_blocking_storage_task(move || {
         storage
@@ -201,16 +201,13 @@ pub async fn ask_ai(
     ai_rate_limiter: State<'_, AIRequestLimiter>,
     cancellation_state: State<'_, AIRequestCancellationState>,
 ) -> Result<AIResponse, AppError> {
-    // Tech-debt audit D7: the AI request flow now returns the unified `AppError`
-    // type. Provider/validation strings pass through as `AppError::Other`, whose
-    // `Display` is the bare message (no prefix), so the wire string the frontend
-    // classifier (`normalizeAIRequestError`) sees is byte-identical to before.
-    // Categorizing into typed variants (e.g. RateLimited) is a deliberate
-    // follow-up: it changes the wire string and needs a coordinated frontend
-    // change, so it is intentionally not done in this pass.
-    request
-        .validate()
-        .map_err(|e| format!("Invalid request: {}", e))?;
+    request.validate().map_err(|error| {
+        AppError::structured(
+            crate::error::ErrorCode::ValidationError,
+            format!("Invalid request: {error}"),
+            false,
+        )
+    })?;
 
     let request_id = request
         .request_id
@@ -226,19 +223,19 @@ pub async fn ask_ai(
             .await;
     }
 
-    let result = tokio::select! {
-        _ = cancellation_token.cancelled() => Err(errors::tag_ai_error_kind(
-            AI_REQUEST_CANCELLED_ERROR.to_string(),
-            errors::AiErrorKind::Cancelled,
-        )),
-        result = execution::execute_ai_request(request, storage.inner(), ai_rate_limiter.inner()) => result,
-    };
+    let result = execution::execute_ai_request(
+        request,
+        storage.inner(),
+        ai_rate_limiter.inner(),
+        cancellation_token,
+    )
+    .await;
 
     if let Some(request_id) = request_id.as_deref() {
         cancellation_state.finish(request_id).await;
     }
 
-    result.map_err(AppError::from)
+    result
 }
 
 #[tauri::command]
@@ -248,18 +245,26 @@ pub async fn ask_ai_stream(
     storage: State<'_, AIStorage>,
     ai_rate_limiter: State<'_, AIRequestLimiter>,
     cancellation_state: State<'_, AIRequestCancellationState>,
-) -> Result<(), AppError> {
-    // D7: same message-preserving `AppError` passthrough as `ask_ai` — the stream
-    // "error" event and the returned error carry the identical string.
-    request
-        .validate()
-        .map_err(|error| format!("Invalid request: {error}"))?;
+) -> Result<AIResponse, AppError> {
+    request.validate().map_err(|error| {
+        AppError::structured(
+            crate::error::ErrorCode::ValidationError,
+            format!("Invalid request: {error}"),
+            false,
+        )
+    })?;
     let request_id = request
         .request_id
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
-        .ok_or_else(|| "Streaming AI requests require a request ID.".to_string())?
+        .ok_or_else(|| {
+            AppError::structured(
+                crate::error::ErrorCode::ValidationError,
+                "Streaming AI requests require a request ID.",
+                false,
+            )
+        })?
         .to_string();
     let token = CancellationToken::new();
     cancellation_state
@@ -278,12 +283,21 @@ pub async fn ask_ai_stream(
     cancellation_state.finish(&request_id).await;
 
     match result {
-        Ok(()) => {
-            emit_ai_stream_event(&app, &request_id, "done", None, None).map_err(AppError::from)
+        Ok(response) => {
+            emit_ai_stream_event(&app, &request_id, "done", None, None).map_err(AppError::from)?;
+            Ok(response)
         }
         Err(error) => {
-            let _ = emit_ai_stream_event(&app, &request_id, "error", Some(error.clone()), None);
-            Err(AppError::from(error))
+            if let Err(emit_err) =
+                emit_ai_stream_event(&app, &request_id, "error", Some(error.to_string()), None)
+            {
+                log::warn!(
+                    "Failed to emit AI stream error event for request_id={}: {}",
+                    request_id,
+                    emit_err
+                );
+            }
+            Err(error)
         }
     }
 }
@@ -292,10 +306,14 @@ pub async fn ask_ai_stream(
 pub async fn cancel_ai_request(
     request_id: String,
     cancellation_state: State<'_, AIRequestCancellationState>,
-) -> Result<bool, String> {
+) -> Result<bool, AppError> {
     let request_id = request_id.trim();
     if request_id.is_empty() {
-        return Err("Request ID cannot be empty.".to_string());
+        return Err(AppError::structured(
+            crate::error::ErrorCode::ValidationError,
+            "Request ID cannot be empty.",
+            false,
+        ));
     }
     Ok(cancellation_state.cancel(request_id).await)
 }
@@ -308,10 +326,14 @@ pub async fn cancel_ai_request(
 pub async fn list_provider_models(
     provider_id: String,
     storage: State<'_, AIStorage>,
-) -> Result<Vec<FetchedModel>, String> {
+) -> Result<Vec<FetchedModel>, AppError> {
     let provider_id = provider_id.trim().to_string();
     if provider_id.is_empty() {
-        return Err("Provider ID cannot be empty.".to_string());
+        return Err(AppError::structured(
+            crate::error::ErrorCode::ValidationError,
+            "Provider ID cannot be empty.",
+            false,
+        ));
     }
     let storage = storage.inner().clone();
     let lookup_id = provider_id.clone();
@@ -321,10 +343,21 @@ pub async fn list_provider_models(
             .map_err(|_| errors::ai_provider_config_error())?
             .into_iter()
             .find(|provider| provider.id == lookup_id)
-            .ok_or_else(|| "The selected AI provider was not found.".to_string())?;
+            .ok_or_else(|| {
+                AppError::structured(
+                    crate::error::ErrorCode::ValidationError,
+                    "The selected AI provider was not found.",
+                    false,
+                )
+            })?;
         let api_key = if endpoints::provider_requires_api_key(&config.provider_type) {
             Some(storage.get_api_key(&config.id).map_err(|_| {
-                "Add an API key for this provider before fetching models.".to_string()
+                AppError::ai(
+                    crate::error::ErrorCode::AiAuth,
+                    "Add an API key for this provider before fetching models.",
+                    false,
+                    None,
+                )
             })?)
         } else {
             storage
@@ -341,7 +374,7 @@ pub async fn list_provider_models(
 /// Persists an agent run trace as JSONL under <data_dir>/traces/ so failed or
 /// surprising runs can be replayed offline. Best-effort debugging artifact.
 #[tauri::command]
-pub fn save_agent_trace(request_id: String, content: String) -> Result<String, String> {
+pub fn save_agent_trace(request_id: String, content: String) -> Result<String, AppError> {
     let safe_name: String = request_id
         .chars()
         .map(|c| {
@@ -352,12 +385,13 @@ pub fn save_agent_trace(request_id: String, content: String) -> Result<String, S
             }
         })
         .collect();
-    let data_dir = crate::utils::paths::resolve_data_dir().map_err(|e| e.to_string())?;
+    let data_dir = crate::utils::paths::resolve_data_dir().map_err(AppError::from)?;
     let traces_dir = data_dir.join("traces");
     fs::create_dir_all(&traces_dir)
-        .map_err(|e| format!("Failed to create traces directory: {e}"))?;
+        .map_err(|e| AppError::Storage(format!("Failed to create traces directory: {e}")))?;
     let path = traces_dir.join(format!("{safe_name}.jsonl"));
-    fs::write(&path, content).map_err(|e| format!("Failed to write agent trace: {e}"))?;
+    fs::write(&path, content)
+        .map_err(|e| AppError::Storage(format!("Failed to write agent trace: {e}")))?;
     Ok(path.to_string_lossy().to_string())
 }
 
@@ -379,3 +413,6 @@ mod tests {
         assert!(!state.cancel("request-1").await);
     }
 }
+
+#[cfg(test)]
+mod adversarial_wire_tests;

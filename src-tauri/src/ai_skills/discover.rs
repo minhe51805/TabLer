@@ -279,7 +279,9 @@ pub fn read_skill_in_roots(
 /// the agent's `<available_skills>` block, plus every SKILL.md that failed to
 /// load so the manager can surface it instead of dropping it silently.
 #[tauri::command]
-pub fn list_ai_skills(workspace_dir: Option<String>) -> Result<AISkillListReport, String> {
+pub fn list_ai_skills(
+    workspace_dir: Option<String>,
+) -> Result<AISkillListReport, crate::error::AppError> {
     Ok(discover_ai_skills(workspace_dir.as_deref()))
 }
 
@@ -289,8 +291,8 @@ pub fn list_ai_skills(workspace_dir: Option<String>) -> Result<AISkillListReport
 pub fn read_ai_skill(
     workspace_dir: Option<String>,
     name: String,
-) -> Result<AISkillContent, String> {
-    read_ai_skill_by_name(workspace_dir.as_deref(), &name)
+) -> Result<AISkillContent, crate::error::AppError> {
+    read_ai_skill_by_name(workspace_dir.as_deref(), &name).map_err(crate::error::AppError::from)
 }
 
 /// Resolve one bundled resource file (references/, scripts/) of a skill across
@@ -368,6 +370,7 @@ pub fn read_ai_skill_resource(
     workspace_dir: Option<String>,
     name: String,
     resource: String,
-) -> Result<AISkillResource, String> {
+) -> Result<AISkillResource, crate::error::AppError> {
     read_skill_resource_in_roots(&skill_roots(workspace_dir.as_deref()), &name, &resource)
+        .map_err(crate::error::AppError::from)
 }

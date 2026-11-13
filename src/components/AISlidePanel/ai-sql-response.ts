@@ -1,12 +1,28 @@
 import type { QueryResult } from "../../types";
 
-const SQL_START_KEYWORDS = ["SELECT", "SHOW", "EXPLAIN", "DESCRIBE", "PRAGMA", "INSERT", "UPDATE", "DELETE", "CREATE", "DROP", "ALTER", "WITH"];
+const SQL_START_KEYWORDS = [
+  "SELECT",
+  "SHOW",
+  "EXPLAIN",
+  "DESCRIBE",
+  "PRAGMA",
+  "INSERT",
+  "UPDATE",
+  "DELETE",
+  "CREATE",
+  "DROP",
+  "ALTER",
+  "WITH",
+];
 
 export function isLikelySqlOnlyResponse(aiResponse: string) {
   const extractedSql = extractSqlFromResponse(aiResponse);
   if (!extractedSql) return false;
 
-  const normalizedResponse = aiResponse.replace(/```sql?/gi, "").replace(/```/g, "").trim();
+  const normalizedResponse = aiResponse
+    .replace(/```sql?/gi, "")
+    .replace(/```/g, "")
+    .trim();
   if (!normalizedResponse) return false;
 
   const remainder = normalizedResponse.replace(extractedSql, "").replace(/\s+/g, " ").trim();
@@ -38,7 +54,9 @@ export function stripLeadingSqlComments(sql: string) {
 
 export function hasSqlStartKeyword(sql: string) {
   const normalized = stripLeadingSqlComments(sql).toUpperCase().trim();
-  return normalized.length > 0 && SQL_START_KEYWORDS.some((keyword) => normalized.startsWith(keyword));
+  return (
+    normalized.length > 0 && SQL_START_KEYWORDS.some((keyword) => normalized.startsWith(keyword))
+  );
 }
 
 /**
@@ -55,7 +73,10 @@ function trimTrailingProseAfterSql(sql: string) {
   if (lastTerminator < 0 || lastTerminator === lines.length - 1) {
     return sql.trim();
   }
-  return lines.slice(0, lastTerminator + 1).join("\n").trim();
+  return lines
+    .slice(0, lastTerminator + 1)
+    .join("\n")
+    .trim();
 }
 
 export function extractSqlFromResponse(aiResponse: string) {
@@ -108,7 +129,11 @@ export function summarizeRunResult(result: QueryResult) {
 }
 
 function normalizeSqlForCompare(text: string) {
-  return text.replace(/\s+/g, " ").trim().replace(/;+\s*$/, "").toLowerCase();
+  return text
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/;+\s*$/, "")
+    .toLowerCase();
 }
 
 /** Drops paragraphs (bare or fenced) whose SQL matches the exposed
@@ -120,7 +145,10 @@ export function removeDuplicateSqlParagraphs(aiResponse: string, sql: string) {
   const kept = aiResponse
     .split(/\n{2,}/)
     .filter((block) => {
-      const withoutFences = block.replace(/```sql/gi, "").replace(/```/g, "").trim();
+      const withoutFences = block
+        .replace(/```sql/gi, "")
+        .replace(/```/g, "")
+        .trim();
       return normalizeSqlForCompare(withoutFences) !== target;
     })
     .join("\n\n");

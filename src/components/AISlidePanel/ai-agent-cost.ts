@@ -11,6 +11,8 @@
  * runner can enforce one cost ceiling regardless of the active provider.
  */
 
+import type { AIUsageStats } from "../../types";
+
 /** Default ceiling on cumulative agent tokens before the loop must finish. */
 export const DEFAULT_AGENT_TOKEN_BUDGET = 120_000;
 
@@ -33,23 +35,26 @@ function nonNegativeInteger(value: unknown): number {
  * Returns 0 for missing, malformed, or empty usage rather than throwing, so a
  * provider that omits usage simply contributes nothing to the budget.
  */
-export function extractAgentUsageTokens(usage: Record<string, unknown> | null | undefined): number {
+export function extractAgentUsageTokens(
+  usage: Record<string, unknown> | AIUsageStats | null | undefined,
+): number {
   if (!usage || typeof usage !== "object") return 0;
+  const raw = usage as Record<string, unknown>;
 
   // Authoritative totals when the provider reports them directly.
   const explicitTotal =
-    nonNegativeInteger(usage.total_tokens) || nonNegativeInteger(usage.totalTokenCount);
+    nonNegativeInteger(raw.total_tokens) || nonNegativeInteger(raw.totalTokenCount);
   if (explicitTotal > 0) return explicitTotal;
 
   // Otherwise sum the prompt/completion components across dialects.
   const prompt =
-    nonNegativeInteger(usage.prompt_tokens) ||
-    nonNegativeInteger(usage.input_tokens) ||
-    nonNegativeInteger(usage.promptTokenCount);
+    nonNegativeInteger(raw.prompt_tokens) ||
+    nonNegativeInteger(raw.input_tokens) ||
+    nonNegativeInteger(raw.promptTokenCount);
   const completion =
-    nonNegativeInteger(usage.completion_tokens) ||
-    nonNegativeInteger(usage.output_tokens) ||
-    nonNegativeInteger(usage.candidatesTokenCount);
+    nonNegativeInteger(raw.completion_tokens) ||
+    nonNegativeInteger(raw.output_tokens) ||
+    nonNegativeInteger(raw.candidatesTokenCount);
   return prompt + completion;
 }
 
@@ -67,21 +72,22 @@ export interface AgentUsageBreakdown {
  * their own rates.
  */
 export function extractAgentUsageBreakdown(
-  usage: Record<string, unknown> | null | undefined,
+  usage: Record<string, unknown> | AIUsageStats | null | undefined,
 ): AgentUsageBreakdown {
   if (!usage || typeof usage !== "object") {
     return { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
   }
+  const raw = usage as Record<string, unknown>;
   const prompt =
-    nonNegativeInteger(usage.prompt_tokens) ||
-    nonNegativeInteger(usage.input_tokens) ||
-    nonNegativeInteger(usage.promptTokenCount);
+    nonNegativeInteger(raw.prompt_tokens) ||
+    nonNegativeInteger(raw.input_tokens) ||
+    nonNegativeInteger(raw.promptTokenCount);
   const completion =
-    nonNegativeInteger(usage.completion_tokens) ||
-    nonNegativeInteger(usage.output_tokens) ||
-    nonNegativeInteger(usage.candidatesTokenCount);
+    nonNegativeInteger(raw.completion_tokens) ||
+    nonNegativeInteger(raw.output_tokens) ||
+    nonNegativeInteger(raw.candidatesTokenCount);
   const explicitTotal =
-    nonNegativeInteger(usage.total_tokens) || nonNegativeInteger(usage.totalTokenCount);
+    nonNegativeInteger(raw.total_tokens) || nonNegativeInteger(raw.totalTokenCount);
   // Prefer the provider's own total; fall back to the component sum.
   const totalTokens = explicitTotal > 0 ? explicitTotal : prompt + completion;
   return { promptTokens: prompt, completionTokens: completion, totalTokens };

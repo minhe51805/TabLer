@@ -90,20 +90,25 @@ pub(crate) fn unknown_command_reason(
 
 /// Idempotent seed, exposed so the commands manager can re-run it on demand.
 #[tauri::command]
-pub fn seed_ai_builtin_commands(force: Option<bool>) -> Result<CommandSeedReport, String> {
+pub fn seed_ai_builtin_commands(
+    force: Option<bool>,
+) -> Result<CommandSeedReport, crate::error::AppError> {
     seed_commands_into_root(&global_commands_root()?, force.unwrap_or(false))
+        .map_err(crate::error::AppError::from)
 }
 
 /// Force-restore every built-in command, discarding user edits to them. This is
 /// the only path that overwrites a modified command and is always user-initiated.
 #[tauri::command]
-pub fn reset_ai_builtin_commands() -> Result<CommandSeedReport, String> {
-    seed_commands_into_root(&global_commands_root()?, true)
+pub fn reset_ai_builtin_commands() -> Result<CommandSeedReport, crate::error::AppError> {
+    seed_commands_into_root(&global_commands_root()?, true).map_err(crate::error::AppError::from)
 }
 
 /// Everything the composer's `/` menu needs: the registry plus load health.
 #[tauri::command]
-pub fn list_ai_commands(workspace_dir: Option<String>) -> Result<CommandRegistry, String> {
+pub fn list_ai_commands(
+    workspace_dir: Option<String>,
+) -> Result<CommandRegistry, crate::error::AppError> {
     let data_dir = resolve_data_dir().map_err(|error| error.to_string())?;
     let workspace = workspace_dir.map(PathBuf::from);
     let (commands, report) = load_commands(workspace.as_deref(), &data_dir);
@@ -142,7 +147,7 @@ pub fn resolve_ai_command(
     workspace_dir: Option<String>,
     command_line: String,
     context: Option<HashMap<String, String>>,
-) -> Result<ResolvedCommand, String> {
+) -> Result<ResolvedCommand, crate::error::AppError> {
     let data_dir = resolve_data_dir().map_err(|error| error.to_string())?;
     let workspace = workspace_dir.map(PathBuf::from);
     let (commands, report) = load_commands(workspace.as_deref(), &data_dir);

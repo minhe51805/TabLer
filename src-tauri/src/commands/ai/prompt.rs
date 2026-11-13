@@ -37,6 +37,7 @@ pub(crate) fn build_ai_prompt(
     effective_context: &str,
     history: &[AIConversationMessage],
     user_prompt: &str,
+    has_native_tools: bool,
 ) -> (String, String) {
     let effective_intent = if matches!(mode, AIRequestMode::Inline) {
         AIRequestIntent::Sql
@@ -99,6 +100,12 @@ pub(crate) fn build_ai_prompt(
                 "Answer the user's request directly in {response_language}. Be helpful and natural. Use any provided workspace context only when it is relevant, and do not force the answer into a database framing when the request is broader than SQL or schema work."
             ),
         ),
+        AIRequestIntent::Agent if has_native_tools => (
+            format!(
+                "You are an autonomous workspace agent controller. You can answer general-purpose requests directly, and when workspace or database context is provided you may use it to ground the answer. If the user request does not require workspace evidence, call the finish tool or answer directly instead of forcing database exploration. When you do rely on provided database context, never invent tables, columns, indexes, keys, or relationships that are not present. Use the provided native function-calling tools to inspect the workspace, run SQL, ask the user, or finish with your grounded answer. Never claim that you are limited to database-only tasks. {language_rule}{history_note}"
+            ),
+            "Invoke one or more native function-calling tools for your next step, or call the finish tool when ready to deliver the final answer.".to_string(),
+        ),
         AIRequestIntent::Agent => (
             format!(
                 "You are an autonomous workspace agent controller. You can answer general-purpose requests directly, and when workspace or database context is provided you may use it to ground the answer. If the user request does not require workspace evidence, finish directly instead of forcing database exploration. When you do rely on provided database context, never invent tables, columns, indexes, keys, or relationships that are not present. Return only a valid JSON object that matches the exact action schema requested by the user prompt. Do not wrap JSON in markdown fences. Do not include commentary before or after the JSON. Never claim that you are limited to database-only tasks. {language_rule}{history_note}"
@@ -126,4 +133,41 @@ pub(crate) fn build_ai_prompt(
     };
 
     (system_prompt, prompt)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_prompt_uses_native_tool_instructions_when_tools_are_attached() {
+        let (system, prompt) = build_ai_prompt(
+            &AIRequestMode::Panel,
+            &AIRequestIntent::Agent,
+            &AIResponseLanguage::En,
+            "",
+            &[],
+            "Inspect users table",
+            true,
+        );
+        assert!(system.contains("native function-calling tools"));
+        assert!(!system.contains("Return only a valid JSON object"));
+        assert!(!prompt.contains("Return only the next action JSON object"));
+        assert!(prompt.contains("Invoke one or more native function-calling tools"));
+    }
+
+    #[test]
+    fn agent_prompt_retains_json_action_contract_when_tools_are_absent() {
+        let (system, prompt) = build_ai_prompt(
+            &AIRequestMode::Panel,
+            &AIRequestIntent::Agent,
+            &AIResponseLanguage::En,
+            "",
+            &[],
+            "Inspect users table",
+            false,
+        );
+        assert!(system.contains("Return only a valid JSON object"));
+        assert!(prompt.contains("Return only the next action JSON object."));
+    }
 }

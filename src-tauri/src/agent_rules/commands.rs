@@ -16,15 +16,18 @@ use crate::utils::paths::resolve_data_dir;
 
 /// Idempotent seed, exposed so the rules manager can re-run it on demand.
 #[tauri::command]
-pub fn seed_ai_builtin_rules(force: Option<bool>) -> Result<RuleSeedReport, String> {
+pub fn seed_ai_builtin_rules(
+    force: Option<bool>,
+) -> Result<RuleSeedReport, crate::error::AppError> {
     seed_rules_into_root(&global_rules_root()?, force.unwrap_or(false))
+        .map_err(crate::error::AppError::from)
 }
 
 /// Force-restore every built-in rule, discarding user edits to them. This is
 /// the only path that overwrites a modified rule and is always user-initiated.
 #[tauri::command]
-pub fn reset_ai_builtin_rules() -> Result<RuleSeedReport, String> {
-    seed_rules_into_root(&global_rules_root()?, true)
+pub fn reset_ai_builtin_rules() -> Result<RuleSeedReport, crate::error::AppError> {
+    seed_rules_into_root(&global_rules_root()?, true).map_err(crate::error::AppError::from)
 }
 
 /// Evaluate one candidate statement against the armed guardrail pack.
@@ -37,7 +40,7 @@ pub fn evaluate_agent_rules(
     workspace_dir: Option<String>,
     statement: String,
     event: Option<String>,
-) -> Result<RuleEvaluation, String> {
+) -> Result<RuleEvaluation, crate::error::AppError> {
     let data_dir = resolve_data_dir().map_err(|error| error.to_string())?;
     let workspace = workspace_dir.map(PathBuf::from);
     let (rules, report) = load_rules(workspace.as_deref(), &data_dir);
@@ -68,7 +71,9 @@ fn classify_sql_event_for_write(statement: &str) -> SqlEvent {
 
 /// Everything the rules manager needs: what is armed, and what failed to load.
 #[tauri::command]
-pub fn list_agent_rules(workspace_dir: Option<String>) -> Result<RuleEvaluation, String> {
+pub fn list_agent_rules(
+    workspace_dir: Option<String>,
+) -> Result<RuleEvaluation, crate::error::AppError> {
     let data_dir = resolve_data_dir().map_err(|error| error.to_string())?;
     let workspace = workspace_dir.map(PathBuf::from);
     let (rules, report) = load_rules(workspace.as_deref(), &data_dir);
@@ -144,7 +149,7 @@ pub fn write_workspace_rule(
     workspace_dir: Option<String>,
     name: String,
     content: String,
-) -> Result<String, String> {
+) -> Result<String, crate::error::AppError> {
     let rules_root = match workspace_dir {
         Some(dir) => Path::new(&dir).join(RULES_DIR_NAME),
         None => global_rules_root()?,
@@ -166,7 +171,7 @@ pub fn save_agent_rule(
     pattern: String,
     pattern_not: Option<String>,
     scan: Option<String>,
-) -> Result<String, String> {
+) -> Result<String, crate::error::AppError> {
     let spec = NewRuleSpec {
         name,
         description,

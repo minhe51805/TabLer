@@ -131,6 +131,12 @@ export function buildAgentControllerPrompt(params: {
    * user to run. The agent must narrate the real outcome, not guess.
    */
   agentAutonomy?: "review" | "smart" | "full";
+  /**
+   * When true, tool calls and tool observations travel natively in structured
+   * `agent_turns` messages, so the inline text transcript (`Tool observations so far:`)
+   * is omitted to avoid duplicating observations and breaking prompt cache reuse.
+   */
+  omitInlineStepObservations?: boolean;
 }) {
   const {
     userPrompt,
@@ -154,6 +160,7 @@ export function buildAgentControllerPrompt(params: {
     earlierContext,
     unattendedReadOnly,
     agentAutonomy,
+    omitInlineStepObservations,
   } = params;
   const databaseMentionMismatch = detectDatabaseMentionMismatch({
     userPrompt,
@@ -326,11 +333,16 @@ export function buildAgentControllerPrompt(params: {
     ...availableActions,
     "",
     "Rules:",
-    "- Return exactly one JSON object and nothing else.",
-    "- Write the message field as a short first-person thought that narrates your reasoning.",
-    NATIVE_TOOL_CALLING_ENABLED
-      ? "- Use only the native tool names provided via function calling."
-      : "- Use only the action names above.",
+    ...(NATIVE_TOOL_CALLING_ENABLED
+      ? [
+          "- Invoke tools via native function calling; you may call multiple independent read-only tools in one turn, and call the finish tool to deliver your final answer.",
+          "- Use only the native tool names provided via function calling.",
+        ]
+      : [
+          "- Return exactly one JSON object and nothing else.",
+          "- Write the message field as a short first-person thought that narrates your reasoning.",
+          "- Use only the action names above.",
+        ]),
     '- Never invent limits on your own toolbelt. Every tool attached to this request stays callable for the whole run; claims like "the toolbelt is limited" or "only planning and search are available" are always false. Execute every requested capability yourself.',
     '- Report every step honestly: a step whose observation was "Tool error" or "Tool blocked" is FAIL or BLOCKED in your final summary, never PASS. Never claim a UI effect (a tab opened, a checkpoint saved, a memory written) that no tool observation in this run confirmed.',
     workspaceToolsEnabled
@@ -432,8 +444,7 @@ export function buildAgentControllerPrompt(params: {
           earlierContext,
         ].join("\n")
       : "",
-    "Tool observations so far:",
-    priorSteps,
+    ...(omitInlineStepObservations ? [] : ["Tool observations so far:", priorSteps]),
   ]
     .filter(Boolean)
     .join("\n");

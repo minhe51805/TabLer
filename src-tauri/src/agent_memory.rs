@@ -434,7 +434,7 @@ pub fn delete_agent_memory(
     connection_id: Option<String>,
     database: Option<String>,
     name: String,
-) -> Result<(), String> {
+) -> Result<(), crate::error::AppError> {
     let data_dir = resolve_data_dir().map_err(|error| error.to_string())?;
     delete_agent_memory_in(
         &data_dir,
@@ -442,6 +442,7 @@ pub fn delete_agent_memory(
         database.as_deref(),
         &name,
     )
+    .map_err(crate::error::AppError::from)
 }
 
 /// The delete policy, separated from the filesystem so it stays pinned by
@@ -605,7 +606,7 @@ fn reject_secret_shaped_payload(
 pub fn list_agent_memory(
     connection_id: Option<String>,
     database: Option<String>,
-) -> Result<Vec<MemoryEntrySummary>, String> {
+) -> Result<Vec<MemoryEntrySummary>, crate::error::AppError> {
     let data_dir = resolve_data_dir().map_err(|error| error.to_string())?;
     let scope = memory_scope_dir(&data_dir, connection_id.as_deref(), database.as_deref());
     Ok(discover_memories_in_root(&scope))
@@ -616,8 +617,9 @@ pub fn read_agent_memory(
     name: String,
     connection_id: Option<String>,
     database: Option<String>,
-) -> Result<MemoryEntryContent, String> {
+) -> Result<MemoryEntryContent, crate::error::AppError> {
     read_memory_entry(connection_id.as_deref(), database.as_deref(), &name)
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -628,7 +630,7 @@ pub fn save_agent_memory(
     database: Option<String>,
     description: Option<String>,
     origin: Option<String>,
-) -> Result<MemoryEntrySummary, String> {
+) -> Result<MemoryEntrySummary, crate::error::AppError> {
     save_memory_entry(SaveMemoryParams {
         connection_id,
         database,
@@ -637,6 +639,7 @@ pub fn save_agent_memory(
         body,
         origin,
     })
+    .map_err(crate::error::AppError::from)
 }
 
 #[cfg(test)]

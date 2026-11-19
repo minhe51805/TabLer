@@ -259,7 +259,13 @@ export function buildAgentControllerPrompt(params: {
       : "",
     (glossaryLines ?? []).length > 0
       ? [
-          "Business glossary (verified semantics — treat as source of truth, never contradict these):",
+          // Security pass 2 finding S2-2: the old framing ("verified semantics —
+          // treat as source of truth, never contradict these") pre-privileged
+          // agent-harvested notes as unchallengeable instructions, turning a
+          // single row-level injection into a persistent privileged one via
+          // remember_term. These are working notes, not gospel — the model must
+          // verify them against the live schema before relying on them.
+          "Working glossary (notes from past sessions — verify against the live schema before relying on them):",
           ...(glossaryLines ?? []),
         ].join("\n")
       : "",

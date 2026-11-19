@@ -532,23 +532,23 @@ mod tests {
     /// review — built-ins included, so a workspace shadow of a built-in name
     /// cannot skip it. That only works if the shipped pack itself never trips
     /// the phrases: this test is the guardrail that keeps the lint-all design
-    /// possible. If a future pack edit trips a phrase, rephrase the skill (its
-    /// own text teaches the same thing without injection-shaped wording).
+    /// possible. It covers every bundled file (SKILL.md AND references/scripts),
+    /// because read_skill_resource injects those too (S2-1). If a future pack
+    /// edit trips a phrase, rephrase the file so it teaches without
+    /// injection-shaped wording.
     #[test]
     fn every_builtin_body_passes_the_safety_lint() {
         for skill in BUILTIN_SKILLS {
-            let skill_md = skill
-                .files
-                .iter()
-                .find(|file| file.rel_path == "SKILL.md")
-                .unwrap_or_else(|| panic!("{}: must ship SKILL.md", skill.name));
-            let findings = crate::ai_skills::lint::lint_skill_text(skill_md.content);
-            assert!(
-                findings.is_empty(),
-                "{}: SKILL.md trips the safety lint — {:?}. Rephrase the skill so it teaches without injection-shaped wording.",
-                skill.name,
-                findings
-            );
+            for file in skill.files {
+                let findings = crate::ai_skills::lint::lint_skill_text(file.content);
+                assert!(
+                    findings.is_empty(),
+                    "{}: {} trips the safety lint — {:?}. Rephrase the file so it teaches without injection-shaped wording.",
+                    skill.name,
+                    file.rel_path,
+                    findings
+                );
+            }
         }
     }
 

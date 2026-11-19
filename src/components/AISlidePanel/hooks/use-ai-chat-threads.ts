@@ -1,5 +1,7 @@
-import { useCallback, useMemo, type MutableRefObject, type RefObject } from "react";
+import { useCallback, useEffect, useMemo, type MutableRefObject, type RefObject } from "react";
 import { emitAppToast } from "../../../utils/app-toast";
+import { APP_EVENTS } from "../../../utils/app-events";
+import { EventCenter } from "../../../stores/event-center";
 import { invokeMutation } from "../../../utils/tauri-utils";
 import {
   createAIWorkspaceId,
@@ -268,6 +270,12 @@ export function useAIChatThreads({
     // `handleCreateChatThread` -> `cancelGeneration()`.
     handleCreateChatThread();
   }, [handleCreateChatThread]);
+
+  useEffect(() => {
+    return EventCenter.on(APP_EVENTS.clearAiHistoryPalette, () => {
+      handleResetStage();
+    });
+  }, [handleResetStage]);
 
   /** Reloads the current conversation from the persisted SQLite history so a
    *  stale-looking chat can be refreshed without touching live generations. */

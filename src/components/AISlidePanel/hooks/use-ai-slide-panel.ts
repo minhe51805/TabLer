@@ -23,6 +23,8 @@ import {
 import { type AIAgentToolName } from "../ai-agent-tools";
 import { type AssistIntent } from "../ai-agent-context";
 import { emitAppToast } from "../../../utils/app-toast";
+import { APP_EVENTS } from "../../../utils/app-events";
+import { EventCenter } from "../../../stores/event-center";
 import { useUIStore } from "../../../stores/uiStore";
 import { extractAgentUsageBreakdown, recordSessionModelUsage } from "../ai-agent-cost";
 import {
@@ -401,15 +403,14 @@ export function useAISlidePanel({
   }, [connectionId, currentDatabase]);
 
   useEffect(() => {
-    const handleTableDataUpdated = (event: Event) => {
-      const detail = (
-        event as CustomEvent<{
-          connectionId?: string;
-          database?: string;
-          invalidateStructure?: boolean;
-        }>
-      ).detail;
-
+    const handleTableDataUpdated = (
+      event: CustomEvent<{
+        connectionId: string;
+        database?: string;
+        invalidateStructure?: boolean;
+      }>,
+    ) => {
+      const detail = event.detail;
       if (!detail?.invalidateStructure) return;
       if (detail.connectionId !== connectionId) return;
 
@@ -420,8 +421,7 @@ export function useAISlidePanel({
       aiSchemaCodecCacheRef.current.clear();
     };
 
-    window.addEventListener("table-data-updated", handleTableDataUpdated);
-    return () => window.removeEventListener("table-data-updated", handleTableDataUpdated);
+    return EventCenter.on(APP_EVENTS.tableDataUpdated, handleTableDataUpdated);
   }, [connectionId, currentDatabase]);
 
   const cancelGeneration = useCallback(() => {
@@ -552,7 +552,7 @@ export function useAISlidePanel({
       setError(message);
       return false;
     }
-    window.dispatchEvent(new CustomEvent("insert-sql-from-ai", { detail: { sql } }));
+    EventCenter.emit(APP_EVENTS.insertSqlFromAI, { sql });
     return true;
   }, []);
 

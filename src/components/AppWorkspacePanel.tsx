@@ -15,6 +15,8 @@ import {
 } from "lucide-react";
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { APP_VERSION } from "../constants/version";
+import { APP_EVENTS } from "../utils/app-events";
+import { EventCenter } from "../stores/event-center";
 import { ErrorBoundary } from "./ErrorBoundary";
 import { WorkspaceConnecting } from "./layout/WorkspaceConnecting";
 import { MetricsSidebar } from "./MetricsSidebar/MetricsSidebar";
@@ -408,11 +410,7 @@ export function AppWorkspacePanel({
             )
           : existingBoards;
       writeStoredBoards([...retainedBoards, ...importedBoards]);
-      window.dispatchEvent(
-        new CustomEvent("metrics-boards-updated", {
-          detail: { connectionId: activeConn.id },
-        }),
-      );
+      EventCenter.emit(APP_EVENTS.metricsBoardsUpdated, { connectionId: activeConn.id });
 
       const importedRelationships = bundle.erViews.flatMap((view) => view.relationships);
       if (importedRelationships.length || mode === "replace") {

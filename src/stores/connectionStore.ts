@@ -11,6 +11,8 @@ import {
 } from "../utils/schema-cache";
 import { useGlobalErrorStore } from "./globalErrorStore";
 import { useUIStore } from "./uiStore";
+import { APP_EVENTS } from "../utils/app-events";
+import { EventCenter } from "./event-center";
 import { invalidateConnectionCapabilities } from "../hooks/useConnectionCapabilities";
 import { applyConnectionAssignments } from "./connection-group-store";
 import { notifyProfilerConnectionClosed } from "../components/Profiler/profilerWindow";
@@ -627,9 +629,7 @@ export const useConnectionStore = create<ConnectionState>((set, get) => {
       invalidateSchemaCache(connectionId, database);
 
       if (typeof window !== "undefined") {
-        window.dispatchEvent(
-          new CustomEvent("schema-cache-invalidated", { detail: { connectionId, database } }),
-        );
+        EventCenter.emit(APP_EVENTS.schemaCacheInvalidated, { connectionId, database });
       }
 
       const state = get();

@@ -236,6 +236,8 @@ function App() {
     handleRefreshWorkspace,
     handleFocusExplorerSearch,
     handleOpenMetricsBoard,
+    handleImportSqlFile,
+    handleImportSqlIntoCurrentDatabase,
     handleOpenDatabaseFile,
     handleExportDatabase,
     isExportingDatabase,
@@ -408,6 +410,8 @@ function App() {
           handleToggleSidebar={handleToggleSidebar}
           handleToggleQueryHistory={handleToggleQueryHistory}
           handleToggleSQLFavorites={handleToggleSQLFavorites}
+          handleImportSqlFile={handleImportSqlFile}
+          handleImportSqlIntoCurrentDatabase={handleImportSqlIntoCurrentDatabase}
           toggleVimMode={toggleVimMode}
           openCommandPalette={openCommandPalette}
           openQuickSwitcher={openQuickSwitcher}

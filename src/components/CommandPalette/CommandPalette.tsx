@@ -3,6 +3,7 @@ import { Command as LucideCommand, X } from "lucide-react";
 import { useCommandPaletteStore } from "../../stores/commandPaletteStore";
 import { buildCommandRegistry, filterCommands } from "./commands-registry";
 import type { Command, CommandCategory } from "../../stores/commandPaletteStore";
+import { APP_EVENTS } from "../../utils/app-events";
 import "../../styles/command-palette.css";
 
 const CATEGORY_ORDER: CommandCategory[] = [
@@ -123,21 +124,21 @@ export function CommandPalette(props: CommandPaletteProps) {
         },
       ],
       [
-        "format-sql-palette",
+        APP_EVENTS.formatSqlPalette,
         () => {
           onFormatSQL?.();
           close();
         },
       ],
       [
-        "focus-sql-editor-palette",
+        APP_EVENTS.focusSqlEditorPalette,
         () => {
           onFocusSQL?.();
           close();
         },
       ],
       [
-        "focus-results-palette",
+        APP_EVENTS.focusResultsPalette,
         () => {
           onFocusResults?.();
           close();
@@ -158,7 +159,7 @@ export function CommandPalette(props: CommandPaletteProps) {
         },
       ],
       [
-        "open-keyboard-shortcuts-palette",
+        APP_EVENTS.openKeyboardShortcutsPalette,
         () => {
           onOpenKeyboardShortcuts?.();
           close();
@@ -186,21 +187,21 @@ export function CommandPalette(props: CommandPaletteProps) {
         },
       ],
       [
-        "open-sql-file-palette",
+        APP_EVENTS.openSqlFilePalette,
         () => {
           onOpenSQLFile?.();
           close();
         },
       ],
       [
-        "import-sql-file-palette",
+        APP_EVENTS.importSqlFilePalette,
         () => {
           onImportSQLFile?.();
           close();
         },
       ],
       [
-        "clear-ai-history-palette",
+        APP_EVENTS.clearAiHistoryPalette,
         () => {
           onClearAIHistory?.();
           close();

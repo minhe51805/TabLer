@@ -21,6 +21,7 @@ import { ConnectionExporter, ConnectionImporter } from "../ConnectionExporter";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useSqlFavoritesStore } from "../../stores/sql-favorites-store";
 import { useQuerySchedulesStore } from "../../stores/query-schedules-store";
+import { useUIStore } from "../../stores/uiStore";
 import { ConnectionConfig } from "../../types/database";
 import { DiagnosticBundleModal } from "../DiagnosticBundleModal";
 import { ProfilerLauncher } from "../Profiler";
@@ -58,6 +59,8 @@ export interface AppGlobalModalsProps {
   handleRunActiveQuery: () => void;
   handleToggleQueryHistory: () => void;
   handleToggleSQLFavorites: () => void;
+  handleImportSqlFile?: () => void;
+  handleImportSqlIntoCurrentDatabase?: () => void;
   handleOpenThemeCustomizer: () => void;
   setShowAISlidePanel: (show: boolean) => void;
 }
@@ -89,6 +92,8 @@ export function AppGlobalModals({
   handleRunActiveQuery,
   handleToggleQueryHistory,
   handleToggleSQLFavorites,
+  handleImportSqlFile,
+  handleImportSqlIntoCurrentDatabase,
   handleOpenThemeCustomizer,
   setShowAISlidePanel,
 }: AppGlobalModalsProps) {
@@ -162,26 +167,34 @@ export function AppGlobalModals({
         onToggleSidebar={handleToggleSidebar}
         onToggleTerminal={() => setShowTerminalPanel((v) => !v)}
         onRunQuery={handleRunActiveQuery}
-        onFormatSQL={() => window.dispatchEvent(new CustomEvent("format-sql-palette"))}
-        onFocusSQL={() => window.dispatchEvent(new CustomEvent("focus-sql-editor-palette"))}
-        onFocusResults={() => window.dispatchEvent(new CustomEvent("focus-results-palette"))}
         onToggleQueryHistory={handleToggleQueryHistory}
         onToggleSQLFavorites={handleToggleSQLFavorites}
         onOpenKeyboardShortcuts={() => setShowKeyboardShortcutsModal(true)}
         onOpenPluginManager={() => setShowPluginManager(true)}
         onOpenSettings={handleOpenThemeCustomizer}
         onOpenAbout={() => setShowAboutModal(true)}
-        onOpenSQLFile={() => window.dispatchEvent(new CustomEvent("open-sql-file-palette"))}
-        onImportSQLFile={() => window.dispatchEvent(new CustomEvent("import-sql-file-palette"))}
-        onClearAIHistory={() => window.dispatchEvent(new CustomEvent("clear-ai-history-palette"))}
+        onOpenSQLFile={handleImportSqlFile}
+        onImportSQLFile={handleImportSqlIntoCurrentDatabase}
         onToggleAISlidePanel={(open) => setShowAISlidePanel(open)}
       />
       <QuickSwitcher
         onOpenSavedQuery={(id) => {
-          window.dispatchEvent(new CustomEvent("open-saved-query-switcher", { detail: { id } }));
+          const fav = useSqlFavoritesStore.getState().favorites.find((item) => item.id === id);
+          const connectionState = useConnectionStore.getState();
+          const targetConnectionId =
+            fav?.connectionId || activeConnectionId || connectionState.activeConnectionId;
+          if (!fav || !targetConnectionId) return;
+          useUIStore.getState().addTab({
+            id: `query-${crypto.randomUUID()}`,
+            type: "query",
+            title: fav.name || "Saved query",
+            connectionId: targetConnectionId,
+            database: fav.database || connectionState.currentDatabase || undefined,
+            content: fav.sql,
+          });
         }}
         onConnect={(connectionId) => {
-          window.dispatchEvent(new CustomEvent("connect-switcher", { detail: { connectionId } }));
+          void useConnectionStore.getState().connectSavedConnection(connectionId);
         }}
       />
       <GlobalSearchPanel />

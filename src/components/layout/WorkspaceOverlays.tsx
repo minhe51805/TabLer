@@ -39,6 +39,8 @@ interface WorkspaceOverlaysProps {
   handleToggleSidebar: () => void;
   handleToggleQueryHistory: () => void;
   handleToggleSQLFavorites: () => void;
+  handleImportSqlFile?: () => void;
+  handleImportSqlIntoCurrentDatabase?: () => void;
   toggleVimMode: () => void;
   openCommandPalette: () => void;
   openQuickSwitcher: () => void;
@@ -110,6 +112,8 @@ export function WorkspaceOverlays(props: WorkspaceOverlaysProps) {
     handleToggleSidebar,
     handleToggleQueryHistory,
     handleToggleSQLFavorites,
+    handleImportSqlFile,
+    handleImportSqlIntoCurrentDatabase,
     toggleVimMode,
     openCommandPalette,
     openQuickSwitcher,
@@ -169,11 +173,33 @@ export function WorkspaceOverlays(props: WorkspaceOverlaysProps) {
   } = props;
 
   useEffect(() => {
-    const toggleSchedules = () => setShowQuerySchedules((current: boolean) => !current);
-    window.addEventListener(APP_EVENTS.toggleQuerySchedulesPalette, toggleSchedules);
-    return () =>
-      window.removeEventListener(APP_EVENTS.toggleQuerySchedulesPalette, toggleSchedules);
-  }, [setShowQuerySchedules]);
+    const offSchedules = EventCenter.on(APP_EVENTS.toggleQuerySchedulesPalette, () =>
+      setShowQuerySchedules((current: boolean) => !current),
+    );
+    const offShortcuts = EventCenter.on(APP_EVENTS.openKeyboardShortcutsPalette, () =>
+      setShowKeyboardShortcutsModal(true),
+    );
+    const offFontScale = EventCenter.on(APP_EVENTS.fontScaleChanged, (event) => {
+      if (typeof event.detail?.scale === "number") {
+        setUiFontScale(event.detail.scale);
+      }
+    });
+    const offConnectionForm = EventCenter.on(APP_EVENTS.openConnectionFormPalette, (event) => {
+      handleOpenConnectionForm(event.detail?.intent ?? "connect");
+    });
+
+    return () => {
+      offSchedules();
+      offShortcuts();
+      offFontScale();
+      offConnectionForm();
+    };
+  }, [
+    handleOpenConnectionForm,
+    setShowKeyboardShortcutsModal,
+    setShowQuerySchedules,
+    setUiFontScale,
+  ]);
 
   return (
     <>
@@ -230,6 +256,8 @@ export function WorkspaceOverlays(props: WorkspaceOverlaysProps) {
             handleRunActiveQuery={handleRunActiveQuery}
             handleToggleQueryHistory={handleToggleQueryHistory}
             handleToggleSQLFavorites={handleToggleSQLFavorites}
+            handleImportSqlFile={handleImportSqlFile}
+            handleImportSqlIntoCurrentDatabase={handleImportSqlIntoCurrentDatabase}
             handleOpenThemeCustomizer={handleOpenThemeCustomizer}
             setShowAISlidePanel={setShowAISlidePanel}
           />

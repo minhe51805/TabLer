@@ -342,6 +342,17 @@ pub fn read_skill_resource_in_roots(
                 "Resource '{relative}' could not be read as UTF-8 text."
             ));
         };
+        // Security pass 2 finding S2-1: the resource body is injected into the
+        // agent context on demand, exactly like SKILL.md — a clean SKILL.md
+        // with a poisoned reference would otherwise bypass the lint entirely.
+        // Screen it the same way before it can be served.
+        let findings = lint_skill_text(&raw);
+        if !findings.is_empty() {
+            return Err(format!(
+                "Resource '{relative}' blocked by the skill safety lint: {}",
+                findings.join("; ")
+            ));
+        }
         let content = if raw.chars().count() > MAX_SKILL_RESOURCE_CHARS {
             let cut = raw
                 .chars()

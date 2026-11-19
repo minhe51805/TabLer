@@ -4,6 +4,8 @@ import { SANDBOX_AGENT_MAX_ROWS } from "../../../stores/queryStore";
 import type { QueryResult } from "../../../types";
 import { splitSqlStatements } from "../../../utils/sqlStatements";
 import { emitAppToast } from "../../../utils/app-toast";
+import { APP_EVENTS } from "../../../utils/app-events";
+import { EventCenter } from "../../../stores/event-center";
 import {
   extractLeadingUseDirective,
   formatExecutionError,
@@ -245,15 +247,11 @@ export function useAISqlRunner({
               normalized.startsWith(prefix),
             );
           });
-          window.dispatchEvent(
-            new CustomEvent("table-data-updated", {
-              detail: {
-                connectionId,
-                database: useConnectionStore.getState().currentDatabase || undefined,
-                invalidateStructure,
-              },
-            }),
-          );
+          EventCenter.emit(APP_EVENTS.tableDataUpdated, {
+            connectionId,
+            database: useConnectionStore.getState().currentDatabase || undefined,
+            invalidateStructure,
+          });
         }
 
         if (queryResult.execution_time_ms >= 0) {
@@ -265,15 +263,11 @@ export function useAISqlRunner({
                   ? "Sandbox"
                   : "Write"
                 : "Run";
-          window.dispatchEvent(
-            new CustomEvent("workspace-activity", {
-              detail: {
-                connectionId,
-                label: activityLabel,
-                durationMs: queryResult.execution_time_ms,
-              },
-            }),
-          );
+          EventCenter.emit(APP_EVENTS.workspaceActivity, {
+            connectionId,
+            label: activityLabel,
+            durationMs: queryResult.execution_time_ms,
+          });
         }
 
         // Safety net #3: surface the rollback path when a write touched a lot

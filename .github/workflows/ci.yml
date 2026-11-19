@@ -152,7 +152,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2022, macos-14]
+        os: [windows-2022, macos-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@v4

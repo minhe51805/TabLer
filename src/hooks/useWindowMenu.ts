@@ -14,6 +14,7 @@ import { useAppLayoutStore } from "../stores/appLayoutStore";
 import { useTheme, ThemeEngine } from "../stores/useTheme";
 import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "../utils/ui-scale";
 import { APP_EVENTS } from "../utils/app-events";
+import { EventCenter } from "../stores/event-center";
 import type { WindowMenuSectionKey, WindowMenuItem } from "../types/app-types";
 import {
   getAdminQueryPreset,
@@ -588,7 +589,7 @@ export function useWindowMenu({ state, actions }: UseWindowMenuOptions) {
           {
             label: t("menu.item.querySchedules"),
             action: () => {
-              window.dispatchEvent(new CustomEvent(APP_EVENTS.toggleQuerySchedulesPalette));
+              EventCenter.emit(APP_EVENTS.toggleQuerySchedulesPalette);
               closeMenu();
             },
             shortcut: "Ctrl+Shift+Q",

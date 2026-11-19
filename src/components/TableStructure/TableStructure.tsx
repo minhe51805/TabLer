@@ -12,6 +12,8 @@ import {
 } from "lucide-react";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUIStore } from "../../stores/uiStore";
+import { APP_EVENTS } from "../../utils/app-events";
+import { EventCenter } from "../../stores/event-center";
 import { useQueryStore } from "../../stores/queryStore";
 import type {
   ColumnDetail,
@@ -735,15 +737,11 @@ export function TableStructure({
       discardStagedChanges();
       setIsReviewOpen(false);
       await reloadStructure();
-      window.dispatchEvent(
-        new CustomEvent("table-structure-updated", {
-          detail: {
-            connectionId,
-            tableName,
-            database,
-          },
-        }),
-      );
+      EventCenter.emit(APP_EVENTS.tableStructureUpdated, {
+        connectionId,
+        tableName,
+        database,
+      });
       showToast(
         "success",
         "Structure updated",
@@ -905,16 +903,15 @@ export function TableStructure({
   ]);
 
   useEffect(() => {
-    const handleTableDataUpdated = (event: Event) => {
-      const detail = (
-        event as CustomEvent<{
-          connectionId: string;
-          database?: string;
-          tableName?: string;
-          invalidateStructure?: boolean;
-        }>
-      ).detail;
-
+    const handleTableDataUpdated = (
+      event: CustomEvent<{
+        connectionId: string;
+        database?: string;
+        tableName?: string;
+        invalidateStructure?: boolean;
+      }>,
+    ) => {
+      const detail = event.detail;
       if (!detail?.invalidateStructure) return;
       if (detail.connectionId !== connectionId) return;
       if (detail.database !== undefined && (detail.database || "") !== (database || "")) return;
@@ -924,8 +921,7 @@ export function TableStructure({
       void reloadStructure();
     };
 
-    window.addEventListener("table-data-updated", handleTableDataUpdated);
-    return () => window.removeEventListener("table-data-updated", handleTableDataUpdated);
+    return EventCenter.on(APP_EVENTS.tableDataUpdated, handleTableDataUpdated);
   }, [connectionId, database, isActive, reloadStructure, tableName]);
 
   useEffect(() => {

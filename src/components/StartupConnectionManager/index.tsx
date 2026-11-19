@@ -12,6 +12,8 @@ import { useShallow } from "zustand/react/shallow";
 import { useI18n } from "../../i18n";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useModalStore } from "../../stores/modalStore";
+import { APP_EVENTS } from "../../utils/app-events";
+import { EventCenter } from "../../stores/event-center";
 import { emitAppToast } from "../../utils/app-toast";
 import { invokeWithTimeout } from "../../utils/tauri-utils";
 import { usePluginStore } from "../../stores/pluginStore";
@@ -250,17 +252,15 @@ export function StartupConnectionManager({
       });
     };
 
-    const handleLauncherFocusConnection = (event: Event) => {
-      const detail = (event as CustomEvent<{ connectionId?: string; immediate?: boolean }>).detail;
+    const handleLauncherFocusConnection = (
+      event: CustomEvent<{ connectionId?: string; immediate?: boolean }>,
+    ) => {
+      const detail = event.detail;
       if (!detail?.connectionId) return;
       focusConnectionCard(detail.connectionId, detail.immediate ? "auto" : "smooth");
     };
 
-    window.addEventListener("launcher-focus-connection", handleLauncherFocusConnection);
-
-    return () => {
-      window.removeEventListener("launcher-focus-connection", handleLauncherFocusConnection);
-    };
+    return EventCenter.on(APP_EVENTS.launcherFocusConnection, handleLauncherFocusConnection);
   }, []);
 
   useEffect(() => {

@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { APP_EVENTS } from "../utils/app-events";
+import { EventCenter } from "../stores/event-center";
 import type { Tab } from "../types";
 import { UI_FONT_SCALE_MAX, UI_FONT_SCALE_MIN, UI_FONT_SCALE_STEP } from "../utils/ui-scale";
 
@@ -58,16 +59,14 @@ export function AppKeyboardHandler({
 
       // Shortcuts overlay: F1 outside the Monaco editor (Monaco keeps its own
       // F1 command palette); Ctrl+/ (and Ctrl+Shift+/) outside Monaco so the
-      // editor keeps its own Ctrl+/ line-comment binding. The CommandPalette
-      // owns the "open-keyboard-shortcuts-palette" listener and forwards it to
-      // the shortcuts modal.
+      // editor keeps its own Ctrl+/ line-comment binding.
       if (
         (e.key === "F1" && !metaPressed && !e.altKey && !e.shiftKey && !isMonacoTarget) ||
         (metaPressed && e.code === "Slash" && !isMonacoTarget)
       ) {
         e.preventDefault();
         e.stopPropagation();
-        window.dispatchEvent(new CustomEvent("open-keyboard-shortcuts-palette"));
+        EventCenter.emit(APP_EVENTS.openKeyboardShortcutsPalette);
         return;
       }
 
@@ -124,7 +123,7 @@ export function AppKeyboardHandler({
         return;
       }
 
-      if (metaPressed && !e.shiftKey && e.key === "0") {
+      if (metaPressed && !e.shiftKey && key === "0") {
         e.preventDefault();
         onToggleSidebar();
         return;
@@ -149,6 +148,11 @@ export function AppKeyboardHandler({
       }
 
       if (metaPressed && e.shiftKey && key === "v") {
+        // Bug DG-4: Ctrl+Shift+V inside a DataGrid triggers row-paste from clipboard,
+        // not the SQL Editor Vim mode toggle.
+        if (target?.closest(".datagrid-shell")) {
+          return;
+        }
         e.preventDefault();
         onToggleVimMode();
         return;
@@ -156,7 +160,7 @@ export function AppKeyboardHandler({
 
       if (metaPressed && e.shiftKey && key === "q") {
         e.preventDefault();
-        window.dispatchEvent(new CustomEvent(APP_EVENTS.toggleQuerySchedulesPalette));
+        EventCenter.emit(APP_EVENTS.toggleQuerySchedulesPalette);
         return;
       }
 
@@ -172,11 +176,7 @@ export function AppKeyboardHandler({
           return;
         }
         e.preventDefault();
-        window.dispatchEvent(
-          new CustomEvent("toggle-query-results-pane", {
-            detail: { tabId: activeTab.id },
-          }),
-        );
+        EventCenter.emit(APP_EVENTS.toggleQueryResultsPane, { tabId: activeTab.id });
       }
 
       // DataGrid-scoped shortcuts must not fire while a Monaco editor has
@@ -184,28 +184,28 @@ export function AppKeyboardHandler({
       // to next find match / multi-cursor). The window-level capture listener
       // runs before Monaco's own handler, so without this guard a keypress in
       // the SQL editor both edits text AND mutates the grid behind it.
-      if (!isMonacoTarget) {
+      if (!isMonacoTarget && !isEditableTarget) {
         if (metaPressed && !e.shiftKey && key === "z") {
           e.preventDefault();
-          window.dispatchEvent(new CustomEvent("datagrid-undo"));
+          EventCenter.emit(APP_EVENTS.datagridUndo);
           return;
         }
 
         if ((metaPressed && e.shiftKey && key === "z") || (metaPressed && key === "y")) {
           e.preventDefault();
-          window.dispatchEvent(new CustomEvent("datagrid-redo"));
+          EventCenter.emit(APP_EVENTS.datagridRedo);
           return;
         }
 
         if (metaPressed && key === "d") {
           e.preventDefault();
-          window.dispatchEvent(new CustomEvent("datagrid-duplicate-row"));
+          EventCenter.emit(APP_EVENTS.datagridDuplicateRow);
           return;
         }
 
         if (metaPressed && key === "Enter") {
           e.preventDefault();
-          window.dispatchEvent(new CustomEvent("datagrid-fk-preview"));
+          EventCenter.emit(APP_EVENTS.datagridFkPreview);
           return;
         }
       }

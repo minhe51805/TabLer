@@ -12,6 +12,8 @@
 import { useEffect, useState } from "react";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { isTauriDesktopWindow } from "../../hooks/useDesktopWindow";
+import { APP_EVENTS } from "../../utils/app-events";
+import { EventCenter } from "../../stores/event-center";
 import { ProfilerModal } from "./ProfilerModal";
 import { openProfilerWindow } from "./profilerWindow";
 
@@ -30,8 +32,7 @@ export function ProfilerLauncher() {
         setOpenInline(true);
       }
     };
-    window.addEventListener("open-live-profiler", handler);
-    return () => window.removeEventListener("open-live-profiler", handler);
+    return EventCenter.on(APP_EVENTS.openLiveProfiler, handler);
   }, [connections, activeConnectionId]);
 
   if (!openInline) return null;

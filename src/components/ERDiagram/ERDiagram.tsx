@@ -40,6 +40,8 @@ import {
   X,
 } from "lucide-react";
 import { invokeCommand as invoke } from "../../utils/tauri-invoke";
+import { APP_EVENTS } from "../../utils/app-events";
+import { EventCenter } from "../../stores/event-center";
 import { createPortal } from "react-dom";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useUIStore } from "../../stores/uiStore";
@@ -356,16 +358,17 @@ export function ERDiagram({ connectionId, database }: Props) {
   }, [loadSchema]);
 
   useEffect(() => {
-    const handleSchemaInvalidation = (event: Event) => {
-      const detail = (event as CustomEvent<{ connectionId?: string; database?: string }>).detail;
+    const handleSchemaInvalidation = (
+      event: CustomEvent<{ connectionId: string; database?: string }>,
+    ) => {
+      const detail = event.detail;
       if (detail?.connectionId !== connectionId) return;
       if (detail.database !== undefined && detail.database !== database) return;
       invalidateCachedERDiagramSchema(connectionId, database);
       void loadSchema();
     };
 
-    window.addEventListener("schema-cache-invalidated", handleSchemaInvalidation);
-    return () => window.removeEventListener("schema-cache-invalidated", handleSchemaInvalidation);
+    return EventCenter.on(APP_EVENTS.schemaCacheInvalidated, handleSchemaInvalidation);
   }, [connectionId, database, loadSchema]);
 
   const handleTableExpandToggle = useCallback((tableName: string) => {
@@ -581,15 +584,11 @@ export function ERDiagram({ connectionId, database }: Props) {
       await executeStructureStatements(connectionId, quickColumnSqlPreview.statements);
       invalidateCachedERDiagramSchema(connectionId, database);
       await loadSchema({ force: true });
-      window.dispatchEvent(
-        new CustomEvent("table-structure-updated", {
-          detail: {
-            connectionId,
-            tableName: qualifiedTableName,
-            database: database || undefined,
-          },
-        }),
-      );
+      EventCenter.emit(APP_EVENTS.tableStructureUpdated, {
+        connectionId,
+        tableName: qualifiedTableName,
+        database: database || undefined,
+      });
       setQuickColumnEditor(null);
       setQuickColumnEditorError(null);
     } catch (reason) {
@@ -1052,26 +1051,22 @@ export function ERDiagram({ connectionId, database }: Props) {
       if (!query) return;
 
       const selectionLabel = columnName ? `${tableName}.${columnName}` : tableName;
-      window.dispatchEvent(
-        new CustomEvent("open-ai-slide-panel", {
-          detail: {
-            prompt: `Review the ER diagram selection ${selectionLabel}.`,
-            attachment: {
-              source: `ER Diagram: ${selectionLabel}`,
-              text: [
-                "ER diagram selection:",
-                `Database: ${database || "current database"}`,
-                `Table: ${tableName}`,
-                columnName ? `Column: ${columnName}` : "",
-                "Suggested read-only query:",
-                query,
-              ]
-                .filter(Boolean)
-                .join("\n"),
-            },
-          },
-        }),
-      );
+      EventCenter.emit(APP_EVENTS.openAISlidePanel, {
+        prompt: `Review the ER diagram selection ${selectionLabel}.`,
+        attachment: {
+          source: `ER Diagram: ${selectionLabel}`,
+          text: [
+            "ER diagram selection:",
+            `Database: ${database || "current database"}`,
+            `Table: ${tableName}`,
+            columnName ? `Column: ${columnName}` : "",
+            "Suggested read-only query:",
+            query,
+          ]
+            .filter(Boolean)
+            .join("\n"),
+        },
+      });
     },
     [buildSelectionQuery, database],
   );

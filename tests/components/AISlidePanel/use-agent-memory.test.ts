@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import hookSource from "@/components/AISlidePanel/ai-agent-generate.ts?raw";
+import facadeSource from "@/components/AISlidePanel/ai-agent-generate.ts?raw";
+import contextLoaderSource from "@/components/AISlidePanel/agent-engine/context-loader.ts?raw";
+import turnDriverSource from "@/components/AISlidePanel/agent-engine/turn-driver.ts?raw";
+
+const hookSource = [facadeSource, contextLoaderSource, turnDriverSource].join("\n");
 import {
   getAgentMemoryIndex,
   invalidateAgentMemoryIndex,

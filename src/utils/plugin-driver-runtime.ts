@@ -227,6 +227,11 @@ export const BUILTIN_ENGINE_KEYS = [
   "mongodb",
 ] as const;
 
+/** The Rust authority for this list is `driver_distribution`'s `Builtin` arm
+ *  (`src-tauri/src/database/capabilities.rs`) — the ten keys above map to its
+ *  ten `DatabaseType` variants one to one (verified 2026-10-31). Adding an
+ *  engine there means adding it here, and vice versa; the two stay equal. */
+
 /** Whether an engine ships by default and needs no plugin to be usable. */
 export function isBuiltinEngine(key: string): boolean {
   return (BUILTIN_ENGINE_KEYS as readonly string[]).includes(key);

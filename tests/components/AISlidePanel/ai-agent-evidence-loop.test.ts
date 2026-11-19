@@ -29,9 +29,10 @@ async function runLoop(overrides: Record<string, unknown> = {}) {
     runAgentTool: vi.fn().mockResolvedValue("rows"),
     publishAgentProgress: vi.fn(),
     recoverAgentFinishAction: vi.fn().mockResolvedValue(finish("recovered")),
-    buildControllerPrompt: vi.fn((force: boolean, extra?: string) => `prompt:${force}:${extra ?? ""}`),
-    isSupersededAIRequestError: (e: unknown) =>
-      e instanceof Error && e.message === "superseded",
+    buildControllerPrompt: vi.fn(
+      (force: boolean, extra?: string) => `prompt:${force}:${extra ?? ""}`,
+    ),
+    isSupersededAIRequestError: (e: unknown) => e instanceof Error && e.message === "superseded",
   };
   return runLoopWith({ ...base, ...overrides });
 }
@@ -96,7 +97,8 @@ describe("runAgentEvidenceLoop", () => {
 
   it("breaks out of the loop when a superseded error occurs mid-recovery", async () => {
     const superseded = new Error("superseded");
-    const requestAgentAction = vi.fn()
+    const requestAgentAction = vi
+      .fn()
       .mockResolvedValueOnce(toolAction())
       .mockRejectedValueOnce(superseded);
     await expect(
@@ -110,7 +112,8 @@ describe("runAgentEvidenceLoop", () => {
   });
 
   it("falls back to the current finish when recovery errors non-superseded", async () => {
-    const requestAgentAction = vi.fn()
+    const requestAgentAction = vi
+      .fn()
       .mockResolvedValueOnce(toolAction())
       .mockRejectedValueOnce(new Error("provider down"));
     const result = await runLoop({

@@ -1,5 +1,5 @@
 use crate::database::ai_models::{AIProviderConfig, AIProviderType};
-use reqwest::{StatusCode, Url};
+use reqwest::Url;
 use std::net::IpAddr;
 
 use super::providers::{resolve_provider_body_shape, ProviderBodyShape};
@@ -353,16 +353,6 @@ pub(crate) fn is_ollama_native_generate_endpoint(endpoint: &str) -> bool {
 
 pub(crate) fn is_nvidia_integrate_endpoint(endpoint: &str) -> bool {
     endpoint_host(endpoint).is_some_and(|host| host == "integrate.api.nvidia.com")
-}
-
-pub(crate) fn should_retry_openai_like_status(status: StatusCode) -> bool {
-    matches!(
-        status,
-        StatusCode::BAD_GATEWAY
-            | StatusCode::SERVICE_UNAVAILABLE
-            | StatusCode::GATEWAY_TIMEOUT
-            | StatusCode::TOO_MANY_REQUESTS
-    )
 }
 
 #[cfg(test)]

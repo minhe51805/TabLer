@@ -5,7 +5,7 @@ import type {
 } from "./ai-workspace-types";
 import type { AIConversationMessage } from "../../types";
 import { AI_MAX_HISTORY_CHARS, AI_MAX_HISTORY_MESSAGES } from "../../config";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "../../utils/tauri-invoke";
 import { isTauriDesktopWindow } from "../../hooks/useDesktopWindow";
 
 export const AI_WORKSPACE_HISTORY_VERSION = 1;

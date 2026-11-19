@@ -1,6 +1,8 @@
 import { useMemo } from "react";
 import type { AppLanguagePreference } from "../i18n";
 import type { AdminQueryKind } from "../utils/admin-query-presets";
+import { APP_EVENTS } from "../utils/app-events";
+import { EventCenter } from "../stores/event-center";
 
 export interface AppMenuActionHandlers {
   activeTab: { type: string; id: string } | null;
@@ -87,17 +89,13 @@ export function useAppMenuActions(handlers: AppMenuActionHandlers) {
       onToggleTerminalPanel: handleToggleTerminalPanel,
       onToggleQueryResultsPane: () => {
         if (activeTab?.type === "query") {
-          window.dispatchEvent(
-            new CustomEvent("toggle-query-results-pane", { detail: { tabId: activeTab.id } }),
-          );
+          EventCenter.emit(APP_EVENTS.toggleQueryResultsPane, { tabId: activeTab.id });
         }
       },
       onToggleRightSidebar: () => handlers.setShowAISlidePanel((v: boolean) => !v),
       onToggleBottomSidebar: () => {
         if (activeTab?.type === "query") {
-          window.dispatchEvent(
-            new CustomEvent("toggle-query-results-pane", { detail: { tabId: activeTab.id } }),
-          );
+          EventCenter.emit(APP_EVENTS.toggleQueryResultsPane, { tabId: activeTab.id });
         } else {
           setShowTerminalPanel((v) => !v);
         }

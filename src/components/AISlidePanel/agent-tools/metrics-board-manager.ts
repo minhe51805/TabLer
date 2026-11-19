@@ -24,6 +24,8 @@ import {
   writeStoredBoards,
 } from "../../MetricsBoard/utils/query-builder";
 import { useUIStore } from "../../../stores/uiStore";
+import { APP_EVENTS } from "../../../utils/app-events";
+import { EventCenter } from "../../../stores/event-center";
 import type { MetricsBoardDefinition, MetricsWidgetDefinition } from "../../../types";
 import type { AgentMetricsBoardRequest, AgentMetricsBoardResult } from "../ai-agent-tool-executor";
 
@@ -83,11 +85,7 @@ function findWidget(
 
 function persistBoards(nextBoards: MetricsBoardDefinition[], connectionId: string) {
   writeStoredBoards(nextBoards);
-  window.dispatchEvent(
-    new CustomEvent("metrics-boards-updated", {
-      detail: { connectionId },
-    }),
-  );
+  EventCenter.emit(APP_EVENTS.metricsBoardsUpdated, { connectionId });
 }
 
 /** Replace one board inside stored state and notify open board views. */
@@ -220,11 +218,7 @@ export async function manageAgentMetricsBoard(
       const result = await executeMetricsQuery(connectionId, validation.statement);
       // Re-dispatch so an open board re-reads storage; the card's own
       // refresh_seconds interval keeps re-querying afterwards.
-      window.dispatchEvent(
-        new CustomEvent("metrics-boards-updated", {
-          detail: { connectionId },
-        }),
-      );
+      EventCenter.emit(APP_EVENTS.metricsBoardsUpdated, { connectionId });
       return {
         boardId: board.id,
         boardName: board.name,

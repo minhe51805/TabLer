@@ -137,7 +137,7 @@ pub async fn list_tables(
     connection_id: String,
     database: Option<String>,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<Vec<TableInfo>, String> {
+) -> Result<Vec<TableInfo>, crate::error::AppError> {
     let driver = db_manager
         .get_driver(&connection_id)
         .await
@@ -149,6 +149,7 @@ pub async fn list_tables(
     .await
     .map_err(|_| "Listing tables timed out after 60 seconds.".to_string())?
     .map_err(|e| e.to_string())
+    .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -157,7 +158,7 @@ pub async fn get_table_structure(
     table: String,
     database: Option<String>,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<TableStructure, String> {
+) -> Result<TableStructure, crate::error::AppError> {
     let driver = db_manager
         .get_driver(&connection_id)
         .await
@@ -169,6 +170,7 @@ pub async fn get_table_structure(
     .await
     .map_err(|_| "Loading table structure timed out after 60 seconds.".to_string())?
     .map_err(|e| e.to_string())
+    .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -177,7 +179,7 @@ pub async fn get_table_columns_preview(
     table: String,
     database: Option<String>,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<Vec<ColumnDetail>, String> {
+) -> Result<Vec<ColumnDetail>, crate::error::AppError> {
     let driver = db_manager
         .get_driver(&connection_id)
         .await
@@ -189,6 +191,7 @@ pub async fn get_table_columns_preview(
     .await
     .map_err(|_| "Loading table columns timed out after 60 seconds.".to_string())?
     .map_err(|e| e.to_string())
+    .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -196,7 +199,7 @@ pub async fn list_schema_objects(
     connection_id: String,
     database: Option<String>,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<Vec<SchemaObjectInfo>, String> {
+) -> Result<Vec<SchemaObjectInfo>, crate::error::AppError> {
     let driver = db_manager
         .get_driver(&connection_id)
         .await
@@ -208,6 +211,7 @@ pub async fn list_schema_objects(
     .await
     .map_err(|_| "Listing schema objects timed out after 60 seconds.".to_string())?
     .map_err(|e| e.to_string())
+    .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -222,7 +226,7 @@ pub async fn get_table_data(
     order_dir: Option<String>,
     filter: Option<String>,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<QueryResult, String> {
+) -> Result<QueryResult, crate::error::AppError> {
     db_manager
         .require_capability(&connection_id, DriverCapability::Query)
         .await
@@ -252,6 +256,7 @@ pub async fn get_table_data(
         )
     })?
     .map_err(|e| e.to_string())
+    .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -260,7 +265,7 @@ pub async fn count_table_rows(
     table: String,
     database: Option<String>,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<i64, String> {
+) -> Result<i64, crate::error::AppError> {
     let driver = db_manager
         .get_driver(&connection_id)
         .await
@@ -272,6 +277,7 @@ pub async fn count_table_rows(
     .await
     .map_err(|_| "Counting table rows timed out after 60 seconds.".to_string())?
     .map_err(|e| e.to_string())
+    .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -281,7 +287,7 @@ pub async fn count_table_null_values(
     column: String,
     database: Option<String>,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<i64, String> {
+) -> Result<i64, crate::error::AppError> {
     let driver = db_manager
         .get_driver(&connection_id)
         .await
@@ -293,6 +299,7 @@ pub async fn count_table_null_values(
     .await
     .map_err(|_| "Counting NULL values timed out after 60 seconds.".to_string())?
     .map_err(|e| e.to_string())
+    .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -301,7 +308,7 @@ pub async fn update_table_cell(
     request: TableCellUpdateRequest,
     db_manager: State<'_, DatabaseManager>,
     safe_mode: State<'_, SafeModeState>,
-) -> Result<u64, String> {
+) -> Result<u64, crate::error::AppError> {
     db_manager.assert_write_allowed(&connection_id).await?;
     let database_type = db_manager
         .connection_database_type(&connection_id)
@@ -342,6 +349,7 @@ pub async fn update_table_cell(
         })?
         .map_err(|e| e.to_string())?;
     ensure_rows_affected("The cell update", 1, affected, STALE_PK_HINT)
+        .map_err(crate::error::AppError::from)
 }
 #[tauri::command]
 pub async fn apply_table_updates_atomically(
@@ -349,7 +357,7 @@ pub async fn apply_table_updates_atomically(
     updates: Vec<TableCellUpdateRequest>,
     db_manager: State<'_, DatabaseManager>,
     safe_mode: State<'_, SafeModeState>,
-) -> Result<u64, String> {
+) -> Result<u64, crate::error::AppError> {
     db_manager.assert_write_allowed(&connection_id).await?;
     let database_type = db_manager
         .connection_database_type(&connection_id)
@@ -403,6 +411,7 @@ pub async fn apply_table_updates_atomically(
         })?
         .map_err(|e| e.to_string())?;
     ensure_rows_affected("The edit queue", expected, affected, STALE_PK_HINT)
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -411,7 +420,7 @@ pub async fn delete_table_rows(
     request: TableRowDeleteRequest,
     db_manager: State<'_, DatabaseManager>,
     safe_mode: State<'_, SafeModeState>,
-) -> Result<u64, String> {
+) -> Result<u64, crate::error::AppError> {
     db_manager.assert_write_allowed(&connection_id).await?;
     let database_type = db_manager
         .connection_database_type(&connection_id)
@@ -446,6 +455,7 @@ pub async fn delete_table_rows(
         .map_err(|_| format!("Row deletion timed out after {} seconds.", window.as_secs()))?
         .map_err(|e| e.to_string())?;
     ensure_rows_affected("The row deletion", expected, affected, STALE_PK_HINT)
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -454,7 +464,7 @@ pub async fn insert_table_row(
     request: TableRowInsertRequest,
     db_manager: State<'_, DatabaseManager>,
     safe_mode: State<'_, SafeModeState>,
-) -> Result<u64, String> {
+) -> Result<u64, crate::error::AppError> {
     db_manager.assert_write_allowed(&connection_id).await?;
     let database_type = db_manager
         .connection_database_type(&connection_id)
@@ -486,6 +496,7 @@ pub async fn insert_table_row(
         })?
         .map_err(|e| e.to_string())?;
     ensure_rows_affected("The row insert", 1, affected, INSERT_SKIP_HINT)
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -494,7 +505,7 @@ pub async fn execute_structure_statements(
     statements: Vec<String>,
     db_manager: State<'_, DatabaseManager>,
     safe_mode: State<'_, SafeModeState>,
-) -> Result<u64, String> {
+) -> Result<u64, crate::error::AppError> {
     db_manager.assert_write_allowed(&connection_id).await?;
     let database_type = db_manager
         .connection_database_type(&connection_id)
@@ -521,6 +532,7 @@ pub async fn execute_structure_statements(
             )
         })?
         .map_err(|e| e.to_string())
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -532,7 +544,7 @@ pub async fn get_foreign_key_lookup_values(
     limit: Option<u32>,
     display_columns: Option<Vec<String>>,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<Vec<LookupValue>, String> {
+) -> Result<Vec<LookupValue>, crate::error::AppError> {
     let driver = db_manager
         .get_driver(&connection_id)
         .await
@@ -554,6 +566,7 @@ pub async fn get_foreign_key_lookup_values(
     .await
     .map_err(|_| "Loading FK lookup values timed out after 60 seconds.".to_string())?
     .map_err(|e| e.to_string())
+    .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -564,7 +577,7 @@ pub async fn insert_table_rows_atomically(
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, CsvImportCancellationState>,
     safe_mode: State<'_, SafeModeState>,
-) -> Result<u64, String> {
+) -> Result<u64, crate::error::AppError> {
     db_manager.assert_write_allowed(&connection_id).await?;
     let database_type = db_manager
         .connection_database_type(&connection_id)
@@ -578,7 +591,7 @@ pub async fn insert_table_rows_atomically(
         )
         .await?;
     if requests.is_empty() {
-        return Err("CSV import requires at least one row.".to_string());
+        return Err("CSV import requires at least one row.".to_string().into());
     }
     db_manager
         .require_capability(&connection_id, DriverCapability::AtomicCsvImport)
@@ -606,7 +619,7 @@ pub async fn insert_table_rows_atomically(
         )),
     };
     cancellation_state.finish(&operation_id);
-    result
+    result.map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -618,7 +631,7 @@ pub async fn import_csv_file_atomically(
     db_manager: State<'_, DatabaseManager>,
     cancellation_state: State<'_, CsvImportCancellationState>,
     safe_mode: State<'_, SafeModeState>,
-) -> Result<AtomicCsvImportSummary, String> {
+) -> Result<AtomicCsvImportSummary, crate::error::AppError> {
     db_manager.assert_write_allowed(&connection_id).await?;
     let database_type = db_manager
         .connection_database_type(&connection_id)
@@ -632,7 +645,9 @@ pub async fn import_csv_file_atomically(
         )
         .await?;
     if request.mappings.is_empty() {
-        return Err("CSV import requires at least one mapped column.".to_string());
+        return Err("CSV import requires at least one mapped column."
+            .to_string()
+            .into());
     }
     db_manager
         .require_capability(&connection_id, DriverCapability::AtomicCsvImport)
@@ -657,7 +672,7 @@ pub async fn import_csv_file_atomically(
     let delimiter = match request.delimiter.as_str() {
         "csv" => b',',
         "tsv" => b'\t',
-        _ => return Err("CSV delimiter must be 'csv' or 'tsv'.".to_string()),
+        _ => return Err("CSV delimiter must be 'csv' or 'tsv'.".to_string().into()),
     };
 
     let cancelled = cancellation_state.start(&operation_id)?;

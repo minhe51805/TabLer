@@ -1,7 +1,7 @@
 ---
 name: query-performance-tuning
 description: This skill should be used when the user asks "why is this query slow", "help me optimize this", "add an index", "it takes too long", or when a query is known to scan a large table.
-version: 1.0.0
+version: 1.1.0
 license: MIT
 allowed-tools:
   [
@@ -10,6 +10,7 @@ allowed-tools:
     describe_tables,
     sample_table_data,
     run_readonly_sql,
+    run_preset,
     check_sql,
     skill,
     read_skill_resource,
@@ -30,12 +31,16 @@ must be backed by a query that ran: a plan, a statistics reading, or a row count
 
 1. Get the SQL text under discussion (the active tab, or the user's message).
 2. Establish the table's size first (`sys.dm_db_partition_stats`) — an index does not
-   matter on 200 rows, and a scan is fatal on 200M.
-3. Inspect the existing index inventory (`scripts/` in the `tsql-dialect-mastery` skill,
-   query 5–6). Never propose an index that already exists.
+   matter on 200 rows, and a scan is fatal on 200M. The `run_preset` `table-stats`
+   preset is the sanctioned per-engine route.
+3. Inspect the existing index inventory — the `run_preset` `index-usage` preset when
+   available, otherwise `scripts/` in the `tsql-dialect-mastery` skill (queries 5–6).
+   Never propose an index that already exists.
 4. Identify the anti-pattern from the checklist below, or read the plan.
 5. Propose the smallest change that addresses the evidence, with the expected effect and
    the cost. Then give the verification query the user can run to confirm.
+
+Per-engine evidence paths: `references/engine-evidence.md` (`run_preset` + `EXPLAIN`).
 
 ## Anti-pattern checklist (check these before anything else)
 
@@ -65,8 +70,9 @@ must be backed by a query that ran: a plan, a statistics reading, or a row count
   predicate order against the index definition before proposing a new one.
 - **Low-cardinality columns** (a status with 4 values) are poor leading keys; put them
   after the selective column, or filter them out with a filtered index.
-- Check `sys.dm_db_missing_index_details` for the server's own suggestions, and
-  `sys.dm_db_index_usage_stats` for indexes with zero seeks — a drop candidate.
+- The `sys.dm_db_*` catalog views hold missing-index suggestions and zero-seek drop
+  candidates — desktop SQL editor path; via the agent use the `run_preset`
+  `index-usage` preset.
 
 ## Reading an execution plan
 
@@ -108,6 +114,8 @@ lower belongs in a "worth testing" list, not in the recommendation.
 ## See also
 
 - `references/plan-operators.md` — how to read each operator in a plan.
+- `references/engine-evidence.md` — per-engine evidence map: `run_preset` presets and
+  `EXPLAIN` syntax.
 - The `tsql-dialect-mastery` skill for the conversion and `TOP`/`OFFSET` traps.
-- The `tsql-dialect-mastery` skill's `scripts/catalog-queries.sql` (queries 5, 6, 7) for
-  index inventory and missing-index suggestions.
+- `tsql-dialect-mastery`'s `scripts/catalog-queries.sql` (queries 5–7) — desktop editor
+  path for index inventory; the agent route is the `index-usage` preset.

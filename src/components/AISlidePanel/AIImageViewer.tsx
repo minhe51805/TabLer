@@ -39,7 +39,8 @@ export function AIImageViewer({
     if (!image) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") onClose();
-      else if (event.key === "+" || event.key === "=") setZoom((current) => clampZoom(current + 0.25));
+      else if (event.key === "+" || event.key === "=")
+        setZoom((current) => clampZoom(current + 0.25));
       else if (event.key === "-") setZoom((current) => clampZoom(current - 0.25));
       else if (event.key === "0") setZoom(1);
     };

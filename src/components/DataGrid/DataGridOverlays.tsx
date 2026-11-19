@@ -1,7 +1,7 @@
 import { createPortal } from "react-dom";
-import type { Dispatch, SetStateAction } from "react";
+import type { Dispatch, FormEvent, SetStateAction } from "react";
 import type { Table } from "@tanstack/react-table";
-import type { DatabaseType, QueryResult } from "../../types";
+import type { ColumnDetail, DatabaseType, QueryResult } from "../../types";
 import type { PastePreview } from "../../utils/clipboard-parser";
 import type { ResolvedColumn } from "./hooks/useDataGrid";
 import type { ColumnDisplayFormat } from "./editors";
@@ -9,11 +9,14 @@ import type { ColumnStats } from "./dialogs/ColumnStatsPopover";
 import { ColumnStatsPopover } from "./dialogs/ColumnStatsPopover";
 import { DataGridContextMenu } from "./dialogs/DataGridContextMenu";
 import { FkPreviewPopover } from "./dialogs/FkPreviewPopover";
+import { InsertRowDialog } from "./dialogs/InsertRowDialog";
 import { PasteRowsDialog } from "./dialogs/PasteRowsDialog";
 import { SetRangeValueDialog } from "./dialogs/SetRangeValueDialog";
 import { ChangeTrackingPreviewModal } from "./components/ChangeTrackingPreviewModal";
 import type { ColumnOrderState, VisibilityState, ColumnPinningState } from "@tanstack/react-table";
 import type { DataGridColumnMasks } from "./hooks/useDataGridColumnMasks";
+import { getPrimaryGridRange, isMultiCellRange } from "./grid-range-operations";
+import { useOptionalDataGridStore } from "./store/dataGridStore";
 
 /** Everything the floating overlays (context menu, popovers, dialogs) need
  *  from the grid — bundled so DataGrid's render stays readable. */
@@ -34,7 +37,7 @@ export interface DataGridOverlaysProps {
   canAttemptInlineEdit: boolean;
   /** View-time column masking state for the header context menu + copies. */
   columnMasks?: DataGridColumnMasks;
-  selectedRangeCellCount: number;
+  selectedRangeCellCount?: number;
   contextMenu: {
     x: number;
     y: number;
@@ -99,6 +102,14 @@ export interface DataGridOverlaysProps {
   onClosePasteDialog: () => void;
   onSubmitPasteDialog: () => void;
   onCancelPasteImport: () => void;
+  isInsertDialogOpen?: boolean;
+  insertDialogColumns?: ColumnDetail[];
+  insertDraft?: Record<string, string>;
+  insertDialogError?: string | null;
+  isSubmittingInsert?: boolean;
+  onCloseInsertDialog?: () => void;
+  onSubmitInsertDialog?: (event?: FormEvent<HTMLFormElement>) => void;
+  onInsertDraftChange?: (columnName: string, value: string) => void;
 }
 
 /** Floating layers above the grid: context menu, FK/column-stats popovers,
@@ -165,7 +176,26 @@ export function DataGridOverlays(props: DataGridOverlaysProps) {
     onClosePasteDialog,
     onSubmitPasteDialog,
     onCancelPasteImport,
+    isInsertDialogOpen = false,
+    insertDialogColumns = [],
+    insertDraft = {},
+    insertDialogError = null,
+    isSubmittingInsert = false,
+    onCloseInsertDialog,
+    onSubmitInsertDialog,
+    onInsertDraftChange,
   } = props;
+  const storeSelectedRangeCellCount = useOptionalDataGridStore((s) => {
+    if (!contextMenu || !data || resolvedColumns.length === 0) return 0;
+    const range = getPrimaryGridRange(s.gridSelection, {
+      rowCount: table.getRowModel().rows.length,
+      columnCount: resolvedColumns.length,
+    });
+    if (!range || !isMultiCellRange(range)) return 0;
+    return (range.endRow - range.startRow + 1) * (range.endCol - range.startCol + 1);
+  }, 0);
+  const effectiveSelectedRangeCellCount = selectedRangeCellCount ?? storeSelectedRangeCellCount;
+
   return (
     <>
       {/* Context Menu — portaled to document.body: ancestors like .main-content
@@ -193,7 +223,7 @@ export function DataGridOverlays(props: DataGridOverlaysProps) {
             onDuplicateRowByIndex={onDuplicateRowByIndex}
             onOpenRowInspector={onOpenRowInspector}
             onColumnAutoFit={onColumnAutoFit}
-            selectedRangeCellCount={selectedRangeCellCount}
+            selectedRangeCellCount={effectiveSelectedRangeCellCount}
             onSetRangeValue={canAttemptInlineEdit ? onSetRangeValue : undefined}
             setColumnOrder={setColumnOrder}
             setColumnPinning={setColumnPinning}
@@ -271,6 +301,26 @@ export function DataGridOverlays(props: DataGridOverlaysProps) {
               onClose={onClosePasteDialog}
               onSubmit={onSubmitPasteDialog}
               onCancel={onCancelPasteImport}
+            />,
+            document.body,
+          )
+        : null}
+
+      {isInsertDialogOpen &&
+      onCloseInsertDialog &&
+      onSubmitInsertDialog &&
+      onInsertDraftChange &&
+      typeof document !== "undefined"
+        ? createPortal(
+            <InsertRowDialog
+              tableName={tableName}
+              columns={insertDialogColumns}
+              draft={insertDraft}
+              error={insertDialogError}
+              isSubmitting={isSubmittingInsert}
+              onClose={onCloseInsertDialog}
+              onSubmit={onSubmitInsertDialog}
+              onDraftChange={onInsertDraftChange}
             />,
             document.body,
           )

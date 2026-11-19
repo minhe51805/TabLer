@@ -132,7 +132,7 @@ fn check_object_file(data_dir: &Path, file: &str, issues: &mut Vec<StorageFileIs
 /// Probe every tracked storage file and report which ones fail to parse.
 /// Runs at frontend boot; a healthy report costs a handful of small reads.
 #[tauri::command]
-pub fn check_storage_health() -> Result<StorageHealthReport, String> {
+pub fn check_storage_health() -> Result<StorageHealthReport, crate::error::AppError> {
     let data_dir = crate::utils::paths::resolve_data_dir().map_err(|error| error.to_string())?;
     let mut issues = Vec::new();
 
@@ -204,14 +204,14 @@ pub fn check_storage_health() -> Result<StorageHealthReport, String> {
 /// clean re-initialization on next launch. Only file names the health check
 /// itself tracks may be reset — arbitrary paths are rejected.
 #[tauri::command]
-pub fn reset_corrupt_storage(files: Vec<String>) -> Result<Vec<String>, String> {
+pub fn reset_corrupt_storage(files: Vec<String>) -> Result<Vec<String>, crate::error::AppError> {
     let data_dir = crate::utils::paths::resolve_data_dir().map_err(|error| error.to_string())?;
     let timestamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
     let mut quarantined = Vec::new();
 
     for file in &files {
         if !is_tracked_file(file) {
-            return Err(format!("Refusing to reset untracked file '{file}'"));
+            return Err(format!("Refusing to reset untracked file '{file}'").into());
         }
     }
 

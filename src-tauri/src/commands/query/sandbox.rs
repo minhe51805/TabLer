@@ -3,9 +3,10 @@ use crate::database::mongodb_sql::{
     MONGO_DDL_SHELL_GUIDANCE, MONGO_DELETE_SHELL_GUIDANCE, MONGO_INSERT_SHELL_GUIDANCE,
     MONGO_SELECT_SHELL_GUIDANCE, MONGO_UPDATE_SHELL_GUIDANCE,
 };
+use crate::error::AppError;
 use crate::utils::sql::{
     classify_sql_with_dialect, detect_dangerous_capability, lint_engine_specific_functions,
-    SqlStatementKind,
+    split_sql_statements, SqlSafetyDecision, SqlStatementKind,
 };
 use sha2::{Digest, Sha256};
 use tokio::time::Duration;
@@ -13,6 +14,50 @@ use tokio::time::Duration;
 const MONGO_SELECT_SANDBOX_GUIDANCE: &str = "This sandbox accepts SQL only. HAVING is not supported — wrap the aggregation in an outer SELECT; use LIMIT/OFFSET for paging.";
 const MONGO_WRITE_SANDBOX_GUIDANCE: &str =
     "Use the data grid or the write-preview flow for changes.";
+
+/// Pre-parsed representation of a SQL batch so `execute_query` and
+/// `execute_sandboxed_query` split, classify, and fingerprint the batch once
+/// instead of re-parsing the same SQL string across 5–6 guard stages.
+pub(super) struct AnalyzedSqlBatch {
+    pub combined_sql: String,
+    pub statement_count: usize,
+    pub decision: SqlSafetyDecision,
+    pub fingerprint: String,
+}
+
+impl AnalyzedSqlBatch {
+    pub fn from_raw_sql(sql: &str, database_type: Option<DatabaseType>) -> Self {
+        let statement_count = split_sql_statements(sql).len();
+        let decision = classify_sql_with_dialect(sql, database_type);
+        let fingerprint = statement_fingerprint(sql);
+        Self {
+            combined_sql: sql.to_string(),
+            statement_count,
+            decision,
+            fingerprint,
+        }
+    }
+
+    pub fn from_statements(statements: &[String], database_type: Option<DatabaseType>) -> Self {
+        let combined_sql = statements.join(";\n");
+        let decision = classify_sql_with_dialect(&combined_sql, database_type);
+        let fingerprint = statement_fingerprint(&combined_sql);
+        Self {
+            combined_sql,
+            statement_count: statements.len(),
+            decision,
+            fingerprint,
+        }
+    }
+
+    pub fn default_timeout(&self) -> Duration {
+        if self.decision.read_only {
+            crate::config::read_only_query_timeout()
+        } else {
+            crate::config::mutating_query_timeout()
+        }
+    }
+}
 
 /// Rewrites the direct driver's shell advice so it cannot send a sandbox caller
 /// into syntax that the sandbox itself refuses.
@@ -95,15 +140,8 @@ pub(super) fn log_sandbox_denial(connection_id: &str, statements_count: usize, r
     );
 }
 
-/// Error-code prefix stamped on every sandbox validation rejection. The
-/// frontend's progressive-fallback path retries generic runtime failures on
-/// the unrestricted `execute_query` boundary; a `SANDBOX_DENIED:` error is a
-/// policy verdict, not a transient failure, so callers must NOT retry it on
-/// a weaker boundary.
-pub(super) const SANDBOX_DENIED_PREFIX: &str = "SANDBOX_DENIED:";
-
-fn sandbox_denied(message: impl Into<String>) -> String {
-    format!("{SANDBOX_DENIED_PREFIX} {}", message.into())
+fn sandbox_denied(message: impl Into<String>) -> AppError {
+    AppError::sandbox_denied(message)
 }
 
 /// Fail-closed capability guard: filesystem/network/OS-command SQL
@@ -113,8 +151,8 @@ fn sandbox_denied(message: impl Into<String>) -> String {
 /// Shared by the sandbox validator and the human query entry points.
 pub(super) fn reject_dangerous_capability(
     sql: &str,
-    database_type: Option<crate::database::models::DatabaseType>,
-) -> Result<(), String> {
+    database_type: Option<DatabaseType>,
+) -> Result<(), AppError> {
     if let Some(reason) = detect_dangerous_capability(sql, database_type) {
         return Err(sandbox_denied(format!(
             "Sandbox gateway blocks SQL that {reason}. This filesystem/network/OS capability is not allowed inside the sandbox."
@@ -125,8 +163,8 @@ pub(super) fn reject_dangerous_capability(
 
 pub(super) fn validate_sandbox_statement(
     statement: &str,
-    database_type: Option<crate::database::models::DatabaseType>,
-) -> Result<(), String> {
+    database_type: Option<DatabaseType>,
+) -> Result<(), AppError> {
     if database_type == Some(DatabaseType::MongoDB) && statement.trim_start().starts_with("db.") {
         return Err(sandbox_denied(
             "The MongoDB sandbox accepts SQL statements only. Run Mongo shell commands from the query editor outside the sandbox, or write SQL.",
@@ -150,9 +188,9 @@ pub(super) fn validate_sandbox_statement(
             "Sandbox gateway requires exactly one SQL statement per execution item.",
         ));
     }
-    let statement = &decision.statements[0];
+    let statement_decision = &decision.statements[0];
     if matches!(
-        statement.kind,
+        statement_decision.kind,
         SqlStatementKind::Session | SqlStatementKind::Transaction | SqlStatementKind::Unknown
     ) {
         return Err(sandbox_denied(
@@ -163,11 +201,35 @@ pub(super) fn validate_sandbox_statement(
     Ok(())
 }
 
+pub(super) fn validate_sandbox_batch_with_decision(
+    statements: &[String],
+    combined_decision: &SqlSafetyDecision,
+    require_read_only: bool,
+    database_type: Option<DatabaseType>,
+) -> Result<(), AppError> {
+    if statements.is_empty() {
+        return Err(sandbox_denied(
+            "Sandbox execution requires at least one SQL statement.",
+        ));
+    }
+    for statement in statements {
+        validate_sandbox_statement(statement, database_type)?;
+    }
+    if require_read_only
+        && (combined_decision.parse_error.is_some() || !combined_decision.read_only)
+    {
+        return Err(sandbox_denied(
+            "This execution boundary only permits read-only SQL.",
+        ));
+    }
+    Ok(())
+}
+
 pub(super) fn validate_sandbox_batch(
     statements: &[String],
     require_read_only: bool,
-    database_type: Option<crate::database::models::DatabaseType>,
-) -> Result<(), String> {
+    database_type: Option<DatabaseType>,
+) -> Result<(), AppError> {
     if statements.is_empty() {
         return Err(sandbox_denied(
             "Sandbox execution requires at least one SQL statement.",
@@ -187,9 +249,10 @@ pub(super) fn validate_sandbox_batch(
     }
     Ok(())
 }
+
 pub(super) fn timeout_for_statements<'a>(
     statements: impl Iterator<Item = &'a str>,
-    database_type: Option<crate::database::models::DatabaseType>,
+    database_type: Option<DatabaseType>,
 ) -> Duration {
     let sql = statements.collect::<Vec<_>>().join(";\n");
     if classify_sql_with_dialect(&sql, database_type).read_only {
@@ -203,11 +266,13 @@ pub(super) fn timeout_for_statements<'a>(
 mod tests {
     use super::{statement_fingerprint, validate_sandbox_statement};
     use crate::database::models::DatabaseType;
+    use crate::error::ErrorCode;
 
     #[test]
     fn sandbox_denies_mongo_shell_with_sql_only_guidance() {
         let error = validate_sandbox_statement("  db.users.find({})", Some(DatabaseType::MongoDB))
             .expect_err("Mongo shell syntax must stay outside the sandbox");
+        assert_eq!(error.code(), ErrorCode::SandboxDenied);
         assert!(error.contains("accepts SQL statements only"));
         assert!(error.contains("query editor outside the sandbox"));
     }
@@ -216,6 +281,7 @@ mod tests {
     fn sandbox_denies_mssql_now_with_getdate_guidance() {
         let error = validate_sandbox_statement("SELECT NOW()", Some(DatabaseType::MSSQL))
             .expect_err("MSSQL NOW() must be rejected");
+        assert_eq!(error.code(), ErrorCode::SandboxDenied);
         assert!(error.contains("GETDATE()"));
         assert!(validate_sandbox_statement("SELECT 'NOW()'", Some(DatabaseType::MSSQL)).is_ok());
     }

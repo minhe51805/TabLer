@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "../utils/tauri-invoke";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { useAppLayoutStore } from "../stores/appLayoutStore";
@@ -49,9 +49,11 @@ export function useDesktopWindow(options: UseDesktopWindowOptions) {
 
   const minimizeWindow = useCallback(() => {
     if (!isDesktopWindow) return;
-    void getCurrentWindow().minimize().catch((error) => {
-      console.error("Failed to minimize window", error);
-    });
+    void getCurrentWindow()
+      .minimize()
+      .catch((error) => {
+        console.error("Failed to minimize window", error);
+      });
   }, [isDesktopWindow]);
 
   const toggleMaximizeWindow = useCallback(() => {
@@ -69,9 +71,11 @@ export function useDesktopWindow(options: UseDesktopWindowOptions) {
 
   const closeWindow = useCallback(() => {
     if (!isDesktopWindow) return;
-    void getCurrentWindow().close().catch((error) => {
-      console.error("Failed to close window", error);
-    });
+    void getCurrentWindow()
+      .close()
+      .catch((error) => {
+        console.error("Failed to close window", error);
+      });
   }, [isDesktopWindow]);
 
   useEffect(() => {

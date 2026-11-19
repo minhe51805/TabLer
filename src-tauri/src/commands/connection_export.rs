@@ -254,14 +254,12 @@ fn persist_imported_connections(
 pub fn export_connections_to_file(
     connections: Vec<ConnectionConfig>,
     password: String,
-) -> Result<String, String> {
+) -> Result<String, crate::error::AppError> {
     if connections.is_empty() {
-        return Err("No connections selected for export.".to_string());
+        return Err("No connections selected for export.".to_string().into());
     }
     if password.len() < MIN_PASSWORD_LEN {
-        return Err(format!(
-            "Password must be at least {MIN_PASSWORD_LEN} characters."
-        ));
+        return Err(format!("Password must be at least {MIN_PASSWORD_LEN} characters.").into());
     }
 
     // Convert to exportable format (excludes password and internal IDs)
@@ -307,7 +305,7 @@ pub fn export_connections_to_file(
                 .map_err(|e| format!("Failed to write file: {}", e))?;
             Ok(file_path.to_string_lossy().to_string())
         }
-        None => Err("No file selected.".to_string()),
+        None => Err("No file selected.".to_string().into()),
     }
 }
 
@@ -323,7 +321,7 @@ pub fn import_connections_from_file(
     selected_indices: Option<Vec<usize>>,
     passwords: Option<HashMap<usize, String>>,
     conn_storage: State<'_, ConnectionStorage>,
-) -> Result<Vec<ExportableConnection>, String> {
+) -> Result<Vec<ExportableConnection>, crate::error::AppError> {
     let encrypted =
         std::fs::read_to_string(&file_path).map_err(|e| format!("Failed to read file: {}", e))?;
 
@@ -921,7 +919,7 @@ pub fn import_external_connections(
     selected_indices: Option<Vec<usize>>,
     passwords: Option<HashMap<usize, String>>,
     conn_storage: State<'_, ConnectionStorage>,
-) -> Result<ExternalImportResult, String> {
+) -> Result<ExternalImportResult, crate::error::AppError> {
     let content =
         std::fs::read_to_string(&file_path).map_err(|e| format!("Failed to read file: {e}"))?;
     let result = parse_external_file(&file_path, &content)?;

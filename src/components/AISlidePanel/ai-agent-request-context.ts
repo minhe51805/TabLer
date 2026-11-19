@@ -36,8 +36,8 @@ export function trimRemoteHistory(
 
   const charBudget = Math.max(0, tokenBudget) * CHARS_PER_TOKEN;
   const hasDigest =
-    typeof history[0]?.content === "string"
-    && history[0].content.startsWith(WORKSPACE_CONTEXT_MESSAGE_PREFIX);
+    typeof history[0]?.content === "string" &&
+    history[0].content.startsWith(WORKSPACE_CONTEXT_MESSAGE_PREFIX);
   const head = hasDigest ? history.slice(0, 2) : [];
   const tail = hasDigest ? history.slice(2) : history;
 
@@ -82,9 +82,7 @@ export interface AgentRequestContext {
  * agent flow: intent, workspace gating and history trimming. Extracted from
  * use-ai-slide-panel so the rules can be unit-tested without mocks.
  */
-export function resolveAgentRequestContext(
-  input: AgentRequestContextInput,
-): AgentRequestContext {
+export function resolveAgentRequestContext(input: AgentRequestContextInput): AgentRequestContext {
   const normalizedPrompt = input.prompt.trim();
   const requestIntentPrompt = input.userPrompt?.trim() || normalizedPrompt;
   const assistIntent = inferAssistIntent(requestIntentPrompt, input.interactionMode);
@@ -93,10 +91,8 @@ export function resolveAgentRequestContext(
   // In agent mode, as long as there is a live connection we let the agent reach
   // for workspace tools even when the intent looks general — that is what makes
   // it behave like a real autonomous agent instead of a plain chat reply.
-  const agentCanUseWorkspace =
-    requestedInteractionMode === "agent" && Boolean(input.connectionId);
-  const needsWorkspaceContext =
-    isWorkspaceScopedIntent(assistIntent) || agentCanUseWorkspace;
+  const agentCanUseWorkspace = requestedInteractionMode === "agent" && Boolean(input.connectionId);
+  const needsWorkspaceContext = isWorkspaceScopedIntent(assistIntent) || agentCanUseWorkspace;
   const modeUsesSchemaContext = aiModeUsesSchemaContext(requestedInteractionMode);
 
   const requestHistory =

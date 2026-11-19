@@ -20,7 +20,7 @@ const SAMPLE_CONNECTION_NAME: &str = "Sample (SQLite)";
 #[tauri::command]
 pub async fn create_sample_database(
     conn_storage: State<'_, ConnectionStorage>,
-) -> Result<ConnectionConfig, String> {
+) -> Result<ConnectionConfig, crate::error::AppError> {
     let file_path = resolve_data_dir()
         .map_err(|error| format!("Could not resolve the app data directory: {error}"))?
         .join(SAMPLE_DB_FILE);

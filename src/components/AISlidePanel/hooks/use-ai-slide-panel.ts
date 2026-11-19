@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
-import { useAIStore } from "../../../stores/aiStore";
+import { useAIStore, type AskAIOptions } from "../../../stores/aiStore";
 import { useConnectionStore } from "../../../stores/connectionStore";
 import { useQueryStore } from "../../../stores/queryStore";
 import {
@@ -23,6 +23,8 @@ import {
 import { type AIAgentToolName } from "../ai-agent-tools";
 import { type AssistIntent } from "../ai-agent-context";
 import { emitAppToast } from "../../../utils/app-toast";
+import { APP_EVENTS } from "../../../utils/app-events";
+import { EventCenter } from "../../../stores/event-center";
 import { useUIStore } from "../../../stores/uiStore";
 import { extractAgentUsageBreakdown, recordSessionModelUsage } from "../ai-agent-cost";
 import {
@@ -219,14 +221,16 @@ export function useAISlidePanel({
    */
   onGenerationCancelled?: () => void;
 }) {
-  const { askAIWithReasoning, cancelAIRequest, aiConfigs, requestPhase } = useAIStore(
-    useShallow((state) => ({
-      askAIWithReasoning: state.askAIWithReasoning,
-      cancelAIRequest: state.cancelAIRequest,
-      aiConfigs: state.aiConfigs,
-      requestPhase: state.requestPhase,
-    })),
-  );
+  const { askAIWithReasoning, askAIAgentTurn, cancelAIRequest, aiConfigs, requestPhase } =
+    useAIStore(
+      useShallow((state) => ({
+        askAIWithReasoning: state.askAIWithReasoning,
+        askAIAgentTurn: state.askAIAgentTurn,
+        cancelAIRequest: state.cancelAIRequest,
+        aiConfigs: state.aiConfigs,
+        requestPhase: state.requestPhase,
+      })),
+    );
   const {
     tables,
     fetchTables,
@@ -267,6 +271,14 @@ export function useAISlidePanel({
   );
 
   const [isGenerating, setIsGenerating] = useState(false);
+  const isGeneratingRef = useRef(false);
+  const updateIsGenerating = useCallback((next: boolean) => {
+    isGeneratingRef.current = next;
+    setIsGenerating(next);
+  }, []);
+  const onGenerationCancelledRef = useRef(onGenerationCancelled);
+  onGenerationCancelledRef.current = onGenerationCancelled;
+  const wasOpenRef = useRef(isOpen);
   const [error, setError] = useState<string | null>(null);
   const { isRunning, runSql } = useAISqlRunner({
     connectionId,
@@ -342,11 +354,7 @@ export function useAISlidePanel({
       intent: AIRequestIntent = "sql",
       history: AIConversationMessage[] = [],
       attachments?: AIRequestAttachment[],
-      options?: {
-        correlationId?: string;
-        unattendedReadOnly?: boolean;
-        preferredModel?: string;
-      },
+      options?: AskAIOptions,
     ): Promise<string> => {
       // Captured before the await: a reply landing after this run was
       // superseded must not overwrite the live run's reasoning/model refs or
@@ -395,15 +403,14 @@ export function useAISlidePanel({
   }, [connectionId, currentDatabase]);
 
   useEffect(() => {
-    const handleTableDataUpdated = (event: Event) => {
-      const detail = (
-        event as CustomEvent<{
-          connectionId?: string;
-          database?: string;
-          invalidateStructure?: boolean;
-        }>
-      ).detail;
-
+    const handleTableDataUpdated = (
+      event: CustomEvent<{
+        connectionId: string;
+        database?: string;
+        invalidateStructure?: boolean;
+      }>,
+    ) => {
+      const detail = event.detail;
       if (!detail?.invalidateStructure) return;
       if (detail.connectionId !== connectionId) return;
 
@@ -414,26 +421,8 @@ export function useAISlidePanel({
       aiSchemaCodecCacheRef.current.clear();
     };
 
-    window.addEventListener("table-data-updated", handleTableDataUpdated);
-    return () => window.removeEventListener("table-data-updated", handleTableDataUpdated);
+    return EventCenter.on(APP_EVENTS.tableDataUpdated, handleTableDataUpdated);
   }, [connectionId, currentDatabase]);
-
-  useEffect(() => {
-    if (isOpen) {
-      setError(null);
-    } else {
-      // Closing the panel must also stop the backend stream; bumping the
-      // request id alone only silences the result, the provider keeps
-      // generating until it finishes on its own. Pending module-level
-      // consents are denied too — a dialog nobody can see must not hold a
-      // run (or a runSql call) open forever.
-      requestIdRef.current += 1;
-      void cancelAIRequest();
-      denyPendingAIFailoverConsent();
-      denyPendingAISqlConfirmation();
-      denyPendingAICheckpointPick();
-    }
-  }, [isOpen, cancelAIRequest]);
 
   const cancelGeneration = useCallback(() => {
     // Settle every consent a stopped run could be waiting on: an unresolved
@@ -442,13 +431,26 @@ export function useAISlidePanel({
     denyPendingAIFailoverConsent();
     denyPendingAISqlConfirmation();
     denyPendingAICheckpointPick();
-    onGenerationCancelled?.();
-    if (!isGenerating) return;
+    onGenerationCancelledRef.current?.();
+    if (!isGeneratingRef.current) return;
     requestIdRef.current += 1;
-    setIsGenerating(false);
+    updateIsGenerating(false);
     setError(null);
     void cancelAIRequest();
-  }, [cancelAIRequest, isGenerating, onGenerationCancelled]);
+  }, [cancelAIRequest, updateIsGenerating]);
+
+  useEffect(() => {
+    const wasOpen = wasOpenRef.current;
+    wasOpenRef.current = isOpen;
+    if (isOpen) {
+      setError(null);
+    } else if (wasOpen) {
+      // Closing the panel (including parent `isOpen=false` without clicking X)
+      // must stop the stream, clear pendingQueue, reset generating state, and
+      // deny pending consents so nothing leaks or drains while closed.
+      cancelGeneration();
+    }
+  }, [isOpen, cancelGeneration]);
 
   const generateAssist = useCallback(
     async (
@@ -461,6 +463,7 @@ export function useAISlidePanel({
           activeDbType,
           activeProvider,
           askAI,
+          askAIAgentTurn,
           cancelAIRequest,
           connectionId,
           currentDatabase,
@@ -476,7 +479,7 @@ export function useAISlidePanel({
           previewWriteTransaction,
           restoreCheckpoint,
           setError,
-          setIsGenerating,
+          setIsGenerating: updateIsGenerating,
           requestIdRef,
           lastReasoningRef,
           lastModelUsedRef,
@@ -490,6 +493,7 @@ export function useAISlidePanel({
       activeDbType,
       activeProvider,
       askAI,
+      askAIAgentTurn,
       cancelAIRequest,
       connectionId,
       currentDatabase,
@@ -504,6 +508,7 @@ export function useAISlidePanel({
       listCheckpoints,
       previewWriteTransaction,
       restoreCheckpoint,
+      updateIsGenerating,
     ],
   );
 
@@ -547,7 +552,7 @@ export function useAISlidePanel({
       setError(message);
       return false;
     }
-    window.dispatchEvent(new CustomEvent("insert-sql-from-ai", { detail: { sql } }));
+    EventCenter.emit(APP_EVENTS.insertSqlFromAI, { sql });
     return true;
   }, []);
 

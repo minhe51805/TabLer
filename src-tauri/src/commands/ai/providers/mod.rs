@@ -8,8 +8,10 @@ use super::endpoints::{
 
 mod history;
 mod models;
+mod wire;
 pub(crate) use history::*;
 pub(crate) use models::*;
+pub(crate) use wire::*;
 
 pub(crate) fn streaming_request_body_with_thinking(
     config: &AIProviderConfig,
@@ -37,9 +39,9 @@ pub(crate) fn streaming_request_body_with_thinking(
         if matches!(
             config.provider_type,
             AIProviderType::OpenAI | AIProviderType::OpenRouter | AIProviderType::Custom
-        ) && !matches!(
+        ) && matches!(
             resolve_provider_body_shape(config, endpoint),
-            ProviderBodyShape::Anthropic
+            ProviderBodyShape::OpenAiLike
         ) {
             object.insert(
                 "stream_options".to_string(),
@@ -103,7 +105,7 @@ pub(crate) fn streaming_endpoint(config: &AIProviderConfig, endpoint: &str) -> S
     }
 }
 
-fn default_max_output_tokens(mode: &AIRequestMode) -> u32 {
+pub(super) fn default_max_output_tokens(mode: &AIRequestMode) -> u32 {
     // Values centralized in `crate::config` (tech-debt audit D10). Panel needs
     // room to close the JSON action object plus a markdown explanation.
     match mode {
@@ -157,15 +159,19 @@ pub(crate) fn model_thinking_unsupported(model: &str) -> bool {
 /// is safe.
 pub(crate) fn is_thinking_param_rejection(body_text: &str) -> bool {
     let text = body_text.to_ascii_lowercase();
-    const THINKING_PARAMS: [&str; 6] = [
+    let normalized = text.replace("\\\"", "\"");
+    const THINKING_PARAMS: [&str; 7] = [
         "enable_thinking",
         "chat_template_kwargs",
         "thinkingconfig",
         "includethoughts",
         "budget_tokens",
         "\"thinking\"",
+        "reasoning_effort",
     ];
-    THINKING_PARAMS.iter().any(|needle| text.contains(needle))
+    THINKING_PARAMS
+        .iter()
+        .any(|needle| normalized.contains(needle))
 }
 
 /// OpenAI-compatible models that emit chain-of-thought via the chat-template

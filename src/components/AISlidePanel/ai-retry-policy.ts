@@ -33,6 +33,16 @@ export const DEFAULT_AGENT_RETRY_POLICY: AgentRetryPolicy = {
   retryableCodes: ["timeout", "provider"],
 };
 
+/** Info surfaced to the caller before one in-line retry wait starts. */
+export interface AgentRetryWaitInfo {
+  delayMs: number;
+  reason: "rate-limit" | "transient";
+  retryAfterMs?: number;
+  /** 1-based retry attempt about to run. */
+  retry: number;
+  maxRetries: number;
+}
+
 export interface ComputeRetryDelayInput {
   /** 1-based attempt number that just failed (1 = first failure). */
   retry: number;

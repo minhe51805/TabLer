@@ -12,10 +12,13 @@ pub struct CreatedMcpToken {
 }
 
 #[tauri::command]
-pub fn list_mcp_tokens(mcp_storage: State<'_, McpStorage>) -> Result<Vec<McpTokenSummary>, String> {
+pub fn list_mcp_tokens(
+    mcp_storage: State<'_, McpStorage>,
+) -> Result<Vec<McpTokenSummary>, crate::error::AppError> {
     mcp_storage
         .list_token_summaries()
         .map_err(|error| error.to_string())
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -25,7 +28,7 @@ pub fn create_mcp_token(
     connection_allowlist: Option<Vec<String>>,
     expires_at: Option<String>,
     mcp_storage: State<'_, McpStorage>,
-) -> Result<CreatedMcpToken, String> {
+) -> Result<CreatedMcpToken, crate::error::AppError> {
     let (grant, token) = mcp_storage
         .create_token(name, permission, connection_allowlist, expires_at)
         .map_err(|error| error.to_string())?;
@@ -39,31 +42,34 @@ pub fn create_mcp_token(
 pub fn revoke_mcp_token(
     token_id: String,
     mcp_storage: State<'_, McpStorage>,
-) -> Result<(), String> {
+) -> Result<(), crate::error::AppError> {
     mcp_storage
         .revoke_token(&token_id)
         .map_err(|error| error.to_string())
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
 pub fn get_mcp_audit_events(
     limit: Option<usize>,
     mcp_storage: State<'_, McpStorage>,
-) -> Result<Vec<McpAuditEvent>, String> {
+) -> Result<Vec<McpAuditEvent>, crate::error::AppError> {
     mcp_storage
         .list_audit(limit.unwrap_or(100))
         .map_err(|error| error.to_string())
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
 pub fn get_mcp_connection_policy(
     connection_id: String,
     connection_storage: State<'_, ConnectionStorage>,
-) -> Result<ExternalAccessPolicy, String> {
+) -> Result<ExternalAccessPolicy, crate::error::AppError> {
     connection_storage
         .load_connection_by_id(&connection_id)
         .map(|connection| connection.external_access_policy())
         .map_err(|error| error.to_string())
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -71,7 +77,7 @@ pub fn set_mcp_connection_policy(
     connection_id: String,
     policy: ExternalAccessPolicy,
     connection_storage: State<'_, ConnectionStorage>,
-) -> Result<(), String> {
+) -> Result<(), crate::error::AppError> {
     let mut connection = connection_storage
         .load_connection_by_id(&connection_id)
         .map_err(|error| error.to_string())?;
@@ -79,6 +85,7 @@ pub fn set_mcp_connection_policy(
     connection_storage
         .save_connection(&connection)
         .map_err(|error| error.to_string())
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -86,7 +93,7 @@ pub async fn start_mcp_local_server(
     server: State<'_, McpLocalServer>,
     connection_storage: State<'_, ConnectionStorage>,
     mcp_storage: State<'_, McpStorage>,
-) -> Result<McpLocalServerStatus, String> {
+) -> Result<McpLocalServerStatus, crate::error::AppError> {
     server
         .start(
             connection_storage.inner().clone(),
@@ -94,21 +101,26 @@ pub async fn start_mcp_local_server(
         )
         .await
         .map_err(|error| error.to_string())
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
 pub fn stop_mcp_local_server(
     server: State<'_, McpLocalServer>,
-) -> Result<McpLocalServerStatus, String> {
-    server.stop().map_err(|error| error.to_string())
+) -> Result<McpLocalServerStatus, crate::error::AppError> {
+    server
+        .stop()
+        .map_err(|error| error.to_string())
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
 pub fn get_mcp_local_server_status(
     server: State<'_, McpLocalServer>,
-) -> Result<McpLocalServerStatus, String> {
+) -> Result<McpLocalServerStatus, crate::error::AppError> {
     server
         .current_status()
         .map_err(|error| error.to_string())
         .map(|status| status.unwrap_or_else(disabled_status))
+        .map_err(crate::error::AppError::from)
 }

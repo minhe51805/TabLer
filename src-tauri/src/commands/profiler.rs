@@ -267,12 +267,12 @@ pub fn profiler_probe_for_database_type(db_type: DatabaseType) -> Result<Profile
 pub async fn get_profiler_probe(
     connection_id: String,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<ProfilerProbe, String> {
+) -> Result<ProfilerProbe, crate::error::AppError> {
     let db_type = db_manager
         .connection_database_type(&connection_id)
         .await
         .map_err(|error| error.to_string())?;
-    profiler_probe_for_database_type(db_type)
+    profiler_probe_for_database_type(db_type).map_err(crate::error::AppError::from)
 }
 
 /// A read-only probe that reads an engine's statement store to rank the most
@@ -366,12 +366,12 @@ pub fn top_queries_probe_for_database_type(
 pub async fn get_top_queries_probe(
     connection_id: String,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<TopQueriesProbe, String> {
+) -> Result<TopQueriesProbe, crate::error::AppError> {
     let db_type = db_manager
         .connection_database_type(&connection_id)
         .await
         .map_err(|error| error.to_string())?;
-    top_queries_probe_for_database_type(db_type)
+    top_queries_probe_for_database_type(db_type).map_err(crate::error::AppError::from)
 }
 
 /// Sample a non-SQL engine's profiler natively (currently MongoDB).
@@ -387,7 +387,7 @@ pub async fn execute_profiler_sample(
     connection_id: String,
     kind: String,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<QueryResult, String> {
+) -> Result<QueryResult, crate::error::AppError> {
     let driver = db_manager
         .get_driver(&connection_id)
         .await
@@ -395,12 +395,14 @@ pub async fn execute_profiler_sample(
     let result = match kind.as_str() {
         "live" => driver.profiler_live_sample().await,
         "top" => driver.profiler_top_sample().await,
-        other => return Err(format!("Unknown profiler sample kind: {other}")),
+        other => return Err(format!("Unknown profiler sample kind: {other}").into()),
     };
     // Surface the full anyhow chain (`{:#}`), not just the outermost context,
     // so the UI shows MongoDB's real cause (e.g. "not authorized ... [inprog]")
     // instead of only the generic "Failed to sample ... via $currentOp" wrapper.
-    result.map_err(|error| format!("{error:#}"))
+    result
+        .map_err(|error| format!("{error:#}"))
+        .map_err(crate::error::AppError::from)
 }
 
 #[cfg(test)]

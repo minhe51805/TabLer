@@ -49,16 +49,18 @@ pub async fn list_tables_in(
     connection_id: String,
     database: String,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<Vec<String>, String> {
+) -> Result<Vec<String>, crate::error::AppError> {
     let database_type = db_manager
         .connection_database_type(&connection_id)
         .await
         .map_err(|error| error.to_string())?;
     if database_type != DatabaseType::MSSQL {
-        return Err("Cross-database listing is only available for SQL Server.".to_string());
+        return Err("Cross-database listing is only available for SQL Server."
+            .to_string()
+            .into());
     }
     if !is_safe_metadata_identifier(&database) {
-        return Err("Invalid database name.".to_string());
+        return Err("Invalid database name.".to_string().into());
     }
     let driver = db_manager
         .get_driver(&connection_id)
@@ -193,7 +195,7 @@ pub async fn search_schema(
     keyword: String,
     limit: Option<usize>,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<Vec<SchemaSearchMatch>, String> {
+) -> Result<Vec<SchemaSearchMatch>, crate::error::AppError> {
     let needle = keyword.trim().to_lowercase();
     if needle.is_empty() {
         return Ok(Vec::new());
@@ -316,10 +318,12 @@ pub async fn search_table_data_multi(
     limit: Option<u64>,
     database: Option<String>,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<Vec<MultiTableDataMatch>, String> {
+) -> Result<Vec<MultiTableDataMatch>, crate::error::AppError> {
     let needle = keyword.trim().to_string();
     if needle.is_empty() {
-        return Err("Global data search requires a non-empty keyword.".to_string());
+        return Err("Global data search requires a non-empty keyword."
+            .to_string()
+            .into());
     }
     let per_table_limit = limit.unwrap_or(DEFAULT_DATA_MATCHES).min(MAX_DATA_MATCHES);
     let total_cap = 200u64;
@@ -516,10 +520,12 @@ pub async fn search_table_data(
     keyword: String,
     limit: Option<u64>,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<crate::database::models::QueryResult, String> {
+) -> Result<crate::database::models::QueryResult, crate::error::AppError> {
     let needle = keyword.trim();
     if needle.is_empty() {
-        return Err("Global data search requires a non-empty keyword.".to_string());
+        return Err("Global data search requires a non-empty keyword."
+            .to_string()
+            .into());
     }
     let row_limit = limit.unwrap_or(DEFAULT_DATA_MATCHES).min(MAX_DATA_MATCHES);
 
@@ -589,6 +595,7 @@ pub async fn search_table_data(
         .execute_parameterized_query(&compiled.sql, &compiled.parameters)
         .await
         .map_err(|error| error.to_string())
+        .map_err(crate::error::AppError::from)
 }
 
 #[cfg(test)]

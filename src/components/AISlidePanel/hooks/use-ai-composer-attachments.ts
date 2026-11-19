@@ -3,8 +3,8 @@ import type { getAIWorkspaceCopy } from "../ai-workspace-copy";
 import {
   MAX_IMAGES_PER_TURN,
   processFilesIntoAttachmentDrafts,
-  type AIAttachmentDraft,
 } from "../../../utils/ai-attachments";
+import { useAIPanelStore } from "../store/aiPanelStore";
 
 interface ComposerProvider {
   model?: string;
@@ -14,26 +14,21 @@ interface ComposerProvider {
 interface UseAIComposerAttachmentsOptions {
   activeProvider: ComposerProvider | null | undefined;
   aiCopy: ReturnType<typeof getAIWorkspaceCopy>;
-  composerAttachments: AIAttachmentDraft[];
-  setComposerAttachments: (updater: (current: AIAttachmentDraft[]) => AIAttachmentDraft[]) => void;
   setError: (message: string | null) => void;
 }
 
 /**
- * Composer attachment intake: files become drafts with dedupe by
- * kind/name/size, a hard cap on images per turn, and a one-time-per-model
+ * Composer attachment intake: files become drafts in `useAIPanelStore` with
+ * dedupe by kind/name/size, a hard cap on images per turn, and a one-time-per-model
  * warning when the active model does not advertise image input.
  */
 export function useAIComposerAttachments({
   activeProvider,
   aiCopy,
-  composerAttachments,
-  setComposerAttachments,
   setError,
 }: UseAIComposerAttachmentsOptions) {
-  // The active model advertises image input via per-model `input_types` in the
-  // settings modal. When it does not, images are still attached but the user
-  // gets a one-time warning that the model may not support them.
+  const setComposerAttachments = useAIPanelStore((state) => state.setComposerAttachments);
+
   const canAttachImages = Boolean(
     activeProvider?.model &&
     activeProvider?.model_settings?.[activeProvider.model]?.input_types?.includes("image"),
@@ -45,7 +40,9 @@ export function useAIComposerAttachments({
       const drafts = await processFilesIntoAttachmentDrafts(files);
       if (drafts.length === 0) return;
       const incomingImages = drafts.filter((draft) => draft.kind === "image").length;
-      const existingImages = composerAttachments.filter((draft) => draft.kind === "image").length;
+      const existingImages = useAIPanelStore
+        .getState()
+        .composerAttachments.filter((draft) => draft.kind === "image").length;
       const imageOverflow = incomingImages + existingImages > MAX_IMAGES_PER_TURN;
       setComposerAttachments((current) => {
         const existing = new Set(
@@ -71,7 +68,6 @@ export function useAIComposerAttachments({
         incomingImages > 0 &&
         imageWarningModelRef.current !== (activeProvider?.model ?? "")
       ) {
-        // Warn once per active model: the request still carries the images.
         imageWarningModelRef.current = activeProvider?.model ?? "";
         setError(aiCopy.attachments.imageMaybeUnsupported);
       }
@@ -81,7 +77,6 @@ export function useAIComposerAttachments({
       aiCopy.attachments.imageLimit,
       aiCopy.attachments.imageMaybeUnsupported,
       canAttachImages,
-      composerAttachments,
       setComposerAttachments,
       setError,
     ],

@@ -115,7 +115,10 @@ fn handle_event_batch(app: &AppHandle, events: Vec<notify::Result<Event>>) {
 }
 
 #[tauri::command]
-pub fn add_linked_folder(path: String, state: State<'_, LinkedFoldersState>) -> Result<(), String> {
+pub fn add_linked_folder(
+    path: String,
+    state: State<'_, LinkedFoldersState>,
+) -> Result<(), crate::error::AppError> {
     let folders = match state.folders.lock() {
         Ok(g) => g,
         Err(poisoned) => poisoned.into_inner(),
@@ -129,7 +132,7 @@ pub fn add_linked_folder(path: String, state: State<'_, LinkedFoldersState>) -> 
         if let Some(watcher) = watcher_guard.as_mut() {
             if let Err(e) = watcher.watch(Path::new(&path), RecursiveMode::Recursive) {
                 folders.remove(&path);
-                return Err(e.to_string());
+                return Err(e.to_string().into());
             }
         }
     }
@@ -140,7 +143,7 @@ pub fn add_linked_folder(path: String, state: State<'_, LinkedFoldersState>) -> 
 pub fn remove_linked_folder(
     path: String,
     state: State<'_, LinkedFoldersState>,
-) -> Result<(), String> {
+) -> Result<(), crate::error::AppError> {
     let folders = match state.folders.lock() {
         Ok(g) => g,
         Err(poisoned) => poisoned.into_inner(),
@@ -159,7 +162,9 @@ pub fn remove_linked_folder(
 }
 
 #[tauri::command]
-pub fn get_linked_folders(state: State<'_, LinkedFoldersState>) -> Result<Vec<String>, String> {
+pub fn get_linked_folders(
+    state: State<'_, LinkedFoldersState>,
+) -> Result<Vec<String>, crate::error::AppError> {
     let folders = state.folders.lock().map_err(|e| e.to_string())?;
     Ok(folders.iter().cloned().collect())
 }
@@ -173,7 +178,9 @@ pub struct LinkedFileInfo {
 }
 
 #[tauri::command]
-pub fn scan_linked_folder(folder_path: String) -> Result<Vec<LinkedFileInfo>, String> {
+pub fn scan_linked_folder(
+    folder_path: String,
+) -> Result<Vec<LinkedFileInfo>, crate::error::AppError> {
     let mut files = Vec::new();
     if let Ok(entries) = std::fs::read_dir(&folder_path) {
         for entry in entries.flatten() {
@@ -209,6 +216,8 @@ pub fn scan_linked_folder(folder_path: String) -> Result<Vec<LinkedFileInfo>, St
 }
 
 #[tauri::command]
-pub fn read_linked_file(file_path: String) -> Result<String, String> {
-    std::fs::read_to_string(file_path).map_err(|e| e.to_string())
+pub fn read_linked_file(file_path: String) -> Result<String, crate::error::AppError> {
+    std::fs::read_to_string(file_path)
+        .map_err(|e| e.to_string())
+        .map_err(crate::error::AppError::from)
 }

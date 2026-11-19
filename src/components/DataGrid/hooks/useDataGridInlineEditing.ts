@@ -29,7 +29,8 @@ interface DataGridInlineEditingParams {
   resolvedColumns: ResolvedColumn[];
   primaryKeyColumns: ResolvedColumn[];
   structureStatus: "idle" | "loading" | "ready" | "failed";
-  editingCell: EditingCell | null;
+  editingCell?: EditingCell | null;
+  getEditingCell?: () => EditingCell | null;
 
   setEditingCell: Dispatch<SetStateAction<EditingCell | null>>;
   setEditingSeedValue: Dispatch<SetStateAction<string>>;
@@ -67,6 +68,7 @@ export function useDataGridInlineEditing({
   primaryKeyColumns,
   structureStatus,
   editingCell,
+  getEditingCell,
 
   setEditingCell,
   setEditingSeedValue,
@@ -165,7 +167,8 @@ export function useDataGridInlineEditing({
   }, [editingDraftRef, editingTouchedRef, setEditingCell, setEditingSeedValue]);
   const commitEditingCell = useCallback(
     async (committed?: GridCellValue, cellOverride?: EditingCell) => {
-      const targetCell = cellOverride ?? editingCell;
+      const targetCell =
+        cellOverride ?? (getEditingCell ? getEditingCell() : (editingCell ?? null));
       if (!targetCell || !data || !tableName) return;
 
       const targetColumn = resolvedColumns[targetCell.col];
@@ -276,6 +279,7 @@ export function useDataGridInlineEditing({
       data,
       database,
       editingCell,
+      getEditingCell,
       editingDraftRef,
       editingTouchedRef,
       patchLoadedTableCell,

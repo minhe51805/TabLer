@@ -84,7 +84,7 @@ fn read_sanitized_logs() -> Result<Vec<Value>, String> {
 #[tauri::command]
 pub fn preview_diagnostic_bundle(
     reviews: State<'_, DiagnosticReviewState>,
-) -> Result<DiagnosticPreview, String> {
+) -> Result<DiagnosticPreview, crate::error::AppError> {
     let logs = read_sanitized_logs()?;
     let estimated_bytes = serde_json::to_vec(&logs)
         .map_err(|error| error.to_string())?
@@ -111,7 +111,7 @@ pub fn preview_diagnostic_bundle(
 pub fn export_diagnostic_bundle(
     review_id: String,
     reviews: State<'_, DiagnosticReviewState>,
-) -> Result<Option<String>, String> {
+) -> Result<Option<String>, crate::error::AppError> {
     let now = Utc::now();
     reviews.consume(&review_id, now)?;
     let Some(path) = FileDialog::new()

@@ -4,6 +4,8 @@ import { describe, expect, it } from "vitest";
 // `types: ["vitest/globals"]` tsconfig.
 import configRs from "../../src-tauri/src/config.rs?raw";
 import {
+  AI_MAX_AGENT_TURNS,
+  AI_MAX_AGENT_TURNS_CHARS,
   AI_MAX_CONTEXT_CHARS,
   AI_MAX_HISTORY_CHARS,
   AI_MAX_HISTORY_MESSAGES,
@@ -34,6 +36,8 @@ describe("frontend AI limits mirror the Rust backend (D1)", () => {
     ["AI_MAX_HISTORY_MESSAGES", AI_MAX_HISTORY_MESSAGES],
     ["AI_MAX_HISTORY_CHARS", AI_MAX_HISTORY_CHARS],
     ["AI_MAX_TOOLS_CHARS", AI_MAX_TOOLS_CHARS],
+    ["AI_MAX_AGENT_TURNS", AI_MAX_AGENT_TURNS],
+    ["AI_MAX_AGENT_TURNS_CHARS", AI_MAX_AGENT_TURNS_CHARS],
   ];
 
   for (const [name, frontendValue] of cases) {

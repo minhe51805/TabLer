@@ -5,6 +5,8 @@ import { changeMatchesScope, changeScopeKey } from "../../../stores/change-track
 import { getCurrentAppLanguage } from "../../../i18n";
 import { getDataGridCopy } from "../datagrid-copy";
 import type { GridCellValue, ResolvedColumn } from "./useDataGrid";
+import { EventCenter } from "../../../stores/event-center";
+import { APP_EVENTS } from "../../../utils/app-events";
 
 interface DataGridStagedChangesParams {
   stagedChanges: StagedChange[];
@@ -198,11 +200,12 @@ export function useDataGridStagedChanges({
       setStagedRowIndices(new Set());
 
       invalidateTableCaches(connectionId, tableName ?? "", database);
-      window.dispatchEvent(
-        new CustomEvent("table-data-updated", {
-          detail: { connectionId, database, tableName, sourceId: dataGridInstanceIdRef.current },
-        }),
-      );
+      EventCenter.emit(APP_EVENTS.tableDataUpdated, {
+        connectionId,
+        database,
+        tableName,
+        sourceId: dataGridInstanceIdRef.current,
+      });
       await refreshTableFromStart();
     } catch (errorValue) {
       const message = errorValue instanceof Error ? errorValue.message : String(errorValue);

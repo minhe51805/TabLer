@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "../utils/tauri-invoke";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { Download, Loader2, RefreshCw, CheckCircle2, AlertCircle } from "lucide-react";
 import { useI18n } from "../i18n";

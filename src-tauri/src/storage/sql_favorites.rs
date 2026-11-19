@@ -95,7 +95,7 @@ impl SqlFavoritesStorage {
 // ─── Tauri Commands ──────────────────────────────────────────────────────────
 
 #[tauri::command]
-pub fn get_sql_favorites() -> Result<Vec<SqlFavorite>, String> {
+pub fn get_sql_favorites() -> Result<Vec<SqlFavorite>, crate::error::AppError> {
     let storage = SqlFavoritesStorage::new()?;
     Ok(storage.get_all())
 }
@@ -109,23 +109,25 @@ pub fn save_sql_favorite(
     tags: Option<Vec<String>>,
     connection_id: Option<String>,
     database: Option<String>,
-) -> Result<SqlFavorite, String> {
+) -> Result<SqlFavorite, crate::error::AppError> {
     let mut storage = SqlFavoritesStorage::new()?;
-    storage.save(SqlFavorite {
-        id: id.unwrap_or_default(),
-        name,
-        description,
-        sql,
-        tags: tags.unwrap_or_default(),
-        connection_id,
-        database,
-        created_at: String::new(),
-        updated_at: String::new(),
-    })
+    storage
+        .save(SqlFavorite {
+            id: id.unwrap_or_default(),
+            name,
+            description,
+            sql,
+            tags: tags.unwrap_or_default(),
+            connection_id,
+            database,
+            created_at: String::new(),
+            updated_at: String::new(),
+        })
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
-pub fn delete_sql_favorite(id: String) -> Result<(), String> {
+pub fn delete_sql_favorite(id: String) -> Result<(), crate::error::AppError> {
     let mut storage = SqlFavoritesStorage::new()?;
-    storage.delete(&id)
+    storage.delete(&id).map_err(crate::error::AppError::from)
 }

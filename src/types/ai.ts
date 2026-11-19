@@ -93,6 +93,60 @@ export interface AIConversationMessage {
   content: string;
 }
 
+/** Provider-agnostic tool definition translated per-dialect in Rust. */
+export interface CanonicalToolSpec {
+  name: string;
+  description: string;
+  parameters: unknown;
+}
+
+/** Provider-agnostic tool invocation returned in AIResponse and replayed in CanonicalAgentTurn. */
+export interface CanonicalToolCall {
+  id: string;
+  name: string;
+  arguments: Record<string, unknown>;
+}
+
+/** Normalized token usage breakdown returned by Rust on AIResponse and stream usage events. */
+export interface AIUsageStats {
+  input_tokens?: number;
+  output_tokens?: number;
+  total_tokens?: number;
+  cache_read_input_tokens?: number;
+  cache_creation_input_tokens?: number;
+}
+
+/** Provider-agnostic multi-turn agent step replayed after the initial prompt. */
+export type CanonicalAgentTurn =
+  | {
+      role: "user";
+      content: string;
+    }
+  | {
+      role: "assistant";
+      text?: string;
+      reasoning?: string | null;
+      thought_signature?: string | null;
+      tool_calls?: CanonicalToolCall[];
+    }
+  | {
+      role: "tool_result";
+      call_id: string;
+      tool_name: string;
+      content: string;
+      is_error?: boolean;
+    };
+
+/** Unified response returned by both `ask_ai` and `ask_ai_stream`. */
+export interface AIResponse {
+  text: string;
+  reasoning?: string;
+  tool_calls?: CanonicalToolCall[];
+  thought_signature?: string;
+  usage?: AIUsageStats;
+  error?: string | null;
+}
+
 /** A user attachment riding the current request (matches Rust AIRequestAttachment). */
 export interface AIRequestAttachment {
   kind: "image" | "text";
@@ -104,6 +158,8 @@ export interface AIRequestAttachment {
 
 export interface AIRequest {
   request_id?: string;
+  provider_id?: string | null;
+  model?: string | null;
   prompt: string;
   context: string;
   mode: AIRequestMode;
@@ -112,6 +168,15 @@ export interface AIRequest {
   history?: AIConversationMessage[];
   /** Current-turn image attachments; text files are inlined into `prompt`. */
   attachments?: AIRequestAttachment[];
+  /** Provider-agnostic tool catalog translated per wire dialect in Rust. */
+  canonical_tools?: CanonicalToolSpec[];
+  /** Enables Anthropic's native `memory_20250818` tool when targeting Claude. */
+  allow_native_memory_tool?: boolean;
+  /** Multi-turn assistant/tool_result steps within the active agent run. */
+  agent_turns?: CanonicalAgentTurn[];
+  /** Legacy provider-shaped tools payload (retained for backward compatibility). */
+  tools?: unknown;
+  tool_choice?: unknown;
   /** Panel "Thinking" toggle. `false` forces reasoning off across every
    *  provider (no thinking tokens); `true`/omitted keeps the capability-gated
    *  default so only models that support reasoning actually emit it. */

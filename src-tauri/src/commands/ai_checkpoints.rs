@@ -350,8 +350,10 @@ pub async fn create_database_checkpoint(
     db_type: DatabaseType,
     label: Option<String>,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<DatabaseCheckpoint, String> {
-    snapshot_database(&connection_id, database, db_type, label, &db_manager).await
+) -> Result<DatabaseCheckpoint, crate::error::AppError> {
+    snapshot_database(&connection_id, database, db_type, label, &db_manager)
+        .await
+        .map_err(crate::error::AppError::from)
 }
 
 /// Shared snapshot core: dump schema + data and persist it (with a meta
@@ -533,7 +535,9 @@ async fn capture_pre_restore_safety_snapshot(
 /// `/rollback` step 1: list the checkpoints stored for this connection,
 /// newest first.
 #[tauri::command]
-pub fn list_database_checkpoints(connection_id: String) -> Result<Vec<DatabaseCheckpoint>, String> {
+pub fn list_database_checkpoints(
+    connection_id: String,
+) -> Result<Vec<DatabaseCheckpoint>, crate::error::AppError> {
     let dir = checkpoint_dir(&connection_id)?;
     if !dir.exists() {
         return Ok(Vec::new());
@@ -788,7 +792,7 @@ pub fn preview_database_checkpoint_restore(
     connection_id: String,
     file_name: String,
     db_type: DatabaseType,
-) -> Result<CheckpointRestorePreview, String> {
+) -> Result<CheckpointRestorePreview, crate::error::AppError> {
     let dir = checkpoint_dir(&connection_id)?;
     let (checkpoint_path, _) = checkpoint_paths(&dir, &file_name)?;
     let body = read_checkpoint_body(&connection_id, &checkpoint_path)?;
@@ -796,7 +800,7 @@ pub fn preview_database_checkpoint_restore(
         .map_err(|_| "The checkpoint body is not valid UTF-8.".to_string())?;
 
     if is_json_snapshot_body(&body) {
-        return build_json_snapshot_preview(&body, db_type);
+        return build_json_snapshot_preview(&body, db_type).map_err(crate::error::AppError::from);
     }
 
     // MSSQL converges through its own drop-and-recreate dump; the other
@@ -881,7 +885,7 @@ fn build_json_snapshot_preview(
 pub async fn delete_database_checkpoint(
     connection_id: String,
     file_name: String,
-) -> Result<(), String> {
+) -> Result<(), crate::error::AppError> {
     let dir = checkpoint_dir(&connection_id)?;
     let (checkpoint_path, meta_path) = checkpoint_paths(&dir, &file_name)?;
     task::spawn_blocking(move || -> Result<(), String> {
@@ -907,12 +911,12 @@ pub async fn rename_database_checkpoint(
     connection_id: String,
     file_name: String,
     label: String,
-) -> Result<CheckpointMeta, String> {
+) -> Result<CheckpointMeta, crate::error::AppError> {
     let dir = checkpoint_dir(&connection_id)?;
     let (_checkpoint_path, meta_path) = checkpoint_paths(&dir, &file_name)?;
     let trimmed = label.trim();
     if trimmed.is_empty() {
-        return Err("Checkpoint label must not be empty.".to_string());
+        return Err("Checkpoint label must not be empty.".to_string().into());
     }
     let clean_label: String = trimmed.chars().take(MAX_LABEL_CHARS * 2).collect();
     task::spawn_blocking(move || -> Result<CheckpointMeta, String> {
@@ -929,6 +933,7 @@ pub async fn rename_database_checkpoint(
     })
     .await
     .map_err(|error| format!("Checkpoint rename task failed: {error}"))?
+    .map_err(crate::error::AppError::from)
 }
 
 /// `/rollback` step 2b: replay the checkpoint through the shared restore
@@ -950,11 +955,12 @@ pub async fn restore_database_checkpoint(
     db_type: DatabaseType,
     db_manager: State<'_, DatabaseManager>,
     safe_mode: State<'_, SafeModeState>,
-) -> Result<RestoreResult, String> {
+) -> Result<RestoreResult, crate::error::AppError> {
     if !checkpoint_restore_supported(db_type) {
         return Err(format!(
             "Checkpoints cannot be restored on {db_type:?}: the engine has no replay path."
-        ));
+        )
+        .into());
     }
     db_manager.assert_write_allowed(&connection_id).await?;
     let dir = checkpoint_dir(&connection_id)?;

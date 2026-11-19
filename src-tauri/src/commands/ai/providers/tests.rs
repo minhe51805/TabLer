@@ -19,6 +19,12 @@ fn thinking_rejection_matches_each_provider_param_name() {
     assert!(is_thinking_param_rejection(
         "field budget_tokens not allowed"
     ));
+    assert!(is_thinking_param_rejection(
+        r#"{"error":{"message":"Unsupported parameter: \"thinking\" is not supported on this model"}}"#
+    ));
+    assert!(is_thinking_param_rejection(
+        r#"{"error":{"message":"Unsupported parameter: 'reasoning_effort'"}}"#
+    ));
 }
 
 #[test]
@@ -951,4 +957,154 @@ fn parses_models_list_responses_per_shape() {
 
     // A malformed / empty envelope yields no models rather than panicking.
     assert!(parse_models_list_response(ModelsListShape::OpenAiData, &json!({})).is_empty());
+}
+
+fn sample_canonical_agent_request() -> crate::database::ai_models::AIRequest {
+    use crate::database::ai_models::{
+        AIRequest, AIRequestIntent, AIResponseLanguage, CanonicalAgentTurn, CanonicalToolCall,
+        CanonicalToolSpec,
+    };
+
+    AIRequest {
+        request_id: Some("req-canonical-1".to_string()),
+        provider_id: None,
+        model: None,
+        prompt: "Inspect users and orders".to_string(),
+        context: "tables: users, orders".to_string(),
+        mode: AIRequestMode::Panel,
+        intent: AIRequestIntent::Agent,
+        language: AIResponseLanguage::En,
+        history: Vec::new(),
+        attachments: Vec::new(),
+        canonical_tools: Some(vec![CanonicalToolSpec {
+            name: "describe_table".to_string(),
+            description: "Describe table schema".to_string(),
+            parameters: json!({
+                "type": "object",
+                "properties": { "table": { "type": "string" } },
+                "required": ["table"],
+                "additionalProperties": false
+            }),
+        }]),
+        allow_native_memory_tool: true,
+        agent_turns: vec![
+            CanonicalAgentTurn::Assistant {
+                text: String::new(),
+                reasoning: Some("Checking both tables".to_string()),
+                thought_signature: None,
+                tool_calls: vec![
+                    CanonicalToolCall {
+                        id: "call_1".to_string(),
+                        name: "describe_table".to_string(),
+                        arguments: json!({ "table": "users" }),
+                    },
+                    CanonicalToolCall {
+                        id: "call_2".to_string(),
+                        name: "describe_table".to_string(),
+                        arguments: json!({ "table": "orders" }),
+                    },
+                ],
+            },
+            CanonicalAgentTurn::ToolResult {
+                call_id: "call_1".to_string(),
+                tool_name: "describe_table".to_string(),
+                content: "users(id, email)".to_string(),
+                is_error: false,
+            },
+            CanonicalAgentTurn::ToolResult {
+                call_id: "call_2".to_string(),
+                tool_name: "describe_table".to_string(),
+                content: "orders(id, user_id)".to_string(),
+                is_error: false,
+            },
+        ],
+        tools: None,
+        tool_choice: None,
+        enable_thinking: Some(true),
+    }
+}
+
+#[test]
+fn anthropic_streaming_and_blocking_share_context_management_beta_header() {
+    let mut anthropic = sample_provider(AIProviderType::Anthropic);
+    anthropic.model = "claude-sonnet-4-20250514".to_string();
+    let req = sample_canonical_agent_request();
+
+    let blocking = prepare_provider_wire_request(&anthropic, &req, false, None).unwrap();
+    let streaming = prepare_provider_wire_request(&anthropic, &req, true, None).unwrap();
+
+    for prepared in [&blocking, &streaming] {
+        let headers = provider_wire_headers(&anthropic, prepared, Some("sk-ant-test"));
+        assert!(headers.contains(&(
+            "anthropic-beta",
+            crate::config::ANTHROPIC_CONTEXT_MANAGEMENT_BETA.to_string(),
+        )));
+        assert!(headers.contains(&(
+            "anthropic-version",
+            crate::config::ANTHROPIC_API_VERSION.to_string(),
+        )));
+        // Native memory_20250818 tool appended on Anthropic.
+        let tools = prepared.body["tools"].as_array().unwrap();
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[1]["type"], "memory_20250818");
+        // Unsigned thinking from another provider disables Anthropic `thinking` cleanly
+        // instead of sending a signature-less block that would 400.
+        assert!(prepared.body.get("thinking").is_none());
+        // Parallel ToolResults merged into one `user` message to preserve alternation.
+        let messages = prepared.body["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 3);
+        assert_eq!(messages[1]["role"], "assistant");
+        assert_eq!(messages[2]["role"], "user");
+        assert_eq!(messages[2]["content"].as_array().unwrap().len(), 2);
+        assert_eq!(
+            messages[2]["content"][1]["cache_control"]["type"],
+            "ephemeral"
+        );
+    }
+}
+
+#[test]
+fn canonical_tools_and_turns_translate_across_openai_gemini_and_ollama_generate() {
+    let mut req = sample_canonical_agent_request();
+    if let crate::database::ai_models::CanonicalAgentTurn::Assistant {
+        thought_signature, ..
+    } = &mut req.agent_turns[0]
+    {
+        *thought_signature = Some("gemini-sig-xyz".to_string());
+    }
+
+    // OpenAI: omits Anthropic memory_20250818, serializes arguments as JSON string, emits role:"tool".
+    let openai = sample_provider(AIProviderType::OpenAI);
+    let openai_prep = prepare_provider_wire_request(&openai, &req, true, None).unwrap();
+    assert_eq!(openai_prep.body["tools"].as_array().unwrap().len(), 1);
+    let oa_msgs = openai_prep.body["messages"].as_array().unwrap();
+    assert_eq!(oa_msgs[2]["role"], "assistant");
+    assert_eq!(oa_msgs[2]["tool_calls"].as_array().unwrap().len(), 2);
+    assert_eq!(oa_msgs[3]["role"], "tool");
+    assert_eq!(oa_msgs[4]["role"], "tool");
+
+    // Gemini: uppercase Schema proto without `additionalProperties`, preserves `thoughtSignature`,
+    // and merges consecutive tool results into one `user` turn.
+    let gemini = sample_provider(AIProviderType::Gemini);
+    let gemini_prep = prepare_provider_wire_request(&gemini, &req, false, None).unwrap();
+    let decl = &gemini_prep.body["tools"][0]["functionDeclarations"][0];
+    assert_eq!(decl["parameters"]["type"], "OBJECT");
+    assert!(decl["parameters"].get("additionalProperties").is_none());
+    let contents = gemini_prep.body["contents"].as_array().unwrap();
+    assert_eq!(contents[1]["role"], "model");
+    assert_eq!(
+        contents[1]["parts"][0]["thoughtSignature"],
+        "gemini-sig-xyz"
+    );
+    assert_eq!(contents[2]["role"], "user");
+    assert_eq!(contents[2]["parts"].as_array().unwrap().len(), 2);
+
+    // OllamaGenerate: strips unsupported `tools` completely and switches prompt to text-JSON contract.
+    let mut ollama_gen = sample_provider(AIProviderType::Custom);
+    ollama_gen.api_format = Some("ollama-generate".to_string());
+    let gen_prep = prepare_provider_wire_request(&ollama_gen, &req, false, None).unwrap();
+    assert!(gen_prep.body.get("tools").is_none());
+    let prompt_str = gen_prep.body["prompt"].as_str().unwrap();
+    assert!(prompt_str.contains("Return only the next action JSON object."));
+    assert!(prompt_str.contains("Agent progress so far:"));
 }

@@ -71,6 +71,10 @@ pub const fn query_model_for(database_type: DatabaseType) -> QueryModel {
 /// `PluginNative`. The match is exhaustive on purpose: adding a new engine forces
 /// a packaging decision here.
 pub const fn driver_distribution(database_type: DatabaseType) -> DriverDistribution {
+    // The `Builtin` arm mirrors `BUILTIN_ENGINE_KEYS` in the frontend
+    // (`src/utils/plugin-driver-runtime.ts`) — ten keys, one to one (verified
+    // 2026-10-31). An engine added to one side without the other presents a
+    // different builtin set in the UI than the backend actually ships.
     match database_type {
         DatabaseType::MySQL
         | DatabaseType::MariaDB

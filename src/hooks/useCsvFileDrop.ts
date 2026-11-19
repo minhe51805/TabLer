@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { UnlistenFn } from "@tauri-apps/api/event";
+import { EventCenter } from "../stores/event-center";
+import { APP_EVENTS } from "../utils/app-events";
 
 /**
  * Window-level file drop → CSV import wizard.
@@ -44,11 +46,7 @@ export function useCsvFileDrop() {
         const path = event.payload.paths.find(isCsvPath);
         if (!path) return;
         pendingCsvDropPath = path;
-        window.dispatchEvent(
-          new CustomEvent<{ path: string }>("open-data-import-palette", {
-            detail: { path },
-          }),
-        );
+        EventCenter.emit(APP_EVENTS.openDataImportPalette, { path });
       })
       .then((cleanup) => {
         if (disposed) {

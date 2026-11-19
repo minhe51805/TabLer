@@ -561,13 +561,13 @@ pub async fn push_workspace_sync(
     password: String,
     device_id: String,
     expected_revision: Option<String>,
-) -> Result<WorkspaceSyncPushResult, String> {
+) -> Result<WorkspaceSyncPushResult, crate::error::AppError> {
     validate_workspace_id(&workspace_id)?;
     if let Some(revision) = expected_revision.as_deref() {
         validate_revision(revision)?;
     }
     if device_id.trim().is_empty() || device_id.len() > 120 {
-        return Err("Workspace sync device id is invalid.".to_string());
+        return Err("Workspace sync device id is invalid.".to_string().into());
     }
     let adapter = provider_adapter(provider)?;
     let _sync_guard = local_sync_guard().lock().await;
@@ -584,7 +584,11 @@ pub async fn push_workspace_sync(
                 remote_version: remote.summary(),
             });
         }
-        return Err("Expected a remote revision, but the workspace no longer exists.".to_string());
+        return Err(
+            "Expected a remote revision, but the workspace no longer exists."
+                .to_string()
+                .into(),
+        );
     }
 
     let mut history = current
@@ -631,7 +635,7 @@ pub async fn pull_workspace_sync(
     workspace_id: String,
     password: String,
     revision: Option<String>,
-) -> Result<WorkspaceSyncPullResult, String> {
+) -> Result<WorkspaceSyncPullResult, crate::error::AppError> {
     validate_workspace_id(&workspace_id)?;
     let adapter = provider_adapter(provider)?;
     let object = match revision.as_deref() {

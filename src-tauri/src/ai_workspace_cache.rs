@@ -359,40 +359,50 @@ pub async fn save_workspace_context_snapshot(
     kind: String,
     thread_id: Option<String>,
     payload: JsonValue,
-) -> Result<WorkspaceContextSnapshot, String> {
+) -> Result<WorkspaceContextSnapshot, crate::error::AppError> {
     AIWorkspaceCacheStorage::new()?
         .save_snapshot(&workspace_id, &kind, thread_id.as_deref(), &payload)
         .await
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
 pub async fn list_workspace_context_snapshots(
     workspace_id: String,
-) -> Result<Vec<WorkspaceContextSnapshot>, String> {
+) -> Result<Vec<WorkspaceContextSnapshot>, crate::error::AppError> {
     AIWorkspaceCacheStorage::new()?
         .list_snapshots(&workspace_id)
         .await
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
 pub async fn get_latest_workspace_digest(
     workspace_id: String,
-) -> Result<Option<WorkspaceDigestEntry>, String> {
+) -> Result<Option<WorkspaceDigestEntry>, crate::error::AppError> {
     AIWorkspaceCacheStorage::new()?
         .latest_digest(&workspace_id)
         .await
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
-pub async fn list_latest_workspace_digests() -> Result<Vec<WorkspaceDigestEntry>, String> {
-    AIWorkspaceCacheStorage::new()?.latest_digests().await
+pub async fn list_latest_workspace_digests(
+) -> Result<Vec<WorkspaceDigestEntry>, crate::error::AppError> {
+    AIWorkspaceCacheStorage::new()?
+        .latest_digests()
+        .await
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
-pub async fn delete_workspace_context_snapshots(workspace_id: String) -> Result<(), String> {
+pub async fn delete_workspace_context_snapshots(
+    workspace_id: String,
+) -> Result<(), crate::error::AppError> {
     AIWorkspaceCacheStorage::new()?
         .delete_snapshots(&workspace_id)
         .await
+        .map_err(crate::error::AppError::from)
 }
 
 /// Codex-style long-term memory entry for one chat thread: a named, keyword
@@ -675,80 +685,105 @@ pub async fn upsert_thread_memory(
     title: String,
     summary: String,
     keywords: Vec<String>,
-) -> Result<ThreadMemory, String> {
+) -> Result<ThreadMemory, crate::error::AppError> {
     AIWorkspaceCacheStorage::new()?
         .upsert_thread_memory(&workspace_id, &thread_id, &title, &summary, &keywords)
         .await
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
 pub async fn list_thread_memories(
     workspace_id: Option<String>,
-) -> Result<Vec<ThreadMemory>, String> {
+) -> Result<Vec<ThreadMemory>, crate::error::AppError> {
     AIWorkspaceCacheStorage::new()?
         .list_thread_memories(workspace_id.as_deref())
         .await
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
-pub async fn delete_thread_memories_for_workspace(workspace_id: String) -> Result<(), String> {
+pub async fn delete_thread_memories_for_workspace(
+    workspace_id: String,
+) -> Result<(), crate::error::AppError> {
     AIWorkspaceCacheStorage::new()?
         .delete_thread_memories_for_workspace(&workspace_id)
         .await
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
-pub async fn delete_thread_memory_for_thread(thread_id: String) -> Result<(), String> {
+pub async fn delete_thread_memory_for_thread(
+    thread_id: String,
+) -> Result<(), crate::error::AppError> {
     AIWorkspaceCacheStorage::new()?
         .delete_thread_memory_for_thread(&thread_id)
         .await
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
-pub async fn save_ai_attachments(attachments: Vec<AIAttachmentRecord>) -> Result<(), String> {
+pub async fn save_ai_attachments(
+    attachments: Vec<AIAttachmentRecord>,
+) -> Result<(), crate::error::AppError> {
     AIWorkspaceCacheStorage::new()?
         .save_ai_attachments(&attachments)
         .await
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
-pub async fn list_ai_attachments() -> Result<Vec<AIAttachmentMeta>, String> {
-    AIWorkspaceCacheStorage::new()?.list_ai_attachments().await
+pub async fn list_ai_attachments() -> Result<Vec<AIAttachmentMeta>, crate::error::AppError> {
+    AIWorkspaceCacheStorage::new()?
+        .list_ai_attachments()
+        .await
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
-pub async fn get_ai_attachment_data(ids: Vec<String>) -> Result<Vec<AIAttachmentData>, String> {
+pub async fn get_ai_attachment_data(
+    ids: Vec<String>,
+) -> Result<Vec<AIAttachmentData>, crate::error::AppError> {
     AIWorkspaceCacheStorage::new()?
         .get_ai_attachment_data(&ids)
         .await
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
-pub async fn delete_ai_attachments(ids: Vec<String>) -> Result<(), String> {
+pub async fn delete_ai_attachments(ids: Vec<String>) -> Result<(), crate::error::AppError> {
     AIWorkspaceCacheStorage::new()?
         .delete_ai_attachments(&ids)
         .await
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
-pub async fn delete_all_ai_attachments() -> Result<i64, String> {
+pub async fn delete_all_ai_attachments() -> Result<i64, crate::error::AppError> {
     AIWorkspaceCacheStorage::new()?
         .delete_all_ai_attachments()
         .await
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
-pub async fn delete_ai_attachments_for_workspace(workspace_key: String) -> Result<(), String> {
+pub async fn delete_ai_attachments_for_workspace(
+    workspace_key: String,
+) -> Result<(), crate::error::AppError> {
     AIWorkspaceCacheStorage::new()?
         .delete_ai_attachments_for_workspace(&workspace_key)
         .await
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
-pub async fn delete_ai_attachments_for_thread(thread_id: String) -> Result<(), String> {
+pub async fn delete_ai_attachments_for_thread(
+    thread_id: String,
+) -> Result<(), crate::error::AppError> {
     AIWorkspaceCacheStorage::new()?
         .delete_ai_attachments_for_thread(&thread_id)
         .await
+        .map_err(crate::error::AppError::from)
 }
 
 #[cfg(test)]

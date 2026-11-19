@@ -10,7 +10,12 @@ export interface AIAgentRecordLink {
 }
 
 function isRecordValue(value: unknown): value is RecordValue {
-  return value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean";
+  return (
+    value === null ||
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  );
 }
 
 function getStableRowKey(
@@ -29,7 +34,9 @@ function extractPrimaryTableIdentifier(sql: string) {
 }
 
 /** Build links only from a completed, single-table Agent read with a stable ID. */
-export function extractAgentRecordLinks(steps: AIWorkspaceAgentStep[] | undefined): AIAgentRecordLink[] {
+export function extractAgentRecordLinks(
+  steps: AIWorkspaceAgentStep[] | undefined,
+): AIAgentRecordLink[] {
   if (!steps?.length) return [];
 
   for (const step of [...steps].reverse()) {
@@ -54,11 +61,13 @@ export function extractAgentRecordLinks(steps: AIWorkspaceAgentStep[] | undefine
         const rowKey = getStableRowKey(sampleRow as Record<string, unknown>, identityColumns);
         if (!rowKey) return [];
         const [column, value] = Object.entries(rowKey)[0];
-        return [{
-          tableName,
-          rowKey,
-          label: `Open ${tableName} record (${column}: ${String(value)})`,
-        }];
+        return [
+          {
+            tableName,
+            rowKey,
+            label: `Open ${tableName} record (${column}: ${String(value)})`,
+          },
+        ];
       });
       if (links.length > 0) return links.slice(0, 3);
     } catch {

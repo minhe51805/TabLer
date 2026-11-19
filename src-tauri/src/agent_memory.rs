@@ -32,6 +32,11 @@ pub struct MemoryEntryContent {
 }
 
 const MAX_MEMORY_DESCRIPTION_CHARS: usize = 200;
+/// Storage cap per connection. The FE prompt index deliberately shows a smaller
+/// slice of these — `MAX_AGENT_MEMORY_INDEX_ENTRIES = 24` after its relevance
+/// sort (`ai-agent-controller-prompt.ts`) — so storage 32 vs prompt 24 is a
+/// designed pair, not drift; the validator's memory contract row checks it as
+/// `js <= rust`.
 const MAX_MEMORY_ENTRIES: usize = 32;
 const MAX_MEMORY_BODY_CHARS: usize = 8_000;
 const MAX_MEMORY_NAME_CHARS: usize = 64;
@@ -286,6 +291,12 @@ pub fn discover_memories_in_root(root: &Path) -> Vec<MemoryEntrySummary> {
             summaries.len(),
             MAX_MEMORY_ENTRIES
         );
+        // benign-cap: agent-driven saves refuse at MAX_MEMORY_ENTRIES with an
+        // explicit "index is full" error (save_memory_entry), so this branch is
+        // only reachable through out-of-band files — MEMORY.md folders are
+        // human-editable by design. Caveat declared: entries past the cap are
+        // hidden from both the agent index and the memory manager until pruned
+        // at the folder level, which is why the cap also guards the save path.
         summaries.truncate(MAX_MEMORY_ENTRIES);
     }
     summaries
@@ -423,7 +434,7 @@ pub fn delete_agent_memory(
     connection_id: Option<String>,
     database: Option<String>,
     name: String,
-) -> Result<(), String> {
+) -> Result<(), crate::error::AppError> {
     let data_dir = resolve_data_dir().map_err(|error| error.to_string())?;
     delete_agent_memory_in(
         &data_dir,
@@ -431,6 +442,7 @@ pub fn delete_agent_memory(
         database.as_deref(),
         &name,
     )
+    .map_err(crate::error::AppError::from)
 }
 
 /// The delete policy, separated from the filesystem so it stays pinned by
@@ -594,7 +606,7 @@ fn reject_secret_shaped_payload(
 pub fn list_agent_memory(
     connection_id: Option<String>,
     database: Option<String>,
-) -> Result<Vec<MemoryEntrySummary>, String> {
+) -> Result<Vec<MemoryEntrySummary>, crate::error::AppError> {
     let data_dir = resolve_data_dir().map_err(|error| error.to_string())?;
     let scope = memory_scope_dir(&data_dir, connection_id.as_deref(), database.as_deref());
     Ok(discover_memories_in_root(&scope))
@@ -605,8 +617,9 @@ pub fn read_agent_memory(
     name: String,
     connection_id: Option<String>,
     database: Option<String>,
-) -> Result<MemoryEntryContent, String> {
+) -> Result<MemoryEntryContent, crate::error::AppError> {
     read_memory_entry(connection_id.as_deref(), database.as_deref(), &name)
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
@@ -617,7 +630,7 @@ pub fn save_agent_memory(
     database: Option<String>,
     description: Option<String>,
     origin: Option<String>,
-) -> Result<MemoryEntrySummary, String> {
+) -> Result<MemoryEntrySummary, crate::error::AppError> {
     save_memory_entry(SaveMemoryParams {
         connection_id,
         database,
@@ -626,6 +639,7 @@ pub fn save_agent_memory(
         body,
         origin,
     })
+    .map_err(crate::error::AppError::from)
 }
 
 #[cfg(test)]

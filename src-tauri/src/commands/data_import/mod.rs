@@ -72,7 +72,7 @@ use xlsx::{align_row_to_len, open_xlsx_sheet, xlsx_header_columns};
 pub async fn preview_import_csv(
     path: Option<String>,
     sample_rows: Option<usize>,
-) -> Result<CsvPreview, String> {
+) -> Result<CsvPreview, crate::error::AppError> {
     // A dropped file arrives with its path already known; otherwise fall back
     // to the picker.
     let path = match path {
@@ -89,7 +89,8 @@ pub async fn preview_import_csv(
         return Err(format!(
             "File is larger than the {} MB preview limit.",
             MAX_PREVIEW_FILE_BYTES / (1024 * 1024)
-        ));
+        )
+        .into());
     }
 
     let delimiter = sniff_delimiter_from_file(&path)?;
@@ -109,7 +110,7 @@ pub async fn preview_import_csv(
         .first()
         .ok_or_else(|| "The selected CSV file is empty.".to_string())?;
     if first.is_empty() {
-        return Err("The selected CSV file is empty.".to_string());
+        return Err("The selected CSV file is empty.".to_string().into());
     }
     let has_header = looks_like_header(first, prefix_rows.get(1).map(Vec::as_slice));
     let header_row = if has_header {
@@ -168,7 +169,7 @@ pub async fn import_csv(
     cancellation_state: State<'_, CsvImportCancellationState>,
     db_manager: State<'_, DatabaseManager>,
     safe_mode: State<'_, SafeModeState>,
-) -> Result<ImportSummary, String> {
+) -> Result<ImportSummary, crate::error::AppError> {
     db_manager.assert_write_allowed(&connection_id).await?;
     // Imports bypass the SQL editor, so Safe Mode never saw them; probe the
     // statement kinds this import will run so 'Read Only' blocks UI writes.
@@ -186,14 +187,15 @@ pub async fn import_csv(
         .await?;
     let file_path = std::path::PathBuf::from(&path);
     if !file_path.exists() {
-        return Err(format!("File not found: {path}"));
+        return Err(format!("File not found: {path}").into());
     }
     let metadata = std::fs::metadata(&file_path).map_err(|error| error.to_string())?;
     if metadata.len() > MAX_IMPORT_FILE_BYTES {
         return Err(format!(
             "File is larger than the {} MB import limit.",
             MAX_IMPORT_FILE_BYTES / (1024 * 1024)
-        ));
+        )
+        .into());
     }
     let delimiter = sniff_delimiter_from_file(&file_path)?;
     let total_bytes = metadata.len();
@@ -235,10 +237,13 @@ pub async fn import_csv(
         rows,
     )
     .await
+    .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
-pub async fn preview_import_json(sample_rows: Option<usize>) -> Result<JsonPreview, String> {
+pub async fn preview_import_json(
+    sample_rows: Option<usize>,
+) -> Result<JsonPreview, crate::error::AppError> {
     let path = rfd::FileDialog::new()
         .add_filter("JSON files", &["json", "ndjson", "jsonl"])
         .add_filter("All files", &["*"])
@@ -250,7 +255,8 @@ pub async fn preview_import_json(sample_rows: Option<usize>) -> Result<JsonPrevi
         return Err(format!(
             "File is larger than the {} MB preview limit.",
             MAX_PREVIEW_FILE_BYTES / (1024 * 1024)
-        ));
+        )
+        .into());
     }
 
     let shape = detect_json_shape(&path)?;
@@ -268,7 +274,8 @@ pub async fn preview_import_json(sample_rows: Option<usize>) -> Result<JsonPrevi
                 return Err(format!(
                     "JSON array files are limited to {} MB — use NDJSON for larger data.",
                     MAX_JSON_ARRAY_FILE_BYTES / (1024 * 1024)
-                ));
+                )
+                .into());
             }
             let objects = read_json_array_objects(&path)?;
             for object in &objects {
@@ -308,7 +315,9 @@ pub async fn preview_import_json(sample_rows: Option<usize>) -> Result<JsonPrevi
     }
 
     if columns.is_empty() {
-        return Err("The selected JSON file has no object fields to import.".to_string());
+        return Err("The selected JSON file has no object fields to import."
+            .to_string()
+            .into());
     }
 
     let rows = sample
@@ -349,7 +358,7 @@ pub async fn import_json(
     cancellation_state: State<'_, CsvImportCancellationState>,
     db_manager: State<'_, DatabaseManager>,
     safe_mode: State<'_, SafeModeState>,
-) -> Result<ImportSummary, String> {
+) -> Result<ImportSummary, crate::error::AppError> {
     db_manager.assert_write_allowed(&connection_id).await?;
     // Same Safe Mode gate as import_csv: UI imports must not bypass
     // 'Read Only' just because they never pass through the SQL editor.
@@ -366,18 +375,21 @@ pub async fn import_json(
         .ensure_mutation_allowed(&connection_id, probe, database_type)
         .await?;
     if source_columns.is_empty() {
-        return Err("Import requires the previewed JSON columns.".to_string());
+        return Err("Import requires the previewed JSON columns."
+            .to_string()
+            .into());
     }
     let file_path = std::path::PathBuf::from(&path);
     if !file_path.exists() {
-        return Err(format!("File not found: {path}"));
+        return Err(format!("File not found: {path}").into());
     }
     let metadata = std::fs::metadata(&file_path).map_err(|error| error.to_string())?;
     if metadata.len() > MAX_IMPORT_FILE_BYTES {
         return Err(format!(
             "File is larger than the {} MB import limit.",
             MAX_IMPORT_FILE_BYTES / (1024 * 1024)
-        ));
+        )
+        .into());
     }
     let total_bytes = metadata.len();
 
@@ -423,13 +435,15 @@ pub async fn import_json(
                 rows,
             )
             .await
+            .map_err(crate::error::AppError::from)
         }
         JsonShape::Array => {
             if metadata.len() > MAX_JSON_ARRAY_FILE_BYTES {
                 return Err(format!(
                     "JSON array files are limited to {} MB — use NDJSON for larger data.",
                     MAX_JSON_ARRAY_FILE_BYTES / (1024 * 1024)
-                ));
+                )
+                .into());
             }
             let objects = read_json_array_objects(&file_path)?;
             let columns = source_columns;
@@ -460,6 +474,7 @@ pub async fn import_json(
                 rows,
             )
             .await
+            .map_err(crate::error::AppError::from)
         }
     }
 }
@@ -469,7 +484,7 @@ pub async fn preview_import_xlsx(
     path: Option<String>,
     sheet: Option<String>,
     sample_rows: Option<usize>,
-) -> Result<XlsxPreview, String> {
+) -> Result<XlsxPreview, crate::error::AppError> {
     let file_path = match path {
         Some(existing) => std::path::PathBuf::from(existing),
         None => rfd::FileDialog::new()
@@ -484,7 +499,8 @@ pub async fn preview_import_xlsx(
         return Err(format!(
             "Spreadsheet files are limited to {} MB.",
             MAX_XLSX_FILE_BYTES / (1024 * 1024)
-        ));
+        )
+        .into());
     }
 
     let (sheet_names, active, range) = open_xlsx_sheet(&file_path, sheet.as_deref())?;
@@ -496,7 +512,7 @@ pub async fn preview_import_xlsx(
         None => Vec::new(),
     };
     if columns.is_empty() {
-        return Err(format!("Sheet '{active}' is empty."));
+        return Err(format!("Sheet '{active}' is empty.").into());
     }
 
     let mut rows: Vec<Vec<String>> = Vec::new();
@@ -547,7 +563,7 @@ pub async fn import_xlsx(
     cancellation_state: State<'_, CsvImportCancellationState>,
     db_manager: State<'_, DatabaseManager>,
     safe_mode: State<'_, SafeModeState>,
-) -> Result<ImportSummary, String> {
+) -> Result<ImportSummary, crate::error::AppError> {
     db_manager.assert_write_allowed(&connection_id).await?;
     // Same Safe Mode gate as import_csv: UI imports must not bypass
     // 'Read Only' just because they never pass through the SQL editor.
@@ -565,21 +581,22 @@ pub async fn import_xlsx(
         .await?;
     let file_path = std::path::PathBuf::from(&path);
     if !file_path.exists() {
-        return Err(format!("File not found: {path}"));
+        return Err(format!("File not found: {path}").into());
     }
     let metadata = std::fs::metadata(&file_path).map_err(|error| error.to_string())?;
     if metadata.len() > MAX_XLSX_FILE_BYTES {
         return Err(format!(
             "Spreadsheet files are limited to {} MB.",
             MAX_XLSX_FILE_BYTES / (1024 * 1024)
-        ));
+        )
+        .into());
     }
     let total_bytes = metadata.len();
 
     let (_, _, range) = open_xlsx_sheet(&file_path, Some(&sheet))?;
     let column_count = range.rows().next().map(|row| row.len()).unwrap_or(0);
     if column_count == 0 {
-        return Err(format!("Sheet '{sheet}' is empty."));
+        return Err(format!("Sheet '{sheet}' is empty.").into());
     }
     // Materialise data rows (calamine already holds the sheet in memory), then
     // hand an owned iterator to the shared sink.
@@ -618,4 +635,5 @@ pub async fn import_xlsx(
         rows,
     )
     .await
+    .map_err(crate::error::AppError::from)
 }

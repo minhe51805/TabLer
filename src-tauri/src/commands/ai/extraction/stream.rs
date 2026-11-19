@@ -1,12 +1,12 @@
-use tauri::AppHandle;
+use crate::database::ai_models::{AIProviderType, AIResponse, AIUsageStats};
 
-use crate::database::ai_models::AIProviderType;
-
-use super::super::{emit_ai_stream_event, MAX_AI_STREAM_OUTPUT_BYTES};
+use super::super::MAX_AI_STREAM_OUTPUT_BYTES;
 use super::text::{
     collect_gemini_parts, extract_openai_like_reasoning_delta, extract_stream_text_from_json,
-    THINK_CLOSE_TAG, THINK_OPEN_TAG,
+    split_think_block, THINK_CLOSE_TAG, THINK_OPEN_TAG,
 };
+use super::tool_calls::{format_tool_call_as_action_json, merge_usage_stats, ToolCallStreamState};
+
 pub(crate) fn extract_stream_deltas(
     provider: &AIProviderType,
     payload: &serde_json::Value,
@@ -72,45 +72,109 @@ pub(crate) fn extract_stream_deltas(
     }
 }
 
-pub(crate) fn publish_stream_payload(
-    app: &AppHandle,
-    request_id: &str,
-    provider: &AIProviderType,
-    payload: &serde_json::Value,
-    pending_text: &mut String,
-    visible_started: &mut bool,
-    output_bytes: &mut usize,
-) -> Result<(), String> {
-    let (text_delta, reasoning_delta) = extract_stream_deltas(provider, payload);
-    // Forward the actual reasoning text so the UI can stream the model's
-    // chain-of-thought live into the collapsible "Thinking…" block, instead of
-    // only flashing a boolean flag and dumping the whole block at the end.
-    if let Some(reasoning) = reasoning_delta {
-        if !reasoning.is_empty() {
-            emit_ai_stream_event(app, request_id, "reasoning_delta", Some(reasoning), None)?;
-        }
-    }
+/// Stateful per-stream collector that publishes live `ai-stream-event` deltas
+/// AND produces the authoritative structured `AIResponse` when the stream ends.
+#[derive(Default)]
+pub(crate) struct StreamResponseAccumulator {
+    raw_text: String,
+    visible_text: String,
+    pending_text: String,
+    visible_started: bool,
+    reasoning_text: String,
+    output_bytes: usize,
+    tool_calls: ToolCallStreamState,
+    usage: Option<AIUsageStats>,
+}
 
-    if let Some(delta) = text_delta {
-        let visible_delta = take_visible_stream_delta(&delta, pending_text, visible_started);
-
-        if !visible_delta.is_empty() {
-            *output_bytes = output_bytes.saturating_add(visible_delta.len());
-            if *output_bytes > MAX_AI_STREAM_OUTPUT_BYTES {
+impl StreamResponseAccumulator {
+    pub(crate) fn push_frame_with_sink(
+        &mut self,
+        provider: &AIProviderType,
+        payload: &serde_json::Value,
+        mut emit: impl FnMut(
+            &'static str,
+            Option<String>,
+            Option<serde_json::Value>,
+        ) -> Result<(), String>,
+    ) -> Result<(), String> {
+        for fragment in self.tool_calls.push_payload(provider, payload) {
+            self.output_bytes = self.output_bytes.saturating_add(fragment.len());
+            if self.output_bytes > MAX_AI_STREAM_OUTPUT_BYTES {
                 return Err("AI stream exceeded the 2 MB output limit.".to_string());
             }
-            emit_ai_stream_event(app, request_id, "text_delta", Some(visible_delta), None)?;
+            emit("text_delta", Some(fragment), None)?;
         }
+
+        let (text_delta, reasoning_delta) = extract_stream_deltas(provider, payload);
+        if let Some(reasoning) = reasoning_delta {
+            if !reasoning.is_empty() {
+                self.reasoning_text.push_str(&reasoning);
+                emit("reasoning_delta", Some(reasoning), None)?;
+            }
+        }
+
+        if let Some(delta) = text_delta {
+            self.raw_text.push_str(&delta);
+            let visible_delta = take_visible_stream_delta(
+                &delta,
+                &mut self.pending_text,
+                &mut self.visible_started,
+            );
+            if !visible_delta.is_empty() {
+                self.output_bytes = self.output_bytes.saturating_add(visible_delta.len());
+                if self.output_bytes > MAX_AI_STREAM_OUTPUT_BYTES {
+                    return Err("AI stream exceeded the 2 MB output limit.".to_string());
+                }
+                self.visible_text.push_str(&visible_delta);
+                emit("text_delta", Some(visible_delta), None)?;
+            }
+        }
+
+        if let Some(merged_usage) = merge_usage_stats(&mut self.usage, payload) {
+            if let Ok(usage_json) = serde_json::to_value(&merged_usage) {
+                emit("usage", None, Some(usage_json))?;
+            }
+        } else if let Some(raw_usage) = payload
+            .get("usage")
+            .cloned()
+            .or_else(|| payload.get("usageMetadata").cloned())
+        {
+            emit("usage", None, Some(raw_usage))?;
+        }
+
+        Ok(())
     }
 
-    if let Some(usage) = payload
-        .get("usage")
-        .cloned()
-        .or_else(|| payload.get("usageMetadata").cloned())
-    {
-        emit_ai_stream_event(app, request_id, "usage", None, Some(usage))?;
+    pub(crate) fn into_response(self, used_canonical_tools: bool) -> AIResponse {
+        let (tool_calls, thought_signature) = self.tool_calls.into_finalized();
+        let (think_reasoning, cleaned_from_raw) = split_think_block(&self.raw_text);
+        let base_text = if self.visible_started {
+            self.visible_text
+        } else {
+            cleaned_from_raw
+        };
+        let reasoning = if !self.reasoning_text.trim().is_empty() {
+            Some(self.reasoning_text.trim().to_string())
+        } else {
+            think_reasoning
+        };
+
+        let text = if base_text.trim().is_empty() && !tool_calls.is_empty() && !used_canonical_tools
+        {
+            format_tool_call_as_action_json(&tool_calls[0]).unwrap_or_default()
+        } else {
+            base_text
+        };
+
+        AIResponse {
+            text,
+            reasoning,
+            tool_calls,
+            thought_signature,
+            usage: self.usage,
+            error: None,
+        }
     }
-    Ok(())
 }
 
 pub(crate) fn take_visible_stream_delta(

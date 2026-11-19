@@ -1,23 +1,17 @@
 use crate::database::models::DatabaseType;
-use crate::utils::sql::{classify_sql_with_dialect, SqlStatementDecision, SqlStatementKind};
+use crate::utils::sql::{
+    classify_sql_with_dialect, SqlSafetyDecision, SqlStatementDecision, SqlStatementKind,
+};
 
 pub fn clamp_safe_mode_level(level: u8) -> u8 {
     level.min(5)
 }
 
-/// Same policy as a plain `assert_sql_allowed_at_level`, except a
-/// `user_approved` run (the human saw this exact SQL and approved it — query
-/// editor confirmation dialog, or the standing full-autonomy grant) may pass
-/// the level 1-3 write/DDL block. Parse errors and the level 4-5
-/// always-blocked family (DROP/TRUNCATE/CREATE TABLE) still fail for everyone.
-///
-/// `database_type` must be the connection's real engine: dialect-specific
-/// statements (MySQL `SHOW`, `DESCRIBE`, …) only classify correctly when the
-/// parser speaks the same dialect the server does.
-pub fn assert_sql_allowed_at_level_with_approval(
+/// Evaluates a pre-classified [`SqlSafetyDecision`] against `level` so callers
+/// that already parsed the batch (`AnalyzedSqlBatch`) do not re-parse the SQL.
+pub fn assert_decision_allowed_at_level_with_approval(
     level: u8,
-    sql: &str,
-    database_type: Option<DatabaseType>,
+    decision: &SqlSafetyDecision,
     user_approved: bool,
 ) -> Result<(), String> {
     let level = clamp_safe_mode_level(level);
@@ -25,10 +19,10 @@ pub fn assert_sql_allowed_at_level_with_approval(
         return Ok(());
     }
 
-    let decision = classify_sql_with_dialect(sql, database_type);
     if decision.statements.is_empty() {
         return Err(decision
             .parse_error
+            .clone()
             .unwrap_or_else(|| "SQL contains no executable statements.".to_string()));
     }
     if let Some(error) = decision.parse_error.as_ref() {
@@ -54,6 +48,29 @@ pub fn assert_sql_allowed_at_level_with_approval(
         ));
     }
     Ok(())
+}
+
+/// Same policy as a plain `assert_sql_allowed_at_level`, except a
+/// `user_approved` run (the human saw this exact SQL and approved it — query
+/// editor confirmation dialog, or the standing full-autonomy grant) may pass
+/// the level 1-3 write/DDL block. Parse errors and the level 4-5
+/// always-blocked family (DROP/TRUNCATE/CREATE TABLE) still fail for everyone.
+///
+/// `database_type` must be the connection's real engine: dialect-specific
+/// statements (MySQL `SHOW`, `DESCRIBE`, …) only classify correctly when the
+/// parser speaks the same dialect the server does.
+pub fn assert_sql_allowed_at_level_with_approval(
+    level: u8,
+    sql: &str,
+    database_type: Option<DatabaseType>,
+    user_approved: bool,
+) -> Result<(), String> {
+    let level = clamp_safe_mode_level(level);
+    if level == 0 {
+        return Ok(());
+    }
+    let decision = classify_sql_with_dialect(sql, database_type);
+    assert_decision_allowed_at_level_with_approval(level, &decision, user_approved)
 }
 
 /// Display label matching the frontend `SAFE_MODE_LABELS` table so a blocked

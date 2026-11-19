@@ -164,7 +164,7 @@ pub async fn preview_maintenance_command(
     table: Option<String>,
     database: Option<String>,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<MaintenancePreview, String> {
+) -> Result<MaintenancePreview, crate::error::AppError> {
     let driver = db_manager
         .get_driver(&connection_id)
         .await
@@ -190,7 +190,7 @@ pub async fn run_maintenance_command(
     database: Option<String>,
     db_manager: State<'_, DatabaseManager>,
     safe_mode: State<'_, SafeModeState>,
-) -> Result<QueryResult, String> {
+) -> Result<QueryResult, crate::error::AppError> {
     db_manager.assert_write_allowed(&connection_id).await?;
     let database_type = db_manager
         .connection_database_type(&connection_id)
@@ -218,6 +218,7 @@ pub async fn run_maintenance_command(
             )
         })?
         .map_err(|e| format!("Maintenance command '{}' failed: {}", command, e))
+        .map_err(crate::error::AppError::from)
 }
 
 #[cfg(test)]

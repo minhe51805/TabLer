@@ -10,7 +10,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "../../utils/tauri-invoke";
 import { AlertTriangle, Check, Copy, Info, RefreshCw, Search, Workflow } from "lucide-react";
 import type { QueryResult } from "../../types";
 import { analyzeStatement, primaryInsight } from "../../utils/profiler-insights";
@@ -62,10 +62,13 @@ function cellNumber(value: Cell | undefined): number {
 function mapRows(result: QueryResult, canonical: string[]): TopQueryRow[] {
   const index: Record<string, number> = {};
   for (const name of canonical) {
-    index[name] = result.columns.findIndex((column) => column.name.toLowerCase() === name.toLowerCase());
+    index[name] = result.columns.findIndex(
+      (column) => column.name.toLowerCase() === name.toLowerCase(),
+    );
   }
   const text = (row: Cell[], name: string) => (index[name] >= 0 ? cellText(row[index[name]]) : "");
-  const numeric = (row: Cell[], name: string) => (index[name] >= 0 ? cellNumber(row[index[name]]) : 0);
+  const numeric = (row: Cell[], name: string) =>
+    index[name] >= 0 ? cellNumber(row[index[name]]) : 0;
   return result.rows.map((row, position) => ({
     key: `${position}`,
     queryText: text(row, "query_text"),
@@ -238,7 +241,6 @@ export function ProfilerTopQueries({ connectionId }: Props) {
     );
   }
 
-
   return (
     <>
       <div className="profiler-toolbar">
@@ -296,7 +298,6 @@ export function ProfilerTopQueries({ connectionId }: Props) {
         </div>
       )}
 
-
       <div className="profiler-body">
         <div className="profiler-scroll">
           <table className="profiler-table">
@@ -346,11 +347,17 @@ export function ProfilerTopQueries({ connectionId }: Props) {
                       onClick={() => setSelectedKey(row.key)}
                       className={`profiler-row${selectedKey === row.key ? " is-selected" : ""}`}
                     >
-                      <td className="profiler-td profiler-td-rank profiler-muted profiler-num">{position + 1}</td>
+                      <td className="profiler-td profiler-td-rank profiler-muted profiler-num">
+                        {position + 1}
+                      </td>
                       <td className="profiler-td profiler-duration">{formatMs(row.totalMs)}</td>
-                      <td className={`profiler-td profiler-num ${meanTone(row.meanMs)}`}>{formatMs(row.meanMs)}</td>
+                      <td className={`profiler-td profiler-num ${meanTone(row.meanMs)}`}>
+                        {formatMs(row.meanMs)}
+                      </td>
                       <td className="profiler-td profiler-num">{formatCount(row.calls)}</td>
-                      <td className="profiler-td profiler-num profiler-muted">{formatCount(row.rows)}</td>
+                      <td className="profiler-td profiler-num profiler-muted">
+                        {formatCount(row.rows)}
+                      </td>
                       <td className="profiler-td profiler-td-sql">
                         <div className="profiler-sql-flex">
                           {insight && (
@@ -394,7 +401,11 @@ export function ProfilerTopQueries({ connectionId }: Props) {
                   className="profiler-detail-btn"
                   onClick={() => copySql(selected.queryText)}
                 >
-                  {copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                  {copied ? (
+                    <Check className="w-3.5 h-3.5 text-emerald-500" />
+                  ) : (
+                    <Copy className="w-3.5 h-3.5" />
+                  )}
                   {copied ? "Copied" : "Copy"}
                 </button>
               </div>
@@ -414,12 +425,14 @@ export function ProfilerTopQueries({ connectionId }: Props) {
                 </div>
               )}
               <dl className="profiler-dl">
-                {([
-                  ["Total time", formatMs(selected.totalMs)],
-                  ["Mean time", formatMs(selected.meanMs)],
-                  ["Calls", formatCount(selected.calls)],
-                  ["Rows", formatCount(selected.rows)],
-                ] as const).map(([label, value]) => (
+                {(
+                  [
+                    ["Total time", formatMs(selected.totalMs)],
+                    ["Mean time", formatMs(selected.meanMs)],
+                    ["Calls", formatCount(selected.calls)],
+                    ["Rows", formatCount(selected.rows)],
+                  ] as const
+                ).map(([label, value]) => (
                   <div key={label} className="profiler-dl-row">
                     <dt className="profiler-dl-key">{label}</dt>
                     <dd className="profiler-dl-val profiler-num">{value}</dd>
@@ -445,4 +458,3 @@ export function ProfilerTopQueries({ connectionId }: Props) {
     </>
   );
 }
-

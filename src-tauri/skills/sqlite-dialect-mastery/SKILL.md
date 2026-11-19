@@ -1,7 +1,7 @@
 ---
 name: sqlite-dialect-mastery
 description: This skill should be used when the user asks to "write SQLite SQL", "why does ALTER TABLE fail", "fix a PRAGMA", or when the target engine is SQLite.
-version: 1.0.0
+version: 1.1.0
 license: MIT
 ---
 
@@ -94,6 +94,8 @@ UTC at write time. `date('now','localtime')` is local; use it only when the app 
 
 ## See also
 
+- `references/pragma-guide.md` — the PRAGMA layer this skill does not cover inline:
+  `STRICT` tables, VACUUM and file bloat, backup safety, `synchronous`, `optimize`.
 - `tsql-safety-guardrails` — mutation discipline, with SQLite's caveat that `TRUNCATE`
   does not exist (`DELETE FROM t` is the equivalent, and it is transactional).
 - `migration-authoring` — the rebuild pattern is the SQLite form of an idempotent DDL step.

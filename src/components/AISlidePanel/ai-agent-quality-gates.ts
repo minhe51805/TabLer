@@ -13,13 +13,13 @@ import { verifyAgentResponseAgainstEvidence } from "./ai-agent-verification";
 export function hasExecutedReadStep(steps: AgentTraceStep[]): boolean {
   return steps.some(
     (step) =>
-      (step.action === "run_readonly_sql"
-        || step.action === "run_parameterized_sql"
-        || step.action === "find_value"
-        || step.action === "sample_table_data")
-      && Boolean(step.observation)
-      && !step.observation.startsWith("Tool error")
-      && !step.observation.startsWith("Tool blocked"),
+      (step.action === "run_readonly_sql" ||
+        step.action === "run_parameterized_sql" ||
+        step.action === "find_value" ||
+        step.action === "sample_table_data") &&
+      Boolean(step.observation) &&
+      !step.observation.startsWith("Tool error") &&
+      !step.observation.startsWith("Tool blocked"),
   );
 }
 
@@ -47,14 +47,14 @@ export function responseClaimsSuccessfulExecution(response: string | undefined):
 export function hasSuccessfulReadStep(steps: AgentTraceStep[]): boolean {
   return steps.some(
     (step) =>
-      (step.action === "run_readonly_sql"
-        || step.action === "run_parameterized_sql"
-        || step.action === "find_value"
-        || step.action === "sample_table_data")
-      && Boolean(step.observation)
-      && !step.observation.startsWith("Tool error")
-      && !step.observation.startsWith("Tool blocked")
-      && hasSuccessfulReadEvidence(step),
+      (step.action === "run_readonly_sql" ||
+        step.action === "run_parameterized_sql" ||
+        step.action === "find_value" ||
+        step.action === "sample_table_data") &&
+      Boolean(step.observation) &&
+      !step.observation.startsWith("Tool error") &&
+      !step.observation.startsWith("Tool blocked") &&
+      hasSuccessfulReadEvidence(step),
   );
 }
 
@@ -149,18 +149,21 @@ export function evaluateEvidenceGate(params: {
       response: "",
       missingReportTable: false,
       falseSuccessClaim: false,
-      verification: { ok: true, unsupported: [], unsupportedIdentifiers: [] } as ReturnType<typeof verifyAgentResponseAgainstEvidence>,
+      verification: { ok: true, unsupported: [], unsupportedIdentifiers: [] } as ReturnType<
+        typeof verifyAgentResponseAgainstEvidence
+      >,
       composeOnly: false,
       needsMoreEvidence: false,
     };
   }
   const missingData = !finishHasSql(finalAction) && !hasExecutedReadStep(steps);
-  const response =
-    typeof finalAction.args?.response === "string" ? finalAction.args.response : "";
+  const response = typeof finalAction.args?.response === "string" ? finalAction.args.response : "";
   const missingReportTable = wantsReportTable && !responseHasMarkdownTable(response);
   const verification = verifyAgentResponseAgainstEvidence(response, steps, knownIdentifiers);
-  const falseSuccessClaim = responseClaimsSuccessfulExecution(response) && !hasSuccessfulReadStep(steps);
-  const needsMoreEvidence = missingData || missingReportTable || falseSuccessClaim || !verification.ok;
+  const falseSuccessClaim =
+    responseClaimsSuccessfulExecution(response) && !hasSuccessfulReadStep(steps);
+  const needsMoreEvidence =
+    missingData || missingReportTable || falseSuccessClaim || !verification.ok;
   return {
     isFinish,
     missingData,
@@ -195,7 +198,9 @@ export function buildUnsupportedEvidenceInstruction(
   if (verification.unsupportedIdentifiers.length > 0) {
     const named = verification.unsupportedIdentifiers
       .slice(0, 4)
-      .map((item) => (item.suggestion ? `${item.cited} (did you mean ${item.suggestion}?)` : item.cited))
+      .map((item) =>
+        item.suggestion ? `${item.cited} (did you mean ${item.suggestion}?)` : item.cited,
+      )
       .join(", ");
     parts.push(
       `Your answer cites table/column names absent from both the workspace schema and every tool observation: ${named}.`,

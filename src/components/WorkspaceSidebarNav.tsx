@@ -1,5 +1,7 @@
 import { Activity, BarChart3, FolderTree, GitBranch, PanelRightClose, Plus } from "lucide-react";
 import type { useI18n } from "../i18n";
+import { APP_EVENTS } from "../utils/app-events";
+import { EventCenter } from "../stores/event-center";
 
 type TFunction = ReturnType<typeof useI18n>["t"];
 
@@ -69,7 +71,7 @@ export function WorkspaceSidebarNav({
       // The profiler is a modal overlay, not a workspace panel, so it has no
       // persistent "active" panel state — the rail button just launches it.
       active: false,
-      onClick: () => window.dispatchEvent(new CustomEvent("open-live-profiler")),
+      onClick: () => EventCenter.emit(APP_EVENTS.openLiveProfiler),
       disabled: !isConnected,
     },
   ] as const;

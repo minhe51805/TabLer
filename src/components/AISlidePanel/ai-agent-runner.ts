@@ -44,6 +44,18 @@ export interface AIAgentRunnerResult {
   tokenBudgetExhausted: boolean;
 }
 
+export interface AIAgentToolBatchItem {
+  callId: string;
+  action: AIAgentToolAction;
+}
+
+export interface AIAgentToolResultEvent {
+  callId: string;
+  action: AIAgentToolAction;
+  observation: string;
+  skipped: boolean;
+}
+
 export interface RunAIAgentToolLoopOptions {
   workspaceToolsEnabled: boolean;
   stepBudget: number;
@@ -63,8 +75,12 @@ export interface RunAIAgentToolLoopOptions {
    */
   getLastRequestTokens?: () => number;
   initialSteps?: AgentTraceStep[];
-  requestAction: (request: AIAgentActionRequest) => Promise<AIAgentToolAction>;
+  requestAction: (
+    request: AIAgentActionRequest,
+  ) => Promise<AIAgentToolAction | AIAgentToolBatchItem[]>;
   runTool: (action: AIAgentToolAction) => Promise<string>;
+  /** Invoked for every tool item in a turn (executed or budget-skipped) so multi-turn transcripts keep 1:1 `call_id` pairing. */
+  onToolResult?: (event: AIAgentToolResultEvent) => void;
   recoverFinish: (reason: string) => Promise<AIAgentFinishAction>;
   onStateChange?: (snapshot: AIAgentRunnerSnapshot) => void;
 }
@@ -172,13 +188,31 @@ export async function runAIAgentToolLoop(
 
   const tokenBudgetExhausted = () => tokenBudget > 0 && tokensUsed >= tokenBudget;
 
+  const normalizeBatch = (
+    raw: AIAgentToolAction | AIAgentToolBatchItem[],
+  ): AIAgentToolBatchItem[] => {
+    if (Array.isArray(raw)) {
+      return raw.length > 0
+        ? raw
+        : [
+            {
+              callId: `step_${steps.length + 1}`,
+              action: { action: "finish", message: "", args: { response: "" } },
+            },
+          ];
+    }
+    return [{ callId: `step_${steps.length + 1}`, action: raw }];
+  };
+
   emit("idle");
 
   try {
     let finalAction: AIAgentToolAction | null = null;
 
     if (!options.workspaceToolsEnabled) {
-      finalAction = await requestAction("direct", true);
+      const batch = normalizeBatch(await requestAction("direct", true));
+      finalAction =
+        batch.find((item) => item.action.action === "finish")?.action ?? batch[0].action;
     } else {
       iteration = 1;
       while (true) {
@@ -194,49 +228,77 @@ export async function runAIAgentToolLoop(
           }
         }
 
-        const action = await requestAction(
-          "iterate",
-          iteration >= effectiveBudget || tokenBudgetExhausted(),
+        const batch = normalizeBatch(
+          await requestAction("iterate", iteration >= effectiveBudget || tokenBudgetExhausted()),
         );
 
-        if (action.action === "finish") {
-          finalAction = action;
+        let sawFinishInBatch = false;
+        for (let idx = 0; idx < batch.length; idx += 1) {
+          const { callId, action } = batch[idx];
+          if (action.action === "finish") {
+            finalAction = action;
+            sawFinishInBatch = true;
+            // Acknowledge any trailing sibling calls so multi-turn transcripts stay valid.
+            for (let remIdx = idx + 1; remIdx < batch.length; remIdx += 1) {
+              const rem = batch[remIdx];
+              options.onToolResult?.({
+                callId: rem.callId,
+                action: rem.action,
+                observation: "Tool skipped: run finished in this turn.",
+                skipped: true,
+              });
+            }
+            break;
+          }
+
+          if (idx > 0 && (iteration > effectiveBudget || tokenBudgetExhausted())) {
+            options.onToolResult?.({
+              callId,
+              action,
+              observation:
+                "Tool skipped: step or token budget reached; call finish using the evidence gathered so far.",
+              skipped: true,
+            });
+            continue;
+          }
+
+          emit("running-tool", {
+            action: action.action,
+            message: action.message || "No message provided.",
+          });
+          const observation = await options.runTool(action);
+          steps = [
+            ...steps,
+            {
+              step: steps.length + 1,
+              action: action.action,
+              message: action.message || "No message provided.",
+              observation,
+            },
+          ];
+          signatureHistory.push(actionSignature(action));
+          options.onToolResult?.({
+            callId,
+            action,
+            observation,
+            skipped: false,
+          });
+          emit("tool-completed", {
+            action: action.action,
+            message: action.message || "No message provided.",
+          });
+
+          if (action.action === "update_plan" && metaFreeCalls < MAX_FREE_META_ACTIONS) {
+            metaFreeCalls += 1;
+          } else {
+            iteration += 1;
+          }
+        }
+
+        if (sawFinishInBatch) {
           break;
         }
 
-        emit("running-tool", {
-          action: action.action,
-          message: action.message || "No message provided.",
-        });
-        const observation = await options.runTool(action);
-        steps = [
-          ...steps,
-          {
-            step: steps.length + 1,
-            action: action.action,
-            message: action.message || "No message provided.",
-            observation,
-          },
-        ];
-        signatureHistory.push(actionSignature(action));
-        emit("tool-completed", {
-          action: action.action,
-          message: action.message || "No message provided.",
-        });
-
-        // Pure-planning actions (update_plan) are overhead, not work: while
-        // under the free-meta allowance they do not consume the step budget,
-        // so a long planning phase can never starve the capabilities the user
-        // actually asked for. Past the allowance they count normally, so
-        // planning still cannot loop forever (token budget also applies).
-        if (action.action === "update_plan" && metaFreeCalls < MAX_FREE_META_ACTIONS) {
-          metaFreeCalls += 1;
-        } else {
-          iteration += 1;
-        }
-
-        // A token ceiling ends the tool phase early even with steps to spare,
-        // so a run can never keep spending after the budget is reached.
         if (tokenBudgetExhausted()) {
           break;
         }
@@ -244,7 +306,10 @@ export async function runAIAgentToolLoop(
 
       if (!finalAction) {
         iteration = effectiveBudget + 1;
-        finalAction = await requestAction("budget", true);
+        const budgetBatch = normalizeBatch(await requestAction("budget", true));
+        finalAction =
+          budgetBatch.find((item) => item.action.action === "finish")?.action ??
+          budgetBatch[0].action;
       }
     }
 

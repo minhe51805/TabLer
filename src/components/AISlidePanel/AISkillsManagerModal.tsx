@@ -373,6 +373,7 @@ export function AISkillsManagerModal({ open, language, onClose }: AISkillsManage
           <button
             type="button"
             className="ai-workspace-modal-close"
+            data-testid="ai-skills-modal-close"
             onClick={onClose}
             aria-label={t("Đóng", "Close")}
             title={t("Đóng", "Close")}

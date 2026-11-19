@@ -36,11 +36,15 @@ function finishAction(args?: Record<string, unknown>): AIAgentFinishAction {
 
 describe("hasExecutedReadStep", () => {
   it("returns true for a successful readonly SQL step", () => {
-    expect(hasExecutedReadStep([step({ action: "run_readonly_sql", observation: "id | name" })])).toBe(true);
+    expect(
+      hasExecutedReadStep([step({ action: "run_readonly_sql", observation: "id | name" })]),
+    ).toBe(true);
   });
 
   it("returns true for a successful sample_table_data step", () => {
-    expect(hasExecutedReadStep([step({ action: "sample_table_data", observation: "rows..." })])).toBe(true);
+    expect(
+      hasExecutedReadStep([step({ action: "sample_table_data", observation: "rows..." })]),
+    ).toBe(true);
   });
 
   it("returns false when the observation starts with Tool error or Tool blocked", () => {
@@ -122,7 +126,11 @@ describe("evaluateEvidenceGate", () => {
   });
 
   it("flags missing data when finish has no SQL and no read step ran", () => {
-    const gate = evaluateEvidenceGate({ finalAction: noSqlFinish, steps: [], wantsReportTable: false });
+    const gate = evaluateEvidenceGate({
+      finalAction: noSqlFinish,
+      steps: [],
+      wantsReportTable: false,
+    });
     expect(gate.missingData).toBe(true);
     expect(gate.needsMoreEvidence).toBe(true);
     expect(gate.composeOnly).toBe(false);
@@ -163,7 +171,7 @@ describe("evaluateEvidenceGate", () => {
 
 describe("buildAgentRecoveryInstruction", () => {
   type Verification = ReturnType<
-    typeof import("@/components/AISlidePanel/ai-agent-verification")["verifyAgentResponseAgainstEvidence"]
+    (typeof import("@/components/AISlidePanel/ai-agent-verification"))["verifyAgentResponseAgainstEvidence"]
   >;
   const okVerification = { ok: true, unsupported: [], unsupportedIdentifiers: [] } as Verification;
   const badVerification = {
@@ -264,7 +272,12 @@ describe("false-success gate", () => {
         response: "Sandbox đã đúng thực thi, dữ liệu sẵn sàng.",
         sql: "SELECT 1 FROM users",
       }),
-      steps: [step({ action: "run_readonly_sql", observation: "Tool error: column \"row_count\" does not exist" })],
+      steps: [
+        step({
+          action: "run_readonly_sql",
+          observation: 'Tool error: column "row_count" does not exist',
+        }),
+      ],
       wantsReportTable: false,
     });
     expect(evaluation.falseSuccessClaim).toBe(true);
@@ -278,10 +291,12 @@ describe("false-success gate", () => {
         response: "The query executed successfully — 120 rows total.",
         sql: "SELECT count(*) FROM users",
       }),
-      steps: [step({
-        action: "run_readonly_sql",
-        observation: "{\"rowCount\":120,\"sandboxed\":true,\"columns\":[\"count:int8\"]}",
-      })],
+      steps: [
+        step({
+          action: "run_readonly_sql",
+          observation: '{"rowCount":120,"sandboxed":true,"columns":["count:int8"]}',
+        }),
+      ],
       wantsReportTable: false,
     });
     expect(evaluation.falseSuccessClaim).toBe(false);
@@ -318,8 +333,7 @@ describe("structured facts (roadmap #7)", () => {
           step: 1,
           action: "run_readonly_sql",
           message: "query",
-          observation:
-            '{"sandboxed":true,"rows":[]}\n@@facts:{"rowsReturned":0}',
+          observation: '{"sandboxed":true,"rows":[]}\n@@facts:{"rowsReturned":0}',
         },
       ]),
     ).toBe(false);

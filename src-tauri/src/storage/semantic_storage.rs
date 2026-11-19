@@ -185,7 +185,7 @@ impl SemanticStorage {
 pub fn get_semantic_entries(
     connection_id: String,
     database: Option<String>,
-) -> Result<Vec<SemanticEntry>, String> {
+) -> Result<Vec<SemanticEntry>, crate::error::AppError> {
     let storage = SemanticStorage::new()?;
     Ok(storage.get_for_scope(&connection_id, database.as_deref()))
 }
@@ -199,25 +199,27 @@ pub fn save_semantic_entry(
     definition: String,
     kind: Option<String>,
     source: Option<String>,
-) -> Result<SemanticEntry, String> {
+) -> Result<SemanticEntry, crate::error::AppError> {
     let mut storage = SemanticStorage::new()?;
-    storage.save(SemanticEntry {
-        id: id.unwrap_or_default(),
-        connection_id,
-        database,
-        term,
-        definition,
-        kind: kind.unwrap_or_else(default_kind),
-        source: source.unwrap_or_else(default_source),
-        created_at: String::new(),
-        updated_at: String::new(),
-    })
+    storage
+        .save(SemanticEntry {
+            id: id.unwrap_or_default(),
+            connection_id,
+            database,
+            term,
+            definition,
+            kind: kind.unwrap_or_else(default_kind),
+            source: source.unwrap_or_else(default_source),
+            created_at: String::new(),
+            updated_at: String::new(),
+        })
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
-pub fn delete_semantic_entry(id: String) -> Result<(), String> {
+pub fn delete_semantic_entry(id: String) -> Result<(), crate::error::AppError> {
     let mut storage = SemanticStorage::new()?;
-    storage.delete(&id)
+    storage.delete(&id).map_err(crate::error::AppError::from)
 }
 
 #[cfg(test)]

@@ -18,7 +18,7 @@ function loadDataReadApprovals(): DataReadApprovals {
     const parsed: unknown = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
     const entries = Object.entries(parsed as Record<string, unknown>).filter(
-      (entry): entry is [string, number] => typeof entry[1] === "number"
+      (entry): entry is [string, number] => typeof entry[1] === "number",
     );
     return Object.fromEntries(entries);
   } catch {
@@ -30,10 +30,7 @@ function loadDataReadApprovals(): DataReadApprovals {
 function saveDataReadApprovals(approvals: DataReadApprovals): void {
   if (typeof window === "undefined") return;
   try {
-    window.localStorage.setItem(
-      AI_DATA_READ_APPROVALS_STORAGE_KEY,
-      JSON.stringify(approvals)
-    );
+    window.localStorage.setItem(AI_DATA_READ_APPROVALS_STORAGE_KEY, JSON.stringify(approvals));
   } catch {
     // Ignore storage write failures (private mode, quota, etc.).
   }
@@ -41,21 +38,21 @@ function saveDataReadApprovals(approvals: DataReadApprovals): void {
 
 export function dataReadScopeKey(
   connectionId: string | null | undefined,
-  database: string | null | undefined
+  database: string | null | undefined,
 ): string {
   return `${connectionId || "no-connection"}:${database || "no-database"}`;
 }
 
 export function isDataReadApproved(
   connectionId: string | null | undefined,
-  database: string | null | undefined
+  database: string | null | undefined,
 ): boolean {
   return Boolean(loadDataReadApprovals()[dataReadScopeKey(connectionId, database)]);
 }
 
 export function approveDataRead(
   connectionId: string | null | undefined,
-  database: string | null | undefined
+  database: string | null | undefined,
 ): void {
   const approvals = loadDataReadApprovals();
   approvals[dataReadScopeKey(connectionId, database)] = Date.now();
@@ -64,7 +61,7 @@ export function approveDataRead(
 
 export function revokeDataRead(
   connectionId: string | null | undefined,
-  database: string | null | undefined
+  database: string | null | undefined,
 ): void {
   const approvals = loadDataReadApprovals();
   const scope = dataReadScopeKey(connectionId, database);

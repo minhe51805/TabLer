@@ -168,16 +168,17 @@ fn build_delete_restore_request(checkpoint: &RewindCheckpoint) -> TableRowDelete
 #[tauri::command]
 pub async fn list_rewind_checkpoints(
     connection_id: String,
-) -> Result<Vec<RewindCheckpointInfo>, String> {
-    checkpoint_store::list_checkpoints(&connection_id)
+) -> Result<Vec<RewindCheckpointInfo>, crate::error::AppError> {
+    checkpoint_store::list_checkpoints(&connection_id).map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
 pub async fn delete_rewind_checkpoint(
     connection_id: String,
     checkpoint_id: String,
-) -> Result<bool, String> {
+) -> Result<bool, crate::error::AppError> {
     checkpoint_store::delete_checkpoint(&connection_id, &checkpoint_id)
+        .map_err(crate::error::AppError::from)
 }
 
 /// Structured refusal — TablePro's `RewindRefusal` equivalent. A restore can
@@ -262,7 +263,7 @@ pub async fn restore_rewind_checkpoint(
     checkpoint_id: String,
     db_manager: State<'_, DatabaseManager>,
     safe_mode: State<'_, SafeModeState>,
-) -> Result<RewindRestoreOutcome, String> {
+) -> Result<RewindRestoreOutcome, crate::error::AppError> {
     let checkpoint: RewindCheckpoint =
         checkpoint_store::load_checkpoint(&connection_id, &checkpoint_id)?;
     if let Some(code) = early_rewind_refusal(&checkpoint, &connection_id) {

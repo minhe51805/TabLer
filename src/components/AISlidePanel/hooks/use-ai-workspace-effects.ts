@@ -5,7 +5,7 @@ import { useEffect } from "react";
 import { invokeMutation } from "../../../utils/tauri-utils";
 import { emitAppToast } from "../../../utils/app-toast";
 import { getCurrentAppLanguage } from "../../../i18n";
-import { denyPendingAIFailoverConsent } from "../../../utils/ai-failover-consent";
+import { useAIPanelStore } from "../store/aiPanelStore";
 import {
   AI_WORKSPACE_HISTORY_SAVE_DEBOUNCE_MS,
   AI_WORKSPACE_HISTORY_VERSION,
@@ -110,12 +110,6 @@ export function useAIWorkspaceEffects(options: Record<string, any>) {
     setIsHistoryOpen,
     isOpenRef,
     openSessionRef,
-    visualizationApprovalScopeRef,
-    setIsSessionDataReadEnabled,
-    visualizationConsentResolverRef,
-    setVisualizationConsentPending,
-    destructiveConsentResolverRef,
-    setDestructiveConsentPending,
     isHistoryOpen,
     historyPanelRef,
     aiConfigs,
@@ -133,6 +127,7 @@ export function useAIWorkspaceEffects(options: Record<string, any>) {
     initialAttachmentNonce,
     initialAttachment,
     onClose,
+    onRequestClose,
     historySaveTimerRef,
     bubbleDismissTimersRef,
     bubbles,
@@ -245,26 +240,14 @@ export function useAIWorkspaceEffects(options: Record<string, any>) {
 
   useEffect(() => {
     isOpenRef.current = isOpen;
+    const panelStore = useAIPanelStore.getState();
     if (isOpen) {
       openSessionRef.current += 1;
-      visualizationApprovalScopeRef.current = null;
-      setIsSessionDataReadEnabled(false);
+      panelStore.setVisualizationApprovalScope(null);
+      panelStore.setIsSessionDataReadEnabled(false);
     } else {
-      if (visualizationConsentResolverRef.current) {
-        visualizationConsentResolverRef.current(false);
-        visualizationConsentResolverRef.current = null;
-      }
-      setVisualizationConsentPending(null);
-      if (destructiveConsentResolverRef.current) {
-        destructiveConsentResolverRef.current(false);
-        destructiveConsentResolverRef.current = null;
-      }
-      setDestructiveConsentPending(null);
-      // A failover consent left pending while the panel closes would never
-      // resolve, starving the run that asked for it — deny it like the other
-      // pending consents above (without persisting a decision).
-      denyPendingAIFailoverConsent();
-      setIsSessionDataReadEnabled(false);
+      panelStore.denyPendingConsents();
+      panelStore.setIsSessionDataReadEnabled(false);
     }
   }, [isOpen]);
 
@@ -369,8 +352,9 @@ export function useAIWorkspaceEffects(options: Record<string, any>) {
     lastWorkspaceKeyRef.current = currentWorkspaceKey;
     setAttachedSelection(null);
     setPromptDraft("");
-    visualizationApprovalScopeRef.current = null;
-    setIsSessionDataReadEnabled(false);
+    const panelStore = useAIPanelStore.getState();
+    panelStore.setVisualizationApprovalScope(null);
+    panelStore.setIsSessionDataReadEnabled(false);
     setError(null);
   }, [currentWorkspaceKey, setError]);
 
@@ -407,11 +391,11 @@ export function useAIWorkspaceEffects(options: Record<string, any>) {
     if (!isOpen) return;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      onClose();
+      (onRequestClose ?? onClose)();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isOpen, onClose]);
+  }, [isOpen, onClose, onRequestClose]);
 
   useEffect(() => {
     return () => {

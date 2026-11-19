@@ -1,63 +1,51 @@
 use crate::database::ai_models::{AIProviderConfig, AIProviderType};
+use crate::error::{AppError, ErrorCode};
 use reqwest::{StatusCode, Url};
 
-/// Machine-readable classification appended to a finished AI error message so
-/// the frontend (`normalizeAIRequestError` in `src/utils/ai-request-errors.ts`)
-/// can route retry/failover decisions off an authoritative marker instead of
-/// guessing from substrings (tech-debt D7). The frontend strips this suffix
-/// before showing the message, so users never see it. The kind strings mirror
-/// the frontend `AIRequestErrorCode` union; the shared contract lives in
-/// `tests/fixtures/ai-error-kinds.json`.
-pub(crate) const AI_ERROR_KIND_MARKER_KEY: &str = "ai_error_kind";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AiErrorKind {
-    Cancelled,
-    Timeout,
-    Provider,
-    InvalidResponse,
+pub(crate) fn ai_cancelled_error() -> AppError {
+    AppError::ai(
+        ErrorCode::AiCancelled,
+        super::AI_REQUEST_CANCELLED_ERROR,
+        false,
+        None,
+    )
 }
 
-impl AiErrorKind {
-    pub(crate) fn as_str(self) -> &'static str {
-        match self {
-            AiErrorKind::Cancelled => "cancelled",
-            AiErrorKind::Timeout => "timeout",
-            AiErrorKind::Provider => "provider",
-            AiErrorKind::InvalidResponse => "invalid-response",
-        }
-    }
+pub(crate) fn ai_storage_load_error() -> AppError {
+    AppError::structured(
+        ErrorCode::StorageError,
+        "Could not load AI provider settings.",
+        false,
+    )
 }
 
-/// Appends the machine-readable kind marker to a finished error message.
-pub(crate) fn tag_ai_error_kind(message: String, kind: AiErrorKind) -> String {
-    format!("{message} [{AI_ERROR_KIND_MARKER_KEY}={}]", kind.as_str())
+pub(crate) fn ai_storage_save_error() -> AppError {
+    AppError::structured(
+        ErrorCode::StorageError,
+        "Could not save AI provider settings.",
+        false,
+    )
 }
 
-pub(crate) fn ai_storage_load_error() -> String {
-    "Could not load AI provider settings.".to_string()
+pub(crate) fn ai_provider_config_error() -> AppError {
+    AppError::ai(
+        ErrorCode::AiAuth,
+        "The active AI provider is not configured correctly.",
+        false,
+        None,
+    )
 }
 
-pub(crate) fn ai_storage_save_error() -> String {
-    "Could not save AI provider settings.".to_string()
-}
-
-pub(crate) fn ai_provider_config_error() -> String {
-    "The active AI provider is not configured correctly.".to_string()
-}
-
-pub(crate) fn ai_provider_request_error(
-    config: &AIProviderConfig,
-    endpoint: &str,
-    error: &reqwest::Error,
-) -> String {
-    let provider_label = if config.name.trim().is_empty() {
+fn provider_label_of(config: &AIProviderConfig) -> String {
+    if config.name.trim().is_empty() {
         format!("{:?}", config.provider_type)
     } else {
         config.name.trim().to_string()
-    };
+    }
+}
 
-    let endpoint_label = Url::parse(endpoint)
+fn endpoint_label_of(endpoint: &str) -> String {
+    Url::parse(endpoint)
         .ok()
         .and_then(|url| {
             let host = url.host_str()?.to_string();
@@ -67,7 +55,16 @@ pub(crate) fn ai_provider_request_error(
                 .unwrap_or_default();
             Some(format!("{host}{port}"))
         })
-        .unwrap_or_else(|| endpoint.to_string());
+        .unwrap_or_else(|| endpoint.to_string())
+}
+
+pub(crate) fn ai_provider_request_error(
+    config: &AIProviderConfig,
+    endpoint: &str,
+    error: &reqwest::Error,
+) -> AppError {
+    let provider_label = provider_label_of(config);
+    let endpoint_label = endpoint_label_of(endpoint);
 
     let raw_error = error.to_string();
     let normalized_error = raw_error.to_ascii_lowercase();
@@ -115,21 +112,25 @@ pub(crate) fn ai_provider_request_error(
         format!("Could not reach {endpoint_label}. Check the endpoint and network connection.")
     };
 
-    let kind = if error.is_timeout() {
-        AiErrorKind::Timeout
+    let code = if error.is_timeout() {
+        ErrorCode::AiTimeout
     } else {
-        AiErrorKind::Provider
+        ErrorCode::AiProviderTransient
     };
-    tag_ai_error_kind(
+    AppError::ai(
+        code,
         format!("The AI request to \"{provider_label}\" could not be completed. {detail}"),
-        kind,
+        true,
+        None,
     )
 }
 
-pub(crate) fn ai_provider_response_error() -> String {
-    tag_ai_error_kind(
-        "The AI provider returned an invalid or unsupported response.".to_string(),
-        AiErrorKind::InvalidResponse,
+pub(crate) fn ai_provider_response_error() -> AppError {
+    AppError::ai(
+        ErrorCode::AiInvalidResponse,
+        "The AI provider returned an invalid or unsupported response.",
+        true,
+        None,
     )
 }
 
@@ -208,20 +209,39 @@ fn compact_response_preview(body: &str, api_key: Option<&str>) -> String {
     truncate_preview(&compact)
 }
 
-pub(crate) fn ai_provider_api_error(message: &str, api_key: Option<&str>) -> String {
-    tag_ai_error_kind(
-        format!(
-            "AI API error: {}",
-            compact_response_preview(message, api_key)
-        ),
-        AiErrorKind::Provider,
-    )
+pub(crate) fn classify_http_status(status: StatusCode) -> (ErrorCode, bool) {
+    match status {
+        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => (ErrorCode::AiAuth, false),
+        StatusCode::TOO_MANY_REQUESTS => (ErrorCode::AiRateLimited, true),
+        StatusCode::REQUEST_TIMEOUT => (ErrorCode::AiProviderTransient, true),
+        _ if status.is_server_error() => (ErrorCode::AiProviderTransient, true),
+        _ if status.is_client_error() => (ErrorCode::AiBadRequest, false),
+        _ => (ErrorCode::AiProviderTransient, false),
+    }
+}
+
+/// Classifies an inline `"error"` payload returned inside an HTTP 200 JSON body
+/// (for example OpenRouter mid-stream/body errors where HTTP status stayed 200).
+pub(crate) fn ai_provider_api_error(message: &str, api_key: Option<&str>) -> AppError {
+    let preview = compact_response_preview(message, api_key);
+    let lower = preview.to_ascii_lowercase();
+    let (code, retryable) = if lower.contains("invalid api key")
+        || lower.contains("unauthorized")
+        || lower.contains("authentication")
+        || lower.contains("forbidden")
+    {
+        (ErrorCode::AiAuth, false)
+    } else if lower.contains("rate limit") || lower.contains("too many requests") {
+        (ErrorCode::AiRateLimited, true)
+    } else {
+        (ErrorCode::AiProviderTransient, true)
+    };
+    AppError::ai(code, format!("AI API error: {preview}"), retryable, None)
 }
 
 /// Read the provider's `Retry-After` header (seconds form, the common 429
 /// case) so the frontend can wait exactly as long as the provider asks
-/// instead of guessing. HTTP-date forms are ignored — the seconds form is
-/// what every rate-limiting AI provider emits.
+/// instead of guessing.
 pub(crate) fn response_retry_after_seconds(response: &reqwest::Response) -> Option<u64> {
     let raw = response
         .headers()
@@ -238,28 +258,35 @@ pub(crate) fn ai_provider_http_status_error(
     body: &str,
     api_key: Option<&str>,
     retry_after_seconds: Option<u64>,
-) -> String {
-    let provider_label = if config.name.trim().is_empty() {
-        format!("{:?}", config.provider_type)
-    } else {
-        config.name.trim().to_string()
-    };
-    let endpoint_label = Url::parse(endpoint)
-        .ok()
-        .and_then(|url| {
-            let host = url.host_str()?.to_string();
-            let port = url
-                .port()
-                .map(|value| format!(":{value}"))
-                .unwrap_or_default();
-            Some(format!("{host}{port}"))
-        })
-        .unwrap_or_else(|| endpoint.to_string());
+) -> AppError {
+    let provider_label = provider_label_of(config);
+    let endpoint_label = endpoint_label_of(endpoint);
     let status_label = status
         .canonical_reason()
         .map(|reason| format!("{} {}", status.as_u16(), reason))
         .unwrap_or_else(|| status.as_u16().to_string());
-    let preview = compact_response_preview(body, api_key);
+
+    // Extract clean provider `"error.message"` when available, still redacted.
+    let extracted_error = serde_json::from_str::<serde_json::Value>(body)
+        .ok()
+        .and_then(|payload| {
+            let err = payload.get("error")?;
+            if let Some(msg) = err.get("message").and_then(|v| v.as_str()) {
+                Some(msg.to_string())
+            } else {
+                err.as_str().map(str::to_string)
+            }
+        });
+    let preview_source = extracted_error.as_deref().unwrap_or(body);
+    let preview = compact_response_preview(preview_source, api_key);
+
+    let (code, retryable) = classify_http_status(status);
+    let retry_after_ms = if retryable {
+        retry_after_seconds.map(|seconds| seconds.saturating_mul(1000))
+    } else {
+        None
+    };
+
     let retry_note = if matches!(
         status,
         StatusCode::BAD_GATEWAY
@@ -268,20 +295,17 @@ pub(crate) fn ai_provider_http_status_error(
             | StatusCode::TOO_MANY_REQUESTS
     ) {
         match retry_after_seconds {
-            // Machine-readable marker: normalizeAIRequestError on the
-            // frontend extracts `retry_after_ms=<n>` from this text and
-            // waits exactly that long before retrying.
             Some(seconds) => format!(
-                " This looks temporary on the provider side. It asks to retry after {seconds} s (retry_after_ms={}).",
-                seconds.saturating_mul(1000)
+                " This looks temporary on the provider side. It asks to retry after {seconds} s."
             ),
-            None => " This looks temporary on the provider side. Please try again in a moment.".to_string(),
+            None => " This looks temporary on the provider side. Please try again in a moment."
+                .to_string(),
         }
     } else {
         String::new()
     };
 
-    let message = if preview.is_empty() {
+    let message = if preview.is_empty() || preview == "{}" {
         format!(
             "The AI provider \"{provider_label}\" at {endpoint_label} returned HTTP {status_label}.{retry_note}"
         )
@@ -290,7 +314,7 @@ pub(crate) fn ai_provider_http_status_error(
             "The AI provider \"{provider_label}\" at {endpoint_label} returned HTTP {status_label}. Response preview: {preview}{retry_note}"
         )
     };
-    tag_ai_error_kind(message, AiErrorKind::Provider)
+    AppError::ai(code, message, retryable, retry_after_ms)
 }
 
 pub(crate) fn ai_provider_non_json_response_error(
@@ -298,30 +322,18 @@ pub(crate) fn ai_provider_non_json_response_error(
     endpoint: &str,
     body: &str,
     api_key: Option<&str>,
-) -> String {
-    let provider_label = if config.name.trim().is_empty() {
-        format!("{:?}", config.provider_type)
-    } else {
-        config.name.trim().to_string()
-    };
-    let endpoint_label = Url::parse(endpoint)
-        .ok()
-        .and_then(|url| {
-            let host = url.host_str()?.to_string();
-            let port = url
-                .port()
-                .map(|value| format!(":{value}"))
-                .unwrap_or_default();
-            Some(format!("{host}{port}"))
-        })
-        .unwrap_or_else(|| endpoint.to_string());
+) -> AppError {
+    let provider_label = provider_label_of(config);
+    let endpoint_label = endpoint_label_of(endpoint);
     let preview = compact_response_preview(body, api_key);
 
-    tag_ai_error_kind(
+    AppError::ai(
+        ErrorCode::AiInvalidResponse,
         format!(
             "The AI provider \"{provider_label}\" at {endpoint_label} returned a non-JSON response. Response preview: {preview}"
         ),
-        AiErrorKind::InvalidResponse,
+        true,
+        None,
     )
 }
 
@@ -330,31 +342,18 @@ pub(crate) fn ai_provider_response_error_with_preview(
     endpoint: &str,
     payload: &serde_json::Value,
     api_key: Option<&str>,
-) -> String {
-    let provider_label = if config.name.trim().is_empty() {
-        format!("{:?}", config.provider_type)
-    } else {
-        config.name.trim().to_string()
-    };
-    let endpoint_label = Url::parse(endpoint)
-        .ok()
-        .and_then(|url| {
-            let host = url.host_str()?.to_string();
-            let port = url
-                .port()
-                .map(|value| format!(":{value}"))
-                .unwrap_or_default();
-            Some(format!("{host}{port}"))
-        })
-        .unwrap_or_else(|| endpoint.to_string());
-
+) -> AppError {
+    let provider_label = provider_label_of(config);
+    let endpoint_label = endpoint_label_of(endpoint);
     let compact_preview = compact_response_preview(&payload.to_string(), api_key);
 
-    tag_ai_error_kind(
+    AppError::ai(
+        ErrorCode::AiInvalidResponse,
         format!(
             "The AI provider \"{provider_label}\" at {endpoint_label} returned an unsupported response shape. Response preview: {compact_preview}"
         ),
-        AiErrorKind::InvalidResponse,
+        true,
+        None,
     )
 }
 
@@ -397,62 +396,6 @@ mod tests {
         assert!(preview.ends_with("..."));
     }
 
-    /// Contract with the frontend (`normalizeAIRequestError` in
-    /// `src/utils/ai-request-errors.ts`): retryable provider HTTP failures
-    /// (429/5xx with a Retry-After header) embed a machine-readable
-    /// `retry_after_ms=<n>` marker parsed by the frontend to wait exactly as
-    /// long as the provider asked.
-    #[test]
-    fn provider_http_error_carries_machine_readable_retry_after_marker() {
-        use crate::database::ai_models::AIProviderType;
-
-        let config: AIProviderConfig = serde_json::from_str(&format!(
-            r#"{{"id":"p1","name":"OpenAI","provider_type":{},"endpoint":"https://api.openai.com/v1/chat/completions","model":"gpt-test","is_enabled":true}}"#,
-            serde_json::to_string(&AIProviderType::OpenAI).unwrap()
-        ))
-        .expect("provider config should deserialize");
-
-        let endpoint = "https://api.openai.com/v1/chat/completions";
-
-        let with_marker = ai_provider_http_status_error(
-            &config,
-            endpoint,
-            StatusCode::TOO_MANY_REQUESTS,
-            "{}",
-            None,
-            Some(4),
-        );
-        assert!(
-            with_marker.contains("retry_after_ms=4000"),
-            "message was: {with_marker}"
-        );
-
-        // Retryable status without a parseable Retry-After header: no marker,
-        // just the human-facing note.
-        let without_marker = ai_provider_http_status_error(
-            &config,
-            endpoint,
-            StatusCode::SERVICE_UNAVAILABLE,
-            "{}",
-            None,
-            None,
-        );
-        assert!(!without_marker.contains("retry_after_ms="));
-        assert!(without_marker.contains("Please try again in a moment."));
-
-        // Non-retryable statuses never carry the marker even if a header
-        // slipped through.
-        let bad_request = ai_provider_http_status_error(
-            &config,
-            endpoint,
-            StatusCode::BAD_REQUEST,
-            "{}",
-            None,
-            Some(4),
-        );
-        assert!(!bad_request.contains("retry_after_ms="));
-    }
-
     fn openai_test_config() -> AIProviderConfig {
         serde_json::from_str(&format!(
             r#"{{"id":"p1","name":"OpenAI","provider_type":{},"endpoint":"https://api.openai.com/v1/chat/completions","model":"gpt-test","is_enabled":true}}"#,
@@ -461,88 +404,94 @@ mod tests {
         .expect("provider config should deserialize")
     }
 
-    /// D7: every terminal AI error builder appends its machine-readable
-    /// `[ai_error_kind=<code>]` marker so the frontend classifier can route
-    /// retry/failover off it instead of guessing from substrings.
     #[test]
-    fn ai_error_builders_append_machine_readable_kind_markers() {
+    fn provider_http_error_carries_structured_code_and_retry_after_ms() {
         let config = openai_test_config();
         let endpoint = "https://api.openai.com/v1/chat/completions";
 
-        assert!(ai_provider_response_error().ends_with("[ai_error_kind=invalid-response]"));
-        assert!(ai_provider_api_error("boom", None).ends_with("[ai_error_kind=provider]"));
-        assert!(ai_provider_http_status_error(
+        let rate_limited = ai_provider_http_status_error(
             &config,
             endpoint,
             StatusCode::TOO_MANY_REQUESTS,
-            "{}",
+            r#"{"error":{"message":"Quota exceeded"}}"#,
             None,
             Some(4),
-        )
-        .ends_with("[ai_error_kind=provider]"));
-        assert!(
-            ai_provider_non_json_response_error(&config, endpoint, "<html>", None)
-                .ends_with("[ai_error_kind=invalid-response]")
         );
-        assert!(ai_provider_response_error_with_preview(
-            &config,
-            endpoint,
-            &json!({"foo": "bar"}),
-            None
-        )
-        .ends_with("[ai_error_kind=invalid-response]"));
+        assert_eq!(rate_limited.code(), ErrorCode::AiRateLimited);
+        assert!(rate_limited.retryable());
+        assert_eq!(rate_limited.retry_after_ms(), Some(4000));
+        assert!(rate_limited.contains("Quota exceeded"));
+        assert!(!rate_limited.contains("ai_error_kind"));
 
-        // The kind marker rides alongside the retry_after_ms marker without
-        // clobbering it: both must survive on the same message.
-        let http = ai_provider_http_status_error(
+        let unavailable = ai_provider_http_status_error(
             &config,
             endpoint,
-            StatusCode::TOO_MANY_REQUESTS,
+            StatusCode::SERVICE_UNAVAILABLE,
             "{}",
+            None,
+            None,
+        );
+        assert_eq!(unavailable.code(), ErrorCode::AiProviderTransient);
+        assert!(unavailable.retryable());
+        assert_eq!(unavailable.retry_after_ms(), None);
+
+        let unauthorized = ai_provider_http_status_error(
+            &config,
+            endpoint,
+            StatusCode::UNAUTHORIZED,
+            r#"{"error":{"message":"Incorrect API key"}}"#,
+            None,
+            None,
+        );
+        assert_eq!(unauthorized.code(), ErrorCode::AiAuth);
+        assert!(!unauthorized.retryable());
+
+        let bad_request = ai_provider_http_status_error(
+            &config,
+            endpoint,
+            StatusCode::BAD_REQUEST,
+            r#"{"error":{"message":"Invalid parameter"}}"#,
             None,
             Some(4),
         );
-        assert!(http.contains("retry_after_ms=4000"));
-        assert!(http.contains("[ai_error_kind=provider]"));
+        assert_eq!(bad_request.code(), ErrorCode::AiBadRequest);
+        assert!(!bad_request.retryable());
+        assert_eq!(bad_request.retry_after_ms(), None);
     }
 
-    /// Cross-language contract shared with the frontend classifier
-    /// (`tests/utils/ai-request-errors.test.ts` + `src/utils/ai-request-errors.ts`).
-    /// If the marker key or the set of emitted kinds drifts from the frontend's
-    /// recognized codes, one side fails.
     #[test]
-    fn ai_error_kind_markers_match_shared_frontend_contract() {
+    fn structured_ai_error_codes_match_shared_frontend_contract() {
         #[derive(serde::Deserialize)]
         struct Contract {
-            #[serde(rename = "markerKey")]
-            marker_key: String,
-            kinds: Vec<String>,
+            codes: Vec<String>,
         }
 
         let contract: Contract = serde_json::from_str(include_str!(
             "../../../../tests/fixtures/ai-error-kinds.json"
         ))
-        .expect("shared AI error-kind contract should parse");
-
-        assert_eq!(contract.marker_key, AI_ERROR_KIND_MARKER_KEY);
+        .expect("shared AI error-code contract should parse");
 
         let emitted = [
-            AiErrorKind::Cancelled,
-            AiErrorKind::Timeout,
-            AiErrorKind::Provider,
-            AiErrorKind::InvalidResponse,
+            ErrorCode::AiCancelled,
+            ErrorCode::AiTimeout,
+            ErrorCode::AiAuth,
+            ErrorCode::AiBadRequest,
+            ErrorCode::AiRateLimited,
+            ErrorCode::AiProviderTransient,
+            ErrorCode::AiInvalidResponse,
+            ErrorCode::RateLimited,
         ];
-        for kind in emitted {
+        for code in emitted {
             assert!(
-                contract.kinds.iter().any(|listed| listed == kind.as_str()),
-                "frontend contract is missing backend kind {}",
-                kind.as_str()
+                contract.codes.iter().any(|listed| listed == code.as_str()),
+                "frontend contract is missing backend code {}",
+                code.as_str()
             );
         }
         assert_eq!(
-            contract.kinds.len(),
+            contract.codes.len(),
             emitted.len(),
-            "contract lists kinds the backend never emits"
+            "contract lists codes the backend AI layer never emits"
         );
     }
 }

@@ -6,6 +6,61 @@ pub(crate) use stream::*;
 pub(crate) use text::*;
 pub(crate) use tool_calls::*;
 
+use crate::database::ai_models::{AIProviderType, AIResponse};
+
+/// Unified non-streaming response extractor across OpenAI-like, Ollama,
+/// Anthropic, Gemini, and Vertex JSON envelopes. Preserves reasoning, multiple
+/// parallel tool calls, extended-thinking signatures, and normalized token usage.
+pub(crate) fn extract_provider_response(
+    provider: &AIProviderType,
+    payload: &serde_json::Value,
+    used_canonical_tools: bool,
+) -> Option<AIResponse> {
+    let tool_calls = extract_canonical_tool_calls(provider, payload);
+    let thought_signature = extract_thought_signature(provider, payload);
+    let usage = extract_usage_stats(payload);
+
+    let (raw_text, provider_reasoning) = match provider {
+        AIProviderType::Anthropic => (
+            extract_anthropic_response_text(payload),
+            extract_anthropic_reasoning(payload),
+        ),
+        AIProviderType::Gemini | AIProviderType::Vertex => (
+            extract_gemini_response_text(payload),
+            extract_gemini_reasoning(payload),
+        ),
+        _ => (
+            extract_openai_like_response_text(payload),
+            extract_openai_like_reasoning(payload),
+        ),
+    };
+
+    let (think_reasoning, cleaned_text) = match raw_text {
+        Some(text) => split_think_block(&text),
+        None => (None, String::new()),
+    };
+    let reasoning = provider_reasoning.or(think_reasoning);
+
+    if cleaned_text.is_empty() && tool_calls.is_empty() && reasoning.is_none() {
+        return None;
+    }
+
+    let text = if cleaned_text.is_empty() && !tool_calls.is_empty() && !used_canonical_tools {
+        format_tool_call_as_action_json(&tool_calls[0]).unwrap_or_default()
+    } else {
+        cleaned_text
+    };
+
+    Some(AIResponse {
+        text,
+        reasoning,
+        tool_calls,
+        thought_signature,
+        usage,
+        error: None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,5 +442,144 @@ mod tests {
             extract_anthropic_response_text(&payload).as_deref(),
             Some("final answer")
         );
+    }
+
+    #[test]
+    fn tool_call_stream_accumulates_multiple_parallel_openai_calls_and_empty_args() {
+        let mut state = ToolCallStreamState::default();
+        let mut preview = String::new();
+        for payload in [
+            json!({
+                "choices": [{
+                    "delta": {
+                        "tool_calls": [
+                            { "index": 0, "id": "call_a", "function": { "name": "list_tables", "arguments": "" } },
+                            { "index": 1, "id": "call_b", "function": { "name": "describe_table", "arguments": "{\"table\":" } }
+                        ]
+                    }
+                }]
+            }),
+            json!({
+                "choices": [{
+                    "delta": {
+                        "tool_calls": [
+                            { "index": 1, "function": { "arguments": "\"orders\"}" } }
+                        ]
+                    }
+                }]
+            }),
+            json!({ "choices": [{ "delta": {}, "finish_reason": "tool_calls" }] }),
+        ] {
+            for fragment in state.push_payload(&AIProviderType::OpenAI, &payload) {
+                preview.push_str(&fragment);
+            }
+        }
+
+        // Zero-arg preview must still be valid JSON (never `"args":,"message"`).
+        let parsed_preview: serde_json::Value = serde_json::from_str(&preview).unwrap();
+        assert_eq!(parsed_preview["action"], "list_tables");
+        assert_eq!(parsed_preview["args"], json!({}));
+
+        let (calls, sig) = state.into_finalized();
+        assert!(sig.is_none());
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].id, "call_a");
+        assert_eq!(calls[0].name, "list_tables");
+        assert_eq!(calls[0].arguments, json!({}));
+        assert_eq!(calls[1].id, "call_b");
+        assert_eq!(calls[1].name, "describe_table");
+        assert_eq!(calls[1].arguments, json!({ "table": "orders" }));
+    }
+
+    #[test]
+    fn tool_call_stream_accumulates_anthropic_parallel_blocks_and_thinking_signature() {
+        let mut state = ToolCallStreamState::default();
+        for payload in [
+            json!({ "type": "content_block_start", "index": 0, "content_block": { "type": "thinking", "thinking": "" } }),
+            json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "signature_delta", "signature": "sig_part1_" } }),
+            json!({ "type": "content_block_delta", "index": 0, "delta": { "type": "signature_delta", "signature": "part2" } }),
+            json!({ "type": "content_block_stop", "index": 0 }),
+            json!({ "type": "content_block_start", "index": 1, "content_block": { "type": "tool_use", "id": "toolu_1", "name": "describe_table" } }),
+            json!({ "type": "content_block_delta", "index": 1, "delta": { "type": "input_json_delta", "partial_json": "{\"table\":\"users\"}" } }),
+            json!({ "type": "content_block_stop", "index": 1 }),
+            json!({ "type": "content_block_start", "index": 2, "content_block": { "type": "tool_use", "id": "toolu_2", "name": "list_tables" } }),
+            json!({ "type": "content_block_stop", "index": 2 }),
+            json!({ "type": "message_stop" }),
+        ] {
+            let _ = state.push_payload(&AIProviderType::Anthropic, &payload);
+        }
+
+        let (calls, sig) = state.into_finalized();
+        assert_eq!(sig.as_deref(), Some("sig_part1_part2"));
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].id, "toolu_1");
+        assert_eq!(calls[0].arguments, json!({ "table": "users" }));
+        assert_eq!(calls[1].id, "toolu_2");
+        assert_eq!(calls[1].arguments, json!({}));
+    }
+
+    #[test]
+    fn merge_usage_stats_combines_anthropic_message_start_and_delta_tokens() {
+        let mut acc = None;
+        let start = json!({
+            "type": "message_start",
+            "message": {
+                "usage": {
+                    "input_tokens": 1200,
+                    "cache_read_input_tokens": 900,
+                    "output_tokens": 1
+                }
+            }
+        });
+        let delta = json!({
+            "type": "message_delta",
+            "usage": { "output_tokens": 85 }
+        });
+
+        let first = merge_usage_stats(&mut acc, &start).unwrap();
+        assert_eq!(first.input_tokens, Some(1200));
+        assert_eq!(first.cache_read_input_tokens, Some(900));
+
+        let final_stats = merge_usage_stats(&mut acc, &delta).unwrap();
+        assert_eq!(final_stats.input_tokens, Some(1200));
+        assert_eq!(final_stats.output_tokens, Some(85));
+        assert_eq!(final_stats.total_tokens, Some(1285));
+        assert_eq!(final_stats.cache_read_input_tokens, Some(900));
+    }
+
+    #[test]
+    fn extract_provider_response_preserves_reasoning_signature_and_parallel_calls() {
+        let gemini_payload = json!({
+            "candidates": [{
+                "content": {
+                    "parts": [
+                        { "text": "Plan: inspect both tables", "thought": true },
+                        { "text": "Checking schema..." },
+                        {
+                            "functionCall": { "name": "describe_table", "args": { "table": "users" } },
+                            "thoughtSignature": "gemini-sig-42"
+                        },
+                        {
+                            "functionCall": { "name": "describe_table", "args": { "table": "orders" } }
+                        }
+                    ]
+                }
+            }],
+            "usageMetadata": {
+                "promptTokenCount": 500,
+                "candidatesTokenCount": 60,
+                "totalTokenCount": 560
+            }
+        });
+
+        let resp =
+            extract_provider_response(&AIProviderType::Gemini, &gemini_payload, true).unwrap();
+        assert_eq!(resp.text, "Checking schema...");
+        assert_eq!(resp.reasoning.as_deref(), Some("Plan: inspect both tables"));
+        assert_eq!(resp.thought_signature.as_deref(), Some("gemini-sig-42"));
+        assert_eq!(resp.tool_calls.len(), 2);
+        assert_eq!(resp.tool_calls[0].id, "call_1");
+        assert_eq!(resp.tool_calls[1].id, "call_2");
+        assert_eq!(resp.usage.as_ref().unwrap().total_tokens, Some(560));
     }
 }

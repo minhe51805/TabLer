@@ -215,13 +215,22 @@ impl AIWorkspaceHistoryStorage {
 }
 
 #[tauri::command]
-pub async fn get_ai_workspace_history() -> Result<PersistedAIWorkspaceState, String> {
-    AIWorkspaceHistoryStorage::new()?.load_state().await
+pub async fn get_ai_workspace_history() -> Result<PersistedAIWorkspaceState, crate::error::AppError>
+{
+    AIWorkspaceHistoryStorage::new()?
+        .load_state()
+        .await
+        .map_err(crate::error::AppError::from)
 }
 
 #[tauri::command]
-pub async fn save_ai_workspace_history(state: PersistedAIWorkspaceState) -> Result<(), String> {
-    AIWorkspaceHistoryStorage::new()?.save_state(&state).await
+pub async fn save_ai_workspace_history(
+    state: PersistedAIWorkspaceState,
+) -> Result<(), crate::error::AppError> {
+    AIWorkspaceHistoryStorage::new()?
+        .save_state(&state)
+        .await
+        .map_err(crate::error::AppError::from)
 }
 
 #[cfg(test)]

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "../utils/tauri-invoke";
 import { AlertTriangle, Loader2 } from "lucide-react";
 import { useI18n } from "../i18n";
 import { getAppShellCopy } from "./app-shell-copy";

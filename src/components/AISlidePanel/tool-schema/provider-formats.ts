@@ -1,4 +1,4 @@
-import type { AIProviderType, AIRequestIntent } from "../../../types";
+import type { AIProviderType, AIRequestIntent, CanonicalToolSpec } from "../../../types";
 import { nativeCatalogOptionsForEngine } from "../ai-agent-engine-gates";
 import type { AIAgentToolSpec, JsonSchema } from "./constants";
 import {
@@ -6,6 +6,43 @@ import {
   listEnabledAgentToolSpecs,
   type AgentToolCatalogOptions,
 } from "./parsing";
+
+export interface CanonicalToolPayload {
+  canonicalTools: CanonicalToolSpec[];
+  allowNativeMemoryTool: boolean;
+}
+
+/**
+ * Builds the provider-agnostic canonical tool catalog for the agent controller.
+ * The Rust wire builder (`prepare_provider_wire_request`) translates these specs
+ * into the target provider's native dialect (OpenAI, Anthropic + memory_20250818,
+ * Gemini/Vertex Schema proto, Ollama `/api/chat`, or omits them for text-only
+ * `/api/generate` endpoints) — keeping mid-run cross-provider failover 100% safe.
+ */
+export function buildCanonicalToolPayload(
+  intent: AIRequestIntent,
+  engineKey?: string | null,
+  options?: { unattendedReadOnly?: boolean },
+): CanonicalToolPayload | null {
+  if (!NATIVE_TOOL_CALLING_ENABLED || intent !== "agent") {
+    return null;
+  }
+
+  const engineOptions = nativeCatalogOptionsForEngine(engineKey);
+  const catalogOptions: AgentToolCatalogOptions = options?.unattendedReadOnly
+    ? { ...engineOptions, unattendedReadOnly: true }
+    : engineOptions;
+  const specs = listEnabledAgentToolSpecs(catalogOptions ?? true);
+
+  return {
+    canonicalTools: specs.map((spec) => ({
+      name: spec.name,
+      description: spec.description,
+      parameters: spec.parameters as unknown as Record<string, unknown>,
+    })),
+    allowNativeMemoryTool: !options?.unattendedReadOnly,
+  };
+}
 
 /** OpenAI / OpenRouter / Custom (OpenAI-compatible) `tools` array. */
 export interface OpenAIFunctionTool {

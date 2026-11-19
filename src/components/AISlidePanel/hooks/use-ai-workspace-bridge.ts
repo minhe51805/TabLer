@@ -3,6 +3,8 @@ import type { AppLanguage } from "../../../i18n";
 import type { MetricsWidgetType } from "../../../types";
 import type { AIMetricsWidgetSpec } from "../../../utils/metrics-board-templates";
 import { createAIWorkspaceId } from "../ai-conversation-state";
+import { APP_EVENTS } from "../../../utils/app-events";
+import { EventCenter } from "../../../stores/event-center";
 import type { AIWorkspaceBubbleData } from "../ai-workspace-types";
 import type { getAIWorkspaceCopy } from "../ai-workspace-copy";
 
@@ -75,19 +77,15 @@ export function useAIWorkspaceBridge({
         return false;
       }
 
-      window.dispatchEvent(
-        new CustomEvent("open-ai-workspace-query", {
-          detail: {
-            sql: normalizedSql,
-            connectionId,
-            database: currentDatabase || undefined,
-            title: options?.title,
-            resultViewMode: options?.viewMode ?? "table",
-            autoRun: options?.autoRun ?? false,
-            focusWorkspace: options?.focusWorkspace ?? false,
-          },
-        }),
-      );
+      EventCenter.emit(APP_EVENTS.openAIWorkspaceQuery, {
+        sql: normalizedSql,
+        connectionId,
+        database: currentDatabase || undefined,
+        title: options?.title,
+        resultViewMode: options?.viewMode ?? "table",
+        autoRun: options?.autoRun ?? false,
+        focusWorkspace: options?.focusWorkspace ?? false,
+      });
       return true;
     },
     [connectionId, currentDatabase, language, setError],
@@ -113,8 +111,9 @@ export function useAIWorkspaceBridge({
       const requestId = createAIWorkspaceId();
 
       const completion = await new Promise<OpenMetricsBoardResult>((resolve) => {
+        let unsubscribeComplete = () => {};
         const timeoutId = window.setTimeout(() => {
-          window.removeEventListener("open-ai-metrics-board-complete", handleComplete);
+          unsubscribeComplete();
           resolve({
             success: false,
             error:
@@ -128,22 +127,22 @@ export function useAIWorkspaceBridge({
           });
         }, 10_000);
 
-        const handleComplete = (event: Event) => {
-          const detail = (
-            event as CustomEvent<{
-              requestId?: string;
-              success?: boolean;
-              error?: string;
-              boardId?: string;
-              didChange?: boolean;
-              addedCount?: number;
-              addedTitles?: string[];
-              created?: boolean;
-            }>
-          ).detail;
+        const handleComplete = (
+          event: CustomEvent<{
+            requestId?: string;
+            success?: boolean;
+            error?: string;
+            boardId?: string;
+            didChange?: boolean;
+            addedCount?: number;
+            addedTitles?: string[];
+            created?: boolean;
+          }>,
+        ) => {
+          const detail = event.detail;
           if (detail?.requestId !== requestId) return;
           window.clearTimeout(timeoutId);
-          window.removeEventListener("open-ai-metrics-board-complete", handleComplete);
+          unsubscribeComplete();
           if (!detail.success && detail.error) {
             setError(detail.error);
           }
@@ -160,26 +159,22 @@ export function useAIWorkspaceBridge({
           });
         };
 
-        window.addEventListener("open-ai-metrics-board-complete", handleComplete);
-        window.dispatchEvent(
-          new CustomEvent("open-ai-metrics-board", {
-            detail: {
-              requestId,
-              template: options?.template ?? "database-overview",
-              mode: options?.mode ?? "create",
-              boardId: options?.boardId,
-              editTargetTitle: options?.editTargetTitle,
-              editTargetType: options?.editTargetType,
-              editQuery: options?.editQuery,
-              editTitle: options?.editTitle,
-              aiWidgets: options?.aiWidgets,
-              connectionId,
-              database: currentDatabase || undefined,
-              title: options?.title,
-              focusWorkspace: options?.focusWorkspace ?? false,
-            },
-          }),
-        );
+        unsubscribeComplete = EventCenter.on(APP_EVENTS.openAIMetricsBoardComplete, handleComplete);
+        EventCenter.emit(APP_EVENTS.openAIMetricsBoard, {
+          requestId,
+          template: options?.template ?? "database-overview",
+          mode: options?.mode ?? "create",
+          boardId: options?.boardId,
+          editTargetTitle: options?.editTargetTitle,
+          editTargetType: options?.editTargetType,
+          editQuery: options?.editQuery,
+          editTitle: options?.editTitle,
+          aiWidgets: options?.aiWidgets,
+          connectionId,
+          database: currentDatabase || undefined,
+          title: options?.title,
+          focusWorkspace: options?.focusWorkspace ?? false,
+        });
       });
 
       return completion;

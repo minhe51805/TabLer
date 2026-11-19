@@ -1,4 +1,9 @@
-export function setBoundedCacheEntry(cache: Map<string, string>, key: string, value: string, maxEntries: number) {
+export function setBoundedCacheEntry(
+  cache: Map<string, string>,
+  key: string,
+  value: string,
+  maxEntries: number,
+) {
   if (cache.has(key)) {
     cache.delete(key);
   } else if (cache.size >= maxEntries) {
@@ -18,12 +23,14 @@ export async function mapWithConcurrency<TInput, TOutput>(
   const results = new Array<TOutput>(items.length);
   let nextIndex = 0;
 
-  await Promise.all(Array.from({ length: normalizedConcurrency }, async () => {
-    while (nextIndex < items.length) {
-      const currentIndex = nextIndex++;
-      results[currentIndex] = await mapper(items[currentIndex], currentIndex);
-    }
-  }));
+  await Promise.all(
+    Array.from({ length: normalizedConcurrency }, async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex++;
+        results[currentIndex] = await mapper(items[currentIndex], currentIndex);
+      }
+    }),
+  );
 
   return results;
 }

@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "../utils/tauri-invoke";
 import { KeyRound, LoaderCircle, RefreshCw, ShieldCheck, UserCog, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ConnectionConfig } from "../types/database";

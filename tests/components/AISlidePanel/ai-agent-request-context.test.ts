@@ -20,7 +20,11 @@ const base = {
 
 describe("resolveAgentRequestContext", () => {
   it("trims the prompt and derives requestIntentPrompt from userPrompt when present", () => {
-    const ctx = resolveAgentRequestContext({ ...base, prompt: "  hi  ", userPrompt: " draw chart " });
+    const ctx = resolveAgentRequestContext({
+      ...base,
+      prompt: "  hi  ",
+      userPrompt: " draw chart ",
+    });
     expect(ctx.normalizedPrompt).toBe("hi");
     expect(ctx.requestIntentPrompt).toBe("draw chart");
   });
@@ -73,13 +77,14 @@ describe("resolveAgentRequestContext", () => {
 
   it("trims a long remote history to the token budget, keeping the newest turns", () => {
     const big = "x".repeat(REMOTE_HISTORY_TOKEN_BUDGET * CHARS_PER_TOKEN); // ~budget each
-    const history = Array.from({ length: 6 }, (_, i) => (
-      { role: "user", content: `${i}:${big}` }
-    )) as unknown as AIConversationMessage[];
+    const history = Array.from({ length: 6 }, (_, i) => ({
+      role: "user",
+      content: `${i}:${big}`,
+    })) as unknown as AIConversationMessage[];
     const ctx = resolveAgentRequestContext({ ...base, history });
     const chars = ctx.requestHistory.reduce((sum, message) => sum + message.content.length, 0);
     // Never grows past the budget plus the single always-kept newest turn.
-    expect(chars).toBeLessThanOrEqual((REMOTE_HISTORY_TOKEN_BUDGET * CHARS_PER_TOKEN) + big.length);
+    expect(chars).toBeLessThanOrEqual(REMOTE_HISTORY_TOKEN_BUDGET * CHARS_PER_TOKEN + big.length);
     expect(ctx.requestHistory.length).toBeGreaterThan(0);
     expect(ctx.requestHistory.length).toBeLessThan(6);
     // The very newest turn is always present.
@@ -88,8 +93,14 @@ describe("resolveAgentRequestContext", () => {
 
   it("always preserves the leading workspace-context digest when trimming remote history", () => {
     const big = "y".repeat(REMOTE_HISTORY_TOKEN_BUDGET * CHARS_PER_TOKEN);
-    const digestUser = { role: "user", content: `${WORKSPACE_CONTEXT_MESSAGE_PREFIX}\nprior summary` };
-    const digestAssistant = { role: "assistant", content: "Understood. I'll keep this workspace context in mind." };
+    const digestUser = {
+      role: "user",
+      content: `${WORKSPACE_CONTEXT_MESSAGE_PREFIX}\nprior summary`,
+    };
+    const digestAssistant = {
+      role: "assistant",
+      content: "Understood. I'll keep this workspace context in mind.",
+    };
     const turns = Array.from({ length: 5 }, (_, i) => ({ role: "user", content: `${i}:${big}` }));
     const history = [digestUser, digestAssistant, ...turns] as unknown as AIConversationMessage[];
     const ctx = resolveAgentRequestContext({ ...base, history });
@@ -100,7 +111,10 @@ describe("resolveAgentRequestContext", () => {
   });
 
   it("drops history entirely for overview intent", () => {
-    const ctx = resolveAgentRequestContext({ ...base, prompt: "give me an overview of the database" });
+    const ctx = resolveAgentRequestContext({
+      ...base,
+      prompt: "give me an overview of the database",
+    });
     expect(ctx.assistIntent).toBe("overview");
     expect(ctx.requestHistory).toHaveLength(0);
   });

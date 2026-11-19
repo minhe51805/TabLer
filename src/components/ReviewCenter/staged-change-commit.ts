@@ -11,6 +11,8 @@ import { useQueryStore } from "../../stores/queryStore";
 import { invalidateTableCaches } from "../DataGrid/hooks/useDataGrid";
 import type { ScopedStagedChange } from "../../stores/change-tracking-store";
 import type { ReviewCenterCopy } from "./review-center-copy";
+import { APP_EVENTS } from "../../utils/app-events";
+import { EventCenter } from "../../stores/event-center";
 
 /** Tell every open grid/structure view that a table's data changed. */
 function notifyTablesChanged(changes: ScopedStagedChange[]): void {
@@ -21,15 +23,11 @@ function notifyTablesChanged(changes: ScopedStagedChange[]): void {
     if (seen.has(key)) continue;
     seen.add(key);
     invalidateTableCaches(connectionId, change.tableName, change.database);
-    window.dispatchEvent(
-      new CustomEvent("table-data-updated", {
-        detail: {
-          connectionId,
-          database: change.database,
-          tableName: change.tableName,
-        },
-      }),
-    );
+    EventCenter.emit(APP_EVENTS.tableDataUpdated, {
+      connectionId,
+      database: change.database,
+      tableName: change.tableName,
+    });
   }
 }
 

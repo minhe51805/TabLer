@@ -33,7 +33,7 @@ const SCHEDULER_RUN_TIMEOUT_MILLIS: u64 = 120_000;
 const MAX_INTERVAL_SECONDS: u64 = 86_400 * 7;
 
 #[tauri::command]
-pub fn list_query_schedules() -> Result<Vec<QuerySchedule>, String> {
+pub fn list_query_schedules() -> Result<Vec<QuerySchedule>, crate::error::AppError> {
     let storage = ScheduleStorage::new()?;
     Ok(storage.get_all())
 }
@@ -164,17 +164,19 @@ fn validate_schedule_draft(
 }
 
 #[tauri::command]
-pub fn delete_query_schedule(id: String) -> Result<(), String> {
+pub fn delete_query_schedule(id: String) -> Result<(), crate::error::AppError> {
     let mut storage = ScheduleStorage::new()?;
-    storage.delete(&id)
+    storage.delete(&id).map_err(crate::error::AppError::from)
 }
 
 /// Clears the "runs missed while the app was closed" counters once the UI has
 /// shown them. Returns how many schedules were cleared.
 #[tauri::command]
-pub fn acknowledge_missed_schedule_runs() -> Result<u64, String> {
+pub fn acknowledge_missed_schedule_runs() -> Result<u64, crate::error::AppError> {
     let mut storage = ScheduleStorage::new()?;
-    storage.acknowledge_missed()
+    storage
+        .acknowledge_missed()
+        .map_err(crate::error::AppError::from)
 }
 
 /// Reports the outcome of an unattended agent task back onto its schedule row.
@@ -194,7 +196,7 @@ pub fn complete_agent_schedule_run(
     rows: Option<u64>,
     error: Option<String>,
     summary: Option<String>,
-) -> Result<(), String> {
+) -> Result<(), crate::error::AppError> {
     let mut storage = ScheduleStorage::new()?;
     let mut schedule = storage
         .get(&schedule_id)
@@ -202,13 +204,13 @@ pub fn complete_agent_schedule_run(
     if !schedule.is_agent_task() {
         return Err(format!(
             "Schedule {schedule_id} is a {SCHEDULE_KIND_SQL} schedule; its runs are reported by the scheduler."
-        ));
+        ).into());
     }
     if schedule.last_status.as_deref() != Some(SCHEDULE_STATUS_DISPATCHED) {
         return Err(format!(
             "Schedule {schedule_id} is not awaiting a run report (status: {}); the report is stale and was not recorded.",
             schedule.last_status.as_deref().unwrap_or("none")
-        ));
+        ).into());
     }
     let outcome = ScheduleRunOutcome::parse(&status)?;
     apply_agent_run_outcome(

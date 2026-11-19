@@ -8,14 +8,25 @@ import {
   type AIRequestAttachment,
   type AIRequestIntent,
   type AIRequestMode,
+  type AIResponse,
+  type AIUsageStats,
+  type CanonicalAgentTurn,
+  type CanonicalToolCall,
   type FetchedModel,
   type LocalOllamaSetupResult,
   type LocalOllamaStatus,
 } from "../types";
-import { buildNativeToolPayload } from "../components/AISlidePanel/ai-agent-tool-schema";
+import { buildCanonicalToolPayload } from "../components/AISlidePanel/ai-agent-tool-schema";
+import {
+  computeAgentRetryDelay,
+  DEFAULT_AGENT_RETRY_POLICY,
+  type AgentRetryPolicy,
+  type AgentRetryWaitInfo,
+} from "../components/AISlidePanel/ai-retry-policy";
 import { useConnectionStore } from "./connectionStore";
 import { getActiveAIProvider, normalizeAIProviderConfigs } from "../utils/ai-provider-registry";
 import { AIRequestError, normalizeAIRequestError } from "../utils/ai-request-errors";
+import { requestAIFailoverConsent } from "../utils/ai-failover-consent";
 import { extractStreamingAgentAnswer } from "../utils/ai-stream-answer";
 import { emitAppToast } from "../utils/app-toast";
 import { useGlobalErrorStore } from "./globalErrorStore";
@@ -24,82 +35,52 @@ const AI_TIMEOUTS = {
   default: 60_000,
   remotePanel: 180_000,
   // Agent steps are single-purpose model calls; 2 minutes is enough for even
-  // slow reasoning models. The old 6-minute ceiling let one hanging endpoint
-  // stall an agent step for 3 provider attempts × 6 min = 18 silent minutes.
+  // slow reasoning models.
   remoteAgentPanel: 120_000,
   localOllamaPanel: 600_000,
   localOllamaInline: 120_000,
 } as const;
 
+const NO_INLINE_RETRY_POLICY: AgentRetryPolicy = {
+  ...DEFAULT_AGENT_RETRY_POLICY,
+  maxRetries: 0,
+};
+
 /**
- * Enabled model ids for a provider, in failover order: the configured model
- * first (the one the old single-model chain used), then the rest of the
- * catalog minus hidden models. Mirrors the composer switcher, so the chain
- * only ever picks models the user could pick themselves.
+ * Bounded model candidates on a single provider:
+ * 1. Primary model (`preferredModel` when pinned on active provider, else `config.model`).
+ * 2. At most ONE fallback model on the same provider (`config.model` when `preferredModel`
+ *    differed, else `config.fast_model`, else the first non-disabled `config.models` entry
+ *    distinct from primary). Never walks all catalog models on a provider.
  */
-function providerModelCandidates(config: AIProviderConfig): string[] {
-  const configured = config.model.trim();
+function providerBoundedModels(
+  config: AIProviderConfig,
+  preferredModel?: string,
+): Array<string | undefined> {
   const hidden = new Set(config.disabled_models ?? []);
-  const extras = (config.models ?? [])
-    .map((model) => model.trim())
-    .filter((model) => model && model !== configured && !hidden.has(model));
-  return configured ? [configured, ...extras] : extras;
-}
+  const configured = config.model.trim();
+  const preferred = preferredModel?.trim() ?? "";
+  const primary = preferred || configured;
 
-/** One stop in the request-level failover chain: a provider plus one model. */
-interface AIChainAttempt {
-  config: AIProviderConfig;
-  providerId: string;
-  model?: string;
-}
+  const fallbackPool = [
+    preferred && configured && configured !== preferred ? configured : "",
+    config.fast_model?.trim() ?? "",
+    ...(config.models ?? []).map((m) => m.trim()),
+  ].filter((candidate) => candidate && candidate !== primary && !hidden.has(candidate));
 
-/**
- * Full failover chain over every enabled provider AND every enabled model of
- * each provider: one broken endpoint (or one broken model on a multi-model
- * provider) no longer kills a run. The active provider/model goes first;
- * providers that timed out within the last 2 minutes are skipped while
- * healthy ones exist (kept otherwise so a lone provider still retries), and
- * within the pool the most recently timed-out provider goes last.
- */
-function buildFailoverChain(
-  configs: AIProviderConfig[],
-  activeConfig: AIProviderConfig,
-): AIChainAttempt[] {
-  const attemptsOf = (config: AIProviderConfig): AIChainAttempt[] =>
-    providerModelCandidates(config).map((model) => ({
-      config,
-      providerId: config.id,
-      model,
-    }));
-  const enabledFallbacks = configs.filter(
-    (candidate) => candidate.is_enabled && candidate.id !== activeConfig.id,
-  );
-  const now = Date.now();
-  const healthyFallbacks = enabledFallbacks.filter((candidate) => {
-    const timedOutAt = recentProviderTimeouts.get(candidate.id);
-    return timedOutAt === undefined || now - timedOutAt >= PROVIDER_TIMEOUT_RETRY_AFTER_MS;
-  });
-  const fallbackPool = healthyFallbacks.length > 0 ? healthyFallbacks : enabledFallbacks;
-  const sortedPool = [...fallbackPool].sort(
-    (left, right) => providerPenaltyRank(left.id) - providerPenaltyRank(right.id),
-  );
-  const activeAttempts = attemptsOf(activeConfig);
-  // Degenerate config guard: an active provider with no configured model and
-  // no visible catalog entries would otherwise produce an EMPTY chain (and a
-  // pointless "undefined" error). Keep one model-less attempt so the backend
-  // still tries the provider's stored configuration.
-  const chain = [
-    ...(activeAttempts.length > 0
-      ? activeAttempts
-      : [{ config: activeConfig, providerId: activeConfig.id }]),
-    ...sortedPool.flatMap((config) => attemptsOf(config)),
-  ];
-  return chain;
+  const fallback = fallbackPool[0];
+  if (!primary && !fallback) {
+    return [undefined];
+  }
+  const out: Array<string | undefined> = [];
+  if (primary) out.push(primary);
+  if (fallback && !out.includes(fallback)) out.push(fallback);
+  return out;
 }
 
 /**
  * Providers that recently timed out (hung without answering). They are pushed
- * to the back of — or briefly dropped from — the failover chain so a hanging
+ * to the back of — or briefly dropped from — the fallback pool so a hanging
  * endpoint cannot eat another full timeout on the very next agent step.
  */
 const PROVIDER_TIMEOUT_RETRY_AFTER_MS = 120_000;
@@ -107,7 +88,6 @@ const recentProviderTimeouts = new Map<string, number>();
 function markProviderTimeout(providerId: string) {
   const now = Date.now();
   recentProviderTimeouts.set(providerId, now);
-  // Keep the map tiny: drop entries old enough to be irrelevant anyway.
   for (const [id, at] of recentProviderTimeouts) {
     if (now - at >= PROVIDER_TIMEOUT_RETRY_AFTER_MS) recentProviderTimeouts.delete(id);
   }
@@ -117,9 +97,27 @@ function providerPenaltyRank(providerId: string): number {
   return at === undefined ? 0 : at;
 }
 
+function orderedFallbackProviders(
+  configs: AIProviderConfig[],
+  activeProviderId: string,
+): AIProviderConfig[] {
+  const enabledFallbacks = configs.filter(
+    (candidate) => candidate.is_enabled && candidate.id !== activeProviderId,
+  );
+  const now = Date.now();
+  const healthy = enabledFallbacks.filter((candidate) => {
+    const timedOutAt = recentProviderTimeouts.get(candidate.id);
+    return timedOutAt === undefined || now - timedOutAt >= PROVIDER_TIMEOUT_RETRY_AFTER_MS;
+  });
+  const pool = healthy.length > 0 ? healthy : enabledFallbacks;
+  return [...pool].sort(
+    (left, right) => providerPenaltyRank(left.id) - providerPenaltyRank(right.id),
+  );
+}
+
 /**
  * Explicit user provider switches win over automatic failover: the panel
- * hook marks the moment of a manual pick, and the agent retry loop skips
+ * hook marks the moment of a manual pick, and the agent loop skips
  * auto-promotion when the user chose a provider during the current run.
  */
 let manualProviderOverrideAt = 0;
@@ -147,6 +145,42 @@ function enqueueConfigSave<T>(task: () => Promise<T>): Promise<T> {
 
 export type AIRequestPhase = "idle" | "requesting" | "cancelling";
 
+export interface AIStreamSession {
+  requestId: string;
+  phase: "requesting" | "cancelling";
+  streamingText: string;
+  streamingReasoning: boolean;
+  streamingReasoningText: string;
+  streamingUsage: Record<string, unknown> | null;
+  trackInPanel: boolean;
+}
+
+export interface AskAIOptions {
+  correlationId?: string;
+  unattendedReadOnly?: boolean;
+  preferredModel?: string;
+  agentTurns?: CanonicalAgentTurn[];
+  retryPolicy?: AgentRetryPolicy;
+  onRetryWait?: (info: AgentRetryWaitInfo) => void;
+  random?: () => number;
+  /**
+   * When false, background side-calls (e.g. `delegate` sub-queries or post-run
+   * learning extraction) keep their own stream session without overwriting the
+   * foreground panel's `activeAIRequestId` / `streamingText`.
+   */
+  trackInPanel?: boolean;
+}
+
+export interface AIAgentTurnResult {
+  text: string;
+  reasoning?: string;
+  toolCalls: CanonicalToolCall[];
+  thoughtSignature?: string;
+  usage?: AIUsageStats;
+  modelUsed?: string;
+  providerUsed?: string;
+}
+
 function createAIRequestId() {
   return (
     globalThis.crypto?.randomUUID?.() ??
@@ -162,23 +196,15 @@ function getAIRequestTimeout(
   if (config.provider_type === "ollama") {
     return mode === "inline" ? AI_TIMEOUTS.localOllamaInline : AI_TIMEOUTS.localOllamaPanel;
   }
-
   if (mode === "panel" && intent === "agent") {
     return AI_TIMEOUTS.remoteAgentPanel;
   }
-
   if (mode === "panel") {
     return AI_TIMEOUTS.remotePanel;
   }
-
   return AI_TIMEOUTS.default;
 }
 
-/**
- * The panel "Thinking" toggle is a single source of truth in this store so the
- * request builder can gate reasoning per call. Persisted under the legacy key so
- * a user's existing preference migrates seamlessly from the old component state.
- */
 const AI_THINKING_STORAGE_KEY = "tabler.ai.workspace.showThinking.v1";
 
 function loadThinkingPreference(): boolean {
@@ -202,18 +228,15 @@ function persistThinkingPreference(enabled: boolean) {
 
 export interface AIState {
   aiConfigs: AIProviderConfig[];
+  /** Concurrent stream sessions keyed by `requestId` so overlapping calls never clobber one another. */
+  activeStreams: Record<string, AIStreamSession>;
   activeAIRequestId: string | null;
   requestPhase: AIRequestPhase;
   streamingText: string;
   streamingReasoning: boolean;
-  /** Accumulated model chain-of-thought captured live from `reasoning_delta`
-   *  stream events; drives the collapsible "Thinking…" block. */
   streamingReasoningText: string;
   streamingUsage: Record<string, unknown> | null;
-  /** True while an automatic provider failover is switching the active provider. */
   isProviderFailingOver: boolean;
-  /** Panel "Thinking" toggle. When false, requests omit the reasoning opt-in so
-   *  the model spends no thinking tokens and the live trace stays hidden. */
   thinkingEnabled: boolean;
   setThinkingEnabled: (enabled: boolean) => void;
 
@@ -229,18 +252,10 @@ export interface AIState {
     aiConfigs: AIProviderConfig[];
     aiKeyStatus: Record<string, boolean>;
   }>;
-  /**
-   * Calls the provider's own "list models" API (via the `list_provider_models`
-   * command) and returns the models it exposes, each with any capability
-   * metadata (context window, output budget, input modalities) the provider
-   * advertised, so AI settings can populate the catalog and auto-fill those
-   * fields without manual typing. Callers should persist the config first so
-   * the backend reads the latest endpoint + API key.
-   */
   listProviderModels: (providerId: string) => Promise<FetchedModel[]>;
   getLocalOllamaStatus: () => Promise<LocalOllamaStatus>;
   setupLocalOllama: () => Promise<LocalOllamaSetupResult>;
-  cancelAIRequest: () => Promise<boolean>;
+  cancelAIRequest: (requestId?: string) => Promise<boolean>;
   askAI: (
     prompt: string,
     context: string,
@@ -248,7 +263,7 @@ export interface AIState {
     intent?: AIRequestIntent,
     history?: AIConversationMessage[],
     attachments?: AIRequestAttachment[],
-    options?: { correlationId?: string; unattendedReadOnly?: boolean; preferredModel?: string },
+    options?: AskAIOptions,
   ) => Promise<string>;
   askAIWithReasoning: (
     prompt: string,
@@ -257,31 +272,19 @@ export interface AIState {
     intent?: AIRequestIntent,
     history?: AIConversationMessage[],
     attachments?: AIRequestAttachment[],
-    options?: { correlationId?: string; unattendedReadOnly?: boolean; preferredModel?: string },
+    options?: AskAIOptions,
   ) => Promise<{ text: string; reasoning?: string; modelUsed?: string }>;
-  /**
-   * Promotes the next enabled provider (cyclic list order, skipping the
-   * current primary) so a dead or rate-limited endpoint stops being tried
-   * first. Persists the switch best-effort. Returns the promoted provider,
-   * or `null` when no other provider is enabled.
-   */
+  askAIAgentTurn: (
+    prompt: string,
+    context: string,
+    history?: AIConversationMessage[],
+    attachments?: AIRequestAttachment[],
+    options?: AskAIOptions,
+  ) => Promise<AIAgentTurnResult>;
   promoteNextEnabledProvider: () => AIProviderConfig | null;
-  /**
-   * Quietly makes `providerId` primary again — the counterpart of
-   * `promoteNextEnabledProvider` for when a run ends: no failover toast, no
-   * spinner flag, just the selector and persistence moving back to the
-   * provider the user actually chose. No-op when the id is unknown or the
-   * provider is disabled (the user's newer decision wins).
-   */
   restoreProvider: (providerId: string) => void;
 }
 
-/**
- * Promotes `next` to the active (primary) provider after `failed` broke a run.
- * Updates the store so the provider selector in the AI panel follows, announces
- * the switch through the global toast region, and persists the choice
- * best-effort so the healthy provider survives an app restart.
- */
 function switchActiveProvider(
   configs: AIProviderConfig[],
   next: AIProviderConfig,
@@ -291,8 +294,6 @@ function switchActiveProvider(
   const normalized = normalizeAIProviderConfigs(
     configs.map((config) => ({ ...config, is_primary: config.id === next.id })),
   );
-  // Surface the automatic switch in the panel: the composer model trigger
-  // shows the spinner until the (queued) persistence settles.
   set({ aiConfigs: normalized, isProviderFailingOver: true });
   emitAppToast({
     title: translateLanguage(getCurrentAppLanguage(), "ai.toast.providerFailover", {
@@ -302,9 +303,6 @@ function switchActiveProvider(
     tone: "info",
     durationMs: 8_000,
   });
-  // Best-effort persistence: the retried request must not wait on the disk
-  // write, and a failed save still leaves the runtime switch in place.
-  // Queued behind other config saves so it can never clobber a user pick.
   void enqueueConfigSave(() =>
     invokeMutation<[AIProviderConfig[], Record<string, boolean>]>("save_ai_configs", {
       providers: normalized,
@@ -317,140 +315,30 @@ function switchActiveProvider(
     .finally(() => set({ isProviderFailingOver: false }));
 }
 
-export const useAIStore = create<AIState>((set, get) => ({
-  aiConfigs: [],
-  activeAIRequestId: null,
-  requestPhase: "idle",
-  streamingText: "",
-  streamingReasoning: false,
-  streamingReasoningText: "",
-  streamingUsage: null,
-  isProviderFailingOver: false,
-  thinkingEnabled: loadThinkingPreference(),
+/** True when an error must abort the ENTIRE coordinator without trying any more models or providers. */
+function isHardTerminalError(error: AIRequestError): boolean {
+  if (error.code === "cancelled") return true;
+  if (error.backendCode === "rate-limited") return true;
+  if (error.backendCode === "ai-bad-request") return true;
+  if (!error.retryable && error.backendCode !== "ai-auth") return true;
+  return false;
+}
 
-  setThinkingEnabled: (enabled) => {
-    persistThinkingPreference(enabled);
-    set({ thinkingEnabled: enabled });
-  },
+/** True when an error must stop the CURRENT provider immediately (no retries or alternate models on it). */
+function shouldAbortProviderImmediately(error: AIRequestError): boolean {
+  return error.backendCode === "ai-auth" || isHardTerminalError(error);
+}
 
-  loadAIConfigs: async () => {
-    try {
-      const [aiConfigs, aiKeyStatus] = await invokeWithTimeout<
-        [AIProviderConfig[], Record<string, boolean>]
-      >("get_ai_configs", {}, 15_000, "Loading AI settings");
-      set({ aiConfigs });
-      return { aiConfigs, aiKeyStatus };
-    } catch (e) {
-      useGlobalErrorStore.getState().setError(`Failed to load AI configs: ${e}`);
-      throw e;
-    }
-  },
-
-  saveAIConfigs: async (configs, apiKeyUpdates, clearedProviderIds) => {
-    try {
-      const [aiConfigs, aiKeyStatus] = await enqueueConfigSave(() =>
-        invokeMutation<[AIProviderConfig[], Record<string, boolean>]>("save_ai_configs", {
-          providers: configs,
-          apiKeyUpdates,
-          clearedProviderIds,
-        }),
-      );
-      set({ aiConfigs });
-      return { aiConfigs, aiKeyStatus };
-    } catch (e) {
-      useGlobalErrorStore.getState().setError(`Failed to save AI configs: ${e}`);
-      throw e;
-    }
-  },
-
-  listProviderModels: async (providerId) =>
-    invokeWithTimeout<FetchedModel[]>(
-      "list_provider_models",
-      { providerId },
-      30_000,
-      "Fetching provider models",
-    ),
-
-  promoteNextEnabledProvider: () => {
-    const configs = get().aiConfigs;
-    const active = getActiveAIProvider(configs);
-    if (!active) return null;
-    const activeIndex = configs.findIndex((config) => config.id === active.id);
-    // Cyclic scan starting after the current primary, so repeated calls walk
-    // through every enabled provider instead of flipping between two.
-    const rotated = [...configs.slice(activeIndex + 1), ...configs.slice(0, activeIndex + 1)];
-    const next = rotated.find((config) => config.is_enabled && config.id !== active.id);
-    if (!next) return null;
-    switchActiveProvider(configs, next, active, set);
-    return next;
-  },
-
-  restoreProvider: (providerId) => {
-    const configs = get().aiConfigs;
-    const target = configs.find((config) => config.id === providerId);
-    if (!target || !target.is_enabled || target.is_primary) return;
-    const normalized = normalizeAIProviderConfigs(
-      configs.map((config) => ({ ...config, is_primary: config.id === providerId })),
-    );
-    set({ aiConfigs: normalized });
-    void enqueueConfigSave(() =>
-      invokeMutation<[AIProviderConfig[], Record<string, boolean>]>("save_ai_configs", {
-        providers: normalized,
-        apiKeyUpdates: {},
-        clearedProviderIds: [],
-      }),
-    )
-      .then(([aiConfigs]) => set({ aiConfigs }))
-      .catch((error) => console.warn("[AI] Failed to persist provider restore:", error));
-  },
-
-  getLocalOllamaStatus: async () => {
-    try {
-      return await invokeWithTimeout<LocalOllamaStatus>(
-        "get_local_ollama_status",
-        {},
-        15_000,
-        "Loading local Ollama status",
-      );
-    } catch (error) {
-      useGlobalErrorStore.getState().setError(`Failed to load local Ollama status: ${error}`);
-      throw error;
-    }
-  },
-
-  setupLocalOllama: async () => {
-    try {
-      const result = await invokeMutation<LocalOllamaSetupResult>("setup_local_ollama", {});
-      set({ aiConfigs: result.aiConfigs });
-      useGlobalErrorStore.getState().clearError();
-      return result;
-    } catch (error) {
-      useGlobalErrorStore.getState().setError(`Failed to set up local Ollama: ${error}`);
-      throw error;
-    }
-  },
-
-  cancelAIRequest: async () => {
-    const requestId = get().activeAIRequestId;
-    if (!requestId) return false;
-
-    set({ requestPhase: "cancelling" });
-    try {
-      return await invokeMutation<boolean>("cancel_ai_request", { requestId });
-    } catch {
-      return false;
-    }
-  },
-
-  askAIWithReasoning: async (
+export const useAIStore = create<AIState>((set, get) => {
+  const executeTurnCoordinator = async (
     prompt: string,
     context: string,
-    mode = "panel",
-    intent = "sql",
-    history = [],
-    attachments,
-    options,
-  ) => {
+    mode: AIRequestMode = "panel",
+    intent: AIRequestIntent = "sql",
+    history: AIConversationMessage[] = [],
+    attachments?: AIRequestAttachment[],
+    options?: AskAIOptions,
+  ): Promise<AIAgentTurnResult> => {
     const activeConfig = getActiveAIProvider(get().aiConfigs);
     if (!activeConfig) {
       throw new AIRequestError(
@@ -459,63 +347,102 @@ export const useAIStore = create<AIState>((set, get) => ({
       );
     }
 
-    // Failover chain: the active (provider, model) first, then every other
-    // enabled model of that provider, then every other enabled provider with
-    // each of its enabled models — one rate-limited or broken endpoint (or one
-    // broken model on a multi-model provider) no longer kills a run.
-    let chain = buildFailoverChain(get().aiConfigs, activeConfig);
+    const fallbackProviders = orderedFallbackProviders(get().aiConfigs, activeConfig.id);
+    const providerGroups: Array<{
+      config: AIProviderConfig;
+      models: Array<string | undefined>;
+      isFallbackProvider: boolean;
+    }> = [
+      {
+        config: activeConfig,
+        models: providerBoundedModels(activeConfig, options?.preferredModel),
+        isFallbackProvider: false,
+      },
+      ...fallbackProviders.map((config) => ({
+        config,
+        models: providerBoundedModels(config),
+        isFallbackProvider: true,
+      })),
+    ];
 
-    // Model routing: a caller may pin a preferred model on the ACTIVE provider
-    // (e.g. the configured fast_model for trivial asks). It goes first; the
-    // rest of the chain stays intact so a broken fast model still fails over.
-    const preferredModel = options?.preferredModel?.trim();
-    if (preferredModel && preferredModel !== activeConfig.model.trim()) {
-      chain = [
-        { config: activeConfig, providerId: activeConfig.id, model: preferredModel },
-        ...chain.filter(
-          (attempt) =>
-            !(attempt.providerId === activeConfig.id && attempt.model === preferredModel),
-        ),
-      ];
-    }
+    const totalChainStops = providerGroups.reduce((acc, g) => acc + g.models.length, 0);
+    const primaryRetryPolicy = options?.retryPolicy ?? NO_INLINE_RETRY_POLICY;
+    const random = options?.random ?? Math.random;
+    const trackInPanel = options?.trackInPanel !== false;
+
+    const connectionState = useConnectionStore.getState();
+    const engineKey = connectionState.connections.find(
+      (connection) => connection.id === connectionState.activeConnectionId,
+    )?.db_type;
+    const canonicalToolPayload = buildCanonicalToolPayload(intent, engineKey, {
+      unattendedReadOnly: options?.unattendedReadOnly === true,
+    });
 
     let lastError: unknown;
-    // Newest non-empty partial stream across attempts; attached to the error
-    // the caller ultimately sees so a mid-stream failure keeps its text.
     let lastPartialText: string | undefined;
-    for (const [index, attempt] of chain.entries()) {
-      const config = attempt.config;
+    let attemptCounter = 0;
+    let crossProviderConsentChecked = false;
+    let crossProviderConsentApproved = false;
+
+    const runSingleTransportCall = async (
+      config: AIProviderConfig,
+      model: string | undefined,
+    ): Promise<AIAgentTurnResult> => {
       const timeoutMs = getAIRequestTimeout(config, mode, intent);
       const requestId = createAIRequestId();
-      // Native function-calling (off by default) rides the non-streaming path so
-      // the full tool_call JSON can be parsed at once; a null payload keeps the
-      // classic streaming text path exactly as before.
-      const connectionState = useConnectionStore.getState();
-      const engineKey = connectionState.connections.find(
-        (connection) => connection.id === connectionState.activeConnectionId,
-      )?.db_type;
-      const nativeToolPayload = buildNativeToolPayload(config.provider_type, intent, engineKey, {
-        // P10: a scheduled agent task runs unattended and read-only, so the
-        // request carries only the read tools.
-        unattendedReadOnly: options?.unattendedReadOnly === true,
-      });
-      set({
-        activeAIRequestId: requestId,
-        requestPhase: "requesting",
+      const session: AIStreamSession = {
+        requestId,
+        phase: "requesting",
         streamingText: "",
         streamingReasoning: false,
         streamingReasoningText: "",
         streamingUsage: null,
-      });
+        trackInPanel,
+      };
+      set((state) => ({
+        activeStreams: { ...state.activeStreams, [requestId]: session },
+        ...(trackInPanel
+          ? {
+              activeAIRequestId: requestId,
+              requestPhase: "requesting" as const,
+              streamingText: "",
+              streamingReasoning: false,
+              streamingReasoningText: "",
+              streamingUsage: null,
+            }
+          : {}),
+      }));
 
       let unlisten: UnlistenFn | undefined;
-      // Hoisted so the catch can attach whatever the provider already
-      // streamed to the thrown error — a mid-stream failure must not discard
-      // the partial answer the user watched arrive.
       let streamedText = "";
+      let streamedReasoning = "";
+      let latestStreamUsage: Record<string, unknown> | null = null;
+
+      const requestPayload = {
+        request_id: requestId,
+        provider_id: config.id ?? null,
+        model: model ?? null,
+        prompt,
+        context,
+        mode,
+        intent,
+        language: getCurrentAppLanguage(),
+        history,
+        attachments: attachments && attachments.length > 0 ? attachments : undefined,
+        enable_thinking: get().thinkingEnabled,
+        ...(canonicalToolPayload
+          ? {
+              canonical_tools: canonicalToolPayload.canonicalTools,
+              allow_native_memory_tool: canonicalToolPayload.allowNativeMemoryTool,
+            }
+          : {}),
+        ...(options?.agentTurns && options.agentTurns.length > 0
+          ? { agent_turns: options.agentTurns }
+          : {}),
+      };
+
       try {
         if (mode === "panel") {
-          let streamedReasoning = "";
           unlisten = await listen<{
             requestId: string;
             kind: "text_delta" | "reasoning_delta" | "usage" | "error" | "done";
@@ -523,55 +450,71 @@ export const useAIStore = create<AIState>((set, get) => ({
             usage?: Record<string, unknown>;
           }>("ai-stream-event", (event) => {
             const payload = event.payload;
-            if (payload.requestId !== requestId || get().activeAIRequestId !== requestId) return;
+            if (payload.requestId !== requestId || !get().activeStreams[requestId]) return;
+
             if (payload.kind === "text_delta" && payload.text) {
               streamedText += payload.text;
-              if (intent === "agent") {
-                // Agent calls stream a JSON tool action, so the raw text is not
-                // user-facing. Pull the finish action's answer out of the partial
-                // JSON as it lands so the final reply streams token-by-token like a
-                // normal chat turn instead of stalling and then dumping all at once.
-                const partialAnswer = extractStreamingAgentAnswer(streamedText);
-                if (partialAnswer) set({ streamingText: partialAnswer });
-              } else {
-                set({ streamingText: streamedText });
-              }
+              const visibleText =
+                intent === "agent"
+                  ? (extractStreamingAgentAnswer(streamedText) ?? "")
+                  : streamedText;
+              set((state) => {
+                const current = state.activeStreams[requestId];
+                if (!current) return state;
+                const nextSession: AIStreamSession = {
+                  ...current,
+                  streamingText: visibleText || current.streamingText,
+                };
+                const isForeground = trackInPanel && state.activeAIRequestId === requestId;
+                return {
+                  activeStreams: { ...state.activeStreams, [requestId]: nextSession },
+                  ...(isForeground && visibleText ? { streamingText: visibleText } : {}),
+                };
+              });
             } else if (payload.kind === "reasoning_delta") {
-              // Accumulate the model's chain-of-thought so the UI can stream it
-              // live into the "Thinking…" block instead of dumping one block.
               if (payload.text) {
                 streamedReasoning += payload.text;
-                set({ streamingReasoning: true, streamingReasoningText: streamedReasoning });
-              } else {
-                set({ streamingReasoning: true });
               }
+              set((state) => {
+                const current = state.activeStreams[requestId];
+                if (!current) return state;
+                const nextSession: AIStreamSession = {
+                  ...current,
+                  streamingReasoning: true,
+                  streamingReasoningText: streamedReasoning,
+                };
+                const isForeground = trackInPanel && state.activeAIRequestId === requestId;
+                return {
+                  activeStreams: { ...state.activeStreams, [requestId]: nextSession },
+                  ...(isForeground
+                    ? {
+                        streamingReasoning: true,
+                        streamingReasoningText: streamedReasoning,
+                      }
+                    : {}),
+                };
+              });
             } else if (payload.kind === "usage" && payload.usage) {
-              set({ streamingUsage: payload.usage });
+              latestStreamUsage = payload.usage;
+              set((state) => {
+                const current = state.activeStreams[requestId];
+                if (!current) return state;
+                const nextSession: AIStreamSession = {
+                  ...current,
+                  streamingUsage: payload.usage ?? null,
+                };
+                const isForeground = trackInPanel && state.activeAIRequestId === requestId;
+                return {
+                  activeStreams: { ...state.activeStreams, [requestId]: nextSession },
+                  ...(isForeground ? { streamingUsage: payload.usage ?? null } : {}),
+                };
+              });
             }
           });
-          await invokeWithTimeout<void>(
+
+          const streamResp = await invokeWithTimeout<AIResponse | undefined>(
             "ask_ai_stream",
-            {
-              request: {
-                request_id: requestId,
-                provider_id: attempt.providerId ?? null,
-                model: attempt.model ?? null,
-                prompt,
-                context,
-                mode,
-                intent,
-                language: getCurrentAppLanguage(),
-                history,
-                attachments: attachments && attachments.length > 0 ? attachments : undefined,
-                enable_thinking: get().thinkingEnabled,
-                ...(nativeToolPayload
-                  ? {
-                      tools: nativeToolPayload.tools,
-                      tool_choice: nativeToolPayload.tool_choice,
-                    }
-                  : {}),
-              },
-            },
+            { request: requestPayload },
             timeoutMs,
             "AI request",
             {
@@ -582,37 +525,34 @@ export const useAIStore = create<AIState>((set, get) => ({
                 }),
             },
           );
+          if (streamResp?.error) {
+            throw new Error(streamResp.error);
+          }
+
+          const finalText =
+            streamResp && typeof streamResp.text === "string" && streamResp.text.length > 0
+              ? streamResp.text
+              : streamedText;
+          const finalReasoning = streamResp?.reasoning || streamedReasoning || undefined;
+          const finalToolCalls = streamResp?.tool_calls ?? [];
+          const finalThoughtSignature = streamResp?.thought_signature ?? undefined;
+          const finalUsage =
+            streamResp?.usage ?? (latestStreamUsage as AIUsageStats | null) ?? undefined;
+
           return {
-            text: streamedText,
-            reasoning: streamedReasoning || undefined,
-            // The model that actually answered — surfaced in the run footer.
-            modelUsed: attempt.model ?? config.model ?? undefined,
+            text: finalText,
+            reasoning: finalReasoning,
+            toolCalls: finalToolCalls,
+            thoughtSignature: finalThoughtSignature,
+            usage: finalUsage,
+            modelUsed: model ?? config.model ?? undefined,
+            providerUsed: config.id,
           };
         }
 
-        const resp = await invokeWithTimeout<{ text: string; reasoning?: string; error?: string }>(
+        const resp = await invokeWithTimeout<AIResponse>(
           "ask_ai",
-          {
-            request: {
-              request_id: requestId,
-              provider_id: attempt.providerId ?? null,
-              model: attempt.model ?? null,
-              prompt,
-              context,
-              mode,
-              intent,
-              language: getCurrentAppLanguage(),
-              history,
-              attachments: attachments && attachments.length > 0 ? attachments : undefined,
-              enable_thinking: get().thinkingEnabled,
-              ...(nativeToolPayload
-                ? {
-                    tools: nativeToolPayload.tools,
-                    tool_choice: nativeToolPayload.tool_choice,
-                  }
-                : {}),
-            },
-          },
+          { request: requestPayload },
           timeoutMs,
           "AI request",
           {
@@ -627,82 +567,344 @@ export const useAIStore = create<AIState>((set, get) => ({
         return {
           text: resp.text,
           reasoning: resp.reasoning,
-          modelUsed: attempt.model ?? config.model ?? undefined,
+          toolCalls: resp.tool_calls ?? [],
+          thoughtSignature: resp.thought_signature ?? undefined,
+          usage: resp.usage ?? undefined,
+          modelUsed: model ?? config.model ?? undefined,
+          providerUsed: config.id,
         };
       } catch (errorValue) {
-        lastError = errorValue;
         const requestError = normalizeAIRequestError(errorValue);
         if (streamedText.trim()) {
           lastPartialText = streamedText;
           (requestError as AIRequestError & { partialText?: string }).partialText = streamedText;
         }
-        // A timed-out provider hung for the full window — deprioritize (or
-        // briefly skip) it on subsequent calls so it cannot eat them too.
-        if (requestError.code === "timeout") markProviderTimeout(config.id);
-        const canFailOver = requestError.code === "timeout" || requestError.code === "provider";
-        if (!canFailOver || index === chain.length - 1) throw requestError;
-        // Stop the superseded backend request before switching endpoints.
-        void invokeMutation<boolean>("cancel_ai_request", { requestId }).catch((error) => {
-          console.warn("[AI] Failed to cancel superseded request:", error);
-        });
-        // Surface silent chain failovers to any listening agent run so the
-        // conversation shows why a step took an extra attempt.
-        window.dispatchEvent(
-          new CustomEvent("ai-provider-chain-failover", {
-            detail: {
-              failedProvider: config.name.trim() || config.id,
-              failedModel: attempt.model ?? null,
-              reason: requestError.code,
-              attempt: index + 1,
-              total: chain.length,
-              ...(options?.correlationId ? { correlationId: options.correlationId } : {}),
-            },
-          }),
-        );
-        // Deliberately no primary change here: the request-level chain tries
-        // the remaining providers silently, and the single visible promotion
-        // is owned by the agent hook (promoteNextEnabledProvider) so the
-        // selector moves exactly once per run instead of flip-flopping.
-        console.warn(
-          `[AI] Provider "${config.name || config.id}"${attempt.model ? ` (model ${attempt.model})` : ""} failed (${requestError.code}); failing over to the next model/provider in the chain.`,
-        );
+        if (requestError.code === "timeout") {
+          markProviderTimeout(config.id);
+        }
+        // Best-effort cancel of superseded backend request when failing over.
+        if (!isHardTerminalError(requestError)) {
+          void invokeMutation<boolean>("cancel_ai_request", { requestId }).catch((error) => {
+            console.warn("[AI] Failed to cancel superseded request:", error);
+          });
+        }
+        throw requestError;
       } finally {
         unlisten?.();
-        if (get().activeAIRequestId === requestId) {
-          set({
-            activeAIRequestId: null,
-            requestPhase: "idle",
-            streamingReasoning: false,
-            streamingReasoningText: "",
-          });
+        set((state) => {
+          const nextStreams = { ...state.activeStreams };
+          delete nextStreams[requestId];
+          if (!trackInPanel || state.activeAIRequestId !== requestId) {
+            return { activeStreams: nextStreams };
+          }
+          const remainingForeground = Object.values(nextStreams).filter((s) => s.trackInPanel);
+          const nextForeground = remainingForeground[remainingForeground.length - 1];
+          return {
+            activeStreams: nextStreams,
+            activeAIRequestId: nextForeground?.requestId ?? null,
+            requestPhase: nextForeground?.phase ?? "idle",
+            streamingReasoning: nextForeground?.streamingReasoning ?? false,
+            streamingReasoningText: nextForeground?.streamingReasoningText ?? "",
+          };
+        });
+      }
+    };
+
+    for (const group of providerGroups) {
+      if (group.isFallbackProvider) {
+        // SEC-T04: Never cross to another provider without explicit consent.
+        // Unattended scheduled runs auto-deny cross-provider failover unless the
+        // user previously persisted approval, because no human can answer a modal.
+        if (!crossProviderConsentChecked) {
+          crossProviderConsentChecked = true;
+          crossProviderConsentApproved = options?.unattendedReadOnly
+            ? false
+            : await requestAIFailoverConsent();
+        }
+        if (!crossProviderConsentApproved) {
+          break;
+        }
+      }
+
+      for (let modelIndex = 0; modelIndex < group.models.length; modelIndex += 1) {
+        const model = group.models[modelIndex];
+        attemptCounter += 1;
+        const modelRetryPolicy =
+          !group.isFallbackProvider && modelIndex === 0
+            ? primaryRetryPolicy
+            : NO_INLINE_RETRY_POLICY;
+
+        let abortCurrentProvider = false;
+        for (let retry = 0; retry <= modelRetryPolicy.maxRetries; retry += 1) {
+          try {
+            return await runSingleTransportCall(group.config, model);
+          } catch (errorValue) {
+            lastError = errorValue;
+            const requestError = normalizeAIRequestError(errorValue);
+
+            if (isHardTerminalError(requestError)) {
+              throw requestError;
+            }
+            if (shouldAbortProviderImmediately(requestError)) {
+              abortCurrentProvider = true;
+              break;
+            }
+            if (!modelRetryPolicy.retryableCodes.includes(requestError.code)) {
+              abortCurrentProvider = true;
+              break;
+            }
+            if (retry >= modelRetryPolicy.maxRetries) {
+              break;
+            }
+
+            const rateLimited =
+              requestError.backendCode === "ai-rate-limited" ||
+              /rate limit|429|quota|too many requests/i.test(requestError.message);
+            const delayMs = computeAgentRetryDelay({
+              retry: retry + 1,
+              policy: modelRetryPolicy,
+              rateLimited,
+              providerRetryAfterMs: requestError.providerRetryAfterMs,
+              random,
+            });
+            if (delayMs === null) {
+              break;
+            }
+            options?.onRetryWait?.({
+              delayMs,
+              reason: rateLimited ? "rate-limit" : "transient",
+              retryAfterMs: requestError.providerRetryAfterMs,
+              retry: retry + 1,
+              maxRetries: modelRetryPolicy.maxRetries,
+            });
+            await new Promise((resolve) => setTimeout(resolve, delayMs));
+          }
+        }
+
+        const latestNormalized = normalizeAIRequestError(lastError);
+        const hasMoreModelsInProvider =
+          !abortCurrentProvider && modelIndex + 1 < group.models.length;
+        const hasMoreProviders =
+          fallbackProviders.length > 0 &&
+          (!crossProviderConsentChecked || crossProviderConsentApproved);
+
+        if (hasMoreModelsInProvider || hasMoreProviders) {
+          window.dispatchEvent(
+            new CustomEvent("ai-provider-chain-failover", {
+              detail: {
+                failedProvider: group.config.name.trim() || group.config.id,
+                failedModel: model ?? null,
+                reason: latestNormalized.code,
+                attempt: attemptCounter,
+                total: totalChainStops,
+                ...(options?.correlationId ? { correlationId: options.correlationId } : {}),
+              },
+            }),
+          );
+          console.warn(
+            `[AI] Provider "${group.config.name || group.config.id}"${model ? ` (model ${model})` : ""} failed (${latestNormalized.code}); evaluating bounded fallback.`,
+          );
+        }
+
+        if (abortCurrentProvider) {
+          break;
         }
       }
     }
+
     const finalError = normalizeAIRequestError(lastError);
     if (lastPartialText) {
       (finalError as AIRequestError & { partialText?: string }).partialText = lastPartialText;
     }
     throw finalError;
-  },
+  };
 
-  askAI: async (
-    prompt,
-    context,
-    mode = "panel",
-    intent = "sql",
-    history = [],
-    attachments,
-    options,
-  ) => {
-    const response = await get().askAIWithReasoning(
+  return {
+    aiConfigs: [],
+    activeStreams: {},
+    activeAIRequestId: null,
+    requestPhase: "idle",
+    streamingText: "",
+    streamingReasoning: false,
+    streamingReasoningText: "",
+    streamingUsage: null,
+    isProviderFailingOver: false,
+    thinkingEnabled: loadThinkingPreference(),
+
+    setThinkingEnabled: (enabled) => {
+      persistThinkingPreference(enabled);
+      set({ thinkingEnabled: enabled });
+    },
+
+    loadAIConfigs: async () => {
+      try {
+        const [aiConfigs, aiKeyStatus] = await invokeWithTimeout<
+          [AIProviderConfig[], Record<string, boolean>]
+        >("get_ai_configs", {}, 15_000, "Loading AI settings");
+        set({ aiConfigs });
+        return { aiConfigs, aiKeyStatus };
+      } catch (e) {
+        useGlobalErrorStore.getState().setError(`Failed to load AI configs: ${e}`);
+        throw e;
+      }
+    },
+
+    saveAIConfigs: async (configs, apiKeyUpdates, clearedProviderIds) => {
+      try {
+        const [aiConfigs, aiKeyStatus] = await enqueueConfigSave(() =>
+          invokeMutation<[AIProviderConfig[], Record<string, boolean>]>("save_ai_configs", {
+            providers: configs,
+            apiKeyUpdates,
+            clearedProviderIds,
+          }),
+        );
+        set({ aiConfigs });
+        return { aiConfigs, aiKeyStatus };
+      } catch (e) {
+        useGlobalErrorStore.getState().setError(`Failed to save AI configs: ${e}`);
+        throw e;
+      }
+    },
+
+    listProviderModels: async (providerId) =>
+      invokeWithTimeout<FetchedModel[]>(
+        "list_provider_models",
+        { providerId },
+        30_000,
+        "Fetching provider models",
+      ),
+
+    promoteNextEnabledProvider: () => {
+      const configs = get().aiConfigs;
+      const active = getActiveAIProvider(configs);
+      if (!active) return null;
+      const activeIndex = configs.findIndex((config) => config.id === active.id);
+      const rotated = [...configs.slice(activeIndex + 1), ...configs.slice(0, activeIndex + 1)];
+      const next = rotated.find((config) => config.is_enabled && config.id !== active.id);
+      if (!next) return null;
+      switchActiveProvider(configs, next, active, set);
+      return next;
+    },
+
+    restoreProvider: (providerId) => {
+      const configs = get().aiConfigs;
+      const target = configs.find((config) => config.id === providerId);
+      if (!target || !target.is_enabled || target.is_primary) return;
+      const normalized = normalizeAIProviderConfigs(
+        configs.map((config) => ({ ...config, is_primary: config.id === providerId })),
+      );
+      set({ aiConfigs: normalized });
+      void enqueueConfigSave(() =>
+        invokeMutation<[AIProviderConfig[], Record<string, boolean>]>("save_ai_configs", {
+          providers: normalized,
+          apiKeyUpdates: {},
+          clearedProviderIds: [],
+        }),
+      )
+        .then(([aiConfigs]) => set({ aiConfigs }))
+        .catch((error) => console.warn("[AI] Failed to persist provider restore:", error));
+    },
+
+    getLocalOllamaStatus: async () => {
+      try {
+        return await invokeWithTimeout<LocalOllamaStatus>(
+          "get_local_ollama_status",
+          {},
+          15_000,
+          "Loading local Ollama status",
+        );
+      } catch (error) {
+        useGlobalErrorStore.getState().setError(`Failed to load local Ollama status: ${error}`);
+        throw error;
+      }
+    },
+
+    setupLocalOllama: async () => {
+      try {
+        const result = await invokeMutation<LocalOllamaSetupResult>("setup_local_ollama", {});
+        set({ aiConfigs: result.aiConfigs });
+        useGlobalErrorStore.getState().clearError();
+        return result;
+      } catch (error) {
+        useGlobalErrorStore.getState().setError(`Failed to set up local Ollama: ${error}`);
+        throw error;
+      }
+    },
+
+    cancelAIRequest: async (targetRequestId) => {
+      const requestId = targetRequestId ?? get().activeAIRequestId;
+      if (!requestId) return false;
+
+      set((state) => {
+        const existing = state.activeStreams[requestId];
+        const nextStreams = existing
+          ? {
+              ...state.activeStreams,
+              [requestId]: { ...existing, phase: "cancelling" as const },
+            }
+          : state.activeStreams;
+        return {
+          activeStreams: nextStreams,
+          ...(state.activeAIRequestId === requestId ? { requestPhase: "cancelling" as const } : {}),
+        };
+      });
+      try {
+        return await invokeMutation<boolean>("cancel_ai_request", { requestId });
+      } catch {
+        return false;
+      }
+    },
+
+    askAIWithReasoning: async (
       prompt,
       context,
-      mode,
-      intent,
-      history,
+      mode = "panel",
+      intent = "sql",
+      history = [],
       attachments,
       options,
-    );
-    return response.text;
-  },
-}));
+    ) => {
+      const result = await executeTurnCoordinator(
+        prompt,
+        context,
+        mode,
+        intent,
+        history,
+        attachments,
+        options,
+      );
+      return {
+        text: result.text,
+        reasoning: result.reasoning,
+        modelUsed: result.modelUsed,
+      };
+    },
+
+    askAIAgentTurn: async (prompt, context, history = [], attachments, options) =>
+      executeTurnCoordinator(prompt, context, "panel", "agent", history, attachments, {
+        retryPolicy: DEFAULT_AGENT_RETRY_POLICY,
+        ...options,
+      }),
+
+    askAI: async (
+      prompt,
+      context,
+      mode = "panel",
+      intent = "sql",
+      history = [],
+      attachments,
+      options,
+    ) => {
+      const response = await executeTurnCoordinator(
+        prompt,
+        context,
+        mode,
+        intent,
+        history,
+        attachments,
+        options,
+      );
+      return response.text;
+    },
+  };
+});

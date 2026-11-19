@@ -1,16 +1,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
-import {
-  useReactTable,
-  getCoreRowModel,
-  type ColumnDef,
-  type ColumnOrderState,
-  type VisibilityState,
-  type ColumnPinningState,
-} from "@tanstack/react-table";
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { useI18n, translateCurrent, getCurrentAppLanguage } from "../../i18n";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { useReactTable, getCoreRowModel, type ColumnDef } from "@tanstack/react-table";
+import { useI18n } from "../../i18n";
 import { Copy, Loader2 } from "lucide-react";
 import { useShallow } from "zustand/react/shallow";
 import { useDataGridSettings } from "../../stores/datagrid-settings-store";
@@ -18,61 +9,38 @@ import {
   useChangeTrackingStore,
   changeScopeKey,
   changeMatchesScope,
+  type ScopedStagedChange,
 } from "../../stores/change-tracking-store";
 import { useConnectionStore } from "../../stores/connectionStore";
 import { useGlobalErrorStore } from "../../stores/globalErrorStore";
 import { useQueryStore } from "../../stores/queryStore";
-import { EventCenter } from "../../stores/event-center";
-import {
-  parseClipboardText,
-  buildPastePreview,
-  type PastePreview,
-} from "../../utils/clipboard-parser";
+import type { PastePreview } from "../../utils/clipboard-parser";
 import type { ColumnDetail, ConnectionConfig, QueryResult, TableRowFocus } from "../../types";
-import { devLogError } from "../../utils/logger";
-import { invokeMutation } from "../../utils/tauri-utils";
-import { emitAppToast } from "../../utils/app-toast";
-import { isMutatingStatement } from "../SQLEditor/SQLEditorUtils";
 import { lazy, Suspense } from "react";
 import "./DataChart.css";
-import { getDataGridChartCopy } from "./datagrid-chart-copy";
-import { getDataGridPowerCopy } from "./datagrid-power-copy";
 import { getDataGridCopy } from "./datagrid-copy";
 
 const DataChart = lazy(() => import("./DataChart").then((m) => ({ default: m.DataChart })));
 import {
-  PAGE_SIZE,
-  invalidateTableScopeCaches,
   invalidateTableCaches,
   inlineStructureCacheRef,
-  buildResolvedColumns,
   isBooleanColumn,
-  resolveTableFilter,
-  type ResolvedColumn,
   type GridCellValue,
   type StructureStatus,
-  type EditingCell,
 } from "./hooks/useDataGrid";
-import { getColumnWidths, saveColumnWidth } from "../../stores/column-width-store";
-import { getColumnLayout, saveColumnLayout } from "../../stores/column-layout-store";
+import { getColumnLayout } from "../../stores/column-layout-store";
 import { useDateFormatStore } from "../../stores/dateFormatStore";
-import { filterAndSortLocalRows, filterRowsWithSourceIndices } from "./local-result-operations";
 import {
   createEmptyGridSelection,
-  isGridCellSelected,
-  moveGridSelection,
-  selectEntireGrid,
   selectGridCell,
   type GridSelectionModifiers,
 } from "./grid-selection";
-import { getPrimaryGridRange, isMultiCellRange } from "./grid-range-operations";
-import { buildStableRowIdentity } from "./row-identity";
 import { useConnectionCapabilities } from "../../hooks/useConnectionCapabilities";
-import { useAppLayoutStore } from "../../stores/appLayoutStore";
 import { isCapabilitySupported } from "../../types";
 
 import { DataGridToolbar } from "./DataGridToolbar";
 import { buildDataGridColumns } from "./DataGridColumns";
+import { DataGridStoreProvider, createDataGridStore } from "./store/dataGridStore";
 import { useDataGridCopySqlActions } from "./hooks/useDataGridCopySqlActions";
 import { useDataGridInlineEditing } from "./hooks/useDataGridInlineEditing";
 import { useDataGridRangeOperations } from "./hooks/useDataGridRangeOperations";
@@ -84,24 +52,19 @@ import { useDataGridTableFetcher } from "./hooks/useDataGridTableFetcher";
 import { useDataGridRowMutations } from "./hooks/useDataGridRowMutations";
 import { useDataGridTableExport } from "./hooks/useDataGridTableExport";
 import { useDataGridColumnMasks } from "./hooks/useDataGridColumnMasks";
-import { buildRowFocusFilter } from "./row-focus";
-import { InsertRowDialog } from "./dialogs/InsertRowDialog";
-import { type ColumnStats } from "./dialogs/ColumnStatsPopover";
-import type { ColumnDisplayFormat } from "./editors";
+import { useDataGridAutoRefreshController } from "./hooks/useDataGridAutoRefresh";
+import { useDataGridColumnLayout } from "./hooks/useDataGridColumnLayout";
+import { useDataGridInspectorAndPopovers } from "./hooks/useDataGridInspectorAndPopovers";
+import { useDataGridKeyboardNav } from "./hooks/useDataGridKeyboardNav";
+import { useDataGridViewProjection } from "./hooks/useDataGridViewProjection";
+import { useDataGridImportExportEvents } from "./hooks/useDataGridImportExportEvents";
+import { useDataGridVirtualization } from "./hooks/useDataGridVirtualization";
 import { DataGridOverlays } from "./DataGridOverlays";
 import { DataGridTableView } from "./DataGridTableView";
 import { DataGridFooter } from "./DataGridFooter";
-import {
-  buildRowInspectorPrimaryKeyValues,
-  matchesRowInspectorEditScope,
-} from "./row-inspector-utils";
-import { getRowInspectorCopy } from "../RowInspector/row-inspector-copy";
-import { loadColumnStats } from "./column-stats-runner";
 
-/** Minimum width that must remain for scrollable (unpinned) columns. Pinning
- *  that would leave less than this is refused so the grid never becomes a
- *  wall of frozen columns. */
-const MIN_UNPINNED_VIEWPORT_PX = 160;
+const EMPTY_STAGED_CHANGES: ScopedStagedChange[] = [];
+const EMPTY_GRID_ROWS: GridCellValue[][] = [];
 
 interface Props {
   connectionId: string;
@@ -163,10 +126,34 @@ export function DataGrid({
   const allowsAtomicEdits = isCapabilitySupported(capabilityProfile?.capabilities.atomicEditQueue);
   const allowsCsvImport = isCapabilitySupported(capabilityProfile?.capabilities.atomicCsvImport);
   const allowsDataExport = isCapabilitySupported(capabilityProfile?.capabilities.dataExport);
-  const initialColumnLayoutRef = useRef(getColumnLayout(connectionId, tableName ?? "", database));
 
+  const [dataGridStore] = useState(createDataGridStore);
+  const { setEditingCell, setEditingSeedValue, setSavingCell, setCopiedCell } =
+    dataGridStore.getState();
+  const getEditingCell = useCallback(() => dataGridStore.getState().editingCell, [dataGridStore]);
+  const getGridSelection = useCallback(
+    () => dataGridStore.getState().gridSelection,
+    [dataGridStore],
+  );
+
+  /** Scope key for this grid's staged-change queue (connection|db|table). */
+  const changeScope = tableName ? changeScopeKey(connectionId, database, tableName) : "";
+
+  const stagedChanges = useChangeTrackingStore(
+    useShallow((state) =>
+      changeScope
+        ? state.stagedChanges.filter((c) => changeMatchesScope(c, changeScope))
+        : EMPTY_STAGED_CHANGES,
+    ),
+  );
+  const stagedChangeCount = stagedChanges.length;
+  const undoableChanges = useChangeTrackingStore((state) =>
+    changeScope ? (state.history[changeScope]?.length ?? 0) : 0,
+  );
+  const redoableChanges = useChangeTrackingStore((state) =>
+    changeScope ? (state.future[changeScope]?.length ?? 0) : 0,
+  );
   const {
-    stagedChanges,
     stageChange,
     stageChanges,
     unstageChanges,
@@ -176,17 +163,24 @@ export function DataGrid({
     redoLast,
     setColumnNameMap,
     setDbType,
-    getChangeCount,
-    getUndoCount,
-    getRedoCount,
-  } = useChangeTrackingStore();
+  } = useChangeTrackingStore(
+    useShallow((state) => ({
+      stageChange: state.stageChange,
+      stageChanges: state.stageChanges,
+      unstageChanges: state.unstageChanges,
+      undoLast: state.undoLast,
+      openPreview: state.openPreview,
+      closePreview: state.closePreview,
+      redoLast: state.redoLast,
+      setColumnNameMap: state.setColumnNameMap,
+      setDbType: state.setDbType,
+    })),
+  );
 
+  const initialColumnLayoutRef = useRef(getColumnLayout(connectionId, tableName ?? "", database));
   const [data, setData] = useState<QueryResult | null>(externalResult || null);
   const [structureColumns, setStructureColumns] = useState<ColumnDetail[]>([]);
   const [foreignKeys, setForeignKeys] = useState<import("../../types").ForeignKeyInfo[]>([]);
-  const [lookupValuesCache, setLookupValuesCache] = useState<
-    Map<string, Array<{ value: string | number; label: string }>>
-  >(new Map());
   const [isLoading, setIsLoading] = useState(false);
   /** True while the grid shows a cached page (see grid-cache-policy TTLs). */
   const [dataFromCache, setDataFromCache] = useState(false);
@@ -208,14 +202,7 @@ export function DataGrid({
   const [multiSort, setMultiSort] = useState<
     Array<{ column: string; direction: "ASC" | "DESC"; priority: number }>
   >([]);
-  const [gridSelection, setGridSelection] = useState(createEmptyGridSelection);
-  const selectedCell = gridSelection.activeCell;
-  const [selectedRowIdentities, setSelectedRowIdentities] = useState<Set<string>>(new Set());
-  const [editingCell, setEditingCell] = useState<EditingCell | null>(null);
-  const [editingSeedValue, setEditingSeedValue] = useState("");
-  const [savingCell, setSavingCell] = useState<EditingCell | null>(null);
   const [isDeletingRows, setIsDeletingRows] = useState(false);
-  const [copiedCell, setCopiedCell] = useState<string | null>(null);
   const [isInsertDialogOpen, setIsInsertDialogOpen] = useState(false);
   const [insertDialogColumns, setInsertDialogColumns] = useState<ColumnDetail[]>([]);
   const [insertDialogBaseValues, setInsertDialogBaseValues] = useState<[string, unknown][]>([]);
@@ -224,12 +211,6 @@ export function DataGrid({
   const [isSubmittingInsert, setIsSubmittingInsert] = useState(false);
   /** When true the insert dialog stages a queued insert (duplicate-row flow). */
   const [insertDialogStages, setInsertDialogStages] = useState(false);
-  /** "Set selected cells to…" bulk-edit dialog state. */
-  const [setRangeDialog, setSetRangeDialog] = useState<{
-    open: boolean;
-    cellCount: number;
-    error: string | null;
-  }>({ open: false, cellCount: 0, error: null });
   /** Paste dialog state */
   const [isPasteDialogOpen, setIsPasteDialogOpen] = useState(false);
   const [pastePreview, setPastePreview] = useState<PastePreview | null>(null);
@@ -251,67 +232,10 @@ export function DataGrid({
   const [exportedRowCount, setExportedRowCount] = useState(0);
   /** Set of row indices with pending staged changes */
   const [stagedRowIndices, setStagedRowIndices] = useState<Set<number>>(new Set());
-  /** FK Preview: {table, column, value, rowIndex, colIndex} */
-  const [fkPreview, setFkPreview] = useState<{
-    table: string;
-    column: string;
-    value: string | number | boolean;
-    rowIndex: number;
-    colIndex: number;
-  } | null>(null);
-  const [fkPreviewData, setFkPreviewData] = useState<import("../../types").QueryResult | null>(
-    null,
-  );
-  const [isLoadingFkPreview, setIsLoadingFkPreview] = useState(false);
-  /** Column stats popover: which column, its aggregates, and query state. */
-  const [columnStats, setColumnStats] = useState<{
-    column: string;
-    stats: ColumnStats | null;
-  } | null>(null);
-  const [columnStatsError, setColumnStatsError] = useState<string | null>(null);
-  const [isLoadingColumnStats, setIsLoadingColumnStats] = useState(false);
   const [viewMode, setViewMode] = useState<"table" | "chart">(initialViewMode);
-  const [columnSizes, setColumnSizes] = useState<Record<string, number>>(() =>
-    getColumnWidths(connectionId, tableName ?? "", database),
-  );
-  const [columnOrder, setColumnOrder] = useState<ColumnOrderState>(
-    initialColumnLayoutRef.current.order,
-  );
-  const [columnVisibility, setColumnVisibility] = useState<VisibilityState>(
-    initialColumnLayoutRef.current.visibility,
-  );
-  const [columnPinning, setColumnPinning] = useState<ColumnPinningState>(
-    initialColumnLayoutRef.current.pinning,
-  );
-  const rowFocusFilter = useMemo(() => buildRowFocusFilter(rowFocus), [rowFocus]);
-  /** Scope key for this grid's staged-change queue (connection|db|table). */
-  const changeScope = tableName ? changeScopeKey(connectionId, database, tableName) : "";
-  /** Resolved quick filter: server-side clause when expressible, else the
-   *  client-side-only flag that limits filtering to loaded rows. */
-  const filterPlan = useMemo(
-    () =>
-      resolveTableFilter(
-        tableFilter,
-        rowFocusFilter,
-        structureColumns,
-        connections.find((c) => c.id === connectionId)?.db_type,
-      ),
-    [tableFilter, rowFocusFilter, structureColumns, connections, connectionId],
-  );
-  const [columnDisplayFormats, setColumnDisplayFormats] = useState<
-    Record<string, ColumnDisplayFormat>
-  >({});
-  const [contextMenu, setContextMenu] = useState<{
-    x: number;
-    y: number;
-    type: "cell" | "header" | "row";
-    colName?: string;
-    rowIndex?: number;
-  } | null>(null);
   /** Row drag-and-drop state */
   const [dragSourceIndex, setDragSourceIndex] = useState<number | null>(null);
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null);
-  const [orderColumn, setOrderColumn] = useState<string | null>(null);
   const columnNamesRef = useRef<string[]>([]);
   /** Per-grid inline-edit draft — a ref, never a module singleton. */
   const editingDraftRef = useRef("");
@@ -322,7 +246,6 @@ export function DataGrid({
   const requestIdRef = useRef(0);
   const dataScopeRef = useRef("");
   const countRequestIdRef = useRef(0);
-  const columnStatsRequestIdRef = useRef(0);
   const structureRequestIdRef = useRef(0);
   const structurePromiseRef = useRef<Promise<ColumnDetail[]> | null>(null);
   const structureRetryAttemptRef = useRef(0);
@@ -332,97 +255,51 @@ export function DataGrid({
   const isActiveRef = useRef(isActive);
   const rowSelectionAnchorRef = useRef<string | null>(null);
   const dataGridInstanceIdRef = useRef(`datagrid-${Math.random().toString(36).slice(2)}`);
-  const inspectorTargetRef = useRef<{
-    rowIndex: number;
-    rowIdentity: string | null;
-  } | null>(null);
   const csvImportOperationIdRef = useRef<string | null>(null);
   const tableExportOperationIdRef = useRef<string | null>(null);
-  // A table-data-updated event that arrived while this grid was in a
-  // background tab marks the data stale; refetch as soon as the tab is
-  // active again (the event-time fetch is skipped for inactive grids).
   const pendingDataRefreshRef = useRef(false);
   const loadedTablePagesRef = useRef(new Map<number, QueryResult>());
 
-  useEffect(() => {
-    let unlisten: UnlistenFn | undefined;
-    void listen<{
-      operationId: string;
-      processedRows: number;
-      processedBytes: number;
-      totalBytes: number;
-    }>("csv-import-progress", (event) => {
-      if (event.payload.operationId !== csvImportOperationIdRef.current) return;
-      setCsvImportProgress({
-        processedRows: event.payload.processedRows,
-        processedBytes: event.payload.processedBytes,
-        totalBytes: event.payload.totalBytes,
-      });
-    })
-      .then((cleanup) => {
-        unlisten = cleanup;
-      })
-      .catch(() => {
-        // Browser-only tests and previews do not expose Tauri's event bridge.
-      });
-    return () => unlisten?.();
-  }, []);
-
-  useEffect(() => {
-    let unlisten: UnlistenFn | undefined;
-    void listen<{ operationId: string; exportedRows: number }>("table-export-progress", (event) => {
-      if (event.payload.operationId !== tableExportOperationIdRef.current) return;
-      setExportedRowCount(event.payload.exportedRows);
-    })
-      .then((cleanup) => {
-        unlisten = cleanup;
-      })
-      .catch(() => {
-        // Browser-only tests and previews do not expose Tauri's event bridge.
-      });
-    return () => unlisten?.();
-  }, []);
-
-  // Displayed-row pipeline: the quick filter (and, for external results, the
-  // client-side sort) decides which rows exist for the user. Selection and
-  // range operations live in this displayed space so filtered-out rows can
-  // never be selected, copied, or mutated.
-  const filteredTableRows = useMemo(() => {
-    if (!data || externalResult) return [];
-    return filterRowsWithSourceIndices(data.rows, tableFilter);
-  }, [data, externalResult, tableFilter]);
-
-  const filteredTableRowIndices = useMemo(
-    () => filteredTableRows.map(({ sourceIndex }) => sourceIndex),
-    [filteredTableRows],
-  );
-
-  const displayedRows = useMemo(() => {
-    if (!data) return [];
-    if (!externalResult) return filteredTableRows.map(({ row }) => row);
-    return filterAndSortLocalRows(
-      data.rows as GridCellValue[][],
-      data.columns.map((column) => column.name),
-      tableFilter,
-      sortColumn,
-      sortDir,
-    );
-  }, [data, externalResult, filteredTableRows, sortColumn, sortDir, tableFilter]);
-
-  const displayedRowIndices = useMemo(() => {
-    if (!externalResult) return filteredTableRowIndices;
-    // filterAndSortLocalRows preserves row identity, so each displayed row
-    // maps back to its source index through a reference map — the row
-    // inspector and context menu depend on this being exact.
-    const sourceIndexByRow = new Map<GridCellValue[], number>();
-    data?.rows.forEach((row, index) => {
-      sourceIndexByRow.set(row as GridCellValue[], index);
-    });
-    return displayedRows.map((row, index) => sourceIndexByRow.get(row) ?? index);
-  }, [data?.rows, displayedRows, externalResult, filteredTableRowIndices]);
+  const {
+    rowFocusFilter,
+    filterPlan,
+    filteredTableRowIndices,
+    displayedRows,
+    displayedRowIndices,
+    resolvedColumns,
+    primaryKeyColumns,
+    rowIdentities,
+    selectedRows,
+    setSelectedRows,
+    isTableEditable,
+    canAttemptInlineEdit,
+    canSelectRows,
+    selectedRowCount,
+    tableData,
+    isPageClamped,
+  } = useDataGridViewProjection({
+    connectionId,
+    database,
+    tableName,
+    externalResult,
+    data,
+    structureColumns,
+    structureStatus,
+    connections,
+    tableFilter,
+    sortColumn,
+    sortDir,
+    rowFocus,
+    allowsInlineEdit,
+    allowsAtomicEdits,
+    dataGridStore,
+    columnNamesRef,
+    rowSelectionAnchorRef,
+  });
 
   const setSelectedCell = useCallback(
     (cell: { row: number; col: number } | null, modifiers: GridSelectionModifiers = {}) => {
+      const { setGridSelection } = dataGridStore.getState();
       if (!cell) {
         setGridSelection(createEmptyGridSelection());
         return;
@@ -445,12 +322,13 @@ export function DataGrid({
         ),
       );
     },
-    [data?.columns.length, displayedRowIndices, displayedRows.length, structureColumns.length],
-  );
-
-  const isCellSelected = useCallback(
-    (row: number, col: number) => isGridCellSelected(gridSelection, { row, col }),
-    [gridSelection],
+    [
+      data?.columns.length,
+      dataGridStore,
+      displayedRowIndices,
+      displayedRows.length,
+      structureColumns.length,
+    ],
   );
 
   useEffect(() => {
@@ -465,256 +343,106 @@ export function DataGrid({
     [onViewModeChange],
   );
 
-  useEffect(() => {
-    const element = tableWrapRef.current;
-    if (!element || viewMode !== "table") return;
-
-    const handleGridKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
-
-      const bounds = {
-        // Displayed rows only — arrow keys and Ctrl+A must skip filtered-out
-        // rows entirely.
-        rowCount: displayedRows.length,
-        columnCount: structureColumns.length || data?.columns.length || 0,
-      };
-      if (bounds.rowCount === 0 || bounds.columnCount === 0) return;
-
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
-        event.preventDefault();
-        setGridSelection(selectEntireGrid(bounds));
-        return;
-      }
-      if (event.key === "Escape") {
-        setGridSelection(createEmptyGridSelection());
-        return;
-      }
-
-      const deltas: Record<string, { row: number; col: number }> = {
-        ArrowUp: { row: -1, col: 0 },
-        ArrowDown: { row: 1, col: 0 },
-        ArrowLeft: { row: 0, col: -1 },
-        ArrowRight: { row: 0, col: 1 },
-      };
-      const delta = deltas[event.key];
-      if (!delta) return;
-
-      event.preventDefault();
-      setGridSelection((previous) => moveGridSelection(previous, delta, bounds, event.shiftKey));
-    };
-
-    element.addEventListener("keydown", handleGridKeyDown);
-    return () => element.removeEventListener("keydown", handleGridKeyDown);
-  }, [data?.columns.length, displayedRows.length, structureColumns.length, viewMode]);
-
-  const { patchLoadedTableCell, fetchData, refreshTableFromStart, ensureStructureLoaded } =
-    useDataGridTableFetcher({
-      connectionId,
-      tableName,
-      database: database || undefined,
-      sortColumn,
-      sortDir,
-      tableFilter,
-      rowFocusFilter,
-      isActive,
-      externalResult,
-      structureColumns,
-      structureStatus,
-      getTableData,
-      countRows,
-      getTableStructure,
-      setColumnNameMap,
-      setDbType,
-      connections,
-      setData,
-      setTotalRows,
-      setIsLoading,
-      setHasMoreTableRows,
-      setCurrentPage,
-      setStructureColumns,
-      setForeignKeys,
-      setStructureStatus,
-      setError,
-      setDataFromCache,
-      refs: {
-        loadedTablePagesRef,
-        dataScopeRef,
-        requestIdRef,
-        isActiveRef,
-        isMountedRef,
-        countRequestIdRef,
-        countTimeoutRef,
-        structurePromiseRef,
-        structureRetryAttemptRef,
-        structureRetryTimeoutRef,
-        structureRequestIdRef,
-        inlineStructureCacheRef,
-      },
-    });
-
-  /** Reload button feedback: spinner while refetching, toast when done. */
-  const [isReloadingData, setIsReloadingData] = useState(false);
-  const handleReloadData = useCallback(async () => {
-    if (isReloadingData) return;
-    setIsReloadingData(true);
-    const startedAt = Date.now();
-    let ok = false;
-    try {
-      ok = await refreshTableFromStart();
-    } finally {
-      // Keep the spinner on screen for at least 450ms so a fast DB still shows
-      // the rotation instead of flickering.
-      const elapsed = Date.now() - startedAt;
-      if (elapsed < 450) await new Promise((resolve) => setTimeout(resolve, 450 - elapsed));
-      setIsReloadingData(false);
-    }
-    emitAppToast(
-      ok
-        ? { title: translateCurrent("datagrid.reloadSuccess"), tone: "success" }
-        : {
-            title: translateCurrent("datagrid.reloadFailed"),
-            description: translateCurrent("datagrid.reloadFailedDesc"),
-            tone: "error",
-          },
-    );
-  }, [isReloadingData, refreshTableFromStart]);
-
-  // ── Auto-refresh ──────────────────────────────────────────────────────────
-  // Interval in ms; 0 = off. The countdown itself lives in the toolbar so the
-  // 1s ticks don't re-render the whole grid.
-  const [autoRefreshMs, setAutoRefreshMs] = useState(0);
-  const autoRefreshInFlightRef = useRef(false);
-
-  /** Auto-refresh only re-runs read-only statements — a mutating query would
-      otherwise trip the Safe Mode confirm dialog on every tick. */
-  const canAutoRefresh =
-    Boolean(tableName && !externalResult) ||
-    Boolean(
-      externalResult?.query &&
-      /^(select|with|show|explain|describe|desc|table|values)\b/i.test(
-        externalResult.query.trim(),
-      ) &&
-      // `EXPLAIN ANALYZE <write>` (and other disguised writes like
-      // `SELECT ... INTO`) execute the wrapped statement — never re-run them.
-      !isMutatingStatement(externalResult.query),
-    );
-  const handleAutoRefreshTick = useCallback(async () => {
-    if (autoRefreshInFlightRef.current || !isMountedRef.current) return;
-    autoRefreshInFlightRef.current = true;
-    try {
-      if (externalResult) {
-        // Query-result grid: re-run the SQL that produced this result.
-        const sql = externalResult.query?.trim();
-        if (!sql) return;
-        const result = await invokeMutation<QueryResult>("execute_query", {
-          connectionId,
-          sql,
-          requestId: crypto.randomUUID(),
-          safeModeApprovedByUser: false,
-        });
-        if (result && isMountedRef.current) {
-          setData(result);
-          setTotalRows(result.rows.length);
-        }
-      } else {
-        await refreshTableFromStart();
-      }
-    } catch (error) {
-      devLogError("Auto-refresh failed", error);
-    } finally {
-      autoRefreshInFlightRef.current = false;
-    }
-  }, [connectionId, externalResult, refreshTableFromStart]);
-
-  const undoableChanges = changeScope ? getUndoCount(changeScope) : 0;
-  const redoableChanges = changeScope ? getRedoCount(changeScope) : 0;
-
-  useEffect(() => {
-    if (externalResult) {
-      setData(externalResult);
-      loadedTablePagesRef.current.clear();
-      setStructureColumns([]);
-      setTotalRows(externalResult.rows.length);
-      setIsLoading(false);
-      setDataFromCache(false);
-      setStructureStatus("ready");
-      structurePromiseRef.current = null;
-      structureRetryAttemptRef.current = 0;
-      if (structureRetryTimeoutRef.current !== null) {
-        window.clearTimeout(structureRetryTimeoutRef.current);
-        structureRetryTimeoutRef.current = null;
-      }
-      structureRequestIdRef.current += 1;
-      return;
-    }
-
-    setData(null);
-    loadedTablePagesRef.current.clear();
-    setHasMoreTableRows(true);
-    setStructureColumns([]);
-    setTotalRows(0);
-    setDataFromCache(false);
-    setCurrentPage(0);
-    const persistedLayout = getColumnLayout(connectionId, tableName ?? "", database);
-    setFilterDraft(persistedLayout.filter);
-    setTableFilter(persistedLayout.filter);
-    setSortColumn(persistedLayout.sort?.column ?? null);
-    setSortDir(persistedLayout.sort?.direction ?? "ASC");
-    setColumnOrder(persistedLayout.order);
-    setColumnVisibility(persistedLayout.visibility);
-    setColumnPinning(persistedLayout.pinning);
-    setStructureStatus("idle");
-    structurePromiseRef.current = null;
-    structureRetryAttemptRef.current = 0;
-    if (structureRetryTimeoutRef.current !== null) {
-      window.clearTimeout(structureRetryTimeoutRef.current);
-      structureRetryTimeoutRef.current = null;
-    }
-    requestIdRef.current += 1;
-    countRequestIdRef.current += 1;
-    structureRequestIdRef.current += 1;
-    // Restore persisted column widths for the new table
-    setColumnSizes(getColumnWidths(connectionId, tableName ?? "", database));
-  }, [tableName, connectionId, database, externalResult, rowFocus?.token]);
-
-  useEffect(() => {
-    if (!tableName || externalResult) return;
-    const timeoutId = window.setTimeout(() => {
-      saveColumnLayout(
-        connectionId,
-        tableName,
-        {
-          order: columnOrder,
-          visibility: columnVisibility,
-          pinning: {
-            left: columnPinning.left ?? [],
-            right: columnPinning.right ?? [],
-          },
-          sort: sortColumn ? { column: sortColumn, direction: sortDir } : null,
-          filter: filterDraft,
-        },
-        database,
-      );
-    }, 150);
-    return () => window.clearTimeout(timeoutId);
-  }, [
+  const {
+    columnSizes,
+    setColumnSizes,
     columnOrder,
-    columnPinning,
+    setColumnOrder,
     columnVisibility,
+    setColumnVisibility,
+    columnPinning,
+    setColumnPinning,
+    columnDisplayFormats,
+    setColumnDisplayFormats,
+    orderColumn,
+    restorePersistedColumnLayout,
+    handleColumnAutoFit,
+    handleColumnPinningChange,
+    handleColumnSizingChange,
+  } = useDataGridColumnLayout({
     connectionId,
+    tableName,
     database,
     externalResult,
-    filterDraft,
+    structureColumns,
     sortColumn,
     sortDir,
-    tableName,
-  ]);
+    filterDraft,
+    tableWrapRef,
+    columnNamesRef,
+  });
 
-  useEffect(() => {
-    if (!tableName || externalResult || !isActive) return;
-    void fetchData(currentPage);
-  }, [currentPage, externalResult, fetchData, isActive, tableName]);
+  const {
+    patchLoadedTableCell,
+    fetchData,
+    refreshTableFromStart,
+    ensureStructureLoaded,
+    isReloadingData,
+    handleReloadData,
+  } = useDataGridTableFetcher({
+    connectionId,
+    tableName,
+    database: database || undefined,
+    sortColumn,
+    sortDir,
+    tableFilter,
+    rowFocusFilter,
+    isActive,
+    externalResult,
+    structureColumns,
+    structureStatus,
+    getTableData,
+    countRows,
+    getTableStructure,
+    setColumnNameMap,
+    setDbType,
+    connections,
+    setData,
+    setTotalRows,
+    setIsLoading,
+    setHasMoreTableRows,
+    setCurrentPage,
+    setStructureColumns,
+    setForeignKeys,
+    setStructureStatus,
+    setError,
+    setDataFromCache,
+    data,
+    currentPage,
+    rowFocusToken: rowFocus?.token,
+    restorePersistedColumnLayout,
+    setFilterDraft,
+    setTableFilter,
+    setSortColumn,
+    setSortDir,
+    refs: {
+      loadedTablePagesRef,
+      dataScopeRef,
+      requestIdRef,
+      isActiveRef,
+      isMountedRef,
+      countRequestIdRef,
+      countTimeoutRef,
+      structurePromiseRef,
+      structureRetryAttemptRef,
+      structureRetryTimeoutRef,
+      structureRequestIdRef,
+      inlineStructureCacheRef,
+    },
+  });
+
+  const { autoRefreshMs, setAutoRefreshMs, canAutoRefresh, handleAutoRefreshTick } =
+    useDataGridAutoRefreshController({
+      tableName,
+      externalResult,
+      connectionId,
+      refreshTableFromStart,
+      isMountedRef,
+      setData,
+      setTotalRows,
+      dataGridStore,
+      stagedChangeCount,
+    });
 
   useEffect(() => {
     if (filterDraft === tableFilter) return;
@@ -724,38 +452,6 @@ export function DataGrid({
     return () => window.clearTimeout(timeoutId);
   }, [filterDraft, tableFilter]);
 
-  useEffect(() => {
-    if (!tableName || externalResult || !isActive || !data) return;
-    if (structureStatus !== "idle") return;
-
-    const warmupId = window.setTimeout(() => {
-      void ensureStructureLoaded().catch((error) => {
-        devLogError("Inline edit metadata warmup failed:", error);
-      });
-    }, 180);
-
-    return () => window.clearTimeout(warmupId);
-  }, [data, ensureStructureLoaded, externalResult, isActive, structureStatus, tableName]);
-
-  useEffect(() => {
-    isActiveRef.current = isActive;
-  }, [isActive]);
-
-  // Column resolution - must be declared before any callbacks that use resolvedColumns
-  const dataColumns = data?.columns.length ? data.columns : structureColumns;
-
-  const resolvedColumns = useMemo<ResolvedColumn[]>(() => {
-    if (dataColumns.length === 0) return [];
-    const cols = buildResolvedColumns(dataColumns, structureColumns);
-    columnNamesRef.current = cols.map((c) => c.name);
-    return cols;
-  }, [dataColumns, structureColumns]);
-
-  const primaryKeyColumns = useMemo(
-    () => resolvedColumns.filter((column) => column.is_primary_key),
-    [resolvedColumns],
-  );
-
   // View-time column masking (A4): persisted per connection+table, masked
   // matrix precomputed over the displayed window. Reveal is session-only.
   const columnMasks = useDataGridColumnMasks(
@@ -764,36 +460,6 @@ export function DataGrid({
     tableName,
     resolvedColumns,
     displayedRows,
-  );
-
-  const rowIdentities = useMemo(
-    () => (data?.rows ?? []).map((row) => buildStableRowIdentity(row, resolvedColumns)),
-    [data?.rows, resolvedColumns],
-  );
-  const selectedRows = useMemo(() => {
-    const indices = new Set<number>();
-    rowIdentities.forEach((identity, index) => {
-      if (identity && selectedRowIdentities.has(identity)) indices.add(index);
-    });
-    return indices;
-  }, [rowIdentities, selectedRowIdentities]);
-  const setSelectedRows = useCallback(
-    (update: Set<number> | ((previous: Set<number>) => Set<number>)) => {
-      setSelectedRowIdentities((previousIdentities) => {
-        const previousIndices = new Set<number>();
-        rowIdentities.forEach((identity, index) => {
-          if (identity && previousIdentities.has(identity)) previousIndices.add(index);
-        });
-        const nextIndices = typeof update === "function" ? update(previousIndices) : update;
-        const nextIdentities = new Set<string>();
-        nextIndices.forEach((index) => {
-          const identity = rowIdentities[index];
-          if (identity) nextIdentities.add(identity);
-        });
-        return nextIdentities;
-      });
-    },
-    [rowIdentities],
   );
 
   const { reconcileStagedChanges, applyStagedChanges, discardStagedChanges } =
@@ -817,186 +483,37 @@ export function DataGrid({
       dataGridInstanceIdRef,
     });
 
-  useEffect(() => {
-    if (!rowFocus || !data?.rows.length || externalResult) return;
-    setSelectedRows(new Set([0]));
-  }, [data, externalResult, rowFocus, setSelectedRows]);
-  const handlePasteRowsFromClipboard = useCallback(async () => {
-    if (!tableName || resolvedColumns.length === 0) return;
-
-    let text: string;
-    try {
-      text = await navigator.clipboard.readText();
-    } catch {
-      setError("Cannot read clipboard. Try using Ctrl+C to copy, then paste here.");
-      return;
-    }
-
-    const parsed = parseClipboardText(text);
-    if (!parsed) {
-      setError("Clipboard does not contain valid TSV/CSV data.");
-      return;
-    }
-
-    const tableColumnNames = resolvedColumns.map((c) => c.name);
-    const preview = buildPastePreview(parsed, tableColumnNames);
-
-    if (preview.mappings.length === 0) {
-      setError(
-        `No columns matched. Clipboard has ${parsed.columnCount} column(s), table has ${tableColumnNames.length} column(s). Check column names.`,
-      );
-      return;
-    }
-
-    setPastePreview(preview);
-    setPasteSourceLabel("Clipboard data");
-    setCsvFileSelection(null);
-    setIsPasteDialogOpen(true);
-  }, [tableName, resolvedColumns, setError]);
-
-  // Ctrl+Shift+V: paste rows from clipboard (in DataGrid, not in insert mode)
-  useEffect(() => {
-    if (!isActive || !tableName || externalResult) return;
-
-    const handlePasteRows = (event: KeyboardEvent) => {
-      if (event.ctrlKey && event.shiftKey && event.key === "V") {
-        event.preventDefault();
-        void handlePasteRowsFromClipboard();
-      }
-    };
-
-    window.addEventListener("keydown", handlePasteRows);
-    return () => window.removeEventListener("keydown", handlePasteRows);
-  }, [isActive, tableName, externalResult, handlePasteRowsFromClipboard]);
-
-  // Detect order/sort column on structure load. Match is EXACT on the
-  // normalized name (lowercase, non-alphanumerics stripped) — a substring
-  // test would claim "record" (contains "ord"), "border", or "sequence_id"
-  // as order columns and enable bogus drag-reorder.
-  useEffect(() => {
-    if (structureColumns.length === 0) return;
-    const ORDER_COLUMN_NAMES = new Set([
-      "roworder",
-      "sortorder",
-      "sortindex",
-      "position",
-      "seq",
-      "sequence",
-      "rank",
-      "priority",
-      "displayorder",
-      "itemorder",
-      "orderindex",
-      "ordering",
-      "sortpos",
-      "rowno",
-      "rownum",
-      "ord",
-      "order",
-    ]);
-    const found = structureColumns.find((col) =>
-      ORDER_COLUMN_NAMES.has(col.name.toLowerCase().replace(/[^a-z0-9]/g, "")),
-    );
-    setOrderColumn(found?.name ?? null);
-  }, [structureColumns]);
-
-  useEffect(() => {
-    isMountedRef.current = true;
-    return () => {
-      isMountedRef.current = false;
-      requestIdRef.current += 1;
-      structureRequestIdRef.current += 1;
-      structurePromiseRef.current = null;
-      structureRetryAttemptRef.current = 0;
-      if (structureRetryTimeoutRef.current !== null) {
-        window.clearTimeout(structureRetryTimeoutRef.current);
-        structureRetryTimeoutRef.current = null;
-      }
-      if (countTimeoutRef.current !== null) {
-        window.clearTimeout(countTimeoutRef.current);
-        countTimeoutRef.current = null;
-      }
-    };
-  }, []);
-
-  useEffect(() => {
-    const handleStructureUpdated = (event: Event) => {
-      const detail = (
-        event as CustomEvent<{
-          connectionId: string;
-          tableName: string;
-          database?: string;
-        }>
-      ).detail;
-
-      if (!detail) return;
-      invalidateTableCaches(detail.connectionId, detail.tableName, detail.database, {
-        invalidateStructure: true,
-      });
-    };
-
-    window.addEventListener("table-structure-updated", handleStructureUpdated);
-    return () => {
-      window.removeEventListener("table-structure-updated", handleStructureUpdated);
-    };
-  }, []);
-
-  useEffect(() => {
-    const handleTableDataUpdated = (event: Event) => {
-      const detail = (
-        event as CustomEvent<{
-          connectionId: string;
-          database?: string;
-          tableName?: string;
-          invalidateStructure?: boolean;
-          sourceId?: string;
-        }>
-      ).detail;
-
-      if (!detail || detail.connectionId !== connectionId) return;
-      if (
-        detail.database !== undefined &&
-        database !== undefined &&
-        (detail.database || "") !== (database || "")
-      ) {
-        return;
-      }
-
-      const invalidationDatabaseScope = database !== undefined ? detail.database : undefined;
-      invalidateTableScopeCaches(
-        detail.connectionId,
-        invalidationDatabaseScope,
-        detail.tableName,
-        Boolean(detail.invalidateStructure),
-      );
-
-      if (!tableName || externalResult) return;
-      if (detail.tableName && detail.tableName !== tableName) return;
-      if (detail.sourceId === dataGridInstanceIdRef.current) return;
-
-      if (!isActiveRef.current) {
-        pendingDataRefreshRef.current = true;
-        return;
-      }
-
-      pendingDataRefreshRef.current = false;
-      void fetchData(currentPage);
-    };
-
-    window.addEventListener("table-data-updated", handleTableDataUpdated);
-    return () => {
-      window.removeEventListener("table-data-updated", handleTableDataUpdated);
-    };
-  }, [connectionId, currentPage, database, externalResult, fetchData, tableName]);
-
-  // Deferred refresh: an update event may land while this grid is a
-  // background tab; refetch on the next activation.
-  useEffect(() => {
-    if (!isActive || !tableName || externalResult) return;
-    if (!pendingDataRefreshRef.current) return;
-    pendingDataRefreshRef.current = false;
-    void fetchData(currentPage);
-  }, [isActive, currentPage, externalResult, fetchData, tableName]);
+  const { handlePasteRowsFromClipboard, handleImportCsv } = useDataGridImportExportEvents({
+    connectionId,
+    tableName,
+    database,
+    externalResult,
+    isActive,
+    currentPage,
+    resolvedColumns,
+    fetchData,
+    setError,
+    setCsvImportProgress,
+    setExportedRowCount,
+    setPastePreview,
+    setCsvFileSelection,
+    setPasteSourceLabel,
+    setIsPasteDialogOpen,
+    refs: {
+      csvImportOperationIdRef,
+      tableExportOperationIdRef,
+      isMountedRef,
+      isActiveRef,
+      requestIdRef,
+      structureRequestIdRef,
+      structurePromiseRef,
+      structureRetryAttemptRef,
+      structureRetryTimeoutRef,
+      countTimeoutRef,
+      pendingDataRefreshRef,
+      dataGridInstanceIdRef,
+    },
+  });
 
   useEffect(() => {
     setEditingCell(null);
@@ -1004,12 +521,16 @@ export function DataGrid({
     editingDraftRef.current = "";
     editingTouchedRef.current = false;
     setSavingCell(null);
-  }, [tableName, currentPage, sortColumn, sortDir, externalResult]);
-
-  useEffect(() => {
-    setSelectedRowIdentities(new Set());
-    rowSelectionAnchorRef.current = null;
-  }, [connectionId, database, externalResult, tableName]);
+  }, [
+    tableName,
+    currentPage,
+    sortColumn,
+    sortDir,
+    externalResult,
+    setEditingCell,
+    setEditingSeedValue,
+    setSavingCell,
+  ]);
 
   // Reset multi-sort when switching tables
   useEffect(() => {
@@ -1021,91 +542,21 @@ export function DataGrid({
     setViewMode("table");
   }, [tableName, connectionId, database, externalResult]);
 
-  /** Duplicate selected row(s) — opens insert dialog pre-filled with source row values. */
+  const handleUndo = useCallback(() => {
+    if (!changeScope || undoableChanges === 0) return;
+    const nextChanges = undoLast(changeScope);
+    if (nextChanges) reconcileStagedChanges(nextChanges);
+  }, [changeScope, reconcileStagedChanges, undoLast, undoableChanges]);
 
-  // Listen for global undo/redo commands from AppKeyboardHandler
-  useEffect(() => {
-    if (!isActive) return;
+  const handleRedo = useCallback(() => {
+    if (!changeScope || redoableChanges === 0) return;
+    const nextChanges = redoLast(changeScope);
+    if (nextChanges) reconcileStagedChanges(nextChanges);
+  }, [changeScope, reconcileStagedChanges, redoLast, redoableChanges]);
 
-    const handleUndo = () => {
-      if (undoableChanges === 0) return;
-      const nextChanges = undoLast(changeScope);
-      if (nextChanges) reconcileStagedChanges(nextChanges);
-    };
-
-    const handleRedo = () => {
-      if (redoableChanges === 0) return;
-      const nextChanges = redoLast(changeScope);
-      if (nextChanges) reconcileStagedChanges(nextChanges);
-    };
-
-    window.addEventListener("datagrid-undo", handleUndo);
-    window.addEventListener("datagrid-redo", handleRedo);
-
-    const handleDupRowEvent = () => {
-      void handleDuplicateRow();
-    };
-    window.addEventListener("datagrid-duplicate-row", handleDupRowEvent);
-
-    const handleFkPreviewEvent = () => {
-      if (!selectedCell || !data || !resolvedColumns.length || !foreignKeys.length) return;
-      // selectedCell is in displayed row space — map back to the source row.
-      const rowIdx = displayedRowIndices[selectedCell.row];
-      const colIdx = selectedCell.col;
-      const col = resolvedColumns[colIdx];
-      if (!col || rowIdx === undefined) return;
-      const fkInfo = foreignKeys.find((fk) => fk.column === col.name);
-      if (!fkInfo) return;
-      const cellValue = data.rows[rowIdx]?.[colIdx];
-      if (cellValue === null || cellValue === undefined) return;
-      const valueStr =
-        typeof cellValue === "string" ? `'${cellValue.replace(/'/g, "''")}'` : String(cellValue);
-      const filter = `${fkInfo.referenced_column} = ${valueStr}`;
-      setFkPreview({
-        table: fkInfo.referenced_table,
-        column: fkInfo.referenced_column,
-        value: cellValue,
-        rowIndex: rowIdx,
-        colIndex: colIdx,
-      });
-      setFkPreviewData(null);
-      setIsLoadingFkPreview(true);
-      void getTableData(connectionId, fkInfo.referenced_table, { database, limit: 5, filter })
-        .then((result) => {
-          setFkPreviewData(result);
-        })
-        .catch((err) => {
-          console.warn("[FK Preview] failed to load:", err);
-        })
-        .finally(() => {
-          setIsLoadingFkPreview(false);
-        });
-    };
-    window.addEventListener("datagrid-fk-preview", handleFkPreviewEvent);
-
-    return () => {
-      window.removeEventListener("datagrid-undo", handleUndo);
-      window.removeEventListener("datagrid-redo", handleRedo);
-      window.removeEventListener("datagrid-duplicate-row", handleDupRowEvent);
-      window.removeEventListener("datagrid-fk-preview", handleFkPreviewEvent);
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [
-    connectionId,
-    data,
-    database,
-    displayedRowIndices,
-    foreignKeys,
-    getTableData,
-    isActive,
-    reconcileStagedChanges,
-    redoLast,
-    redoableChanges,
-    resolvedColumns,
-    selectedCell,
-    undoLast,
-    undoableChanges,
-  ]);
+  const handleOpenChangePreview = useCallback(() => {
+    if (changeScope) openPreview(changeScope);
+  }, [changeScope, openPreview]);
 
   /** Server-side order is single-column so every loaded chunk uses one consistent order. */
   const { handleSort, handleFilterChange, handleMultiSortClear, handleSortAsc, handleSortDesc } =
@@ -1119,222 +570,13 @@ export function DataGrid({
       setFilterDraft,
     });
 
-  const handleCopyValue = useCallback((value: GridCellValue, cellKey: string) => {
-    navigator.clipboard.writeText(value === null ? "NULL" : String(value));
-    setCopiedCell(cellKey);
-    setTimeout(() => setCopiedCell(null), 1200);
-  }, []);
-
-  // Auto-fit column to content: double-click on divider
-  const handleColumnAutoFit = useCallback(
-    (colId: string) => {
-      if (colId === "_row_num") return;
-      const wrap = tableWrapRef.current;
-      if (!wrap) return;
-
-      if (columnNamesRef.current.indexOf(colId) < 0) return;
-
-      // Measure header text width
-      const headerEl = wrap.querySelector(`th[data-col-id="${CSS.escape(colId)}"]`);
-      const headerWidth = headerEl?.textContent?.length ?? colId.length;
-      const headerSize = Math.max(40, headerWidth * 8.5 + 32);
-
-      // Measure content width from rendered cells. Cells carry data-col-id —
-      // nth-child would count the virtual column spacers and land on the
-      // wrong column under column virtualization.
-      let maxContentWidth = 0;
-      const cellEls = wrap.querySelectorAll<HTMLElement>(
-        `.datagrid-row td[data-col-id="${CSS.escape(colId)}"]`,
-      );
-      cellEls.forEach((el) => {
-        const clone = el.cloneNode(true) as HTMLElement;
-        clone.style.position = "absolute";
-        clone.style.visibility = "hidden";
-        clone.style.whiteSpace = "nowrap";
-        clone.style.width = "auto";
-        clone.style.maxWidth = "none";
-        clone.style.overflow = "visible";
-        document.body.appendChild(clone);
-        maxContentWidth = Math.max(maxContentWidth, clone.scrollWidth);
-        document.body.removeChild(clone);
-      });
-
-      const newWidth = Math.max(40, Math.max(maxContentWidth + 22, headerSize));
-      setColumnSizes((prev) => ({ ...prev, [colId]: newWidth }));
-      if (tableName) saveColumnWidth(connectionId, tableName, colId, newWidth, database);
+  const handleCopyValue = useCallback(
+    (value: GridCellValue, cellKey: string) => {
+      navigator.clipboard.writeText(value === null ? "NULL" : String(value));
+      setCopiedCell(cellKey);
+      setTimeout(() => setCopiedCell(null), 1200);
     },
-    [connectionId, database, tableName],
-  );
-
-  // Context menu handler
-  const handleContextMenu = useCallback(
-    (e: React.MouseEvent, type: "cell" | "header" | "row", colName?: string, rowIndex?: number) => {
-      e.preventDefault();
-      // Keep this event away from the document-level close listener below —
-      // otherwise a right-click while a menu is open (or a stale armed listener)
-      // sets the fresh menu state back to null within the same event, and the
-      // menu never appears.
-      e.stopPropagation();
-      setContextMenu({ x: e.clientX, y: e.clientY, type, colName, rowIndex });
-    },
-    [],
-  );
-
-  // Close context menu on outside click
-  useEffect(() => {
-    if (!contextMenu) return;
-    const handler = () => setContextMenu(null);
-    document.addEventListener("click", handler, { once: true });
-    document.addEventListener("contextmenu", handler, { once: true });
-    return () => {
-      document.removeEventListener("click", handler);
-      // The contextmenu listener is { once: true } but only consumes itself on
-      // a contextmenu event; if the menu closes first (item click / re-render),
-      // it stays armed and would swallow the NEXT right-click's menu. Remove it.
-      document.removeEventListener("contextmenu", handler);
-    };
-  }, [contextMenu]);
-
-  const isTableEditable = Boolean(
-    tableName &&
-    !externalResult &&
-    allowsInlineEdit &&
-    allowsAtomicEdits &&
-    structureStatus === "ready" &&
-    primaryKeyColumns.length > 0,
-  );
-
-  const handleOpenRowInspector = useCallback(
-    (rowIndex: number) => {
-      if (!data || !data.rows[rowIndex]) return;
-      const row = data.rows[rowIndex];
-      const absoluteRowNumber = rowIndex + 1;
-      inspectorTargetRef.current = {
-        rowIndex,
-        rowIdentity: buildStableRowIdentity(row, resolvedColumns),
-      };
-      // Masked columns must not leak into the inspector — mask the row before
-      // emitting so the panel shows exactly what the grid shows.
-      void columnMasks.maskRows([row]).then(([maskedRow]) => {
-        const inspectorRow = maskedRow ?? row;
-        EventCenter.emit("row-inspector-open", {
-          rowIndex: absoluteRowNumber,
-          row: inspectorRow,
-          columns: resolvedColumns,
-          primaryKeyValues: buildRowInspectorPrimaryKeyValues(
-            inspectorRow,
-            resolvedColumns,
-            primaryKeyColumns,
-          ),
-          tableName,
-          database,
-          canEdit: isTableEditable,
-          maskedColumnNames: [...columnMasks.activeMaskedNames],
-          gridInstanceId: dataGridInstanceIdRef.current,
-          connectionId,
-        });
-      });
-    },
-    [
-      data,
-      resolvedColumns,
-      primaryKeyColumns,
-      tableName,
-      database,
-      columnMasks,
-      isTableEditable,
-      connectionId,
-    ],
-  );
-
-  const rowInspectorOpen = useAppLayoutStore((state) => state.showRowInspector);
-
-  /** Toolbar toggle: opens the inspector on the active cell's row (falling
-   *  back to the first selected row, then the first row) or closes it. */
-  const handleToggleRowInspector = useCallback(() => {
-    if (rowInspectorOpen) {
-      EventCenter.emit("row-inspector-close", undefined);
-      return;
-    }
-    if (!data || data.rows.length === 0) return;
-    // selectedCell is in displayed row space — map to the source row.
-    const target =
-      (selectedCell ? displayedRowIndices[selectedCell.row] : undefined) ??
-      (selectedRows.size > 0 ? Math.min(...selectedRows) : 0);
-    handleOpenRowInspector(target);
-  }, [
-    rowInspectorOpen,
-    data,
-    selectedCell,
-    displayedRowIndices,
-    selectedRows,
-    handleOpenRowInspector,
-  ]);
-
-  useEffect(() => {
-    columnStatsRequestIdRef.current += 1;
-    setColumnStats(null);
-    setColumnStatsError(null);
-    setIsLoadingColumnStats(false);
-  }, [connectionId, database, tableName]);
-
-  const handleCloseColumnStats = useCallback(() => {
-    columnStatsRequestIdRef.current += 1;
-    setColumnStats(null);
-    setColumnStatsError(null);
-    setIsLoadingColumnStats(false);
-  }, []);
-
-  /** Header context-menu "Column stats": runs aggregate SELECTs through the
-   *  regular read-only query path and shows the results in a popover. Only
-   *  offered for table-backed grids (tableName present, no external result). */
-  const handleColumnStats = useCallback(
-    (colName: string) => {
-      if (!tableName || externalResult) return;
-      const columnIndex = resolvedColumns.findIndex((column) => column.name === colName);
-      const column = columnIndex >= 0 ? resolvedColumns[columnIndex] : undefined;
-      if (!column) return;
-      const requestId = columnStatsRequestIdRef.current + 1;
-      columnStatsRequestIdRef.current = requestId;
-      const isCurrent = () => columnStatsRequestIdRef.current === requestId;
-      setColumnStats({ column: colName, stats: null });
-      setColumnStatsError(null);
-      setIsLoadingColumnStats(true);
-      void loadColumnStats({
-        connectionId,
-        tableName,
-        column,
-        columnIndex,
-        dataRows: data?.rows ?? [],
-        databaseType: connections.find((c: ConnectionConfig) => c.id === connectionId)?.db_type,
-        executeQuery,
-        isCurrent,
-      })
-        .then((stats) => {
-          if (!isCurrent() || !stats) return;
-          setColumnStats({ column: colName, stats });
-        })
-        .catch((error) => {
-          if (isCurrent()) {
-            setColumnStatsError(String(error instanceof Error ? error.message : error));
-          }
-        })
-        .finally(() => {
-          if (isCurrent()) setIsLoadingColumnStats(false);
-        });
-    },
-    [tableName, externalResult, resolvedColumns, connections, connectionId, executeQuery, data],
-  );
-
-  const canAttemptInlineEdit = Boolean(
-    tableName && !externalResult && allowsInlineEdit && allowsAtomicEdits,
-  );
-  const canSelectRows = Boolean(tableName && !externalResult && primaryKeyColumns.length > 0);
-  const selectedRowCount = selectedRows.size;
-  const allVisibleRowsSelected = Boolean(
-    canSelectRows &&
-    filteredTableRowIndices.length &&
-    filteredTableRowIndices.every((rowIndex) => selectedRows.has(rowIndex)),
+    [setCopiedCell],
   );
 
   const { startEditingCell, cancelEditingCell, commitEditingCell, editCellFromInspector } =
@@ -1347,7 +589,7 @@ export function DataGrid({
       resolvedColumns,
       primaryKeyColumns,
       structureStatus,
-      editingCell,
+      getEditingCell,
       setEditingCell,
       setEditingSeedValue,
       setSavingCell,
@@ -1363,50 +605,51 @@ export function DataGrid({
       editingTouchedRef,
     });
 
-  useEffect(() => {
-    const offEdit = EventCenter.on("row-inspector-edit-cell", (event) => {
-      const detail = event.detail;
-      if (
-        !matchesRowInspectorEditScope(detail, {
-          gridInstanceId: dataGridInstanceIdRef.current,
-          connectionId,
-          tableName,
-          database,
-        }) ||
-        externalResult ||
-        !isTableEditable
-      ) {
-        return;
-      }
-      const target = inspectorTargetRef.current;
-      const sourceRowIndex = detail.rowIndex - 1;
-      const row = target?.rowIndex === sourceRowIndex ? data?.rows[sourceRowIndex] : undefined;
-      if (!target || !row || buildStableRowIdentity(row, resolvedColumns) !== target.rowIdentity) {
-        setError(getRowInspectorCopy(getCurrentAppLanguage()).staleRow);
-        return;
-      }
-      const colIndex = resolvedColumns.findIndex((column) => column.name === detail.columnName);
-      if (colIndex < 0) return;
-      void editCellFromInspector(sourceRowIndex, colIndex, detail.value);
-    });
-    const offClose = EventCenter.on("row-inspector-close", () => {
-      inspectorTargetRef.current = null;
-    });
-    return () => {
-      offEdit();
-      offClose();
-    };
-  }, [
+  const {
+    contextMenu,
+    setContextMenu,
+    handleContextMenu,
+    fkPreview,
+    setFkPreview,
+    fkPreviewData,
+    isLoadingFkPreview,
+    lookupValuesCache,
+    handleLoadLookupValues,
+    columnStats,
+    columnStatsError,
+    isLoadingColumnStats,
+    handleColumnStats,
+    handleCloseColumnStats,
+    setRangeDialog,
+    setSetRangeDialog,
+    handleOpenSetRangeDialog,
+    rowInspectorOpen,
+    handleOpenRowInspector,
+    handleToggleRowInspector,
+  } = useDataGridInspectorAndPopovers({
     connectionId,
+    database: database || undefined,
     tableName,
-    database,
     externalResult,
+    isActive,
     isTableEditable,
     data,
     resolvedColumns,
-    editCellFromInspector,
+    primaryKeyColumns,
+    foreignKeys,
+    displayedRowsLength: displayedRows.length,
+    displayedRowIndices,
+    selectedRows,
+    columnMasks,
+    dataGridStore,
+    dataGridInstanceIdRef,
+    connections,
+    getTableData,
+    executeQuery,
+    getForeignKeyLookupValues,
     setError,
-  ]);
+    editCellFromInspector,
+  });
 
   const {
     handleRangeCopy,
@@ -1415,7 +658,7 @@ export function DataGrid({
     handleRangeFillDown,
     handleRangeSetValue,
   } = useDataGridRangeOperations({
-    gridSelection,
+    getGridSelection,
     data,
     displayedRows,
     displayedRowIndices,
@@ -1434,54 +677,6 @@ export function DataGrid({
     maskRowsForCopy: columnMasks.maskRows,
   });
 
-  /** Cells covered by the active selection — gates the bulk-edit menu item. */
-  const selectedRangeCellCount = useMemo(() => {
-    if (!data || resolvedColumns.length === 0) return 0;
-    const range = getPrimaryGridRange(gridSelection, {
-      rowCount: displayedRows.length,
-      columnCount: resolvedColumns.length,
-    });
-    if (!range || !isMultiCellRange(range)) return 0;
-    return (range.endRow - range.startRow + 1) * (range.endCol - range.startCol + 1);
-  }, [data, displayedRows.length, gridSelection, resolvedColumns.length]);
-
-  const handleOpenSetRangeDialog = useCallback(() => {
-    setSetRangeDialog({ open: true, cellCount: selectedRangeCellCount, error: null });
-  }, [selectedRangeCellCount]);
-
-  // Range editing keys (copy / paste / fill / clear). Kept separate from the
-  // early selection-key effect because these depend on the staged-edit gate,
-  // which is only known after the fetcher and capability wiring above.
-  useEffect(() => {
-    const element = tableWrapRef.current;
-    if (!element || viewMode !== "table") return;
-
-    const handleRangeEditingKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
-
-      const key = event.key.toLowerCase();
-      const primary = event.ctrlKey || event.metaKey;
-
-      if (primary && !event.shiftKey && !event.altKey && (key === "c" || key === "v")) {
-        const handled = key === "c" ? handleRangeCopy() : handleRangePaste();
-        if (handled) event.preventDefault();
-        return;
-      }
-      if (primary && !event.shiftKey && !event.altKey && key === "d") {
-        // Fill down only owns Ctrl+D for a multi-cell range; a plain active
-        // cell keeps the global duplicate-row shortcut untouched.
-        if (handleRangeFillDown()) event.preventDefault();
-        return;
-      }
-      if (event.key === "Delete" || event.key === "Backspace") {
-        if (handleRangeDelete()) event.preventDefault();
-      }
-    };
-
-    element.addEventListener("keydown", handleRangeEditingKeyDown);
-    return () => element.removeEventListener("keydown", handleRangeEditingKeyDown);
-  }, [handleRangeCopy, handleRangeDelete, handleRangeFillDown, handleRangePaste, viewMode]);
   const {
     closeInsertDialog,
     closePasteDialog,
@@ -1553,6 +748,31 @@ export function DataGrid({
 
     dataGridInstanceIdRef,
   });
+
+  useDataGridKeyboardNav({
+    viewMode,
+    isActive,
+    tableName,
+    externalResult,
+    tableWrapRef,
+    dataColumnsLength: data?.columns.length ?? 0,
+    displayedRowsLength: displayedRows.length,
+    structureColumnsLength: structureColumns.length,
+    dataGridStore,
+    handleRangeCopy,
+    handleRangePaste,
+    handleRangeDelete,
+    handleRangeFillDown,
+    handlePasteRowsFromClipboard,
+    handleDuplicateRow,
+    handleUndo,
+    handleRedo,
+    isInsertDialogOpen,
+    closeInsertDialog,
+    isPasteDialogOpen,
+    closePasteDialog,
+  });
+
   const { handleDragStart, handleDragOver, handleDrop, handleDragEnd } = useDataGridDragReorder({
     tableName,
     database: database || undefined,
@@ -1571,87 +791,10 @@ export function DataGrid({
     refreshTableFromStart,
     dataGridInstanceIdRef,
   });
-  useEffect(() => {
-    if (!isInsertDialogOpen) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closeInsertDialog();
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [closeInsertDialog, isInsertDialogOpen]);
-
-  useEffect(() => {
-    if (!setRangeDialog.open) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        setSetRangeDialog((previous) => ({ ...previous, open: false }));
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [setRangeDialog.open]);
-
-  useEffect(() => {
-    if (!isPasteDialogOpen) return;
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        closePasteDialog();
-      }
-    };
-
-    document.addEventListener("keydown", handleKeyDown);
-    return () => document.removeEventListener("keydown", handleKeyDown);
-  }, [closePasteDialog, isPasteDialogOpen]);
 
   useEffect(() => {
     closeInsertDialog();
   }, [closeInsertDialog, connectionId, database, tableName]);
-  const handleImportCsv = useCallback(async () => {
-    if (!tableName || resolvedColumns.length === 0) return;
-    try {
-      const file = await invokeMutation<{
-        fileName: string;
-        content: string;
-        byteSize: number;
-        filePath: string;
-        isTruncated: boolean;
-        delimiter: "csv" | "tsv";
-      }>("read_csv_file", {});
-      const parsed = parseClipboardText(file.content);
-      if (!parsed) throw new Error("The selected file does not contain valid CSV or TSV data.");
-      const preview = buildPastePreview(
-        parsed,
-        resolvedColumns.map((column) => column.name),
-      );
-      if (preview.mappings.length === 0)
-        throw new Error("No CSV headers match columns in the selected table.");
-      setPastePreview(preview);
-      setCsvFileSelection({
-        filePath: file.filePath,
-        delimiter: file.delimiter,
-        byteSize: file.byteSize,
-        isTruncated: file.isTruncated,
-      });
-      const sizeLabel =
-        file.byteSize >= 1024 * 1024
-          ? `${(file.byteSize / (1024 * 1024)).toFixed(1)} MB`
-          : `${Math.max(1, Math.round(file.byteSize / 1024))} KB`;
-      setPasteSourceLabel(`${file.fileName} (${sizeLabel}, streaming import)`);
-      setIsPasteDialogOpen(true);
-    } catch (errorValue) {
-      setError(errorValue instanceof Error ? errorValue.message : String(errorValue));
-    }
-  }, [resolvedColumns, setError, tableName]);
 
   /** Apply all staged changes to the database (commit) */
   const { handleRowSelection, handleToggleSelectAllRows } = useDataGridRowSelection({
@@ -1698,48 +841,24 @@ export function DataGrid({
     maskRowsForCopy: columnMasks.maskRows,
   });
 
-  // Table tabs are paginated — the banner only fires when a requested page
-  // was clamped above MAX_TABLE_PAGE_ROWS. Query tabs surface the cap via
-  // the toolbar badge instead: one indicator per surface, no duplicates.
-  const isPageClamped = Boolean(!externalResult && data?.truncated);
-
   // Derive dbType and date format for date cell formatting
   const { t, language } = useI18n();
   const connection = connections.find((c: ConnectionConfig) => c.id === connectionId);
   const dbType = connection?.db_type;
   const dateFormat = useDateFormatStore((s) => s.getFormat(connectionId, dbType));
 
+  const hasData = Boolean(data);
   const columns = useMemo<ColumnDef<unknown[], unknown>[]>(() => {
-    if (!data || resolvedColumns.length === 0) return [];
-
-    const handleLoadLookupValues = async (table: string, column: string) => {
-      const cacheKey = `${table}|${column}`;
-      const cached = lookupValuesCache.get(cacheKey);
-      if (cached) return cached;
-      try {
-        const values = await getForeignKeyLookupValues(connectionId, table, column);
-        setLookupValuesCache((prev) => new Map(prev).set(cacheKey, values));
-        return values;
-      } catch {
-        return [];
-      }
-    };
+    if (!hasData || resolvedColumns.length === 0) return [];
 
     return buildDataGridColumns({
       resolvedColumns,
       canSelectRows,
       canAttemptInlineEdit,
-      selectedRows,
-      selectedCell,
-      isCellSelected,
-      editingCell,
-      editingSeedValue,
-      savingCell,
       sortColumn,
       sortDir,
       rowOffset: 0,
       rowIndexMap: displayedRowIndices,
-      copiedCell,
       editingDraftRef,
       editingTouchedRef,
       handleSort,
@@ -1749,7 +868,6 @@ export function DataGrid({
       commitEditingCell,
       cancelEditingCell,
       structureStatus,
-      allVisibleRowsSelected,
       isBooleanColumn,
       handleCopyValue,
       setSelectedCell,
@@ -1772,20 +890,13 @@ export function DataGrid({
       onToggleMaskReveal: columnMasks.toggleRevealed,
     });
   }, [
-    data,
+    hasData,
     resolvedColumns,
     canSelectRows,
     canAttemptInlineEdit,
-    selectedRows,
-    selectedCell,
-    isCellSelected,
-    editingCell,
-    editingSeedValue,
-    savingCell,
     sortColumn,
     sortDir,
     displayedRowIndices,
-    copiedCell,
     handleSort,
     handleRowSelection,
     handleToggleSelectAllRows,
@@ -1793,11 +904,11 @@ export function DataGrid({
     commitEditingCell,
     cancelEditingCell,
     structureStatus,
-    allVisibleRowsSelected,
     handleCopyValue,
     setSelectedCell,
     foreignKeys,
     lookupValuesCache,
+    handleLoadLookupValues,
     connectionId,
     handleOpenRowInspector,
     handleColumnAutoFit,
@@ -1812,11 +923,9 @@ export function DataGrid({
     columnMasks.activeMaskedNames,
     columnMasks.maskedRows,
     columnMasks.toggleRevealed,
-    getForeignKeyLookupValues,
   ]);
 
-  const tableData = useMemo(() => displayedRows, [displayedRows]);
-
+  // eslint-disable-next-line react-hooks/incompatible-library
   const table = useReactTable({
     data: tableData,
     columns,
@@ -1830,153 +939,50 @@ export function DataGrid({
     },
     onColumnOrderChange: setColumnOrder,
     onColumnVisibilityChange: setColumnVisibility,
-    onColumnPinningChange: (updater) => {
-      setColumnPinning((prev) => {
-        const next = typeof updater === "function" ? updater(prev) : updater;
-        // Pin budget: pinned columns must leave a scrollable sliver, otherwise
-        // the whole viewport freezes and horizontal scrolling becomes useless.
-        const viewportWidth = tableWrapRef.current?.clientWidth ?? 0;
-        if (viewportWidth > 0) {
-          const pinnedTotal = [...(next.left ?? []), ...(next.right ?? [])].reduce(
-            (total, id) => total + (table.getColumn(id)?.getSize() ?? 0),
-            0,
-          );
-          if (pinnedTotal > viewportWidth - MIN_UNPINNED_VIEWPORT_PX) {
-            emitAppToast({
-              title: getDataGridPowerCopy(getCurrentAppLanguage()).pinning.limitToast,
-              tone: "info",
-            });
-            return prev;
-          }
-        }
-        return next;
-      });
-    },
-    onColumnSizingChange: (updater) => {
-      setColumnSizes((prev) => {
-        const next = typeof updater === "function" ? updater(prev) : updater;
-        // Persist each changed column width
-        if (tableName) {
-          for (const [colId, width] of Object.entries(next)) {
-            if (prev[colId] !== width) {
-              saveColumnWidth(connectionId, tableName, colId, width, database);
-            }
-          }
-        }
-        return next;
-      });
-    },
+    onColumnPinningChange: (updater) =>
+      handleColumnPinningChange(updater, (id) => table.getColumn(id)?.getSize() ?? 0),
+    onColumnSizingChange: handleColumnSizingChange,
   });
 
-  const estimatedRowHeight =
-    settings.rowHeight === "small" ? 26 : settings.rowHeight === "large" ? 38 : 32;
-  const rowVirtualizer = useVirtualizer({
-    count: table.getRowModel().rows.length,
-    getScrollElement: () => tableWrapRef.current,
-    estimateSize: () => estimatedRowHeight,
-    overscan: 12,
-  });
-  const virtualRows = rowVirtualizer.getVirtualItems();
-  const virtualPaddingTop = virtualRows.length > 0 ? virtualRows[0].start : 0;
-  const virtualPaddingBottom =
-    virtualRows.length > 0
-      ? rowVirtualizer.getTotalSize() - virtualRows[virtualRows.length - 1].end
-      : 0;
-  const leftPinnedColumns = table.getLeftVisibleLeafColumns();
-  const virtualizableColumns = table.getCenterVisibleLeafColumns();
-  const rightPinnedColumns = table.getRightVisibleLeafColumns();
-  const columnVirtualizer = useVirtualizer({
-    horizontal: true,
-    count: virtualizableColumns.length,
-    getScrollElement: () => tableWrapRef.current,
-    estimateSize: (index) => virtualizableColumns[index]?.getSize() ?? 150,
-    overscan: 3,
-  });
-  const virtualColumns = columnVirtualizer.getVirtualItems();
-  const virtualPaddingLeft = virtualColumns.length > 0 ? virtualColumns[0].start : 0;
-  const virtualPaddingRight =
-    virtualColumns.length > 0
-      ? columnVirtualizer.getTotalSize() - virtualColumns[virtualColumns.length - 1].end
-      : 0;
-  const pinnedWidth = [...leftPinnedColumns, ...rightPinnedColumns].reduce(
-    (total, column) => total + column.getSize(),
-    0,
-  );
-  const tableMinWidth = pinnedWidth + columnVirtualizer.getTotalSize();
-  const renderedColumnCount =
-    leftPinnedColumns.length +
-    virtualColumns.length +
-    rightPinnedColumns.length +
-    Number(virtualPaddingLeft > 0) +
-    Number(virtualPaddingRight > 0);
-  /** Remaining pin budget in px: viewport minus already-pinned columns minus
-   *  the reserved scrollable sliver. Non-positive disables further pinning. */
-  const pinBudgetPx =
-    (tableWrapRef.current?.clientWidth ?? 0) - pinnedWidth - MIN_UNPINNED_VIEWPORT_PX;
-
-  useEffect(() => {
-    if (!tableName || externalResult || isLoading || !hasMoreTableRows || virtualRows.length === 0)
-      return;
-    const lastVisibleIndex = virtualRows[virtualRows.length - 1].index;
-    const lastVisibleSourceIndex = displayedRowIndices[lastVisibleIndex] ?? lastVisibleIndex;
-    if (
-      lastVisibleSourceIndex >=
-      (data?.rows.length ?? 0) - Math.max(24, Math.ceil(PAGE_SIZE / 4))
-    ) {
-      setCurrentPage((page) => page + 1);
-    }
-  }, [
-    data?.rows.length,
-    displayedRowIndices,
-    externalResult,
-    hasMoreTableRows,
-    isLoading,
-    tableName,
+  const {
     virtualRows,
-  ]);
+    virtualPaddingTop,
+    virtualPaddingBottom,
+    leftPinnedColumns,
+    virtualizableColumns,
+    rightPinnedColumns,
+    virtualColumns,
+    virtualPaddingLeft,
+    virtualPaddingRight,
+    tableMinWidth,
+    renderedColumnCount,
+    pinBudgetPx,
+    footerPortalTarget,
+  } = useDataGridVirtualization({
+    table,
+    tableWrapRef,
+    rowHeight: settings.rowHeight,
+    tableName,
+    externalResult,
+    isLoading,
+    hasMoreTableRows,
+    displayedRowIndices,
+    dataRowsLength: data?.rows.length ?? 0,
+    setCurrentPage,
+  });
 
-  const stagedChangeCount = stagedChanges.filter((c) =>
-    changeScope ? changeMatchesScope(c, changeScope) : false,
-  ).length;
+  const handleToolbarSortColumn = useCallback(
+    (colName: string) => {
+      if (!colName) {
+        setSortColumn(null);
+        return;
+      }
+      handleSort(colName);
+    },
+    [handleSort],
+  );
 
-  // Stop auto-refresh the moment the grid enters edit mode: a silent refetch
-  // would clobber an in-progress cell edit or staged changes.
-  useEffect(() => {
-    if (autoRefreshMs > 0 && (editingCell !== null || stagedChangeCount > 0)) {
-      setAutoRefreshMs(0);
-      emitAppToast({
-        title: getDataGridChartCopy(getCurrentAppLanguage()).autoRefresh.stoppedForEdit,
-        tone: "info",
-      });
-    }
-  }, [autoRefreshMs, editingCell, stagedChangeCount]);
   const visibleRowCount = tableData.length;
-  const insertDialogModal =
-    isInsertDialogOpen && typeof document !== "undefined"
-      ? createPortal(
-          <InsertRowDialog
-            tableName={tableName}
-            columns={insertDialogColumns}
-            draft={insertDraft}
-            error={insertDialogError}
-            isSubmitting={isSubmittingInsert}
-            onClose={closeInsertDialog}
-            onSubmit={handleSubmitInsertDialog}
-            onDraftChange={handleInsertDraftChange}
-          />,
-          document.body,
-        )
-      : null;
-  // Footer pills portal into the app statusbar slot when available
-  // (table workspace); fall back to the in-grid footer otherwise.
-  const [footerPortalTarget, setFooterPortalTarget] = useState<HTMLElement | null>(null);
-  useEffect(() => {
-    if (externalResult) {
-      setFooterPortalTarget(null);
-      return;
-    }
-    setFooterPortalTarget(document.getElementById("datagrid-footer-slot"));
-  }, [externalResult]);
   if (!data && !isLoading) {
     return (
       <div className="datagrid-blank-state">
@@ -2008,7 +1014,7 @@ export function DataGrid({
   );
 
   return (
-    <>
+    <DataGridStoreProvider store={dataGridStore}>
       <div
         data-testid="data-grid"
         className={`datagrid-shell${externalResult ? "" : " compact"}${settings.rowHeight !== "medium" ? ` row-height-${settings.rowHeight}` : ""}${!settings.alternatingRows ? " alternating-rows-disabled" : ""}`}
@@ -2032,7 +1038,9 @@ export function DataGrid({
           handleCopyAsInsertParam={handleCopyAsInsertParam}
           handleCopyAsUpdateParam={handleCopyAsUpdateParam}
           handleCopyAsDeleteParam={handleCopyAsDeleteParam}
-          dataRows={columnMasks.hasActiveMasks ? (columnMasks.maskedRows ?? []) : tableData}
+          dataRows={
+            columnMasks.hasActiveMasks ? (columnMasks.maskedRows ?? EMPTY_GRID_ROWS) : tableData
+          }
           anonymizerRows={tableData}
           isTableEditable={isTableEditable}
           canExportData={allowsDataExport}
@@ -2051,20 +1059,17 @@ export function DataGrid({
           autoRefreshPaused={!isActive}
           autoRefreshBusy={isReloadingData || isLoading}
           undoableChanges={undoableChanges}
-          stagedChangeCount={tableName ? getChangeCount(changeScope) : 0}
-          onApplyChanges={openPreview}
+          redoableChanges={redoableChanges}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          stagedChangeCount={stagedChangeCount}
+          onApplyChanges={handleOpenChangePreview}
           onDiscardChanges={discardStagedChanges}
           sortColumn={sortColumn}
           sortDir={sortDir}
           multiSort={multiSort}
           onClearMultiSort={handleMultiSortClear}
-          onSortColumn={(colName) => {
-            if (!colName) {
-              setSortColumn(null);
-              return;
-            }
-            handleSort(colName);
-          }}
+          onSortColumn={handleToolbarSortColumn}
           diffResult={data}
           dbType={dbType}
           onToggleRowInspector={data && data.rows.length > 0 ? handleToggleRowInspector : undefined}
@@ -2175,7 +1180,6 @@ export function DataGrid({
           isLoading={isLoading}
           stagedChangeCount={stagedChangeCount}
           canAttemptInlineEdit={canAttemptInlineEdit}
-          selectedRangeCellCount={selectedRangeCellCount}
           contextMenu={contextMenu}
           fkPreview={fkPreview}
           fkPreviewData={fkPreviewData}
@@ -2223,9 +1227,16 @@ export function DataGrid({
           onClosePasteDialog={closePasteDialog}
           onSubmitPasteDialog={() => void handleSubmitPasteDialog()}
           onCancelPasteImport={() => void handleCancelPasteImport()}
+          isInsertDialogOpen={isInsertDialogOpen}
+          insertDialogColumns={insertDialogColumns}
+          insertDraft={insertDraft}
+          insertDialogError={insertDialogError}
+          isSubmittingInsert={isSubmittingInsert}
+          onCloseInsertDialog={closeInsertDialog}
+          onSubmitInsertDialog={handleSubmitInsertDialog}
+          onInsertDraftChange={handleInsertDraftChange}
         />
       </div>
-      {insertDialogModal}
-    </>
+    </DataGridStoreProvider>
   );
 }

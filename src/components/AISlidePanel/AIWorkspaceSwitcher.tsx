@@ -1,14 +1,6 @@
 import { Fragment, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import {
-  Check,
-  ChevronDown,
-  Database,
-  FolderKanban,
-  Pencil,
-  Plus,
-  Trash2,
-} from "lucide-react";
+import { Check, ChevronDown, Database, FolderKanban, Pencil, Plus, Trash2 } from "lucide-react";
 import type { AIWorkspaceCopy } from "./ai-workspace-copy";
 
 export interface AIWorkspaceSwitcherWorkspace {
@@ -62,7 +54,9 @@ export function AIWorkspaceSwitcher({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [draftName, setDraftName] = useState("");
   /** Open rebind picker: workspace id + fixed-position anchor (viewport px). */
-  const [rebindState, setRebindState] = useState<{ id: string; top: number; left: number } | null>(null);
+  const [rebindState, setRebindState] = useState<{ id: string; top: number; left: number } | null>(
+    null,
+  );
   const rebindId = rebindState?.id ?? null;
   const rootRef = useRef<HTMLDivElement | null>(null);
   const pickerRef = useRef<HTMLDivElement | null>(null);
@@ -110,7 +104,8 @@ export function AIWorkspaceSwitcher({
     };
   }, [rebindState]);
 
-  const activeWorkspace = workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? null;
+  const activeWorkspace =
+    workspaces.find((workspace) => workspace.id === activeWorkspaceId) ?? null;
   const displayLabel = activeWorkspace?.name ?? copy.autoMode;
   const pickerWorkspace = workspaces.find((workspace) => workspace.id === rebindState?.id) ?? null;
 
@@ -118,7 +113,10 @@ export function AIWorkspaceSwitcher({
     const rect = anchor.getBoundingClientRect();
     const PICKER_WIDTH = 224;
     const PICKER_HEIGHT = 236;
-    const left = Math.max(8, Math.min(rect.right - PICKER_WIDTH, window.innerWidth - PICKER_WIDTH - 8));
+    const left = Math.max(
+      8,
+      Math.min(rect.right - PICKER_WIDTH, window.innerWidth - PICKER_WIDTH - 8),
+    );
     const top = Math.min(rect.bottom + 4, Math.max(8, window.innerHeight - PICKER_HEIGHT));
     setRebindState({ id: workspaceId, top, left });
   };
@@ -129,7 +127,10 @@ export function AIWorkspaceSwitcher({
   };
 
   return (
-    <div ref={rootRef} className={`ai-workspace-history-dropdown ai-ws-switcher ${isOpen ? "is-open" : ""}`}>
+    <div
+      ref={rootRef}
+      className={`ai-workspace-history-dropdown ai-ws-switcher ${isOpen ? "is-open" : ""}`}
+    >
       <button
         type="button"
         className="ai-workspace-history-toggle ai-ws-switcher-toggle"
@@ -138,7 +139,9 @@ export function AIWorkspaceSwitcher({
       >
         <FolderKanban className="w-3.5 h-3.5" />
         <span className="ai-ws-switcher-name">{displayLabel}</span>
-        {activeWorkspace?.contextUpdatedAt ? <span className="ai-ws-context-dot" title={copy.contextBadge} /> : null}
+        {activeWorkspace?.contextUpdatedAt ? (
+          <span className="ai-ws-context-dot" title={copy.contextBadge} />
+        ) : null}
       </button>
 
       {isOpen && (
@@ -162,7 +165,7 @@ export function AIWorkspaceSwitcher({
             {activeWorkspaceId === null ? <Check className="w-3.5 h-3.5 ai-ws-item-check" /> : null}
           </button>
 
-          {workspaces.map((workspace) => (
+          {workspaces.map((workspace) =>
             editingId === workspace.id ? (
               <div key={workspace.id} className="ai-ws-item is-editing">
                 <input
@@ -201,7 +204,9 @@ export function AIWorkspaceSwitcher({
                         title={
                           rebindLocked
                             ? (rebindLockedTitle ?? copy.rebindAction)
-                            : (workspace.database ? `${copy.rebindAction}: ${workspace.database}` : copy.rebindAction)
+                            : workspace.database
+                              ? `${copy.rebindAction}: ${workspace.database}`
+                              : copy.rebindAction
                         }
                         aria-disabled={rebindLocked}
                         onClick={(event) => {
@@ -252,8 +257,8 @@ export function AIWorkspaceSwitcher({
                   </div>
                 </div>
               </Fragment>
-            )
-          ))}
+            ),
+          )}
 
           <button
             type="button"
@@ -272,54 +277,51 @@ export function AIWorkspaceSwitcher({
       {/* Rebind picker is portaled to <body> with fixed coordinates so it
           floats above the popover: its scroll area can neither clip it nor
           be stretched by it. */}
-      {isOpen && rebindState && pickerWorkspace ? createPortal(
-        <div
-          ref={pickerRef}
-          className="ai-ws-db-picker"
-          style={{ top: rebindState.top, left: rebindState.left }}
-          onClick={(event) => event.stopPropagation()}
-          role="presentation"
-        >
-          <span className="ai-ws-db-picker-title">{copy.rebindAction}</span>
-          <button
-            type="button"
-            className={`ai-ws-db-option ${pickerWorkspace.database ? "" : "is-active"}`}
-            onClick={() => {
-              onRebindWorkspace?.(pickerWorkspace.id, "");
-              setRebindState(null);
-            }}
-          >
-            <span className="ai-ws-db-option-name">{copy.dbAuto}</span>
-            {!pickerWorkspace.database ? <Check className="w-3 h-3" /> : null}
-          </button>
-          {databases.map((database) => (
-            <button
-              key={database}
-              type="button"
-              className={`ai-ws-db-option ${pickerWorkspace.database === database ? "is-active" : ""}`}
-              title={
-                database === currentDatabase
-                  ? copy.dbCurrentHint
-                  : database
-              }
-              onClick={() => {
-                onRebindWorkspace?.(pickerWorkspace.id, database);
-                setRebindState(null);
-              }}
+      {isOpen && rebindState && pickerWorkspace
+        ? createPortal(
+            <div
+              ref={pickerRef}
+              className="ai-ws-db-picker"
+              style={{ top: rebindState.top, left: rebindState.left }}
+              onClick={(event) => event.stopPropagation()}
+              role="presentation"
             >
-              <span className="ai-ws-db-option-name">
-                {database}
-                {database === currentDatabase ? (
-                  <span className="ai-ws-db-open-dot" title={copy.dbCurrentHint} />
-                ) : null}
-              </span>
-              {pickerWorkspace.database === database ? <Check className="w-3 h-3" /> : null}
-            </button>
-          ))}
-        </div>,
-        document.body,
-      ) : null}
+              <span className="ai-ws-db-picker-title">{copy.rebindAction}</span>
+              <button
+                type="button"
+                className={`ai-ws-db-option ${pickerWorkspace.database ? "" : "is-active"}`}
+                onClick={() => {
+                  onRebindWorkspace?.(pickerWorkspace.id, "");
+                  setRebindState(null);
+                }}
+              >
+                <span className="ai-ws-db-option-name">{copy.dbAuto}</span>
+                {!pickerWorkspace.database ? <Check className="w-3 h-3" /> : null}
+              </button>
+              {databases.map((database) => (
+                <button
+                  key={database}
+                  type="button"
+                  className={`ai-ws-db-option ${pickerWorkspace.database === database ? "is-active" : ""}`}
+                  title={database === currentDatabase ? copy.dbCurrentHint : database}
+                  onClick={() => {
+                    onRebindWorkspace?.(pickerWorkspace.id, database);
+                    setRebindState(null);
+                  }}
+                >
+                  <span className="ai-ws-db-option-name">
+                    {database}
+                    {database === currentDatabase ? (
+                      <span className="ai-ws-db-open-dot" title={copy.dbCurrentHint} />
+                    ) : null}
+                  </span>
+                  {pickerWorkspace.database === database ? <Check className="w-3 h-3" /> : null}
+                </button>
+              ))}
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   );
 }
-

@@ -31,7 +31,8 @@ const SMALL_ABSOLUTE_TOLERANCE_CEILING = 100;
 /** Fenced blocks and inline code: their numbers are code, not claims. */
 const CODE_SPAN_PATTERN = /```[\s\S]*?```|`[^`\n]*`/g;
 /** ISO dates, slash dates, and times — never statistics. */
-const DATE_TIME_TOKEN_PATTERN = /\b\d{4}-\d{1,2}-\d{1,2}\b|\b\d{1,2}\/\d{1,2}\/\d{2,4}\b|\b\d{1,2}:\d{2}(?::\d{2})?\b/g;
+const DATE_TIME_TOKEN_PATTERN =
+  /\b\d{4}-\d{1,2}-\d{1,2}\b|\b\d{1,2}\/\d{1,2}\/\d{2,4}\b|\b\d{1,2}:\d{2}(?::\d{2})?\b/g;
 /** Version-ish tokens (1.2.3, v2.11.4) — identifiers, not statistics. */
 const VERSION_TOKEN_PATTERN = /\bv?\d+(?:\.\d+){2,}\b/g;
 
@@ -156,11 +157,13 @@ const IDENTIFIER_SUGGESTION_MAX_DISTANCE = 2;
 const IDENTIFIER_MIN_LENGTH = 3;
 
 /** Backticked or quoted identifiers: `orders`, "user_id", `public.users`. */
-const BACKTICKED_IDENTIFIER_PATTERN = /[`"']([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)[`"']/g;
+const BACKTICKED_IDENTIFIER_PATTERN =
+  /[`"']([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)[`"']/g;
 /** Dotted references in prose: orders.total, public.users. */
 const DOTTED_IDENTIFIER_PATTERN = /\b[A-Za-z_][A-Za-z0-9_]*\.[A-Za-z_][A-Za-z0-9_]*\b/g;
 /** Structured name fields the harness writes into observations. */
-const OBSERVATION_NAME_FIELD_PATTERN = /"(?:name|column|table|identifier|columnName|colName)"\s*:\s*"([^"\n]+)"/g;
+const OBSERVATION_NAME_FIELD_PATTERN =
+  /"(?:name|column|table|identifier|columnName|colName)"\s*:\s*"([^"\n]+)"/g;
 /** `col:type` tokens from the schema capsule and describe_table output. */
 const OBSERVATION_COLUMN_TOKEN_PATTERN = /\b([A-Za-z_][A-Za-z0-9_]*)\s*:\s*[A-Za-z]/g;
 
@@ -314,8 +317,8 @@ export function verifyAgentResponseAgainstEvidence(
 
   return {
     ok:
-      unsupported.size < VERIFICATION_UNSUPPORTED_LIMIT
-      && unsupportedIdentifiers.length < IDENTIFIER_UNSUPPORTED_LIMIT,
+      unsupported.size < VERIFICATION_UNSUPPORTED_LIMIT &&
+      unsupportedIdentifiers.length < IDENTIFIER_UNSUPPORTED_LIMIT,
     unsupported: [...unsupported].slice(0, 8),
     unsupportedIdentifiers: unsupportedIdentifiers.slice(0, 8),
   };

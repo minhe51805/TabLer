@@ -12,10 +12,47 @@ export interface AgentSchemaSearchMatch {
 }
 
 const SEARCH_STOP_WORDS = new Set([
-  "about", "across", "after", "against", "bang", "bangs", "cai", "can", "cua", "data",
-  "database", "do", "find", "for", "from", "give", "hay", "hien", "in", "la", "lay", "me",
-  "mot", "nay", "of", "on", "record", "row", "search", "show", "table", "the", "tim", "to",
-  "trong", "user", "users", "value", "voi", "where", "with",
+  "about",
+  "across",
+  "after",
+  "against",
+  "bang",
+  "bangs",
+  "cai",
+  "can",
+  "cua",
+  "data",
+  "database",
+  "do",
+  "find",
+  "for",
+  "from",
+  "give",
+  "hay",
+  "hien",
+  "in",
+  "la",
+  "lay",
+  "me",
+  "mot",
+  "nay",
+  "of",
+  "on",
+  "record",
+  "row",
+  "search",
+  "show",
+  "table",
+  "the",
+  "tim",
+  "to",
+  "trong",
+  "user",
+  "users",
+  "value",
+  "voi",
+  "where",
+  "with",
 ]);
 
 function normalize(value: string) {
@@ -34,18 +71,36 @@ export function isAgentRecordLookupRequest(prompt: string) {
   if (/\b[0-9a-f]{8}-[0-9a-f-]{27,}\b/i.test(prompt)) return true;
 
   return [
-    "find", "search", "locate", "look up", "lookup", "check", "inspect record", "show record",
-    "find user", "which user", "who owns", "event", "incident", "record", "row",
-    "tim", "kiem tra", "tra cuu", "tim user", "nguoi dung", "su viec", "ban ghi", "dong du lieu",
+    "find",
+    "search",
+    "locate",
+    "look up",
+    "lookup",
+    "check",
+    "inspect record",
+    "show record",
+    "find user",
+    "which user",
+    "who owns",
+    "event",
+    "incident",
+    "record",
+    "row",
+    "tim",
+    "kiem tra",
+    "tra cuu",
+    "tim user",
+    "nguoi dung",
+    "su viec",
+    "ban ghi",
+    "dong du lieu",
   ].some((signal) => normalized.includes(signal));
 }
 
 function buildSearchTerms(query: string) {
   const normalized = normalize(query);
   const terms = new Set(
-    normalized
-      .split("_")
-      .filter((term) => term.length >= 3 && !SEARCH_STOP_WORDS.has(term)),
+    normalized.split("_").filter((term) => term.length >= 3 && !SEARCH_STOP_WORDS.has(term)),
   );
 
   if (query.includes("@") || /\be[-_ ]?mail\b/i.test(query)) {
@@ -119,7 +174,8 @@ export function prioritizeSchemaScanCandidates(
       for (const term of terms) {
         if (!normalizedIdentifier) continue;
         if (normalizedIdentifier.includes(term)) score += 2;
-        else if (normalizedIdentifier.length >= 3 && term.includes(normalizedIdentifier)) score += 1;
+        else if (normalizedIdentifier.length >= 3 && term.includes(normalizedIdentifier))
+          score += 1;
       }
       return { identifier, index, score };
     })

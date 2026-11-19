@@ -62,7 +62,7 @@ pub async fn export_database(
     connection_name: Option<String>,
     encrypt_password: Option<String>,
     db_manager: State<'_, DatabaseManager>,
-) -> Result<DatabaseExportResult, String> {
+) -> Result<DatabaseExportResult, crate::error::AppError> {
     db_manager
         .require_capability(&connection_id, DriverCapability::DataExport)
         .await
@@ -163,7 +163,7 @@ pub async fn export_database(
                 }
                 Err(error) => {
                     let _ = fs::remove_file(&write_path);
-                    return Err(error.to_string());
+                    return Err(error.to_string().into());
                 }
             }
         }

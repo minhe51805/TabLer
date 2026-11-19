@@ -2,7 +2,7 @@
  * Connection export/import utilities.
  * Uses AES-256-GCM encryption via Rust backend.
  */
-import { invoke } from "@tauri-apps/api/core";
+import { invokeCommand as invoke } from "./tauri-invoke";
 import type { ConnectionConfig } from "../types/database";
 
 export interface ExportableConnection {

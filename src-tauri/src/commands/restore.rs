@@ -38,8 +38,8 @@ pub struct RestoreResult {
 pub fn preview_database_restore(
     sql: String,
     db_type: DatabaseType,
-) -> Result<RestorePreview, String> {
-    build_restore_preview(&sql, db_type)
+) -> Result<RestorePreview, crate::error::AppError> {
+    build_restore_preview(&sql, db_type).map_err(crate::error::AppError::from)
 }
 
 /// Shared preview classifier — also powers checkpoint-restore previews.
@@ -131,7 +131,7 @@ pub async fn restore_database_sql(
     db_type: DatabaseType,
     db_manager: State<'_, DatabaseManager>,
     safe_mode: State<'_, SafeModeState>,
-) -> Result<RestoreResult, String> {
+) -> Result<RestoreResult, crate::error::AppError> {
     db_manager.assert_write_allowed(&connection_id).await?;
     run_sql_restore(
         &connection_id,
@@ -144,6 +144,7 @@ pub async fn restore_database_sql(
         PreRestoreSnapshot::Auto { require: true },
     )
     .await
+    .map_err(crate::error::AppError::from)
 }
 
 /// Shared restore pipeline — also powers checkpoint rollback.

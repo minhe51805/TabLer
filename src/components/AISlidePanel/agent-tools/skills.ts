@@ -3,6 +3,8 @@ import { isSupersededAIRequestError } from "../ai-agent-action-requestor";
 import { AI_AGENT_TOOL_NAMES, type AIAgentToolName } from "../ai-agent-tools";
 import { agentToolError, isRetryableAgentToolError } from "../agent-tool-executor-helpers";
 import { useSkillUsageStore } from "../../../stores/skillUsageStore";
+import { APP_EVENTS } from "../../../utils/app-events";
+import { EventCenter } from "../../../stores/event-center";
 import { invokeMutation } from "../../../utils/tauri-utils";
 import type { AgentToolModule } from "./shared";
 
@@ -41,15 +43,11 @@ export const tools: AgentToolModule[] = [
           name: skillName,
         });
         const loadedName = content.name || skillName;
-        window.dispatchEvent(
-          new CustomEvent("workspace-activity", {
-            detail: {
-              connectionId: ctx.connectionId,
-              label: `Skill: ${content.name}`,
-              durationMs: 0,
-            },
-          }),
-        );
+        EventCenter.emit(APP_EVENTS.workspaceActivity, {
+          connectionId: ctx.connectionId,
+          label: `Skill: ${content.name}`,
+          durationMs: 0,
+        });
         useSkillUsageStore.getState().recordSkillRun(loadedName, ctx.connectionId);
         // Register bundled resources so read_skill_resource stays fail-closed:
         // only paths this skill listed may be pulled on demand.
@@ -150,15 +148,11 @@ export const tools: AgentToolModule[] = [
           resource: string;
           content: string;
         }>("read_ai_skill_resource", { name: skillName, resource: resourcePath });
-        window.dispatchEvent(
-          new CustomEvent("workspace-activity", {
-            detail: {
-              connectionId: ctx.connectionId,
-              label: `Skill resource: ${resource.resource}`,
-              durationMs: 0,
-            },
-          }),
-        );
+        EventCenter.emit(APP_EVENTS.workspaceActivity, {
+          connectionId: ctx.connectionId,
+          label: `Skill resource: ${resource.resource}`,
+          durationMs: 0,
+        });
         const rawContent = resource.content ?? "";
         const clipped =
           rawContent.length > AI_SKILL_RESOURCE_MAX_CHARS

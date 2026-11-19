@@ -42,16 +42,19 @@ export function sanitizeAgentObservationValue(
       : value;
   // Indirect-prompt-injection defense (security review 2026-11-01): a value
   // must not be able to close the <row_data> fence it will be wrapped in, or
-  // it could masquerade as the agent's own context. Case-insensitive so
-  // `</ROW_DATA>` variants are covered too.
-  return trimmed.replace(/<\/row_data/gi, "<\\/row_data");
+  // it could masquerade as the agent's own context.
+  return neutralizeFenceForgery(trimmed);
 }
 
-/** Neutralize a value against fence-forgery: a value must not be able to close
+/** Neutralize text against fence-forgery: content must not be able to close
  *  the <row_data> fence it may later be wrapped in, or it could masquerade as
  *  the agent's own context. Case-insensitive so `</ROW_DATA>` variants are
- *  covered too. Exported for the memory-observation path, which reads
- *  out-of-band-authored files and gets the same treatment. */
+ *  covered too. Shared by the row-value sanitizer and the memory-observation
+ *  path (S2-3), which reads out-of-band-authored files and gets the same
+ *  treatment. */
+export function neutralizeFenceForgery(text: string): string {
+  return text.replace(/<\/row_data/gi, "<\\/row_data");
+}
 
 export function redactAgentSqlLiterals(sql: string) {
   return sql.replace(/'(?:''|[^'])*'/g, "'[REDACTED]'");

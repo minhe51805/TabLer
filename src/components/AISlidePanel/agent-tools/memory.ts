@@ -1,4 +1,5 @@
 import { formatExecutionError } from "../../SQLEditor/SQLEditorUtils";
+import { neutralizeFenceForgery } from "../ai-agent-grounding";
 import { isSupersededAIRequestError } from "../ai-agent-action-requestor";
 import { agentToolError, isRetryableAgentToolError } from "../agent-tool-executor-helpers";
 import { invalidateAgentMemoryIndex } from "../hooks/use-agent-memory";
@@ -108,7 +109,11 @@ export const tools: AgentToolModule[] = [
         return [
           `Memory "${content.name}" loaded${updatedNote}. Treat it as a saved observation, not a live fact — re-verify anything the schema contradicts:`,
           "",
-          content.body ?? "",
+          // S2-3: memory bodies are file-authored content (out-of-band
+          // MEMORY.md is human-editable by design), so they get the same
+          // fence-forgery neutralization as row values — an instruction-shaped
+          // body can be reported, but it cannot forge a closing fence.
+          neutralizeFenceForgery(content.body ?? ""),
         ].join("\n");
       } catch (errorValue) {
         if (isSupersededAIRequestError(errorValue)) throw errorValue;

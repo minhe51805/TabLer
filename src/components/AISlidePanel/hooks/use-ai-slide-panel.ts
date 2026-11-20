@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
+import { useAIAutonomyStore } from "../../../stores/aiAutonomyStore";
 import { useAIStore, type AskAIOptions } from "../../../stores/aiStore";
 import { useConnectionStore } from "../../../stores/connectionStore";
 import { useQueryStore } from "../../../stores/queryStore";
@@ -41,6 +42,7 @@ import { buildExplainQuery, parseExplainOutput } from "../../../utils/explain-pa
 import { getIndexProposals, type IndexProposal } from "../../../utils/index-advisor";
 import { useAISqlRunner } from "./use-ai-sql-runner";
 import { runAgentAssist, type AgentAssistOptions } from "../ai-agent-generate";
+import type { OpenQueryTabInput } from "../agent-engine/types";
 
 export type { AIExecutedSqlResult } from "./use-ai-sql-runner";
 
@@ -452,6 +454,33 @@ export function useAISlidePanel({
     }
   }, [isOpen, cancelGeneration]);
 
+  // DI-contract cleanup (2026-11-20): the four store groups the engine used to
+  // read directly are mapped here, in the factory — the driver only ever sees
+  // the contract. Stable via useCallback so they are safe in the deps array.
+  const getAutonomyForConnection = useCallback(
+    (id: string) => useAIAutonomyStore.getState().getAutonomy(id),
+    [],
+  );
+  const listTabs = useCallback(
+    () => useUIStore.getState().tabs.map((tab) => ({ id: tab.id, type: tab.type })),
+    [],
+  );
+  const openQueryTab = useCallback(
+    (input: OpenQueryTabInput) => useUIStore.getState().addTab(input),
+    [],
+  );
+  const getDbTypeForConnection = useCallback(
+    (id: string | null) =>
+      useConnectionStore.getState().connections.find((c) => c.id === id)?.db_type,
+    [],
+  );
+  const getActiveAIRequestId = useCallback(() => useAIStore.getState().activeAIRequestId, []);
+  const getAIConfigs = useCallback(() => useAIStore.getState().aiConfigs, []);
+  const restoreProvider = useCallback(
+    (providerId: string) => useAIStore.getState().restoreProvider(providerId),
+    [],
+  );
+
   const generateAssist = useCallback(
     async (
       prompt: string,
@@ -484,6 +513,13 @@ export function useAISlidePanel({
           lastReasoningRef,
           lastModelUsedRef,
           aiSchemaCodecCacheRef,
+          getAutonomyForConnection,
+          listTabs,
+          openQueryTab,
+          getDbTypeForConnection,
+          getActiveAIRequestId,
+          getAIConfigs,
+          restoreProvider,
         },
         prompt,
         history,
@@ -509,6 +545,13 @@ export function useAISlidePanel({
       previewWriteTransaction,
       restoreCheckpoint,
       updateIsGenerating,
+      getAutonomyForConnection,
+      listTabs,
+      openQueryTab,
+      getDbTypeForConnection,
+      getActiveAIRequestId,
+      getAIConfigs,
+      restoreProvider,
     ],
   );
 

@@ -1,9 +1,6 @@
 import { getLinkedWorkspaceDir } from "../../../hooks/useLinkedFolders";
 import type { AppLanguage } from "../../../i18n";
-import { getManualProviderOverrideAt, useAIStore } from "../../../stores/aiStore";
-import { useAIAutonomyStore } from "../../../stores/aiAutonomyStore";
-import { useConnectionStore } from "../../../stores/connectionStore";
-import { useUIStore } from "../../../stores/uiStore";
+import { getManualProviderOverrideAt } from "../../../stores/aiStore";
 import type {
   AIConversationMessage,
   AIProviderConfig,
@@ -361,7 +358,7 @@ export async function driveAgentTurns(params: {
       agentMemoryIndex,
       queryTabs,
       unattendedReadOnly,
-      agentAutonomy: useAIAutonomyStore.getState().getAutonomy(connectionId ?? ""),
+      agentAutonomy: ctx.getAutonomyForConnection(connectionId ?? ""),
       omitInlineStepObservations,
     });
 
@@ -380,7 +377,7 @@ export async function driveAgentTurns(params: {
     requestId,
     requestIdRef,
     openQueryTab: ({ sql: tabSql, title, autoRun }) => {
-      const tabIdsBefore = new Set(useUIStore.getState().tabs.map((tab) => tab.id));
+      const tabIdsBefore = new Set(ctx.listTabs().map((tab) => tab.id));
       EventCenter.emit(APP_EVENTS.openAIWorkspaceQuery, {
         sql: tabSql,
         connectionId: connectionId ?? undefined,
@@ -390,9 +387,7 @@ export async function driveAgentTurns(params: {
         autoRun,
         focusWorkspace: true,
       });
-      return useUIStore
-        .getState()
-        .tabs.some((tab) => tab.type === "query" && !tabIdsBefore.has(tab.id));
+      return ctx.listTabs().some((tab) => tab.type === "query" && !tabIdsBefore.has(tab.id));
     },
     manageMetricsBoard: (request) =>
       manageAgentMetricsBoard(request, {
@@ -401,8 +396,8 @@ export async function driveAgentTurns(params: {
       }),
     openTableTab: ({ table, database }) => {
       if (!connectionId) return false;
-      const tabIdsBefore = new Set(useUIStore.getState().tabs.map((tab) => tab.id));
-      useUIStore.getState().addTab({
+      const tabIdsBefore = new Set(ctx.listTabs().map((tab) => tab.id));
+      ctx.openQueryTab({
         id: `table-${connectionId}-${database || currentDatabase || ""}-${table}-${crypto.randomUUID()}`,
         type: "table",
         title: table,
@@ -410,9 +405,7 @@ export async function driveAgentTurns(params: {
         tableName: table,
         database: database || currentDatabase || undefined,
       });
-      return useUIStore
-        .getState()
-        .tabs.some((tab) => tab.type === "table" && !tabIdsBefore.has(tab.id));
+      return ctx.listTabs().some((tab) => tab.type === "table" && !tabIdsBefore.has(tab.id));
     },
     requestDataReadConsent,
     requestDataDestructiveConsent,
@@ -431,8 +424,7 @@ export async function driveAgentTurns(params: {
       agentPlanLines = plan.map((step, index) => `${index + 1}. [${step.status}] ${step.title}`);
     },
     createCheckpoint: (label) => {
-      const state = useConnectionStore.getState();
-      const dbType = state.connections.find((c) => c.id === connectionId)?.db_type;
+      const dbType = ctx.getDbTypeForConnection(connectionId);
       if (!connectionId || !dbType) {
         return Promise.reject(new Error("No active connection for checkpoint."));
       }
@@ -445,7 +437,7 @@ export async function driveAgentTurns(params: {
         "create_database_checkpoint",
         {
           connectionId,
-          database: state.currentDatabase || null,
+          database: ctx.currentDatabase || null,
           dbType,
           label: label ?? null,
         },
@@ -616,7 +608,7 @@ export async function driveAgentTurns(params: {
   }
 
   const runStartedAt = Date.now();
-  const providerAtRunStart = getActiveAIProvider(useAIStore.getState().aiConfigs)?.id ?? null;
+  const providerAtRunStart = getActiveAIProvider(ctx.getAIConfigs())?.id ?? null;
   let crossProviderOccurred = false;
   let manualProviderSwitchPending = false;
 
@@ -637,7 +629,7 @@ export async function driveAgentTurns(params: {
       observation: "Provider switched manually mid-run.",
     });
     publishAgentProgress();
-    if (useAIStore.getState().activeAIRequestId) {
+    if (ctx.getActiveAIRequestId()) {
       void cancelAIRequest();
     }
   };
@@ -686,7 +678,7 @@ export async function driveAgentTurns(params: {
       crossProviderOccurred &&
       getManualProviderOverrideAt() <= runStartedAt
     ) {
-      useAIStore.getState().restoreProvider(providerAtRunStart);
+      ctx.restoreProvider(providerAtRunStart);
     }
   };
 
@@ -1103,7 +1095,7 @@ export async function driveAgentTurns(params: {
               failoverNotes.push(
                 formatProviderFollowUpNote(
                   appLanguage,
-                  getActiveAIProvider(useAIStore.getState().aiConfigs),
+                  getActiveAIProvider(ctx.getAIConfigs()),
                   formatActionFailureReason(errorValue),
                 ),
               );

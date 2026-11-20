@@ -55,10 +55,12 @@ import {
 import { parseCanonicalToolCall } from "@/components/AISlidePanel/ai-agent-tools";
 import { invalidateAgentSchemaSummary } from "@/components/AISlidePanel/ai-schema-summary";
 import { invalidateAgentMemoryIndex } from "@/components/AISlidePanel/hooks/use-agent-memory";
+import { useAIAutonomyStore } from "@/stores/aiAutonomyStore";
 import { useAIStore } from "@/stores/aiStore";
 import { useConnectionStore } from "@/stores/connectionStore";
 import { useQueryStore } from "@/stores/queryStore";
 import { useSafeModeStore } from "@/stores/safeModeStore";
+import { useUIStore } from "@/stores/uiStore";
 import type { AIProviderConfig, TableInfo } from "@/types";
 import { setAIFailoverConsent } from "@/utils/ai-failover-consent";
 import { clearQueryResultCache } from "@/utils/query-result-cache";
@@ -139,6 +141,14 @@ function createRealAgentContext(overrides: Partial<AgentAssistContext> = {}): {
     lastReasoningRef: { current: undefined },
     lastModelUsedRef: { current: undefined },
     aiSchemaCodecCacheRef: { current: new Map() },
+    getAutonomyForConnection: (id) => useAIAutonomyStore.getState().getAutonomy(id),
+    listTabs: () => useUIStore.getState().tabs.map((tab) => ({ id: tab.id, type: tab.type })),
+    openQueryTab: (input) => useUIStore.getState().addTab(input),
+    getDbTypeForConnection: (id) =>
+      useConnectionStore.getState().connections.find((c) => c.id === id)?.db_type,
+    getActiveAIRequestId: () => useAIStore.getState().activeAIRequestId,
+    getAIConfigs: () => useAIStore.getState().aiConfigs,
+    restoreProvider: (id) => useAIStore.getState().restoreProvider(id),
     ...overrides,
   };
 

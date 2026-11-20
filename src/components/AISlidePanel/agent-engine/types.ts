@@ -13,10 +13,23 @@ import type { useConnectionStore } from "../../../stores/connectionStore";
 import type { useQueryStore } from "../../../stores/queryStore";
 import type { AgentToolAvailability } from "../ai-agent-engine-gates";
 import type {
+  AIWorkspaceAgentAutonomy,
   AIWorkspaceAgentStep,
   AIWorkspaceInteractionMode,
   AIWorkspaceRunTraceEntry,
 } from "../ai-workspace-types";
+
+/** Narrow input for opening a table query tab — the store's own tab shape is
+ *  deliberately not part of the engine contract, so the store can evolve
+ *  without touching the engine. */
+export interface OpenQueryTabInput {
+  id: string;
+  type: "table";
+  title: string;
+  connectionId: string;
+  tableName: string;
+  database?: string;
+}
 
 /** Pure mutable value box compatible with React's `MutableRefObject<T>` without importing React. */
 export interface MutableValueBox<T> {
@@ -80,6 +93,23 @@ export interface AgentAssistContext {
   lastReasoningRef: MutableValueBox<string | undefined>;
   lastModelUsedRef: MutableValueBox<string | undefined>;
   aiSchemaCodecCacheRef: MutableValueBox<Map<string, string>>;
+  /** Autonomy for the bound connection — routed through the factory instead of
+   *  `useAIAutonomyStore.getState()` (DI-contract cleanup, 2026-11-20). */
+  getAutonomyForConnection: (connectionId: string) => AIWorkspaceAgentAutonomy;
+  /** Current tabs as { id, type } pairs (not the full store Tab shape) — lets
+   *  the driver keep its type filters while never touching the store. */
+  listTabs: () => Array<{ id: string; type: string }>;
+  /** Open a table query tab; the driver computes "was a new tab created" by
+   *  diffing listTabIds() before/after. */
+  openQueryTab: (input: OpenQueryTabInput) => void;
+  /** The bound connection's engine kind — the only field the driver reads from
+   *  connection state (was a whole-store read at turn-driver :434). */
+  getDbTypeForConnection: (connectionId: string | null) => DatabaseType | undefined;
+  /** Provider lifecycle: in-flight request id, provider list, and provider
+   *  restore after a cross-provider run. */
+  getActiveAIRequestId: () => string | null;
+  getAIConfigs: () => AIProviderConfig[];
+  restoreProvider: (providerId: string) => void;
 }
 
 export interface AgentAssistOptions {
